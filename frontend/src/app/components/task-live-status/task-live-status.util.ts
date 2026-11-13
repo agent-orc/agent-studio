@@ -1,3 +1,4 @@
+import { hostCapabilityWait } from '../../models/ready-wait-reason';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskState } from '../../models/task.model';
 
@@ -32,8 +33,9 @@ export function dependencyWaitHeadline(task: TaskInfo): string | null {
 }
 
 /** Short name for the non-dependency holds; the hold block states the detail. */
-export function holdHeadline(mechanism: string): string {
+export function holdHeadline(mechanism: string, reason = ''): string {
   switch (mechanism) {
+    case 'host-capability-missing': return hostCapabilityWait(reason).status;
     case 'dispatch-rejection': return 'Queued, but the runner refused it';
     case 'crash-backoff': return 'Crash cooldown before the next attempt';
     default: return 'Queued, but not pickable';

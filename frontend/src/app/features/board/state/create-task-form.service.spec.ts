@@ -28,9 +28,9 @@ describe('CreateTaskFormService', () => {
     });
     const form = TestBed.inject(CreateTaskFormService);
     form.newTitle = 'Draft';
-    form.newModel = 'prefilled-model';
-    form.newThinkingLevel = 'high';
-    form.modelSelectionExplicit = explicit;
+    form.newModel.set('prefilled-model');
+    form.newThinkingLevel.set('high');
+    form.modelSelectionExplicit.set(explicit);
 
     form.submit();
 
@@ -58,10 +58,10 @@ describe('CreateTaskFormService', () => {
     const form = TestBed.inject(CreateTaskFormService);
     form.visible.set(true);
     form.selectProject('/workspace/demo');
-    expect(form.newModel).toBe('project-model');
-    expect(form.modelSelectionExplicit).toBe(true);
+    expect(form.newModel()).toBe('project-model');
+    expect(form.modelSelectionExplicit()).toBe(true);
 
-    form.onCreateCliTypeChange(form.newCliType === 'codex' ? 'claude' : 'codex');
-    expect(form.modelSelectionExplicit).toBe(false);
+    form.onCreateCliTypeChange(form.newCliType() === 'codex' ? 'claude' : 'codex');
+    expect(form.modelSelectionExplicit()).toBe(false);
   });
 });

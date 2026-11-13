@@ -1226,6 +1226,14 @@ public sealed class ManagementApiOwnHostTests : IDisposable
         Assert.Equal("verified", overview.GetProperty("lastGood").GetProperty("verification").GetString());
         Assert.Equal("verified", overview.GetProperty("lastVerification").GetProperty("outcome").GetString());
         Assert.Equal("not-configured", overview.GetProperty("offHost").GetProperty("state").GetString());
+        var archiveId = overview.GetProperty("lastGood").GetProperty("id").GetString()!;
+        var contentPath = "/api/v1/management/backups/" + archiveId + "/contents";
+        using (var anonymous = factory.CreateClient())
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(contentPath)).StatusCode);
+        var contents = await client.GetFromJsonAsync<JsonElement>(contentPath);
+        Assert.Equal(JsonValueKind.Object, contents.GetProperty("credentialFiles").ValueKind);
+        Assert.Contains(contents.GetProperty("files").EnumerateArray(), file =>
+            file.GetProperty("path").GetString() == "workspace/backup-fixture.txt");
         var operatorView = await client.GetFromJsonAsync<JsonElement>("/api/operator/backups");
         Assert.Equal(overview.GetProperty("lastGood").GetProperty("id").GetString(),
             operatorView.GetProperty("lastGood").GetProperty("id").GetString());

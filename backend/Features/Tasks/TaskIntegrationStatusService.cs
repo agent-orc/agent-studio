@@ -74,6 +74,7 @@ public sealed class TaskIntegrationStatusService
     private readonly Func<string, string?> _readOriginUrl;
     private readonly GitReachabilityIndex? _reachability;
     private readonly BatchGateStore _batchGates;
+    private readonly TaskScannerService? _scanner;
 
     /// <summary>The delivered lanes this verdict applies to. Cards outside get no entry.</summary>
     internal static readonly HashSet<string> DeliveredLanes = new(StringComparer.Ordinal)
@@ -107,9 +108,10 @@ public sealed class TaskIntegrationStatusService
         ProjectRegistry? registry = null,
         GitOriginStore? originStore = null,
         GitReachabilityIndex? reachability = null,
-        BatchGateStore? batchGates = null)
+        BatchGateStore? batchGates = null,
+        TaskScannerService? scanner = null)
         : this(git, settings, pipelineLog, logger, TimeProvider.System, registry,
-            originStore: originStore, reachability: reachability, batchGates: batchGates)
+            originStore: originStore, reachability: reachability, batchGates: batchGates, scanner: scanner)
     {
     }
 
@@ -123,7 +125,8 @@ public sealed class TaskIntegrationStatusService
         Func<string, string?>? readOriginUrl = null,
         GitOriginStore? originStore = null,
         GitReachabilityIndex? reachability = null,
-        BatchGateStore? batchGates = null)
+        BatchGateStore? batchGates = null,
+        TaskScannerService? scanner = null)
     {
         _git = git;
         _settings = settings;
@@ -138,6 +141,7 @@ public sealed class TaskIntegrationStatusService
         // card classification shares it with provenance and the integration view.
         _reachability = reachability;
         _batchGates = batchGates ?? new BatchGateStore();
+        _scanner = scanner;
         _cache = new GenerationSingleFlightCache<RepoIntegration>(timeProvider);
         _contentCache = new GenerationSingleFlightCache<bool?>(timeProvider);
         _pathCache = new GenerationSingleFlightCache<IReadOnlyList<string>>(timeProvider);
@@ -219,7 +223,12 @@ public sealed class TaskIntegrationStatusService
                     uncountedGates.TryAdd(gate.TreeSha, uncounted);
                     continue;
                 }
-                publications.Add(new(gate.TreeSha, parent, gate.Describe()));
+                var fullSuite = string.Equals(gate.TestLevel, TestExecutionLevels.Full, StringComparison.OrdinalIgnoreCase);
+                if (!fullSuite && gate.TestLevel is null && _scanner?.FindJob(gate.SourceJobId, job.WatchPath) is { } source)
+                    fullSuite = PublishedGateEvidenceBackfill.PassedReceipts(source.FolderPath)
+                        .Any(receipt => string.Equals(receipt.Sha, gate.TreeSha, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(receipt.TestLevel, TestExecutionLevels.Full, StringComparison.OrdinalIgnoreCase));
+                publications.Add(new(gate.TreeSha, parent, gate.Describe(), fullSuite));
             }
             var batches = _batchGates;
             var currentProfile = BatchGatePilotService.GateProfile(
@@ -241,7 +250,8 @@ public sealed class TaskIntegrationStatusService
                         && !string.Equals(verdict.VerifiedSha, verdict.BaseSha, StringComparison.OrdinalIgnoreCase)
                         ? $"it verified {verdict.VerifiedSha}"
                     : !string.Equals(verdict.GateProfileDigest, currentProfile, StringComparison.Ordinal)
-                        ? "its gate profile digest is not the current profile"
+                        ? $"its gate profile digest {verdict.GateProfileDigest ?? "none"} is not the current gate profile {currentProfile}; "
+                            + "a verdict under an older gate profile is not counted"
                     : !File.Exists(verdict.EvidencePath) ? "its evidence file is missing"
                     : null;
                 if (uncounted is not null)
@@ -343,6 +353,14 @@ public sealed class TaskIntegrationStatusService
             }
             var neutralEvidence = neutralCommits.Count == 0 ? string.Empty
                 : $" Gate-neutral document-key commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
+            if (decision.CoveringPublication is { } covering)
+                return status with { Verification = verification with
+                {
+                    Reason = $"{verification.Reason} {covering.Gate} passed a full suite on later first-parent "
+                        + $"publication {covering.TreeSha}, covering earlier publications through "
+                        + $"{Short(verification.Sha!)}.{neutralEvidence}",
+                    GateNeutralCommits = neutralCommits.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+                } };
             if (mappedBatchGate is not null)
                 return status with { Verification = verification with
                 {
@@ -735,7 +753,9 @@ public sealed class TaskIntegrationStatusService
                 currentIntegrationSha,
                 currentIntegrationBranch,
                 currentDeliverySha,
-                branchHistory);
+                branchHistory,
+                sha => _git.ResolveRepoRootForWatchPath(job.WatchPath) is { } root
+                    ? _git.GetNetChangeSource(root, sha) : null);
             if (IntegrationVerificationStates.PermitsCompletion(projected)
                 || branchHistory is null
                 || !ReviewSubjectStore.IsValidResultSha(currentDeliverySha)) return projected;
@@ -1445,6 +1465,7 @@ public sealed class TaskIntegrationStatusService
                     Stage = failedStep?.StepId,
                     EvidenceExcerpt = evidenceExcerpt,
                     RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
+                    ReplayAvailable = failure.ReplayAvailable,
                     FailureClass = failure.FailureClass,
                     FailureSignature = failure.FailureSignature,
                     ConflictReport = failure.ConflictReport,

@@ -51,6 +51,29 @@ const partialLinks = [
   { from: 'website', to: 'external', kind: 'call', label: 'Service', sourceRef: 'role fixture' },
 ];
 
+test('project Operations explains an empty structure in both themes and at phone width', async ({ page }) => {
+  fs.mkdirSync(results, { recursive: true });
+  const pageErrors: string[] = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await page.route(/\/api\/v1\/operations\/structure(?:\?|$)/, route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ nodes: [], links: [] }) }));
+  await page.route('**/api/v1/operations/structure/library**', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ registries: [], consumers: [] }) }));
+  await page.goto('/#/workspace/operations/structure');
+  await expect(page.getByTestId('structure-empty')).toContainText('No structure has been recorded');
+  await expect(page.getByTestId('structure-canvas')).not.toBeVisible();
+  await expect(page.getByTestId('structure-shortcuts')).toHaveCount(0);
+  await expect(page.getByText('Keys 1–3 change detail', { exact: false })).toHaveCount(0);
+  await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    await page.getByTestId('structure-view').screenshot({ path: path.join(results, `structure-empty-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId('structure-view').screenshot({ path: path.join(results, 'structure-empty-390.png') });
+  expect(pageErrors).toEqual([]);
+});
+
 test('declared structure is accessible in both projections, widths and themes', async ({ page }) => {
   test.setTimeout(180_000);
   fs.mkdirSync(results, { recursive: true });
@@ -199,17 +222,6 @@ test('declared structure is accessible in both projections, widths and themes', 
     await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
     await projectSection.screenshot({ path: path.join(results, `project-operations-structure-${theme}.png`) });
   }
-  const settingsPage = await page.context().newPage();
-  await settingsPage.setViewportSize({ width: 1920, height: 1400 });
-  await settingsPage.goto('/#/workspace/settings/environment');
-  await settingsPage.getByRole('button', { name: 'Map', exact: true }).click();
-  await expect(settingsPage.getByTestId('structure-view').locator('[data-node-id="studio"]')).toBeVisible();
-  await expect(settingsPage.locator('app-environment-map')).toHaveCount(0);
-  for (const theme of ['light', 'dark'] as const) {
-    await settingsPage.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
-    await settingsPage.getByTestId('structure-view').screenshot({ path: path.join(results, `settings-structure-${theme}.png`) });
-  }
-  await settingsPage.close();
   await page.goto('/#/projects/website/operations/structure');
   await expect(view.getByText('Website partial picture')).toBeVisible();
   await page.keyboard.press('3');

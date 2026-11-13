@@ -43,7 +43,7 @@ async function saveShot(testInfo: TestInfo, name: string, body: Buffer): Promise
   }
 }
 
-function buildInfo(state: string, emptyContext = false) {
+function buildInfo(state: string, emptyContext = false, checkoutMissing = false) {
   return {
     id: JOB_ID,
     taskKey: `${WATCH_PATH}::${JOB_ID}`,
@@ -104,12 +104,19 @@ function buildInfo(state: string, emptyContext = false) {
     tags: [],
     ownerClientId: 'local-default',
     lastUsage: null,
+    integration: checkoutMissing ? {
+      status: 'pending', integrationBranch: 'main', deliveryRef: 'task/AGT-1994', sha: null,
+      detail: 'Integration failed', failure: {
+        code: 'server-checkout-missing', label: 'Server checkout needed', rebaseRecoveryAvailable: false,
+        reason: 'This project needs a server checkout before delivery can integrate.',
+      },
+    } : null,
   };
 }
 
-function buildDetail(state: string, emptyContext = false) {
+function buildDetail(state: string, emptyContext = false, checkoutMissing = false) {
   return {
-    info: buildInfo(state, emptyContext),
+    info: buildInfo(state, emptyContext, checkoutMissing),
     promptMarkdown: '# Task',
     promptHistory: [],
     titleHistory: [],
@@ -261,9 +268,9 @@ const TIMELINE = [
 ];
 
 async function installRoutes(page: Page, state: string, emptyContext = false, recentAttempt = false,
-  parkedReason = 'Push protection rejected the branch.'): Promise<void> {
+  parkedReason = 'Push protection rejected the branch.', checkoutMissing = false): Promise<void> {
   const info = {
-    ...buildInfo(state, emptyContext),
+    ...buildInfo(state, emptyContext, checkoutMissing),
     ...(recentAttempt ? {
       parkedBlocker: {
         blockerType: 'operator-decision', conditionKind: 'manual',
@@ -275,7 +282,7 @@ async function installRoutes(page: Page, state: string, emptyContext = false, re
       },
     } : {}),
   };
-  const detail = buildDetail(state, emptyContext);
+  const detail = buildDetail(state, emptyContext, checkoutMissing);
   if (recentAttempt) {
     detail.info = info;
   }
@@ -402,9 +409,9 @@ async function setTheme(page: Page, theme: 'dark' | 'light'): Promise<void> {
 }
 
 async function openDetail(page: Page, state: string, emptyContext = false, recentAttempt = false,
-  parkedReason?: string, beforeOpen?: () => Promise<void>): Promise<void> {
+  parkedReason?: string, beforeOpen?: () => Promise<void>, checkoutMissing = false): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 960 });
-  await installRoutes(page, state, emptyContext, recentAttempt, parkedReason);
+  await installRoutes(page, state, emptyContext, recentAttempt, parkedReason, checkoutMissing);
   await beforeOpen?.();
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   await page.addStyleTag({ content: '[data-testid="studio-overlay-root"], [role="alert"] { display: none !important; }' });
@@ -431,6 +438,36 @@ async function shootBothThemes(page: Page, testInfo: TestInfo, baseName: string)
 }
 
 test.describe('Escalation summary panel — collapsible + compact', () => {
+  test('missing server checkout points to setup and cannot be reissued', async ({ page }) => {
+    await openDetail(page, '5e-escalated', false, false, undefined, undefined, true);
+    const panel = page.getByTestId('escalation-summary');
+    await expect(panel.getByTestId('server-checkout-remedy')).toBeVisible();
+    await expect(panel.getByTestId('server-checkout-remedy').getByRole('link', { name: 'Open Project Settings' }))
+      .toHaveAttribute('href', /\/#\/projects\/fixture-escalation\/settings$/);
+    await expect(panel.getByTestId('server-checkout-remedy').getByRole('link', { name: 'Read the setup guide' }))
+      .toHaveAttribute('href', /networked-task-server\.md#project-checkouts$/);
+    await expect(panel.getByTestId('escalation-action-reissue-escalated')).toHaveCount(0);
+    await expect(page.getByTestId('triage-action-reissue-escalated')).toHaveCount(0);
+    mkdirSync(SHOTS_DIR, { recursive: true });
+    // The studio shell renders the task header toolbar in the tab row; the
+    // standalone detail header shows it otherwise.
+    const header = page.locator('.studio-tab-actions:visible, app-detail-header header.detail__header:visible').first();
+    await expect(header.getByRole('button', { name: 'Continue (reissue)' })).toHaveCount(0);
+    const remedy = panel.getByTestId('server-checkout-remedy');
+    const capture = async (suffix: string) => {
+      await header.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-detail-header-${suffix}.png`), animations: 'disabled' });
+      await panel.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-escalation-summary-${suffix}.png`), animations: 'disabled' });
+      await remedy.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-remedy-${suffix}.png`), animations: 'disabled' });
+    };
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(theme);
+    }
+    await setTheme(page, 'light');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await capture('390');
+  });
+
   test.beforeEach(() => test.setTimeout(90_000));
 
   test('gate infrastructure park offers retry and project switch without coding actions', async ({ page }, testInfo) => {

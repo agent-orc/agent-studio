@@ -570,6 +570,21 @@ describe('TaskLiveStatusComponent', () => {
     expect(root.querySelector('[data-testid="task-live-current"]')?.textContent).toContain('Crash cooldown');
   });
 
+  it('says a Ready card waits for a host that has not accepted its model (AGT-3709)', () => {
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready',
+      pickupHold: { mechanism: 'host-capability-missing',
+        reason: 'Runner agent-runner-02 refused this card (host-capability-missing): Host capability missing on agent-runner-02: model-acceptance:claude:claude-opus-5. Upgrade or repair the host probe.',
+        sinceUtc: new Date().toISOString(), unsatisfiable: false, resolutions: [] },
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], latestEventAt: new Date().toISOString() },
+    }));
+    fixture.detectChanges();
+
+    const current = fixture.nativeElement.querySelector('[data-testid="task-live-current"]') as HTMLElement;
+    expect(current.textContent).toContain('Not picked · host lacks the model');
+    expect(current.textContent).not.toContain('Queued, but not pickable');
+  });
+
   it('shows one dependency wait instead of a stale runner position, then flips to the slot after fulfillment', () => {
     const nextSteps = [{ stepId: 'core-agent-run', displayName: 'Agent execution' }];
     const open = task({

@@ -23,6 +23,11 @@ internal static class TempRootBootstrap
     internal static void RedirectTempRoot()
     {
         TestTempRoot.Redirect();
+        // AGT-3755: a faulted task can finalize before the first host boot
+        // installs this net, and DOTNET_ThrowUnobservedTaskExceptions=1 then
+        // ends the whole test host. Tests that start background work assert
+        // their own leaks with UnobservedTaskExceptionProbe instead.
+        AgentStudio.Diagnostics.ProcessGlobalTaskSafety.EnsureUnobservedTaskExceptionsAreObserved();
         var removed = LauncherListenerEnvironment.Strip(
             Environment.GetEnvironmentVariables(),
             name => Environment.SetEnvironmentVariable(name, null));

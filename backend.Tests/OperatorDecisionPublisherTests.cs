@@ -43,6 +43,15 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                 new OperatorWatcherCaseFactSource(cases, _root),
                 new OperatorBatchGateFactSource(batches),
                 new OperatorPendingPushFactSource(pushes, jobId => jobId == "job-8" ? "A-8" : null),
+                new OperatorBlockedPublicationFactSource(() => _tasks, task => task.Id == "A-7"
+                    ? new PipelineStepExecution
+                    {
+                        StepId = PipelineCatalogue.MergeIntoDevelopStepId, Status = PipelineStepStatus.Failed,
+                        Verdict = "error", FailureCode = AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
+                        Reason = "Publication failed (remote-rejected); origin moved.",
+                        CompletedAt = task.EnteredLaneAt,
+                    }
+                    : null),
                 new OperatorProviderLimitFactSource(limits),
             ],
             _options, _clock, NullLogger<OperatorDecisionPublisher>.Instance);
@@ -57,7 +66,10 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
 
         var factTime = _clock.GetUtcNow().UtcDateTime;
         var expected = new Dictionary<string, DateTime>(StringComparer.Ordinal);
-        foreach (var type in OperatorDecisionTypes.All) expected[type] = factTime;
+        // Deploy completion has its own quota-backed source; this fixture
+        // registers only the task, watcher, batch, push and provider sources.
+        foreach (var type in OperatorDecisionTypes.All.Where(type => type != OperatorDecisionTypes.DeployCompleted))
+            expected[type] = factTime;
         expected[OperatorDecisionTypes.PushPendingOverdue] = factTime.AddSeconds(2);
         _tasks =
         [
@@ -72,6 +84,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                 QuotaWait = new QuotaWaitStatus("claude", factTime, factTime.AddHours(2), 30, "weekly limit"),
             },
             Card("A-6", TaskStates.Progress, factTime),
+            Card("A-7", TaskStates.AutoReview, factTime),
         ];
         cases.Save(_root, Case("host-offline", factTime));
         cases.Save(_root, Case("idle-capacity", factTime));
@@ -88,16 +101,17 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         Assert.Equal(WatcherLeaseOutcome.Granted, leases.Acquire("service-account:watcher", new WatcherLeaseRequest("laptop")).Outcome);
 
         _clock.Advance(TimeSpan.FromSeconds(5));
-        await WaitUntil(() => Types(log).IsSupersetOf(OperatorDecisionTypes.All));
+        await WaitUntil(() => Types(log).IsSupersetOf(expected.Keys));
 
         var events = log.Read(0, 1000, _ => true).Events;
-        foreach (var type in OperatorDecisionTypes.All)
+        foreach (var type in expected.Keys)
         {
             var published = events.Where(item => item.Type == type).ToArray();
             Assert.NotEmpty(published);
             Assert.All(published, item => Assert.InRange(item.Time - expected[type], TimeSpan.Zero, Limit));
         }
         Assert.Equal("A-8", events.Single(item => item.Type == OperatorDecisionTypes.PushPendingOverdue).CardKey);
+        Assert.Equal("A-7", events.Single(item => item.Type == OperatorDecisionTypes.PushBlocked).CardKey);
         Assert.Equal(2, events.Count(item => item.Type == OperatorDecisionTypes.QuotaExhausted));
 
         // Facts that last are not published again by later sweeps.

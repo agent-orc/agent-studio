@@ -57,6 +57,10 @@ public sealed partial class MergeIntoDevelopRunnerTests
         Assert.Equal(result.MergedSha, publication.PublishedSha);
         Assert.NotEqual(developBefore, publication.TreeSha);
         Assert.False(publication.Backfilled);
+        var source = ReviewSubjectStore.Read(fixture.Folder)!.ResultSha;
+        var verification = IntegrationVerificationStore.Read(fixture.Folder);
+        Assert.Contains(source, verification!.DeliveryShas);
+        Assert.Contains(result.MergedSha!, verification.DeliveryShas);
     }
 
     [Theory]
@@ -139,6 +143,41 @@ public sealed partial class MergeIntoDevelopRunnerTests
         var entry = Assert.Single(PublishedGateEvidenceStore.Read(fixture.WatchPath));
         Assert.False(entry.Backfilled);
         Assert.Equal("inline", entry.SourceJobId);
+    }
+
+    [Fact]
+    public void Backfill_reads_every_gate_log_of_a_card_with_several_publications()
+    {
+        // AGT-3756, the AGT-3243 shape: three publications, the first gate red,
+        // and the third push recorded the second tree under its own published SHA.
+        var fixture = SeedLateGateFixture("backfill-several", "several", publishDelivery: true);
+        var first = RunGit(fixture.Repo, "rev-parse develop").Out.Trim();
+        File.WriteAllText(Path.Combine(fixture.Repo, "second.txt"), "second publication");
+        Commit(fixture.Repo, "feat: second publication");
+        var second = RunGit(fixture.Repo, "rev-parse HEAD").Out.Trim();
+        File.WriteAllText(Path.Combine(fixture.Repo, "third.txt"), "third publication");
+        Commit(fixture.Repo, "feat: third publication");
+        var third = RunGit(fixture.Repo, "rev-parse HEAD").Out.Trim();
+        RunGit(fixture.Repo, "push -q origin develop");
+        // clock-independent: the recording time of a kept entry never meets "now".
+        Assert.True(PublishedGateEvidenceStore.Append(fixture.WatchPath, new PublishedGateEvidence(
+            "Fixture", "develop", second, "pre-develop-build-gate", "several", "Ok",
+            "inline gate", third, new DateTimeOffset(2026, 11, 10, 12, 0, 0, TimeSpan.Zero))));
+        WriteReceipt(fixture.Folder, 1, first, "Fail", "Executed", "test-level=full; selected=3; full-suite=required-and-run");
+        WriteReceipt(fixture.Folder, 2, second, "Ok", "Executed", "test-level=full; selected=3; full-suite=map-fallback-and-run");
+        WriteReceipt(fixture.Folder, 3, third, "Ok", "Executed", "test-level=work-package; selected=1; full-suite=not-run");
+        var backfill = Backfill(fixture);
+
+        Assert.Equal(2, backfill.Repair("Fixture", "several", fixture.Folder, fixture.WatchPath));
+        Assert.Equal(0, backfill.Repair("Fixture", "several", fixture.Folder, fixture.WatchPath));
+
+        var exact = PublishedGateEvidenceStore.Read(fixture.WatchPath)
+            .Where(entry => entry.Backfilled).ToList();
+        Assert.Equal([second, third], exact.Select(entry => entry.PublishedSha));
+        Assert.All(exact, entry => Assert.Equal(entry.PublishedSha, entry.TreeSha));
+        Assert.Equal("several/post-steps/pre-develop-build-gate-2.log", exact[0].GateLog);
+        Assert.Equal("several/post-steps/pre-develop-build-gate-3.log", exact[1].GateLog);
+        Assert.DoesNotContain(PublishedGateEvidenceStore.Read(fixture.WatchPath), entry => entry.TreeSha == first);
     }
 
     [Theory]

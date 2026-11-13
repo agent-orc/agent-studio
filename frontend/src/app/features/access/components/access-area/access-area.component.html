@@ -27,8 +27,9 @@
           <div class="access-row"><button type="button" class="access-secondary" (click)="temporaryPassword.set(null)">Done</button></div>
         </div>
       }
+      <div class="access__table-scroll">
       <table class="access__users" data-testid="access-users">
-        <thead><tr><th scope="col">Name</th><th scope="col">Username</th><th scope="col">Roles</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <thead><tr><th scope="col">Name</th><th scope="col">Username</th><th scope="col">Roles</th><th scope="col">Status</th><th scope="col">Factor</th><th scope="col">Last changed</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
         <tbody>
           @for (user of data.users; track user.id) {
             <tr [attr.data-testid]="'access-user-' + user.username">
@@ -40,6 +41,8 @@
                 </span>
               </td>
               <td data-label="Status"><app-status-indicator [tone]="statusTone(user)" [label]="status(user)" [testId]="'access-user-status-' + user.username" /></td>
+              <td data-label="Factor">{{ user.hasFactor ? 'Registered' : 'None' }}</td>
+              <td data-label="Last changed">{{ user.factorChangedAt ? (user.factorChangedAt | date:'medium') : user.hasFactor ? 'Unknown' : 'Never' }}</td>
               <td class="access-actions" data-label="Actions">
                 <app-session-manager [userId]="user.id" />
                 <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="resetPassword(user)">Reset password</button>
@@ -49,6 +52,21 @@
           }
         </tbody>
       </table>
+      </div>
+      <app-session-manager />
+      <section aria-label="Factor activity" data-testid="factor-activity">
+        <h4>Factor activity</h4>
+        <div class="access__table-scroll">
+        <table>
+          <thead><tr><th scope="col">Time</th><th scope="col">Actor</th><th scope="col">Event</th><th scope="col">User</th><th scope="col">Session</th></tr></thead>
+          <tbody>
+            @for (entry of factorEvents(); track entry.sequence) {
+              <tr><td>{{ entry.at | date:'medium' }}</td><td>{{ entry.actor }}</td><td>{{ entry.operation }}</td><td>{{ entry.target }}</td><td>{{ entry.session || 'Unknown' }}</td></tr>
+            } @empty { <tr><td colspan="5">No factor activity recorded.</td></tr> }
+          </tbody>
+        </table>
+        </div>
+      </section>
       <h4>Invite a person</h4>
       <app-access-invite-form />
     </section>

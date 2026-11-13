@@ -124,6 +124,8 @@ public sealed class ModelSelectionService : IModelSelectionService
     {
         ArgumentNullException.ThrowIfNull(call);
         var request = call.Request;
+        if (request.Consumer == SelectionConsumers.Persona)
+            request = request with { Required = request.Required with { SameClassOnly = true } };
         var project = string.IsNullOrWhiteSpace(request.Project)
             ? null
             : _projectSettings.Get(request.Project);

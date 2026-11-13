@@ -2,6 +2,8 @@ using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Watcher;
+using AgentStudio.Quota;
+using AgentStudio.Registry;
 
 namespace AgentStudio.Operator;
 
@@ -13,6 +15,22 @@ public interface IOperatorDecisionFactSource
 
     /// <summary>The current facts, or null while the source has nothing to read yet; null keeps their published keys.</summary>
     IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc);
+}
+
+/// <summary>Completed deploys already metered by workspace quota, without a new event store.</summary>
+public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, ProjectRegistry projects)
+    : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.DeployCompleted];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+        => quota.CompletedDeploys(nowUtc.AddDays(-7)).Select(deploy =>
+        {
+            var project = projects.FindById(deploy.ProjectId);
+            return new OperatorDecisionFact(OperatorDecisionTypes.DeployCompleted,
+                $"{OperatorDecisionTypes.DeployCompleted}|{deploy.ProjectId}|{deploy.JobId}|{deploy.CompletedAt:O}",
+                project?.DisplayName, deploy.JobId, "Deployment completed.", deploy.CompletedAt!.Value, []);
+        }).ToArray();
 }
 
 /// <summary>
@@ -108,6 +126,21 @@ public sealed class OperatorPendingPushFactSource(
             .SelectMany(project => OperatorDecisionFacts.FromPendingPushes(
                 project, reservations.GetWaits(project), cardKeyOf))
             .ToArray();
+}
+
+/// <summary>
+/// Post Processing cards whose publication was refused (AGT-3695). It reads the
+/// published task index and each Post Processing card's pipeline record; it
+/// starts no scan and no git process.
+/// </summary>
+public sealed class OperatorBlockedPublicationFactSource(
+    Func<IReadOnlyList<TaskInfo>?> tasks,
+    Func<TaskInfo, PipelineStepExecution?> latestMergeOf) : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PushBlocked];
+
+    public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
+        => tasks() is { } published ? OperatorDecisionFacts.FromBlockedPublications(published, latestMergeOf) : null;
 }
 
 /// <summary>Provider limits the runners recorded per CLI.</summary>

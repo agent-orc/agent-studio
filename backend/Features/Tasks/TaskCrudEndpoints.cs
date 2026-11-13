@@ -793,6 +793,80 @@ public static class TaskCrudEndpoints
                 transitions, scanner, leases, authority, timeline, isolation, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
+        group.MapPost("/{jobId}/content-review", async (string jobId, string? project,
+            string? watchPath, HttpContext context, TaskScannerService scanner,
+            TaskTransitionService transitions, AttemptAuthorityService authority,
+            AgentStudio.Runner.RemoteReviewPlanBuilder plans,
+            AgentStudio.Projects.ProjectSettingsService projectSettings,
+            AgentStudio.Git.GitService git, TimelineLog timeline,
+            AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>
+        {
+            if (!ProjectAccessAuthorization.HasOperatorAuthority(context))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var card = scanner.FindJob(jobId, watchPath);
+            if (card is null) return Results.NotFound();
+            if (card.State != TaskStates.HumanReview)
+                return Results.Conflict(new { code = "content-review-state", error = "Review again is available in Human Review." });
+            var taskKey = card.Key ?? card.Id;
+            var run = authority.GetTaskProjection(taskKey).CurrentRunAttempt;
+            if (run is not { State: AttemptLifecycleState.Completed, ResultEnvelope: not null, ResultSha: not null })
+                return Results.Conflict(new { code = "content-review-delivery", error = "The current delivery has no completed run to review." });
+            var required = TaskModes.IsConcept(card.Mode) ? "concept-fit" : "requirement-fit";
+            var currentBrief = BriefVersionStore.ReadCurrent(card.FolderPath);
+            var repository = git.ResolveRepoRootForWatchPath(card.WatchPath);
+            var settings = projectSettings.Get(card.ProjectName);
+            var oldPlan = authority.GetTaskProjection(taskKey).CurrentReviewAttempt?.Subject.Plan;
+            var plan = plans.Build(card, repository, settings, oldPlan?.IntegrationRef,
+                run.ResultSha, immutableResultRef: run.ResultEnvelope.ImmutableRemoteRef);
+            var commands = plan.Commands.Where(command => command.Aspect == required).ToArray();
+            if (commands.Length == 0)
+                return Results.Conflict(new { code = "content-review-unavailable",
+                    error = $"No {required} review command is configured for this card." });
+            plan = plan with
+            {
+                Commands = commands,
+                RequiredAspects = [required],
+                BriefSha256 = currentBrief,
+                RequiresVisualReview = false,
+                CarriedVerdicts = null,
+                ScopedReview = null,
+                DeepReviewDecision = null,
+                VerifyReuseFromAttemptIds = null,
+                BuildTestDeferredToBatch = false,
+                VerifyDefinitionMissing = null,
+            };
+            var promptPath = Path.Combine(card.FolderPath, "prompt.md");
+            var requirements = File.Exists(promptPath) ? File.ReadAllText(promptPath) : card.Id;
+            var moved = await transitions.MoveAsync(jobId, TaskStates.AutoReview, watchPath, ct,
+                cause: OperatorActor(context), reason: "Review content against the current brief");
+            if (moved.Status != MoveJobStatus.Success)
+                return MoveResult(moved);
+            var review = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+                taskKey, run.RepositoryId, run.ResultSha, run.AttemptId,
+                AttemptAuthorityService.Hash(requirements),
+                AttemptAuthorityService.Hash("remote-review-policy:v1:current-brief"),
+                run.EvidenceDigests, $"content-review:{run.AttemptId}:{currentBrief}:{Guid.NewGuid():N}",
+                RepositoryUrl: run.ResultEnvelope.RepositoryUrl,
+                ResultRef: run.ResultEnvelope.ImmutableRemoteRef,
+                Plan: plan));
+            if (!review.Accepted)
+            {
+                await transitions.MoveAsync(jobId, TaskStates.HumanReview, watchPath, ct,
+                    cause: TimelineActors.System, reason: "Content review request failed");
+                return Results.Conflict(new { code = "content-review-create-failed", error = review.Message });
+            }
+            timeline.Append(moved.NewFolderPath ?? card.FolderPath, TimelineEventKinds.ContentReviewRequested,
+                OperatorActor(context), $"Reviewing {required} again against brief {currentBrief}.",
+                details: new Dictionary<string, string>
+                {
+                    ["briefVersion"] = currentBrief,
+                    ["reviewAttemptId"] = review.AttemptId,
+                    ["aspect"] = required,
+                });
+            return Results.Ok(new { reviewAttemptId = review.AttemptId, briefVersion = currentBrief });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
+
         group.MapPost("/{jobId}/older-brief-delivery/decision", async (
             string jobId, string? project, string? watchPath,
             OlderBriefDeliveryDecisionRequest req, HttpContext context,
@@ -1079,17 +1153,9 @@ public static class TaskCrudEndpoints
             {
                 try
                 {
-                    CliModelCatalog catalogue;
-                    try
-                    {
-                        catalogue = await cliRouter.Get(requestedCli).GetModelCatalogAsync(false, ct);
-                    }
-                    catch when (requestedCli is CliTypes.Claude or CliTypes.Codex)
-                    {
-                        catalogue = requestedCli == CliTypes.Claude
-                            ? ClaudeModelDiscovery.FallbackCatalog("creation-registry-fallback")
-                            : CodexModelDiscovery.FallbackCatalog("creation-registry-fallback");
-                    }
+                    // AGT-3709: a cold catalogue starts the CLI in a PTY; create
+                    // never waits for that and answers from the registry instead.
+                    var catalogue = await RequestPathModelCatalogue.GetAsync(cliRouter, requestedCli, ct);
                     var recommendation = modelRouting.Recommend(
                         req.TaskType,
                         catalogue,

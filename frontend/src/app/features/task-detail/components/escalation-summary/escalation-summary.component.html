@@ -96,6 +96,7 @@
 
     @if (!collapsed()) {
       <div class="escalation__body" id="escalation-body" data-testid="escalation-body">
+        @if (serverCheckoutMissing()) { <app-server-checkout-remedy [projectName]="detail().info.projectName" /> }
         <app-gate-queue-release [info]="detail().info" />
         @if (detail().info.needsInput; as needsInput) {
           <section class="escalation__needs-input" data-testid="needs-input-question" aria-label="Agent question">
@@ -114,20 +115,12 @@
               </div>
             } @else {
               <label class="escalation__answer-label" for="needs-input-answer">Your answer</label>
-              <textarea
-                id="needs-input-answer"
-                data-testid="needs-input-answer"
-                rows="4"
-                [value]="answerDraft()"
-                [disabled]="answering() || mutationsBlocked()"
-                (input)="updateAnswer($event)"></textarea>
+              <textarea id="needs-input-answer" data-testid="needs-input-answer" rows="4" [value]="answerDraft()"
+                [disabled]="answering() || mutationsBlocked()" (input)="updateAnswer($event)"></textarea>
               @if (answerError(); as error) {
                 <p class="escalation__answer-error" role="alert">{{ error }}</p>
               }
-              <button
-                type="button"
-                class="escalation__submit-answer"
-                data-testid="needs-input-submit"
+              <button type="button" class="escalation__submit-answer" data-testid="needs-input-submit"
                 [disabled]="!answerDraft().trim() || answering() || mutationsBlocked()"
                 [appPendingButton]="answering()"
                 pendingLabel="Queueing answer…"

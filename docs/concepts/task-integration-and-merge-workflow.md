@@ -479,9 +479,12 @@ the published tip that proved containment instead (AGT-3103).
 passed on and lists the card's delivery SHAs that tree contained
 (`deliveryShas`). After other cards land, the projection keeps the card
 `integrated-verified` for that tree while the published branch still carries
-it and the card's current delivery is one of those SHAs. A rewritten branch, a
-newer delivery, another branch, or a record without `deliveryShas` makes it
-stale. Later commits are their own cards' responsibility: re-gating every
+it and the card's current delivery is one of those SHAs. For a single-parent
+net-change publication, the record includes both the published commit and its
+source result SHA. Older records can use the publication's
+`Agent-Studio-Net-Change-Of` trailer to identify that result. A rewritten branch,
+a newer delivery, or another branch makes the record stale. Later commits are
+their own cards' responsibility: re-gating every
 completed card on each tip change would let a red tip they did not cause reopen
 them. The merge runner itself still matches the exact tip only when it
 releases a push, so a push it approves never extends past a gated tree. A
@@ -569,7 +572,17 @@ now a no-op integration:
   profile, its evidence file exists, and that commit is on the first-parent
   integration line. Failed, provisional, narrow, stale-profile, and
   missing-evidence base verdicts do not cover a publication; the refusal names
-  such a base check.
+  such a base check, and for a stale profile both digests.
+  Since AGT-3756 an entry is keyed by branch, published SHA, tree and gate
+  step, not by tree alone, so each publication of one card keeps its own
+  entry. An older entry whose tree differs from its published SHA (tree
+  `81123540e` under `dd73bd98f` for AGT-3243) no longer blocks the exact
+  entry for that tree: the startup backfill reads every
+  `pre-develop-build-gate-N.log` of a card and adds the exact entry, and logs
+  the number of cards, receipts, added, already recorded and skipped
+  receipts. When acceptance refuses a contained delivery without a gate, the
+  refusal names the verification state, evidence and tree it found and the
+  verification reason, instead of the generic `project.yml` hint.
 - **Batch candidate evidence.** The operator fast path pushes a batch
   candidate to the branch before its members' reviews settle. The batch gate
   already tested the candidate and wrote a run verdict (`outcome: pass`,

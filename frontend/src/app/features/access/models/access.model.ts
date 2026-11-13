@@ -35,6 +35,8 @@ export interface AccessUser {
   projects: readonly string[];
   disabled: boolean;
   mustChangePassword: boolean;
+  hasFactor?: boolean;
+  factorChangedAt?: string | null;
 }
 
 export interface AccessGroup {

@@ -1,4 +1,5 @@
 using AgentStudio.Security;
+using AgentStudio.Quota;
 
 namespace AgentStudio.Personas;
 
@@ -20,6 +21,45 @@ public static class PersonaEndpoints
         personas.MapGet("", (string id, PersonaActivationStore store) =>
             AccessSecurityEndpoints.Execute(() => Results.Ok(store.List(id))));
 
+        personas.MapGet("/budget", (string id, PersonaActivationStore store,
+            PersonaSchedulingService scheduling, WorkspaceQuotaService quota) =>
+            AccessSecurityEndpoints.Execute(() =>
+            {
+                var activations = store.List(id).Personas.Select(p => p.Activation)
+                    .Where(a => a is not null).Cast<PersonaActivationV1>().ToArray();
+                var snapshot = quota.Snapshot(id);
+                return Results.Ok(scheduling.Budget(id, DateTime.UtcNow,
+                    snapshot.Limits?.ModelTokensPerWeek, activations));
+            })).RequirePermission(IamPermissions.WorkspaceRead);
+
+        personas.MapPut("/budget", (string id, PersonaBudgetSettings request, HttpContext context,
+            AccessSecurityStore security, PersonaActivationStore store,
+            PersonaSchedulingService scheduling, WorkspaceQuotaService quota) =>
+            AccessSecurityEndpoints.Execute(() =>
+            {
+                var owner = AccessSecurityEndpoints.RequireHuman(context, security);
+                security.RequirePersonaOwner(owner);
+                var activations = store.List(id).Personas.Select(p => p.Activation)
+                    .Where(a => a is { State: PersonaStates.Active or PersonaStates.Shadow })
+                    .Cast<PersonaActivationV1>().ToArray();
+                var snapshot = quota.Snapshot(id);
+                var defaultPool = snapshot.Limits?.ModelTokensPerWeek is { } limit ? limit / 10 : 1_200_000;
+                try
+                {
+                    if (request.PoolTokensPerWeek is null && activations.Sum(a => (long)a.Allowance.TokensPerWeek) > defaultPool)
+                        throw new ArgumentException("Active persona allowances exceed the default pool.");
+                    scheduling.SetBudget(id, request.PoolTokensPerWeek, request.MaxOpenPerWorkspace,
+                        activations.Sum(a => (long)a.Allowance.TokensPerWeek));
+                }
+                catch (ArgumentException ex)
+                {
+                    throw new SecurityOperationException(400, "invalid-persona-budget", ex.Message);
+                }
+                security.AppendPersonaAudit(owner.User.Id, "persona.budget.set", id, "pool", request);
+                return Results.Ok(scheduling.Budget(id, DateTime.UtcNow,
+                    snapshot.Limits?.ModelTokensPerWeek, activations));
+            })).RequirePermission(IamPermissions.WorkspaceAdminister);
+
         personas.MapPost("/{personaId}/activate", (string id, string personaId, PersonaActivateRequest? request,
             HttpContext context, AccessSecurityStore security, PersonaActivationStore store) =>
             AccessSecurityEndpoints.Execute(() => Results.Ok(store.Activate(id, personaId, request ?? new PersonaActivateRequest(),
@@ -36,6 +76,35 @@ public static class PersonaEndpoints
             AccessSecurityEndpoints.Execute(() => Results.Ok(store.Fork(id, personaId, request,
                 AccessSecurityEndpoints.RequireHuman(context, security)))))
             .RequirePermission(IamPermissions.WorkspaceAdminister);
+
+        // PT-2 only establishes admission. PT-4 and PT-10 add the validated publication and manager handlers.
+        personas.MapPost("/{personaId}/operations/{operationId}", (string id, string personaId, string operationId,
+            HttpContext context) =>
+        {
+            if (!OperatorOperationIds.PersonaAll.Contains(operationId, StringComparer.Ordinal))
+                return Results.NotFound(new { error = "persona-operation-not-found" });
+            return Results.Json(new { error = "persona-operation-not-implemented",
+                message = "The persona operation is catalogued and authorized; its handler belongs to a later slice." },
+                statusCode: StatusCodes.Status501NotImplemented);
+        }).RequirePermission(IamPermissions.WorkspaceOperate);
+
+        personas.MapPost("/stop-all", (string id, HttpContext context, AccessSecurityStore security,
+            PersonaActivationStore store) => AccessSecurityEndpoints.Execute(() =>
+        {
+            var owner = AccessSecurityEndpoints.RequireHuman(context, security);
+            return Results.Ok(new { principalIds = store.StopAll(id, owner) });
+        })).RequirePermission(IamPermissions.WorkspaceAdminister);
+
+        personas.MapPost("/renew-grants", (string id, HttpContext context, AccessSecurityStore security,
+            PersonaActivationStore store) => AccessSecurityEndpoints.Execute(() =>
+        {
+            var owner = AccessSecurityEndpoints.RequireHuman(context, security);
+            var workspace = store.List(id);
+            var active = workspace.Personas.Where(entry => entry.Activation is { State: not PersonaStates.Inactive })
+                .Select(entry => entry.Id).ToList();
+            var grants = security.RenewPersonaTeamGrants(workspace.WorkspaceId, active, owner);
+            return Results.Ok(new { grants = grants.Select(security.ToStandingGrantResponse).ToList() });
+        })).RequirePermission(IamPermissions.WorkspaceAdminister);
     }
 
     private static void MapChange(RouteGroupBuilder personas, string action,
@@ -46,3 +115,5 @@ public static class PersonaEndpoints
                     AccessSecurityEndpoints.RequireHuman(context, security)))))
             .RequirePermission(IamPermissions.WorkspaceAdminister);
 }
+
+public sealed record PersonaBudgetSettings(long? PoolTokensPerWeek, int MaxOpenPerWorkspace = 2);

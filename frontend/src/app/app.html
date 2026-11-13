@@ -1,4 +1,5 @@
 @if (auth.studioAllowed() && !noProjectAccess()) {
+    <app-recovery-sign-in-notice />
     <app-offline-banner />
     <app-public-demo-banner />
     @defer (when codexSignInRequest() !== null) { <app-codex-sign-in-dialog /> }
@@ -363,11 +364,11 @@
         @defer (on immediate) {
         <app-create-job-dialog
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
-          [cliTypeDraft]="createJobForm.newCliType"
+          [cliTypeDraft]="createJobForm.newCliType()"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
           [submitting]="createJobForm.submitting()"
-          [defaultsPending]="createJobForm.defaultsPending()"
-          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
+          [defaultsPending]="createJobForm.agentPending()"
+          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit()"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
           (watchPathChange)="createJobForm.selectProject($event)"
@@ -409,19 +410,7 @@
         (uxuiActionQueued)="onUxuiActionQueued($event)"
         (openTask)="onOpenTaskFromReel($event)" />
       }
-      @defer (when verboseDebugContext() !== null) {
-        @if (verboseDebugContext(); as ctx) {
-          <app-verbose-debug-overlay
-            data-testid="app-verbose-debug-overlay"
-            [lines]="ctx.lines"
-            [runTimeline]="ctx.runTimeline"
-            [screenshots]="ctx.screenshots"
-            [tokenSummary]="ctx.tokenSummary"
-            [job]="ctx.job"
-            [source]="ctx.job?.id ?? 'cli-output.log'"
-            (closeRequest)="closeVerboseDebug()" />
-        }
-      }
+      @defer (when verboseDebugContext() !== null) { <app-verbose-debug-host [context]="verboseDebugContext()" (closeRequest)="closeVerboseDebug()" /> }
       </div>
     } @else {
     <!-- Legacy layout (VS Code layout switched off): its header chrome loads on demand. -->
@@ -729,11 +718,11 @@
         @defer (on immediate) {
         <app-create-job-dialog
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
-          [cliTypeDraft]="createJobForm.newCliType"
+          [cliTypeDraft]="createJobForm.newCliType()"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
           [submitting]="createJobForm.submitting()"
-          [defaultsPending]="createJobForm.defaultsPending()"
-          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
+          [defaultsPending]="createJobForm.agentPending()"
+          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit()"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
           (watchPathChange)="createJobForm.selectProject($event)"
@@ -795,19 +784,7 @@
       <app-notification-stack />
       @defer (when mediaLightboxOpen() !== null) { <app-media-lightbox /> }
 
-      @defer (when verboseDebugContext() !== null) {
-        @if (verboseDebugContext(); as ctx) {
-          <app-verbose-debug-overlay
-            data-testid="app-verbose-debug-overlay"
-            [lines]="ctx.lines"
-            [runTimeline]="ctx.runTimeline"
-            [screenshots]="ctx.screenshots"
-            [tokenSummary]="ctx.tokenSummary"
-            [job]="ctx.job"
-            [source]="ctx.job?.id ?? 'cli-output.log'"
-            (closeRequest)="closeVerboseDebug()" />
-        }
-      }
+      @defer (when verboseDebugContext() !== null) { <app-verbose-debug-host [context]="verboseDebugContext()" (closeRequest)="closeVerboseDebug()" /> }
     </div>
     }
     }

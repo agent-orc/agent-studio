@@ -108,7 +108,9 @@ that is already allowed to edit that project's checkout.
   sessions, and force a change at the next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
-  has idle plus absolute expiry. Browser mutations require the matching CSRF
+  has an 8-hour idle limit and a 7-day absolute limit by default. The cookie's
+  maximum age is the absolute limit; the server enforces idle expiry on every
+  request. Browser mutations require the matching CSRF
   header. Because SameSite does not separate sibling hosts of one site, every
   unsafe request that carries a session cookie, and every sign-in, bootstrap,
   or invitation acceptance, must also carry a matching `Origin` or
@@ -144,6 +146,13 @@ that is already allowed to edit that project's checkout.
   Disabling a person asks for confirmation and revokes open sessions immediately.
   A correct-password sign-in to a disabled account explains its state. A signed-in
   person with no project access sees a single instruction to ask the owner.
+- Adding or replacing an authenticator or passkey on an account with an existing
+  factor requires a fresh, session-bound step-up. A recovery-code sign-in grants
+  one factor enrollment within five minutes and Studio displays the number of
+  remaining codes. Factor binding, replacement, recovery-code use, and recovery
+  code regeneration are recorded in the IAM audit with actor, session, and time.
+  The Owner sees factor presence and last change for each user in Access, along
+  with the factor activity history.
 - The standalone Task Server Studio session uses the same 10-failure client
   lockout, 20-failure username budget, 15-minute window, 8-hour idle expiry,
   and 7-day absolute expiry as the networked monolith defaults.
@@ -779,6 +788,32 @@ refused before any role binding is read.
   `OperatorOperationCatalogInventoryTests` fails for a route matched by two
   rules, a rule that matches no mapped route, or a typed operation without a
   catalogue entry.
+
+### Persona principals and team stop (PT-2)
+
+Persona principals (PT-2, PT-D10 option B) use the same identity store and
+operator policy step. Each activated persona has an `opa_persona_*` service
+account of origin `persona`, linked to its role descriptor and workspace.
+Activation issues one T1 standing grant for its descriptor operations and
+project scope for seven days; deactivation revokes the grant and every
+occurrence session.
+The platform mints an `oas.*` session for one occurrence id, valid for at most
+30 minutes. Calls must carry the matching `X-Persona-Occurrence-Id`; the actor
+is `persona:<id>/session:<sid>` and `delegatedBy` names the activating Owner.
+The catalogue has four T1 publication operations and four T1 manager
+operations. The latter can only enter a manager descriptor's activation
+grant. Card, repository file and log instruction sources are admitted only
+for publication; manager actions reject them. PT-4 and PT-10 own the
+publication and manager handlers, which currently answer 501 after admission.
+
+`POST /api/workspaces/{id}/personas/stop-all` is an Owner action without
+step-up. It disables every persona principal in that workspace, revokes all
+their sessions and grants in one access-state save, marks activations inactive
+while keeping their history, and writes a
+`persona.stop-all` IAM audit entry. `POST .../renew-grants` takes one fresh
+Owner step-up and renews the live grants of every active persona for seven
+days; an expired grant is replaced. The SM-2 End all operator access action
+also disables persona principals and revokes their sessions and grants.
 
 ### Operator kill switch (security model SM-2)
 

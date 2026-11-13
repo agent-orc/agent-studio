@@ -26,7 +26,33 @@ An older, host-level backup with a systemd timer and age encryption (AGT-3365) i
 | `api-tmp`, `caddy-config`, `frontend-data`, `frontend-config` | No | Recreated at start |
 | Control plane lock (`workspace/.security/control-plane.lock`) | No; the running API holds it exclusively | Recreated at start |
 
+Batch gate, review package, gate ledger, and gate capacity state under `home/.local/share/agentstudio/instances/` uses the installation id in `workspace/.batch-state-installation-id`. The API creates the id on first start and moves state from the former path-derived instance folder. On restore to different paths, it updates absolute paths inside the identified instance's JSON evidence records before opening the stores. If another instance folder still holds batch manifests, startup logs `batch-state-unmatched-instance` with both paths so an older archive or an incomplete restore cannot silently appear empty.
+
 With the archive, the backup and secret store keys, the escrowed host CA and the Git remotes, a new host comes back to the state of the backup. Recover excluded services and review security changes made since the backup using the steps below. URL passwords and tokens are removed from recorded `origin` URLs. A file whose content is the secret store key or the backup key, or whose name ends in `.kek`, is left out of every source whatever its path; the archive's content list counts such files.
+
+### Credential content list
+
+The encrypted archive ends with `studio-backup/contents.json`. Its `credentialFiles` map counts files in each class below, including zero counts; one file may count in two classes. In the Operations panel, each archive's **Files** count opens its authenticated content list. The management route is `GET /api/v1/management/backups/{id}/contents` and requires the same permissions as the backup overview. Run `--studio-backup inspect` with the backup key to read the counts offline without restoring. The count is based on known paths, so an operator must also inspect newly added credential locations before treating the list as exhaustive. Local archives and the backup key are on the same host by default; configure an off-host target and escrow the key separately.
+
+| Credential class in `credentialFiles` | Archive members | Key needed to read values |
+|---|---|---|
+| `access-state-hashes-and-sessions` | `workspace/.security/access-state.json` and IAM migration snapshots: password, recovery code, session, API token and runner credential hashes, plus IAM state | Backup key |
+| `totp-seeds-sealed` | Encrypted TOTP seeds in access state and IAM migration snapshots; existing plaintext seeds are sealed at startup after upgrade | Backup key plus secret store key |
+| `secret-store-values-sealed` | `workspace/.security/secrets/items/*/*.sealed.json` secret values | Backup key plus secret store key |
+| `stack-environment` | `stack/.env`, including deployment and backup target settings | Backup key |
+| `backup-target-credentials` | `stack/backup-target/*`: SFTP private key or S3 access key pair and pinned host keys | Backup key |
+| `home-ssh-keys` | `home/.ssh/*`: private keys and SSH configuration | Backup key |
+| `provider-cli-and-git-logins` | Provider CLI login files, Git credentials and cloud or Kubernetes credentials under `home/` | Backup key |
+| `github-app-git-credentials` | Short-lived GitHub App git credential file under `home/` | Backup key |
+| `caddy-tls-and-acme` | `caddy-data/*`: TLS private keys, certificates and ACME account key | Backup key |
+| `host-certificates` | `host-certificates/*`: host certificate state | Backup key |
+| `origin-pull-ca` | `origin-pull/*`: origin-pull CA material | Backup key |
+
+Backup creation refuses an access-state file or IAM migration snapshot that still contains a plaintext TOTP seed. Repair the secret store key and let the access store finish its startup migration before retrying.
+
+The `workspace/.security` directory also contains passkey public keys and audit records. Git bundles and task storage may hold credentials placed there by users; those contents are protected by the backup key alone. The backup key, secret store key and host CA private key are excluded as described above.
+
+Archives created before this change may still hold plaintext TOTP seeds and have no credential counts. Keep those archives under the old exposure assumption until they expire; rotate enrolled authenticators if an old archive and its backup key may have been disclosed.
 
 ## Schedule, retention and verification
 
@@ -87,7 +113,7 @@ bash secret-key.sh print "$STUDIO_DATA_DIR" > studio-secrets.kek || rm -f studio
 
 Every backup manifest records the fingerprint of the key that was in place (shown as the secret key id), and `restore-backup.sh` refuses a key copy with a different fingerprint. Sealed secrets carried over from another installation open only with that installation's key; the restore installs the copy at the path in `.env` before the first start. For an existing installation without `STUDIO_SECRETS_KEY_FILE`, follow the key setup instructions in [Studio website](./studio-website.md#update-and-stop) first.
 
-Keep the two escrowed keys in separate places: whoever holds the backup key and an archive can read everything except the sealed secrets; only together with the secret store key do the sealed secrets open.
+Keep the two escrowed keys in separate places. The backup key and an archive expose the credential classes marked "Backup key" in the [credential content list](#credential-content-list), including backup-target, SSH, provider, GitHub App, TLS and ACME credentials. TOTP seeds and sealed secret store values require the secret store key as well.
 
 ### Check the escrowed copies
 
@@ -185,7 +211,7 @@ Refresh the Operations page and confirm the warning clears before issuing certif
 The API binary has offline backup commands that run without starting the host, for example in a one-shot API container:
 
 ```sh
-dotnet OrchestratorApi.dll --studio-backup inspect --key backup.key --archive <archive>         # manifest, file count, consistency
+dotnet OrchestratorApi.dll --studio-backup inspect --key backup.key --archive <archive>         # manifest, file count, credential counts, consistency
 dotnet OrchestratorApi.dll --studio-backup decrypt --key backup.key --archive <archive> --output backup.tar.gz
 dotnet OrchestratorApi.dll --studio-backup restore --key backup.key --archive <archive> --target workspace=<dir> ... [--restored-by <name>] [--no-clone]
 dotnet OrchestratorApi.dll --studio-backup key-create <file> | key-id <file>

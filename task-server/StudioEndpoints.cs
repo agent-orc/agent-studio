@@ -447,6 +447,7 @@ public static class StudioEndpoints
             SameSite = SameSiteMode.Strict,
             Path = "/",
             Secure = secure,
+            MaxAge = TimeSpan.FromDays(7),
         });
         context.Response.Cookies.Append("ts-studio-csrf", csrfToken, new CookieOptions
         {

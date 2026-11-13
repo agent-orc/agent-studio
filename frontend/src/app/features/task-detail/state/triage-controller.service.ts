@@ -293,6 +293,14 @@ export class TriageController {
             'Acceptance needs an operator override');
           return;
         }
+        if (ev.targetState === '6-completed' && err?.status === 409
+            && err?.error?.code === 'completion-content-gap') {
+          this.notifications.warning(
+            'Acceptance was refused because the delivery or content review does not match the current brief. See Acceptance grounds for the versions, review again, or accept with a written reason.',
+            'Acceptance needs a decision');
+          this.jobService.refresh(true);
+          return;
+        }
         if (ev.targetState === '6-completed'
             && err?.status === 409
             && (err?.error?.code === 'integration-dead-end'

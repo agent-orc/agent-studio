@@ -174,7 +174,7 @@ export class TaskLiveStatusComponent {
     if (hold) {
       return {
         tone: hold.unsatisfiable ? 'stalled' : 'waiting',
-        headline: holdHeadline(hold.mechanism),
+        headline: holdHeadline(hold.mechanism, hold.reason),
         detail: activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,

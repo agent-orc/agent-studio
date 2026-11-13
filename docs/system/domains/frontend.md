@@ -272,6 +272,16 @@ reads `GET /api/projects/execution-capability` before a first project exists;
 when local coding is disabled, it requires a runner for a source-backed project
 and labels Local as board and orchestration only.
 
+A Ready card a host refuses with `host-capability-missing` (or
+`host-model-unavailable`) carries a `host-capability-missing` pickup hold. The
+card's live status line and hold headline name the model from the
+`model-acceptance:<cli>:<model>` key, say when a fresh host is still verifying
+it, and show the refusal sentence once (AGT-3709). The Add task agent chip shows
+the model and thinking level the create request sends; Create stays disabled
+until project defaults and the policy suggestion have settled, unless the
+operator picked a model. A slice card's Dossier chip takes its own line above
+the title and truncates, so it never overlaps the title at 390 px.
+
 ## Global Search
 
 The title-bar search opens a Ctrl+K command palette. It covers tasks (key,

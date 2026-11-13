@@ -29,6 +29,19 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+An interrupted deterministic red batch ends as `Paused` with reason
+`isolation interrupted` on the next pilot tick when unresolved members remain.
+The pilot derives any child findings, releases the parent members to planning,
+and keeps that terminal state visible in the batch article and card. A live
+isolation flight alone blocks continue, steer, and requeue; a persisted red
+verdict by itself is not a live flight. Coordinator leases record the local
+process identity so a restarted host can reclaim a dead process's lease
+without waiting for its two-minute expiry.
+The batch state response exposes `phaseAtUtc`, `isolationActive`, and
+`isolationPending` on each batch. The card and batch panel use those facts to
+name the active or interrupted wait without treating a stored red child as a
+live process.
+
 The batch gate state read reports `phaseReason` and `phaseAtUtc` for a stopped batch and
 `causedByTaskKey` when a member eject or lost review generation caused
 abandonment. Explicit operator withdrawals are retained as batch withdrawal
@@ -1766,9 +1779,11 @@ comparison before Quality Studio's verdict contract can decide a review.
   names the current Attempt and that Git already projects the delivery as
   `integrated`. A passed gate on the delivery's recorded verification tree
   remains valid after the branch advances when that tree is on the published
-  first-parent line and every later publication has its own passed per-task or
-  batch gate. A rewritten tree or a later publication without gate evidence
-  refuses acceptance. The completion claim names the gate that verified the
+  first-parent line and later publications have passed per-task or batch gates.
+  A later exact full-suite gate on a first-parent publication covers earlier
+  ungated publications that its tree contains. A partial or red later gate does
+  not. A rewritten tree or an uncovered later publication refuses acceptance.
+  The completion claim names the gate that verified the
   delivery. Acceptance then performs only the lane move. It never fetches,
   merges, gates, resets the merge row, or enqueues `AcceptedIntegrationQueue`.
   An unintegrated delivery returns the typed `IntegrationFailed` move outcome
@@ -3294,8 +3309,10 @@ whose `task.integration` said `integrated`. Two defects met.
   gate after later publications only when its recorded verification tree is on
   the published branch's first-parent line. One bounded first-parent range from
   that tree to the current tip identifies the later publication commits. Each
-  must be covered by its own passed per-task gate or by a passed batch gate
-  spanning those commits. Batch evidence cannot substitute for the original
+  must be covered by its own passed per-task gate, by a passed batch gate
+  spanning those commits, or by a later exact full-suite gate on a containing
+  first-parent publication. The latter names its covering publication in the
+  acceptance reason. Batch evidence cannot substitute for the original
   tree's first-parent ancestry. A branch rewrite or an uncovered later
   publication is refused; acceptance evidence names the gate that verified
   the delivery.

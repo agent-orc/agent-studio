@@ -17,9 +17,9 @@ import { ensureReviewHost, killReviewHost, reviewHostGone, startReviewHost, stop
  * daemon is started again with the same identity and state directory. The
  * replacement daemon relaunches a vanished worker within the same attempt up
  * to DurableReviewProcess.MaximumWorkerRelaunches times, so the playthrough
- * kill is repeated until the backend reports the review as lost. That
- * twice, so the host keeps two restarts and the second retry waits 3 minutes,
- * then once more after the budget the backend reports is spent, so the
+ * kill is repeated until the backend reports the review as lost. The review
+ * is lost twice, so the host keeps two restarts and the second retry waits
+ * 3 minutes, then once more after the budget the backend reports is spent, so the
  * escalation names the restarts.
  */
 
@@ -60,9 +60,11 @@ async function restartReviewHost(workspace: string, held: string): Promise<numbe
 /**
  * Kill the review host until the attempt is lost and the backend schedules
  * `retry`; a relaunched worker holds the aspect again before the next kill.
+ * `budget` is the retry budget the backend reports; once known it caps the kills.
  * Returns the replacement daemon, the kills it took and the live queue that names the loss.
  */
-async function loseReview(page: Page, cardId: string, workspace: string, held: string, retry: number | null):
+async function loseReview(page: Page, cardId: string, workspace: string, held: string, retry: number | null,
+  budget: number | null):
   Promise<{ replacement: number; kills: number; queue: LiveQueue }> {
   for (let kill = 1; ; kill++) {
     const replacement = await restartReviewHost(workspace, held);
@@ -74,7 +76,10 @@ async function loseReview(page: Page, cardId: string, workspace: string, held: s
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline && !(await lost()) && !existsSync(held)) await page.waitForTimeout(500);
     if (await lost()) return { replacement, kills: kill, queue: (await liveQueue(page, cardId))! };
-    expect(kill, 'the review host relaunched the worker more often than the relaunch budget allows').toBeLessThan(4);
+    const cap = budget ?? (await liveQueue(page, cardId))?.retry?.budget;
+    if (cap !== undefined) {
+      expect(kill, 'the review host relaunched the worker more often than the backend budget allows').toBeLessThanOrEqual(cap);
+    }
     await waitForHeldReview(page, cardId, held);
   }
 }
@@ -118,7 +123,7 @@ test('a killed review host is named on the card with its automatic retry and sta
     await expect(card).toHaveCount(1, { timeout: 30_000 });
 
     // 2. Kill the review host and start it again: the review is lost, retry 1 of the backend budget.
-    let lost = await loseReview(page, cardId, workspace!, held, 1);
+    let lost = await loseReview(page, cardId, workspace!, held, 1, null);
     replacement = lost.replacement;
     let kills = lost.kills;
     const first = lost.queue;
@@ -140,7 +145,7 @@ test('a killed review host is named on the card with its automatic retry and sta
     // 3. The retry claims the review again; kill the host once more: retry 2 of the budget, 3 minutes out.
     // killReviewHost SIGKILLs the replacement too; a SIGTERM would hand the review off instead.
     await waitForHeldReview(page, cardId, held);
-    lost = await loseReview(page, cardId, workspace!, held, 2);
+    lost = await loseReview(page, cardId, workspace!, held, 2, budget);
     replacement = lost.replacement;
     kills += lost.kills;
     const second = lost.queue;
@@ -187,10 +192,10 @@ test('a killed review host is named on the card with its automatic retry and sta
     // 6. Spend the rest of the budget; the escalation names every restart instead of "cannot be materialized".
     for (let retry = 3; retry <= budget; retry++) {
       await waitForHeldReview(page, cardId, held);
-      replacement = (await loseReview(page, cardId, workspace!, held, retry)).replacement;
+      replacement = (await loseReview(page, cardId, workspace!, held, retry, budget)).replacement;
     }
     await waitForHeldReview(page, cardId, held);
-    replacement = (await loseReview(page, cardId, workspace!, held, null)).replacement;
+    replacement = (await loseReview(page, cardId, workspace!, held, null, budget)).replacement;
     await page.goto(`/#/tasks/${cardId}`);
     const escalation = page.getByText(new RegExp(
       `The review was lost to ${budget + 1} review host restarts: .*The automatic retry budget of ${budget} is spent`)).first();
