@@ -183,3 +183,36 @@ links the newest three. Export is standalone article HTML with light, dark
 and print styles for browser PDF output. Sending is disabled; the summary
 renderer contains only the masthead, coverage, front-page titles, importance
 numbers and an HTTPS sign-in link.
+
+## Presenter decks (PT-9)
+
+After a weekly issue is published, the Watcher sweep writes an immutable
+`<TaskRepository>/.metadata/presenter-decks/<workspace>/<deck-id>/deck.json`.
+Each issue gets a seven-slide weekly deck. Every fourth consecutive issue also
+produces a monthly review covering those four issues, with ten to twelve
+slides. Layout is deterministic: items at importance 40 or above, Critical
+first, no more than three blocks per slide, a decisions slide even when empty,
+and a role slide only when that role has an item at 70 or above. A trend slide
+requires four published weekly issues; the issue's padded trend rows alone do
+not count as observed history.
+
+Each slide block records its issue id and either an item id plus the sourced
+importance field, a watch row stats field, or an exact issue
+trend field and value. Validation rejects an unknown item, a changed claim, a
+number without a source field, or a value that differs from the immutable
+issue. One optional presenter model call supplies slide titles and cited
+speaker notes. Invalid or unavailable output leaves the deterministic titles.
+The role remains a catalogue entry; the deck records the selected active
+presenter persona id separately from the presenter role id. When several
+presenter personas are active, the lowest stable persona id supplies the call.
+The deck records editor tokens; admission includes prior issue and deck editor
+tokens in the current budget week. Historical backfills use deterministic
+titles without a model call.
+
+The Studio magazine view opens the deck at 16:9 in both themes. Read routes are
+`GET /api/workspaces/{id}/personas/decks` and `GET .../decks/{deckId}`.
+`GET .../decks/{deckId}/export?format=html|pdf&audience=owner|stakeholder`
+returns standalone slide HTML with arrow-key navigation and print styling, or
+a 16:9 PDF with one page per slide. The stakeholder export uses generic item
+labels and omits notes, bodies, host names and monetary costs. PPTX is outside
+this slice.

@@ -304,6 +304,9 @@ type / motion rules. New components should be added to this list.
   evidence panes, projected when the user opens a task tab.
 - **Diff tab** — placeholder for future per-task diff view.
 - **Activity tab** — placeholder for project-feed views.
+- **Presenter deck** — the Team magazine view embeds a 16:9 slide viewer with
+  `--studio-*` surfaces and foreground tokens. It shows one slide at a time and
+  uses the same flat, bordered card grammar in both themes.
 
 ### Sheets and overlays
 

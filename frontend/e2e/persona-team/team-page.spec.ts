@@ -51,6 +51,13 @@ const issue = {
 };
 const priorIssue = { ...issue, id: 'weekly-2026-11-02', masthead: 'Studio Weekly 44',
   periodStart: '2026-11-02', periodEnd: '2026-11-08' };
+const deck = { id: 'weekly-2026-11-09', workspaceId: 'ws-demo', kind: 'weekly', audience: 'owner',
+  issueIds: ['weekly-2026-11-09'], slides: [
+    { id: 'slide-1', layout: 'title', title: 'Weekly review', speakerNotes: null,
+      blocks: [{ kind: 'item', label: 'Backup gap', itemId: 'pit_1', issueId: 'weekly-2026-11-09', sourceField: 'importance', value: '97', role: 'Operations warden' }] },
+    { id: 'slide-2', layout: 'ranked-list', title: 'Priority items', speakerNotes: null,
+      blocks: [{ kind: 'item', label: 'Credential expiry', itemId: 'pit_2', issueId: 'weekly-2026-11-09', sourceField: 'importance', value: '95', role: 'Security officer' }] },
+  ] };
 const exportFixture = join(resultDir, 'weekly-rendered.html');
 const exportedHtml = existsSync(exportFixture) ? readFileSync(exportFixture, 'utf8') :
   '<!doctype html><html><head><meta charset="utf-8"><style data-article-template="v2">:root{color-scheme:light;background:white;color:black}@media(prefers-color-scheme:dark){:root{color-scheme:dark;background:#222;color:white}}@media print{@page{size:A4}body{background:white;color:black}}</style></head><body><h1>Studio Weekly</h1><h2>Backup gap</h2><p>97</p></body></html>';
@@ -96,6 +103,8 @@ async function setup(page: Page, options: { failStop?: boolean; holdDecision?: b
   await page.route('**/api/workspaces/ws-demo/personas**', (route: Route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/issues/weekly-2026-11-09/export')) return route.fulfill({ contentType: 'text/html', body: exportedHtml });
+    if (path.endsWith('/decks')) return route.fulfill({ json: [deck] });
+    if (path.endsWith('/decks/weekly-2026-11-09/export')) return route.fulfill({ contentType: 'text/html', body: '<html><body>Weekly review</body></html>' });
     if (path.endsWith('/issues')) return route.fulfill({ json: [issue, priorIssue] });
     if (path.endsWith('/sheet')) return route.fulfill({ json: { experience: 72.4, rank: 'Member',
       eligibility: 'Rank does not change grants or allowance',
@@ -177,6 +186,36 @@ test('pool totals equal the visible cards; Stop all paints at once and rolls bac
   fixture.releaseStop();
   await expect(page.getByRole('alert')).toContainText('previous state has been restored');
   await expect(page.getByTestId('team-card-mira')).toContainText('active');
+});
+
+test('presenter deck shows two slides in both themes with readable contrast', async ({ page }) => {
+  mkdirSync(resultDir, { recursive: true });
+  await setup(page);
+  await page.getByRole('button', { name: 'View magazine' }).click();
+  await page.getByTestId('deck-open').click();
+  const slide = page.getByTestId('deck-slide');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    for (let index = 0; index < 2; index++) {
+      await expect(slide).toContainText(index === 0 ? 'Backup gap' : 'Credential expiry');
+      const contrasts = await slide.evaluate(element => {
+        const parse = (color: string) => color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+        const luminance = (values: number[]) => values.map(value => {
+          const channel = value / 255;
+          return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+        }).reduce((sum, value, i) => sum + value * [.2126, .7152, .0722][i], 0);
+        return [...element.querySelectorAll('h2,h3,.deck-type,.deck-source,.deck-value')].map(node => {
+          const foreground = luminance(parse(getComputedStyle(node).color));
+          const background = luminance(parse(getComputedStyle(node.closest('article') ?? element).backgroundColor));
+          return (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05);
+        });
+      });
+      expect(Math.min(...contrasts)).toBeGreaterThanOrEqual(4.5);
+      await slide.screenshot({ path: join(resultDir, `presenter-slide-${index + 1}-${theme}--mocked.png`) });
+      if (index === 0) await page.keyboard.press('ArrowRight');
+    }
+    await page.keyboard.press('ArrowLeft');
+  }
 });
 
 test('a resolved Critical item loses acute styling immediately, without a reload', async ({ page }) => {

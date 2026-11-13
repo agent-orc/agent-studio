@@ -1,6 +1,6 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { ChangeDetectionStrategy, Component, Injectable, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, Injectable, effect, inject, input, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 
@@ -22,6 +22,10 @@ interface WeeklyIssue { id: string; workspaceId: string; kind: string; masthead:
   operationsWatch: IssueWatchRow[]; sections: IssueSection[]; trends: IssueTrendWeek[];
   corrections: IssueStory[]; colophon: string[]; editorSkipped: boolean; articles: IssueArticle[];
   reviewMonth: string | null; monthlyReview: IssueMonthlyReview[] }
+interface DeckBlock { kind: string; label: string; itemId: string | null; issueId: string;
+  sourceField: string | null; value: string | null; role: string | null }
+interface DeckSlide { id: string; layout: string; title: string; blocks: DeckBlock[]; speakerNotes: string | null }
+interface PresenterDeck { id: string; workspaceId: string; kind: string; audience: string; issueIds: string[]; slides: DeckSlide[] }
 
 @Injectable({ providedIn: 'root' })
 class WeeklyIssueSelection { readonly issueId = signal<string | null>(null); }
@@ -39,6 +43,9 @@ export class WeeklyIssueViewComponent {
   readonly selected = signal<WeeklyIssue | null>(null);
   readonly loading = signal(false);
   readonly error = signal('');
+  readonly decks = signal<PresenterDeck[]>([]);
+  readonly selectedDeck = signal<PresenterDeck | null>(null);
+  readonly slideIndex = signal(0);
   constructor() {
     effect(() => { const id = this.workspaceId(); if (id) this.load(id); });
     effect(() => {
@@ -53,12 +60,40 @@ export class WeeklyIssueViewComponent {
       next: rows => { this.issues.set(rows); this.loading.set(false); },
       error: () => { this.error.set('Magazine issues could not be loaded.'); this.loading.set(false); },
     });
+    this.http.get<PresenterDeck[]>(`/api/workspaces/${encodeURIComponent(id)}/personas/decks`).subscribe({
+      next: rows => this.decks.set(rows), error: () => this.decks.set([]),
+    });
   }
   openMagazine(issue?: WeeklyIssue): void {
     this.selection.issueId.set(issue?.id ?? null);
     this.tabs.open({ kind: 'team', personaId: 'magazine' });
   }
-  choose(issue: WeeklyIssue): void { this.selected.set(issue); }
+  choose(issue: WeeklyIssue): void { this.selected.set(issue); this.closeDeck(); }
+  deckFor(issue: WeeklyIssue): PresenterDeck | undefined {
+    return this.decks().find(deck => deck.kind === 'weekly' && deck.id === issue.id);
+  }
+  openDeck(deck: PresenterDeck): void { this.selectedDeck.set(deck); this.slideIndex.set(0); }
+  closeDeck(): void { this.selectedDeck.set(null); }
+  moveSlide(delta: number): void {
+    const deck = this.selectedDeck();
+    if (deck) this.slideIndex.set(Math.max(0, Math.min(deck.slides.length - 1, this.slideIndex() + delta)));
+  }
+  @HostListener('document:keydown', ['$event'])
+  onKeydown(event: KeyboardEvent): void {
+    if (!this.selectedDeck()) return;
+    if (event.key === 'Escape') { this.closeDeck(); return; }
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') { this.moveSlide(1); event.preventDefault(); }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { this.moveSlide(-1); event.preventDefault(); }
+  }
+  async exportDeck(deck: PresenterDeck, format: 'html' | 'pdf', audience: 'owner' | 'stakeholder'): Promise<void> {
+    const path = `/api/workspaces/${encodeURIComponent(deck.workspaceId)}/personas/decks/${encodeURIComponent(deck.id)}/export?format=${format}&audience=${audience}`;
+    try {
+      const blob = await firstValueFrom(this.http.get(path, { responseType: 'blob' }));
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${deck.id}-${audience}.${format}`; anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch { this.error.set('Deck export failed.'); }
+  }
   async exportIssue(issue: WeeklyIssue): Promise<void> {
     const path = `/api/workspaces/${encodeURIComponent(issue.workspaceId)}/personas/issues/${encodeURIComponent(issue.id)}/export`;
     try {
