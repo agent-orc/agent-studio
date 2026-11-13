@@ -69,7 +69,7 @@ public static class OperatorOperationIds
     public static readonly IReadOnlyList<string> PersonaPublish =
         [PersonaItemPublish, PersonaReportPublish, PersonaProposalDraft, PersonaDecisionRequest];
     public static readonly IReadOnlyList<string> PersonaManager =
-        [PersonaProposalAccept, PersonaImportanceAdjust, PersonaBudgetRebalance, PersonaPause];
+        [PersonaProposalAccept, PersonaImportanceAdjust, PersonaBudgetRebalance, PersonaPause, CardRequeue];
     public static readonly IReadOnlyList<string> PersonaAll = [.. PersonaPublish, .. PersonaManager];
 }
 

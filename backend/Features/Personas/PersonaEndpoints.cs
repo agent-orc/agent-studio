@@ -38,6 +38,25 @@ public static class PersonaEndpoints
             })).RequirePermission(IamPermissions.WorkspaceAdminister);
         personas.MapGet("/reports", (string id, PersonaReportStore reports) => Results.Ok(reports.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/manager-actions", (string id, PersonaManagerService managers) =>
+            Results.Ok(managers.List(id))).RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapPost("/manager-actions/{receiptId}/undo", async (string id, string receiptId,
+            HttpContext context, AccessSecurityStore security, PersonaManagerService managers) =>
+            {
+                try
+                {
+                    var owner = AccessSecurityEndpoints.RequireHuman(context, security);
+                    return Results.Ok(await managers.UndoAsync(id, receiptId, owner, context.RequestAborted));
+                }
+                catch (SecurityOperationException ex)
+                {
+                    return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status);
+                }
+                catch (PersonaManagerRefusal ex)
+                {
+                    return Results.Conflict(new { error = ex.Code });
+                }
+            }).RequirePermission(IamPermissions.WorkspaceAdminister);
 
         app.MapPost("/api/runner/personas/claim", async (HttpContext context,
             PersonaLeaseClaimRequest request, PersonaOccurrenceService occurrences, CancellationToken ct) =>
@@ -128,12 +147,21 @@ public static class PersonaEndpoints
                 AccessSecurityEndpoints.RequireHuman(context, security)))))
             .RequirePermission(IamPermissions.WorkspaceAdminister);
 
-        // PT-2 only establishes admission. PT-4 and PT-10 add the validated publication and manager handlers.
-        personas.MapPost("/{personaId}/operations/{operationId}", (string id, string personaId, string operationId,
-            HttpContext context) =>
+        personas.MapPost("/{personaId}/operations/{operationId}", async (string id, string personaId, string operationId,
+            PersonaManagerRequest? request, HttpContext context, PersonaManagerService managers) =>
         {
             if (!OperatorOperationIds.PersonaAll.Contains(operationId, StringComparer.Ordinal))
                 return Results.NotFound(new { error = "persona-operation-not-found" });
+            if (OperatorOperationIds.PersonaManager.Contains(operationId, StringComparer.Ordinal))
+            {
+                if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem]
+                    is not ServiceAccountPrincipal principal)
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                var receipt = await managers.ApplyAsync(id, personaId, operationId,
+                    request ?? new PersonaManagerRequest(), principal, context.RequestAborted);
+                return receipt.Outcome == "applied" ? Results.Ok(receipt)
+                    : Results.Json(receipt, statusCode: StatusCodes.Status409Conflict);
+            }
             return Results.Json(new { error = "persona-operation-not-implemented",
                 message = "The persona operation is catalogued and authorized; its handler belongs to a later slice." },
                 statusCode: StatusCodes.Status501NotImplemented);

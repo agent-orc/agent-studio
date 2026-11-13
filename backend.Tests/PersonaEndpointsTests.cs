@@ -127,13 +127,17 @@ public sealed class PersonaEndpointsTests : IDisposable
         using var manager = BearerClient(factory, managerSession.Secret, "occ-manager");
         using (var allowed = await PostWithSource(manager,
             $"{basePath}/chief-of-staff/operations/persona.proposal.accept", "owner-chat"))
-            Assert.Equal(HttpStatusCode.NotImplemented, allowed.StatusCode);
+        {
+            Assert.Equal(HttpStatusCode.Conflict, allowed.StatusCode);
+            Assert.Equal("manager-not-active", (await Body(allowed)).GetProperty("refusal").GetString());
+        }
         using (var refused = await PostWithSource(manager,
             $"{basePath}/chief-of-staff/operations/persona.proposal.accept", "repository-file"))
         {
             Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
             Assert.Equal("instruction-source-denied", (await Body(refused)).GetProperty("error").GetString());
         }
+
 
         using (var renewal = await owner.PostAsJsonAsync($"{basePath}/renew-grants", new { }))
             Assert.Equal("step-up-required", (await Body(renewal)).GetProperty("error").GetString());
@@ -152,6 +156,85 @@ public sealed class PersonaEndpointsTests : IDisposable
         Assert.Contains(security.ControlPlaneAudit.ReadNewest(entry => entry.Operation == "persona.stop-all", 10),
             entry => entry.Target == $"persona:{workspaceId}");
         Assert.True(security.ControlPlaneAudit.VerifyChain().Ok);
+    }
+
+    [Fact]
+    public async Task Active_manager_refuses_importance_bounds_with_receipts_and_owner_can_undo()
+    {
+        using var factory = BuildFactory();
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var workspaceId = factory.Services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock).Id;
+        var basePath = $"/api/workspaces/{workspaceId}/personas";
+        using (var setupOwner = await OwnerClientAsync(factory))
+        {
+            await ReadOk(setupOwner.PostAsJsonAsync("/api/auth/step-up", new { code = CurrentCode() }));
+            await ReadOk(setupOwner.PostAsJsonAsync($"{basePath}/chief-of-staff/activate", new { }));
+        }
+        _clock.Advance(TimeSpan.FromDays(2));
+        var session = security.MintPersonaOccurrenceSession(workspaceId, "chief-of-staff", "occ-manager-active");
+        using var manager = BearerClient(factory, session.Secret, "occ-manager-active");
+        var items = factory.Services.GetRequiredService<AgentStudio.Personas.PersonaItemStore>();
+        var item = items.Upsert(workspaceId, "security-a", "security", "occ-item",
+            new AgentStudio.Personas.PersonaItemDraftV1(
+                AgentStudio.Personas.PersonaItemKinds.Finding, "Floor finding", "Untrusted item body",
+                null, [new AgentStudio.Personas.PersonaEvidenceV1("fact:one")],
+                1, 1, 0.5, "fingerprint"), 95, _clock.GetUtcNow().UtcDateTime);
+        var path = $"{basePath}/chief-of-staff/operations/persona.importance.adjust";
+        using (var large = await PostWithSource(manager, path, "owner-chat",
+            new { itemId = item.Id, adjustment = -16, reason = "Review" }))
+            Assert.Equal("adjustment-out-of-bounds", (await Body(large)).GetProperty("refusal").GetString());
+        using (var floor = await PostWithSource(manager, path, "owner-chat",
+            new { itemId = item.Id, adjustment = -1, reason = "Review" }))
+            Assert.Equal("importance-floor-or-ceiling", (await Body(floor)).GetProperty("refusal").GetString());
+        var adjusted = await ReadOk(PostWithSource(manager, path, "owner-chat",
+            new { itemId = item.Id, adjustment = 5, reason = "Review" }));
+        Assert.Equal(100, items.Find(workspaceId, item.Id)!.Importance);
+        using var owner = await OwnerClientAsync(factory);
+        var undo = await ReadOk(owner.PostAsJsonAsync(
+            $"{basePath}/manager-actions/{adjusted.GetProperty("id").GetString()}/undo", new { }));
+        Assert.True(undo.GetProperty("calibrationReversal").GetBoolean());
+        Assert.Equal(95, items.Find(workspaceId, item.Id)!.Importance);
+    }
+
+    [Fact]
+    public async Task Manager_lane_write_needs_attention_and_revision_and_owner_undo_restores_lane()
+    {
+        using var factory = BuildFactory("persona-proposal:pit_one");
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var workspaceId = factory.Services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock).Id;
+        var basePath = $"/api/workspaces/{workspaceId}/personas";
+        using (var setupOwner = await OwnerClientAsync(factory))
+        {
+            await ReadOk(setupOwner.PostAsJsonAsync("/api/auth/step-up", new { code = CurrentCode() }));
+            await ReadOk(setupOwner.PostAsJsonAsync($"{basePath}/chief-of-staff/activate", new { }));
+        }
+        _clock.Advance(TimeSpan.FromDays(2));
+        var session = security.MintPersonaOccurrenceSession(workspaceId, "chief-of-staff", "occ-lane");
+        using var manager = BearerClient(factory, session.Secret, "occ-lane");
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var card = scanner.FindJob("alpha-card")!;
+        var attention = factory.Services.GetRequiredService<AgentStudio.Operator.OperatorCoordinationStore>();
+        var revision = AgentStudio.Operator.OperatorCoordinationStore.Revision(card.FolderPath);
+        var path = $"{basePath}/chief-of-staff/operations/card.requeue";
+        Assert.NotNull(attention.Acquire(card.TaskKey, "human:owner", true));
+        using (var held = await PostWithSource(manager, path, "owner-chat",
+            new { cardId = card.Id, targetState = TaskStates.Ready, revision, reason = "Queue proposal" }))
+            Assert.Equal("attention-held", (await Body(held)).GetProperty("refusal").GetString());
+        await attention.OwnerActionAsync(card.TaskKey, card.ProjectName, "human:owner-takeover");
+        using (var stale = await PostWithSource(manager, path, "owner-chat",
+            new { cardId = card.Id, targetState = TaskStates.Ready, revision = "\"stale\"", reason = "Queue proposal" }))
+            Assert.Equal("stale-card-revision", (await Body(stale)).GetProperty("refusal").GetString());
+        var moved = await ReadOk(PostWithSource(manager, path, "owner-chat",
+            new { cardId = card.Id, targetState = TaskStates.Ready, revision, reason = "Queue proposal" }));
+        Assert.Equal(TaskStates.Ready, scanner.FindJob(card.Id)!.State);
+        using var owner = await OwnerClientAsync(factory);
+        var undo = await ReadOk(owner.PostAsJsonAsync(
+            $"{basePath}/manager-actions/{moved.GetProperty("id").GetString()}/undo", new { }));
+        var restored = scanner.FindJob(card.Id)!;
+        Assert.Equal(TaskStates.Backlog, restored.State);
+        Assert.Equal(AgentStudio.Operator.OperatorCoordinationStore.Revision(restored.FolderPath),
+            undo.GetProperty("nextRevision").GetString());
+        Assert.True(undo.GetProperty("calibrationReversal").GetBoolean());
     }
 
     [Fact]
@@ -225,9 +308,10 @@ public sealed class PersonaEndpointsTests : IDisposable
         return client;
     }
 
-    private static Task<HttpResponseMessage> PostWithSource(HttpClient client, string path, string source)
+    private static Task<HttpResponseMessage> PostWithSource(HttpClient client, string path, string source,
+        object? body = null)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(new { }) };
+        var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body ?? new { }) };
         request.Headers.Add("X-Operator-Instruction-Source", source);
         return client.SendAsync(request);
     }
@@ -263,7 +347,7 @@ public sealed class PersonaEndpointsTests : IDisposable
         return client;
     }
 
-    private WebApplicationFactory<Program> BuildFactory()
+    private WebApplicationFactory<Program> BuildFactory(string creationSource = "human")
     {
         Directory.CreateDirectory(_workspace);
         var projectPath = Path.Combine(_workspace, "projects", "alpha");
@@ -274,7 +358,7 @@ public sealed class PersonaEndpointsTests : IDisposable
         File.WriteAllText(Path.Combine(cardPath, "task.json"), JsonSerializer.Serialize(new
         {
             id = "alpha-card", title = "Alpha card", state = TaskStates.Backlog, order = 1,
-            agent = "codex", kind = "task",
+            agent = "codex", kind = "task", creationSource,
         }));
         File.WriteAllText(Path.Combine(cardPath, "prompt.md"), "Fixture card.");
         var factory = new TestHostFactory().WithWebHostBuilder(builder =>

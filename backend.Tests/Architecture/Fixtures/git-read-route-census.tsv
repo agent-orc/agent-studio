@@ -482,6 +482,7 @@
 /api/workspaces/{id}/personas/	free	-	-	-
 /api/workspaces/{id}/personas/budget	free	-	-	-
 /api/workspaces/{id}/personas/items	free	-	-	-
+/api/workspaces/{id}/personas/manager-actions	free	-	-	-
 /api/workspaces/{id}/personas/reports	free	-	-	-
 /api/workspaces/{id}/settings	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/	free	-	-	-

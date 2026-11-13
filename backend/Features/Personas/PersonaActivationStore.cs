@@ -262,6 +262,53 @@ public sealed partial class PersonaActivationStore
             _ => activation with { State = PersonaStates.Paused, PausedAt = now },
         });
 
+    public (PersonaActivationV1 From, PersonaActivationV1 To) Rebalance(
+        string workspaceId, string fromId, string toId, int tokens, string actor, DateTime now)
+    {
+        if (tokens <= 0 || fromId == toId)
+            throw new PersonaManagerRefusal("budget-target-forbidden");
+        lock (_gate)
+        {
+            var state = StateLocked(Workspace(workspaceId));
+            var source = ActivationOf(state, fromId) ?? throw new PersonaManagerRefusal("persona-not-active");
+            var to = ActivationOf(state, toId) ?? throw new PersonaManagerRefusal("persona-not-active");
+            if ((source.RoleId ?? source.Descriptor.Id) is "budget-steward" or "chief-of-staff"
+                || (to.RoleId ?? to.Descriptor.Id) is "budget-steward" or "chief-of-staff")
+                throw new PersonaManagerRefusal("budget-target-forbidden");
+            if (source.State is not (PersonaStates.Active or PersonaStates.Shadow)
+                || to.State is not (PersonaStates.Active or PersonaStates.Shadow)
+                || tokens > source.Allowance.TokensPerWeek)
+                throw new PersonaManagerRefusal("allowance-unavailable");
+            var nextFrom = source with { Allowance = source.Allowance with
+                { TokensPerWeek = source.Allowance.TokensPerWeek - tokens },
+                History = [.. source.History, new PersonaActivationEventV1(now, actor, "rebalance-out",
+                    source.State, source.ActivationRevision, source.DescriptorRevision, source.DescriptorDigest, tokens.ToString())] };
+            var nextTo = to with { Allowance = to.Allowance with
+                { TokensPerWeek = to.Allowance.TokensPerWeek + tokens },
+                History = [.. to.History, new PersonaActivationEventV1(now, actor, "rebalance-in",
+                    to.State, to.ActivationRevision, to.DescriptorRevision, to.DescriptorDigest, tokens.ToString())] };
+            SaveLocked(state with { Activations = Replace(Replace(state.Activations, nextFrom), nextTo) });
+            return (nextFrom, nextTo);
+        }
+    }
+
+    public PersonaActivationV1 ManagerPause(string workspaceId, string personaId, string actor, DateTime now)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked(Workspace(workspaceId));
+            var current = ActivationOf(state, personaId) ?? throw new PersonaManagerRefusal("persona-not-active");
+            if (current.State is not (PersonaStates.Active or PersonaStates.Shadow))
+                throw new PersonaManagerRefusal("persona-not-active");
+            var next = current with { State = PersonaStates.Paused, PausedAt = now,
+                History = [.. current.History, new PersonaActivationEventV1(now, actor, "manager-pause",
+                    PersonaStates.Paused, current.ActivationRevision, current.DescriptorRevision,
+                    current.DescriptorDigest, null)] };
+            SaveLocked(state with { Activations = Replace(state.Activations, next) });
+            return next;
+        }
+    }
+
     public PersonaActivationV1 Resume(string workspaceId, string personaId, PersonaChangeRequest request, HumanPrincipal owner)
         => Transition(workspaceId, personaId, request, owner, "resume", (activation, now) => activation.State switch
         {
