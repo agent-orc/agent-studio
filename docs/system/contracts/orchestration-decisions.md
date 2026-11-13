@@ -160,6 +160,12 @@ liveness, and per member: queued record, ownership marker, disposition) into
 the findings the batch gate state reports and the repair the pilot applies.
 The legal phases and the findings are listed in
 [batch gate](../../operations/gates/batch-gate.md#batch-phase-record-and-invariants-agt-3563).
+AGT-3569: `BatchFlightClaimPolicy` decides the durable flight claim of a
+project's batch flight slot: whether a claim is granted (no live or unsettled
+claim holds the slot), when a claim expires (step deadline first, then a lapsed
+heartbeat or an exited owner), whether a heartbeat renews it, each step's
+deadline, and what an expiry does with the batch (retry, visible gate or
+restart recovery).
 
 AGT-3568: `BatchFormationPolicy` is the formation planner's rule. The pilot
 collects the formed batches of one scope and base, their pending members and

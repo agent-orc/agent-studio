@@ -6,9 +6,7 @@ public sealed partial class BatchGatePilotService
 {
     private bool ProjectGateBusy(BatchGateScope scope)
     {
-        lock (_runningBatches)
-            if (_runningBatches.TryGetValue(scope.Project, out var flight)
-                && !flight.IsCompleted) return true;
+        if (FlightSlotBusy(scope.Project)) return true;
         string[] fallbackAttempts;
         lock (_fallbackFlights)
             fallbackAttempts = _fallbackFlights.Where(pair => !pair.Value.Task.IsCompleted)

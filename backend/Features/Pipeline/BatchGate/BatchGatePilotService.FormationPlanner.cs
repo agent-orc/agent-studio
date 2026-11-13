@@ -27,7 +27,7 @@ public sealed partial class BatchGatePilotService
     private string? CommitIntent(BatchGateIntent intent, Action? afterRetire = null)
         => _store.WithPlannerLock(intent.Successor.Scope.Project, () =>
         {
-            lock (_runningBatches)
+            lock (_flights)
             {
                 var decision = _store.DecideIntent(intent, Assembling);
                 if (!decision.Accepted)
@@ -48,7 +48,7 @@ public sealed partial class BatchGatePilotService
 
     private bool Assembling(string batchId)
     {
-        lock (_runningBatches) return _assemblingBatchIds.Contains(batchId);
+        lock (_flights) return _assemblingBatchIds.Contains(batchId);
     }
 
     private BatchGateIntent FormationIntent(BatchIntentKind kind, string route, BatchGateManifest successor,
@@ -174,7 +174,7 @@ public sealed partial class BatchGatePilotService
             {
                 _store.WithPlannerLock(intent.Successor.Scope.Project, () =>
                 {
-                    lock (_runningBatches)
+                    lock (_flights)
                     {
                         if (_store.ReadIntentOutcome(intent) is not null) return 0;
                         var step = MonolithTransitionAdapter.BatchIntentRecovery(new BatchIntentRecoveryFacts(
@@ -208,7 +208,7 @@ public sealed partial class BatchGatePilotService
         foreach (var request in _store.ListSuccessorTicks())
         {
             bool live;
-            lock (_runningBatches) live = _startedBatchIds.Contains(request.BatchId);
+            lock (_flights) live = _startedBatchIds.Contains(request.BatchId);
             // This tick is the successor tick of a flight that is gone.
             if (!live && _store.TryConsumeSuccessorTick(request.Project, request.BatchId))
                 _logger.LogInformation("batch-gate-successor-tick-served batch={BatchId} reason={Reason}",
@@ -443,7 +443,7 @@ public sealed partial class BatchGatePilotService
         // AGT-3710: the replacement keeps the queue place of the oldest batch it replaces.
         var replacement = close.Manifest with { Exclusions = exclusions, QueuedSinceUtc = plan.QueuedSinceUtc };
         BatchGateIntentRetirement[] retiring;
-        lock (_runningBatches)
+        lock (_flights)
             // A snapshot with a flight waiting for the reservation triggers a
             // successor tick when that flight exits; the request is durable.
             retiring = moving.Select(old => Retirement(old,
