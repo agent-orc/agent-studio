@@ -1,10 +1,22 @@
 export interface PersonaEntry {
   id: string; title: string; aspect: string; kind: string; revision: string;
   adoptableRevision: string | null;
-  descriptor: { charter: string; cadence: { report: string }; budget: { tokensPerWeek: number } };
+  descriptor: { charter: string; cadence: { report: string }; budget: { tokensPerWeek: number }; attributes: PersonaAttributes };
   activation: null | { personaId: string; roleId?: string; state: string; descriptorRevision: string;
-    allowance: { tokensPerWeek: number }; history: { at: string; action: string; state: string; descriptorRevision: string }[] };
+    activationRevision: number; attributes: PersonaAttributes; allowance: { tokensPerWeek: number };
+    history: { at: string; action: string; state: string; descriptorRevision: string }[] };
 }
+export interface PersonaAttributes { focus: Record<string, number> | null; autonomy: string; riskAppetite: string;
+  thoroughness: number; signalThreshold: number }
+export interface PersonaRate { numerator: number; denominator: number; percent: number | null }
+export interface PersonaStatsWindow { window: string; activationRevision: number | null; raised: number;
+  accepted: number; rejected: number; duplicate: number; open: number; acceptance: PersonaRate;
+  cards: { promoted: number; completed: number; open: number; rejectedInReview: number; archivedWithoutDelivery: number };
+  tokens: number; pricedCostUsd: number; unknownPriceSessions: number; costPerAcceptedUsd: number | null;
+  medianResponseHours: number | null; p90ResponseHours: number | null; punctuality: PersonaRate;
+  calibration: number | null; misses: number; tooFewDecisions: boolean }
+export interface PersonaSheet { experience: number; rank: string; eligibility: string;
+  windows: PersonaStatsWindow[]; revisions: PersonaStatsWindow[] }
 export interface PersonaItem { id: string; personaId: string; roleId: string; kind: string; title: string;
   body: string; importance: number; state: string; createdAtUtc: string; deadlineUtc?: string | null;
   impact: number; urgency: number; confidence: number; floor: number; draftCard?: boolean;

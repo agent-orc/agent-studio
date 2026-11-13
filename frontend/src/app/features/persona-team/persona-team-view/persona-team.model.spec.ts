@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { PersonaEntry, PersonaItem, isOpenPersonaItem, personaCards, poolTotals } from './persona-team.model';
 const entry = (id: string, role: string): PersonaEntry => ({
   id, title: id, aspect: role, kind: 'persona', revision: '1', adoptableRevision: null,
-  descriptor: { charter: '', cadence: { report: 'P1D' }, budget: { tokensPerWeek: 100 } },
+  descriptor: { charter: '', cadence: { report: 'P1D' }, budget: { tokensPerWeek: 100 },
+    attributes: { focus: { security: 100 }, autonomy: 'A1', riskAppetite: 'low', thoroughness: 3, signalThreshold: 40 } },
   activation: { personaId: id, roleId: role, state: 'active', descriptorRevision: '1',
+    activationRevision: 1, attributes: { focus: { security: 100 }, autonomy: 'A1', riskAppetite: 'low', thoroughness: 3, signalThreshold: 40 },
     allowance: { tokensPerWeek: 100 }, history: [] },
 });
 const item = (personaId: string, state: string, importance: number): PersonaItem => ({

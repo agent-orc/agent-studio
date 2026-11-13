@@ -1,6 +1,8 @@
 using AgentStudio.Security;
 using AgentStudio.Quota;
 using AgentStudio.Magazine;
+using AgentStudio.Tasks;
+using AgentStudio.Tokens;
 
 namespace AgentStudio.Personas;
 
@@ -39,6 +41,17 @@ public static class PersonaEndpoints
             })).RequirePermission(IamPermissions.WorkspaceAdminister);
         personas.MapGet("/reports", (string id, PersonaReportStore reports) => Results.Ok(reports.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/{personaId}/sheet", (string id, string personaId,
+            PersonaActivationStore activations, PersonaItemStore items,
+            PersonaSchedulingService scheduling, PersonaReportStore reports, TaskScannerService scanner,
+            ITokenPricing pricing) =>
+            AccessSecurityEndpoints.Execute(() =>
+            {
+                var activation = activations.List(id).Personas.FirstOrDefault(p => p.Id == personaId)?.Activation;
+                return activation is null ? Results.NotFound() : Results.Ok(PersonaStatsProjection.Build(
+                    activation, items.List(id), scheduling.Receipts(id), reports.List(id), DateTime.UtcNow,
+                    scanner.GetResidentIdentityFacts(), pricing));
+            })).RequirePermission(IamPermissions.WorkspaceRead);
 
         personas.MapGet("/issues", (string id, WeeklyIssueService issues) =>
             Results.Ok(issues.List(id))).RequirePermission(IamPermissions.WorkspaceRead);
@@ -129,6 +142,11 @@ public static class PersonaEndpoints
             HttpContext context, AccessSecurityStore security, PersonaActivationStore store) =>
             AccessSecurityEndpoints.Execute(() => Results.Ok(store.Activate(id, personaId, request ?? new PersonaActivateRequest(),
                 AccessSecurityEndpoints.RequireHuman(context, security)))))
+            .RequirePermission(IamPermissions.WorkspaceAdminister);
+        personas.MapPut("/{personaId}/attributes", (string id, string personaId,
+            PersonaAttributeChangeRequest request, HttpContext context, AccessSecurityStore security,
+            PersonaActivationStore store) => AccessSecurityEndpoints.Execute(() => Results.Ok(
+                store.ChangeAttributes(id, personaId, request, AccessSecurityEndpoints.RequireHuman(context, security)))))
             .RequirePermission(IamPermissions.WorkspaceAdminister);
 
         personas.MapPost("/{personaId}/run-now", (string id, string personaId, HttpContext context,

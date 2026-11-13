@@ -11,10 +11,11 @@ const project = { sourceType: 'local-folder', id: 'PROJ-002', displayName: 'Demo
 const workspace = { id: 'ws-demo', displayName: 'Demo workspace', sortOrder: 0, isDefault: true,
   color: null, createdAt: '2026-11-10T00:00:00Z', projects: [project] };
 const stamp = new Date().toISOString();
+const attributes = { focus: { audits: 60, backups: 40 }, autonomy: 'A1', riskAppetite: 'low', thoroughness: 3, signalThreshold: 40 };
 const makeEntry = (id: string, title: string, roleId: string, allowance: number) => ({ id, title,
   aspect: roleId, kind: 'persona', revision: '1', adoptableRevision: null,
-  descriptor: { charter: `Review ${roleId} evidence.`, cadence: { report: 'P1D' }, budget: { tokensPerWeek: allowance } },
-  activation: { personaId: id, roleId, state: 'active', descriptorRevision: '1',
+  descriptor: { charter: `Review ${roleId} evidence.`, cadence: { report: 'P1D' }, budget: { tokensPerWeek: allowance }, attributes },
+  activation: { personaId: id, roleId, state: 'active', descriptorRevision: '1', activationRevision: 1, attributes,
     allowance: { tokensPerWeek: allowance }, history: [{ at: stamp, action: 'activate', state: 'active', descriptorRevision: '1' }] } });
 const baseItem = { personaId: 'mira', roleId: 'security', createdAtUtc: stamp, impact: 4, urgency: 3, confidence: .8, floor: 0 };
 const initialItems = () => [
@@ -91,6 +92,30 @@ async function setup(page: Page, options: { failStop?: boolean; holdDecision?: b
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/issues/weekly-2026-11-09/export')) return route.fulfill({ contentType: 'text/html', body: exportedHtml });
     if (path.endsWith('/issues')) return route.fulfill({ json: [issue, priorIssue] });
+    if (path.endsWith('/sheet')) return route.fulfill({ json: { experience: 72.4, rank: 'Member',
+      eligibility: 'Rank does not change grants or allowance',
+      windows: [{ window: '30 days', activationRevision: null, raised: 6, accepted: 4, rejected: 2,
+        duplicate: 0, open: 0, acceptance: { numerator: 4, denominator: 6, percent: 66.7 },
+        cards: { promoted: 1, completed: 0, open: 1, rejectedInReview: 0, archivedWithoutDelivery: 0 },
+        tokens: 1200, pricedCostUsd: .34, unknownPriceSessions: 1, costPerAcceptedUsd: null,
+        medianResponseHours: 1.2, p90ResponseHours: 2.8,
+        punctuality: { numerator: 5, denominator: 6, percent: 83.3 }, calibration: 4, misses: 0,
+        tooFewDecisions: false }], revisions: [
+          { window: 'lifetime', activationRevision: 1, raised: 3, accepted: 2, rejected: 1,
+            duplicate: 0, open: 0, tokens: 600, acceptance: { numerator: 2, denominator: 3, percent: null },
+            cards: { promoted: 0, completed: 0, open: 0, rejectedInReview: 0, archivedWithoutDelivery: 0 },
+            pricedCostUsd: .17, unknownPriceSessions: 1, costPerAcceptedUsd: null,
+            medianResponseHours: 1.2, p90ResponseHours: 2.8,
+            punctuality: { numerator: 2, denominator: 3, percent: null }, calibration: 4, misses: 0,
+            tooFewDecisions: true },
+          { window: 'lifetime', activationRevision: 2, raised: 3, accepted: 2, rejected: 1,
+            duplicate: 0, open: 0, tokens: 600, acceptance: { numerator: 2, denominator: 3, percent: null },
+            cards: { promoted: 1, completed: 0, open: 1, rejectedInReview: 0, archivedWithoutDelivery: 0 },
+            pricedCostUsd: .17, unknownPriceSessions: 0, costPerAcceptedUsd: null,
+            medianResponseHours: 1.1, p90ResponseHours: 2.5,
+            punctuality: { numerator: 3, denominator: 3, percent: null }, calibration: null, misses: 0,
+            tooFewDecisions: true }] } });
+    if (path.endsWith('/attributes') && route.request().method() === 'PUT') return route.fulfill({ json: {} });
     if (path.endsWith('/budget')) return route.fulfill({ json: { poolTokens: 400, usedTokens: 80, startUtc: stamp,
       endUtc: stamp, personas: { mira: { allowanceTokens: 100, usedTokens: 30 }, aster: { allowanceTokens: 150, usedTokens: 50 } } } });
     if (path.endsWith('/items')) return route.fulfill({ json: items });
@@ -177,6 +202,30 @@ test('Ask opens the in-app chat for the persona', async ({ page }) => {
   await openPersona(page);
   await page.getByTestId('persona-ask').click();
   await expect(page.getByTestId('orch-side-sheet')).toBeVisible();
+});
+
+test('sheet shows denominators, revision split and light and dark captures', async ({ page }) => {
+  mkdirSync(resultDir, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await setup(page);
+  await openPersona(page);
+  await openTab(page, 'Sheet');
+  const sheet = page.getByTestId('persona-sheet');
+  await expect(sheet).toContainText('66.7%');
+  await expect(sheet).toContainText('(4 / 6)');
+  await expect(sheet).toContainText('Revision 1');
+  await expect(sheet).toContainText('Revision 2');
+  await expect(sheet).toContainText('too few decisions');
+  await expect(sheet.getByText('Focus weights · 100 / 100')).toBeVisible();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(resultDir, `persona-sheet-${theme}.png`), fullPage: true });
+    await sheet.getByText('Derived record').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `persona-sheet-stats-${theme}.png`), fullPage: true });
+    await sheet.locator('.team-sheet-window').last().scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `persona-sheet-revisions-${theme}.png`), fullPage: true });
+    await sheet.getByText('Character sheet').scrollIntoViewIfNeeded();
+  }
 });
 
 test('team and persona pages render in light and dark', async ({ page }) => {
