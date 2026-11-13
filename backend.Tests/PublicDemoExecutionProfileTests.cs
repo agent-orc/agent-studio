@@ -229,7 +229,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3670 adds accept (Start) and send back (Continue) decisions.
         // AGT-3652 adds the content-only re-review against the current brief
         // (Review): it runs a model call public demo denies.
-        Assert.Equal(156, routes.Count);
+        // PT-4 adds persona lease claim and completion. Both execute a persona
+        // occurrence and must receive the same typed public-demo denial.
+        Assert.Equal(158, routes.Count);
         foreach (var (routePath, path) in new[]
         {
             ("/api/tasks/{jobId}/content-review", ExecutionAdmissionPath.Review),
@@ -288,7 +290,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/activate", ExecutionAdmissionPath.Continue),
             ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/rollback", ExecutionAdmissionPath.Continue),
             ("/api/v1/orchestration/host-decisions", ExecutionAdmissionPath.Start),
-            ("/api/v1/orchestration/decision-jobs", ExecutionAdmissionPath.Start)
+            ("/api/v1/orchestration/decision-jobs", ExecutionAdmissionPath.Start),
+            ("/api/runner/personas/claim", ExecutionAdmissionPath.Claim),
+            ("/api/runner/personas/complete", ExecutionAdmissionPath.Continue)
         })
         {
             var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
@@ -333,9 +337,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 12,
+                [ExecutionAdmissionPath.Claim] = 13,
                 [ExecutionAdmissionPath.Start] = 35,
-                [ExecutionAdmissionPath.Continue] = 35,
+                [ExecutionAdmissionPath.Continue] = 36,
                 [ExecutionAdmissionPath.Review] = 10,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 32,
