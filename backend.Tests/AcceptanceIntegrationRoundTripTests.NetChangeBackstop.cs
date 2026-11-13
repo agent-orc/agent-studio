@@ -58,8 +58,9 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         var (deps, card, _) = CompletedNetChangeCard("net-guard");
         var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
 
-        Assert.True(AcceptedIntegrationPublishedDeliveryGuard.KeepCompletedAfterRecoveryMerge(
-            card, "develop", AcceptedIntegrationFailureCodes.StaleAttempt, git, NullLogger.Instance));
+        Assert.True(AcceptedIntegrationPublishedDeliveryGuard.KeepCompleted(
+            card, "develop", AcceptedIntegrationFailureCodes.StaleAttempt, git, null, NullLogger.Instance,
+            recoveryMerge: true));
     }
 
     [Fact]
@@ -72,7 +73,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
 
         Assert.False(AcceptedIntegrationPublishedDeliveryGuard.CarriesNetChangePublication(card, "develop", git));
-        Assert.False(AcceptedIntegrationPublishedDeliveryGuard.KeepCompletedAfterRecoveryMerge(
-            card, "develop", AcceptedIntegrationFailureCodes.StaleAttempt, git, NullLogger.Instance));
+        Assert.False(AcceptedIntegrationPublishedDeliveryGuard.KeepCompleted(
+            card, "develop", AcceptedIntegrationFailureCodes.StaleAttempt, git, null, NullLogger.Instance,
+            recoveryMerge: true));
     }
 }
