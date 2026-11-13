@@ -16,7 +16,7 @@
         <button type="button" [appPendingButton]="busy() === 'Stop all personas'" [disabled]="!!busy()" (click)="stopAll()" data-testid="team-stop-all">Stop all personas</button>
         <button type="button" class="team-primary" (click)="tab.set('charter')" data-testid="team-activate">Activate persona</button>
       } @else if (current(); as person) {
-        <button type="button" (click)="ask()">Ask</button>
+        <button type="button" (click)="ask()" data-testid="persona-ask">Ask</button>
         <button type="button" [disabled]="!!busy()" (click)="change(person, 'run-now')">Run now</button>
         @if (person.activation?.state === 'paused') { <button type="button" [disabled]="!!busy()" (click)="change(person, 'resume')">Resume</button> }
         @else { <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'pause')">Pause</button> }
@@ -62,16 +62,16 @@
     }
     @if (!loading() && cards().length === 0) { <p class="team-message">No personas are active in this workspace.</p> }
   } @else if (current(); as person) {
-    <nav class="team-tabs" aria-label="Persona sections">
+    <nav class="team-tabs" aria-label="Persona sections" data-testid="persona-tabs">
       <app-segmented-control [options]="tabOptions" [value]="tab()" ariaLabel="Persona sections" (valueChange)="tab.set($event)" />
     </nav>
     @switch (tab()) {
       @case ('feed') {
         <div class="team-filters"><label>Sort <select [value]="sort()" (change)="sort.set($any($event.target).value)"><option value="importance">Importance</option><option value="time">Newest</option></select></label>
           <label>Kind <select [value]="kind()" (change)="kind.set($any($event.target).value)"><option value="all">All</option><option value="finding">Findings</option><option value="proposal">Proposals</option><option value="decision-request">Decisions</option><option value="report-line">Report lines</option></select></label>
-          <label>State <select [value]="state()" (change)="state.set($any($event.target).value)"><option value="open">Open</option><option value="all">All</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option></select></label></div>
+          <label>State <select [value]="state()" (change)="state.set($any($event.target).value)"><option value="open">Open</option><option value="all">All</option><option value="deferred">Deferred</option><option value="resolved">Resolved</option><option value="accepted">Accepted</option><option value="rejected">Rejected</option></select></label></div>
         <div class="team-list">@for (item of feed(); track item.id) {
-          <article class="team-item" [class.team-item--critical]="isOpenPersonaItem(item) && item.importance >= 90">
+          <article class="team-item" [attr.data-testid]="'persona-item-' + item.id" [class.team-item--critical]="isOpenPersonaItem(item) && item.importance >= 90">
             <span class="team-importance">{{ item.importance }}</span><div><h2>{{ item.title }}</h2><p>{{ item.body }}</p><small>{{ item.kind }} · {{ item.state }} · Impact {{ item.impact }} · Urgency {{ item.urgency }} · Confidence {{ item.confidence }} · Floor {{ item.floor }}</small></div>
             @if (item.kind === 'finding' && isOpenPersonaItem(item)) { <button type="button" [disabled]="!!busy()" (click)="decide(item, 'resolved')">Resolve</button> }
           </article>
@@ -81,8 +81,10 @@
         <article class="team-row"><div><h2>{{ report.template }} · {{ report.publishedAtUtc | date:'medium' }}</h2><p>{{ report.state }} · {{ report.reason }}</p><small>Sources read: {{ report.sourcesRead.join(', ') || 'None' }} · Missing: {{ report.sourcesMissing.join(', ') || 'None' }}</small></div></article>
       } @empty { <p class="team-message">No reports yet.</p> }</div> }
       @case ('proposals') { <div class="team-list">@for (item of proposals(); track item.id) {
-        <article class="team-row"><div><h2>{{ item.title }}</h2><p>{{ item.body }}</p><small>{{ item.state }} · Importance {{ item.importance }}</small></div>
-          <div class="team-actions"><button type="button" [disabled]="!!busy() || item.state !== 'draft'" (click)="decide(item, 'accepted')">Accept</button><button type="button" [disabled]="!!busy() || item.state !== 'draft'" (click)="decide(item, 'rejected')">Reject</button><button type="button" [disabled]="!!busy() || item.state !== 'draft'" (click)="decide(item, 'deferred')">Defer</button></div></article>
+        <article class="team-row"><div><h2>{{ item.title }}</h2><p>{{ item.body }}</p><small>{{ item.state }}@if (item.deferredUntilUtc) { until {{ item.deferredUntilUtc | date:'mediumDate' }} } · Importance {{ item.importance }} · Dossier {{ item.dossierKey }} {{ item.dossierSection }}</small></div>
+          @if (isOpenPersonaItem(item)) {
+          <div class="team-actions"><button type="button" [disabled]="!!busy()" (click)="decide(item, 'accepted')">Accept</button><button type="button" [disabled]="!!busy()" (click)="decide(item, 'rejected')">Reject</button><button type="button" [disabled]="!!busy()" (click)="decide(item, 'deferred')">Defer</button></div>
+          } @else if (item.promotedTaskKey) { <small>Promoted to {{ item.promotedTaskKey }}</small> }</article>
       } @empty { <p class="team-message">No proposals yet.</p> }</div> }
       @case ('budget') { <section class="team-pool"><div><span>Used this week</span><strong>{{ currentCard()?.used ?? 0 | number }}</strong></div><div><span>Allowance</span><strong>{{ currentCard()?.allowance ?? 0 | number }}</strong></div><div><span>Team pool</span><strong>{{ totals().pool | number }}</strong></div></section> }
       @case ('charter') { <section class="team-charter"><h2>Charter</h2><p>{{ person.descriptor.charter }}</p><p>Role: {{ person.activation?.roleId || person.id }} · Revision: {{ person.activation?.descriptorRevision || person.revision }}</p>

@@ -13,6 +13,12 @@ public static class PersonaItemKinds
         [Finding, Proposal, DecisionRequest, ReportLine], StringComparer.Ordinal);
 }
 
+/// <summary>Item states. Open, draft and deferred items still take an owner decision.</summary>
+public static class PersonaItemStates
+{
+    public static bool IsDecidable(string state) => state is "open" or "draft" or "deferred";
+}
+
 public sealed record PersonaEvidenceV1(string Ref, bool Measured = false);
 public sealed record PersonaItemDraftV1(string Kind, string Title, string Body, string? Project,
     IReadOnlyList<PersonaEvidenceV1> Evidence, int Impact, int Urgency, double Confidence,
@@ -29,7 +35,8 @@ public sealed record PersonaItemV1(string Id, string PersonaId, string RoleId, s
     IReadOnlyList<PersonaItemChangeV1> History, DateTime? DeadlineUtc = null,
     bool DraftCard = false, IReadOnlyList<string>? Options = null, string? RecommendedOption = null,
     string? DossierKey = null, string? DossierSection = null,
-    string? DraftTitle = null, string? DraftPrompt = null, string? Area = null);
+    string? DraftTitle = null, string? DraftPrompt = null, string? Area = null,
+    DateTime? DeferredUntilUtc = null, string? PromotedTaskKey = null);
 
 public static class PersonaImportanceService
 {
@@ -116,7 +123,7 @@ public sealed class PersonaItemStore
         {
             var items = Load(workspaceId);
             var priorIndex = items.FindIndex(i => i.PersonaId == personaId && i.Fingerprint == fingerprint
-                && i.State is "open" or "draft");
+                && PersonaItemStates.IsDecidable(i.State));
             var confidence = PersonaImportanceService.CapConfidence(draft.Confidence, draft.Evidence);
             var score = PersonaImportanceService.Score(draft.Impact, draft.Urgency, confidence, floor);
             PersonaItemV1 item;
@@ -150,7 +157,17 @@ public sealed class PersonaItemStore
         }
     }
 
-    public PersonaItemV1 Decide(string workspaceId, string itemId, string outcome, DateTime now)
+    public PersonaItemV1? Find(string workspaceId, string itemId)
+    {
+        lock (_gate) return Load(workspaceId).FirstOrDefault(item => item.Id == itemId);
+    }
+
+    /// <summary>
+    /// Records an owner decision that <see cref="PersonaProposalLifecycle"/> has already applied.
+    /// Returns null when another decision closed the item first.
+    /// </summary>
+    public PersonaItemV1? RecordDecision(string workspaceId, string itemId, string outcome, string reason,
+        DateTime now, DateTime? deferredUntil = null, string? promotedTaskKey = null)
     {
         lock (_gate)
         {
@@ -158,15 +175,11 @@ public sealed class PersonaItemStore
             var index = items.FindIndex(item => item.Id == itemId);
             if (index < 0) throw new KeyNotFoundException("Persona item not found.");
             var current = items[index];
-            if (current.State is not ("open" or "draft" or "deferred"))
-                throw new InvalidOperationException("The persona item is already decided.");
-            if (current.Kind == PersonaItemKinds.Proposal
-                ? outcome is not ("accepted" or "rejected" or "deferred")
-                : outcome != "resolved")
-                throw new ArgumentException("This outcome does not apply to the item.");
+            if (!PersonaItemStates.IsDecidable(current.State)) return null;
             var updated = current with { State = outcome, UpdatedAtUtc = now,
+                DeferredUntilUtc = deferredUntil, PromotedTaskKey = promotedTaskKey ?? current.PromotedTaskKey,
                 History = [.. current.History, new PersonaItemChangeV1(now, current.Importance,
-                    current.Importance, "owner-" + outcome, "owner-decision")] };
+                    current.Importance, "owner-" + outcome, reason)] };
             items[index] = updated;
             Save(workspaceId, items);
             return updated;

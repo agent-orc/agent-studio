@@ -8,7 +8,8 @@ export interface PersonaEntry {
 export interface PersonaItem { id: string; personaId: string; roleId: string; kind: string; title: string;
   body: string; importance: number; state: string; createdAtUtc: string; deadlineUtc?: string | null;
   impact: number; urgency: number; confidence: number; floor: number; draftCard?: boolean;
-  dossierKey?: string | null; dossierSection?: string | null; draftTitle?: string | null; draftPrompt?: string | null }
+  dossierKey?: string | null; dossierSection?: string | null; draftTitle?: string | null; draftPrompt?: string | null;
+  deferredUntilUtc?: string | null; promotedTaskKey?: string | null }
 export interface PersonaReport { id: string; personaId: string; publishedAtUtc: string; state: string;
   template: string; reason: string; openItems: { itemId: string; title: string; importance: number }[];
   sourcesRead: string[]; sourcesMissing: string[]; tokensUsed: number }
@@ -16,7 +17,9 @@ export interface PersonaBudget { poolTokens: number; usedTokens: number; startUt
   personas: Record<string, { allowanceTokens: number; usedTokens: number }> }
 export interface PersonaCard { entry: PersonaEntry; used: number; allowance: number; report: PersonaReport | null;
   highest: number | null; overdue: boolean }
-export const isOpenPersonaItem = (item: PersonaItem): boolean => item.state === 'open' || item.state === 'draft';
+/** Open, draft and deferred items still take an owner decision; a deferred proposal stays decidable. */
+export const isOpenPersonaItem = (item: PersonaItem): boolean =>
+  item.state === 'open' || item.state === 'draft' || item.state === 'deferred';
 export function personaCards(entries: PersonaEntry[], budget: PersonaBudget | null,
   items: PersonaItem[], reports: PersonaReport[], now = new Date()): PersonaCard[] {
   return entries.filter(entry => !!entry.activation).map(entry => {

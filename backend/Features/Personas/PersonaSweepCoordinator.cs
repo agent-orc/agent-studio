@@ -15,14 +15,6 @@ namespace AgentStudio.Personas;
 public sealed class PersonaSweepCoordinator
 {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PersonaTrigger> _manualRuns = new();
-
-    public bool RequestRun(string workspaceId, string personaId, DateTime now)
-    {
-        var activation = _activations.List(workspaceId).Personas.FirstOrDefault(p => p.Id == personaId)?.Activation;
-        if (activation is not { State: PersonaStates.Active or PersonaStates.Shadow }) return false;
-        _manualRuns[workspaceId + ":" + personaId] = new PersonaTrigger(now, "manual.run", "run-now:" + Guid.NewGuid().ToString("N"));
-        return true;
-    }
     private readonly PersonaActivationStore _activations;
     private readonly PersonaSchedulingService _scheduling;
     private readonly WorkspaceRegistry _workspaces;
@@ -60,6 +52,25 @@ public sealed class PersonaSweepCoordinator
         _audit = audit;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Run now: queues a <c>manual.run</c> trigger for the next sweep. The
+    /// scheduler accepts it whatever the descriptor's triggers are and closes
+    /// its window at the request time, so admission, budget and grants still
+    /// decide whether the occurrence runs. Only active and shadow personas run.
+    /// </summary>
+    public bool RequestRun(string workspaceId, string personaId, DateTime now)
+    {
+        var activation = _activations.List(workspaceId).Personas.FirstOrDefault(p => p.Id == personaId)?.Activation;
+        if (activation is not { State: PersonaStates.Active or PersonaStates.Shadow }) return false;
+        _manualRuns[workspaceId + ":" + personaId] = new PersonaTrigger(now, PersonaSchedulingService.ManualRunTrigger,
+            "run-now:" + Guid.NewGuid().ToString("N"));
+        return true;
+    }
+
+    /// <summary>The queued run-now trigger the next sweep consumes, if any.</summary>
+    public PersonaTrigger? PendingManualRun(string workspaceId, string personaId)
+        => _manualRuns.TryGetValue(workspaceId + ":" + personaId, out var trigger) ? trigger : null;
 
     public IReadOnlyList<PersonaOccurrenceReceipt> Sweep(DateTime now,
         IReadOnlyList<AgentStudio.Watcher.WatcherSignalObservation> observations)

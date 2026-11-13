@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PersonaEntry, PersonaItem, personaCards, poolTotals } from './persona-team.model';
+import { PersonaEntry, PersonaItem, isOpenPersonaItem, personaCards, poolTotals } from './persona-team.model';
 const entry = (id: string, role: string): PersonaEntry => ({
   id, title: id, aspect: role, kind: 'persona', revision: '1', adoptableRevision: null,
   descriptor: { charter: '', cadence: { report: 'P1D' }, budget: { tokensPerWeek: 100 } },
@@ -24,5 +24,9 @@ describe('persona team projection', () => {
     const cards = personaCards([entry('A', 'security')], null,
       [item('A', 'resolved', 97), item('A', 'open', 54)], [], new Date('2026-11-13'));
     expect(cards[0].highest).toBe(54);
+  });
+  it('keeps a deferred proposal open and decidable', () => {
+    expect(['open', 'draft', 'deferred'].map(state => isOpenPersonaItem(item('A', state, 50)))).toEqual([true, true, true]);
+    expect(['accepted', 'rejected', 'resolved'].map(state => isOpenPersonaItem(item('A', state, 50)))).toEqual([false, false, false]);
   });
 });

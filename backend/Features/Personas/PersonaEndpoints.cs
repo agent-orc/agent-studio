@@ -21,20 +21,20 @@ public static class PersonaEndpoints
         personas.MapGet("/items", (string id, PersonaItemStore items) => Results.Ok(items.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
         personas.MapPost("/items/{itemId}/decision", (string id, string itemId, PersonaItemDecision request,
-            HttpContext context, AccessSecurityStore security, PersonaItemStore items) =>
+            HttpContext context, AccessSecurityStore security, PersonaProposalLifecycle lifecycle) =>
             AccessSecurityEndpoints.Execute(() =>
             {
                 var owner = AccessSecurityEndpoints.RequireHuman(context, security);
                 security.RequirePersonaOwner(owner);
                 try
                 {
-                    var item = items.Decide(id, itemId, request.Outcome, DateTime.UtcNow);
+                    var item = lifecycle.Decide(id, itemId, request, DateTime.UtcNow);
                     security.AppendPersonaAudit(owner.User.Id, "persona.item.decide", id, itemId, request);
                     return Results.Ok(item);
                 }
                 catch (KeyNotFoundException) { return Results.NotFound(); }
                 catch (ArgumentException ex) { return Results.BadRequest(new { error = "invalid-persona-item-decision", message = ex.Message }); }
-                catch (InvalidOperationException ex) { return Results.Conflict(new { error = "persona-item-already-decided", message = ex.Message }); }
+                catch (PersonaDecisionConflictException ex) { return Results.Conflict(new { error = ex.Code, message = ex.Message }); }
             })).RequirePermission(IamPermissions.WorkspaceAdminister);
         personas.MapGet("/reports", (string id, PersonaReportStore reports) => Results.Ok(reports.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
@@ -168,5 +168,3 @@ public static class PersonaEndpoints
 }
 
 public sealed record PersonaBudgetSettings(long? PoolTokensPerWeek, int MaxOpenPerWorkspace = 2);
-
-public sealed record PersonaItemDecision(string Outcome);

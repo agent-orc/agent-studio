@@ -27,6 +27,7 @@ export default defineConfig({
       '**/project/operations-security.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
       '**/workspace/structure-view.spec.ts',
+      '**/persona-team/team-page.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/studio-shell/activity-bar-single-active.spec.ts',
       '**/cli/consumer-model-policy.spec.ts',
