@@ -111,7 +111,7 @@
             (triagePrimary)="onStudioTriagePrimary()"
             (triageMenuItem)="onStudioTriageMenuItemClick($event)" />
         </div>
-        <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure' || studioTabState.activeTab()?.kind === 'magazine'">
+        <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure' || studioTabState.activeTab()?.kind === 'magazine' || studioTabState.activeTab()?.kind === 'team'">
           <app-workspace-banner [projects]="bannerProjects()" />
           @if (triage.moveRefusal(); as refusal) {
             @if (selectedJob()?.info?.taskKey === refusal.taskKey) {

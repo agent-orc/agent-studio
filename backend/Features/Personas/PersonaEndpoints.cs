@@ -20,6 +20,22 @@ public static class PersonaEndpoints
 
         personas.MapGet("/items", (string id, PersonaItemStore items) => Results.Ok(items.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapPost("/items/{itemId}/decision", (string id, string itemId, PersonaItemDecision request,
+            HttpContext context, AccessSecurityStore security, PersonaItemStore items) =>
+            AccessSecurityEndpoints.Execute(() =>
+            {
+                var owner = AccessSecurityEndpoints.RequireHuman(context, security);
+                security.RequirePersonaOwner(owner);
+                try
+                {
+                    var item = items.Decide(id, itemId, request.Outcome, DateTime.UtcNow);
+                    security.AppendPersonaAudit(owner.User.Id, "persona.item.decide", id, itemId, request);
+                    return Results.Ok(item);
+                }
+                catch (KeyNotFoundException) { return Results.NotFound(); }
+                catch (ArgumentException ex) { return Results.BadRequest(new { error = "invalid-persona-item-decision", message = ex.Message }); }
+                catch (InvalidOperationException ex) { return Results.Conflict(new { error = "persona-item-already-decided", message = ex.Message }); }
+            })).RequirePermission(IamPermissions.WorkspaceAdminister);
         personas.MapGet("/reports", (string id, PersonaReportStore reports) => Results.Ok(reports.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
 
@@ -91,6 +107,16 @@ public static class PersonaEndpoints
                 AccessSecurityEndpoints.RequireHuman(context, security)))))
             .RequirePermission(IamPermissions.WorkspaceAdminister);
 
+        personas.MapPost("/{personaId}/run-now", (string id, string personaId, HttpContext context,
+            AccessSecurityStore security, PersonaSweepCoordinator sweeps) =>
+            AccessSecurityEndpoints.Execute(() =>
+            {
+                var owner = AccessSecurityEndpoints.RequireHuman(context, security);
+                security.RequirePersonaOwner(owner);
+                return sweeps.RequestRun(id, personaId, DateTime.UtcNow)
+                    ? Results.Accepted() : Results.Conflict(new { error = "persona-not-running" });
+            })).RequirePermission(IamPermissions.WorkspaceAdminister);
+
         MapChange(personas, "pause", (store, id, personaId, request, owner) => store.Pause(id, personaId, request, owner));
         MapChange(personas, "resume", (store, id, personaId, request, owner) => store.Resume(id, personaId, request, owner));
         MapChange(personas, "deactivate", (store, id, personaId, request, owner) => store.Deactivate(id, personaId, request, owner));
@@ -142,3 +168,5 @@ public static class PersonaEndpoints
 }
 
 public sealed record PersonaBudgetSettings(long? PoolTokensPerWeek, int MaxOpenPerWorkspace = 2);
+
+public sealed record PersonaItemDecision(string Outcome);

@@ -362,10 +362,11 @@ public sealed class PersonaSchedulingService
                 windows[investigationUtc] = new HashSet<string>(["investigation"], StringComparer.Ordinal);
         }
         foreach (var trigger in triggers.Where(t => t.At >= activation.ActivatedAt && t.At <= now
-            && activation.Descriptor.Triggers.Contains(t.Type, StringComparer.Ordinal)))
+            && (t.Type == "manual.run" || activation.Descriptor.Triggers.Contains(t.Type, StringComparer.Ordinal))))
         {
             var hours = trigger.Floor >= 90 ? 1 : 6;
-            var end = trigger.At.Date.AddHours((Math.Floor(trigger.At.TimeOfDay.TotalHours / hours) + 1) * hours);
+            var end = trigger.Type == "manual.run" ? trigger.At :
+                trigger.At.Date.AddHours((Math.Floor(trigger.At.TimeOfDay.TotalHours / hours) + 1) * hours);
             if (!windows.TryGetValue(end, out var refs)) windows[end] = refs = new(StringComparer.Ordinal);
             refs.Add(trigger.Ref);
         }

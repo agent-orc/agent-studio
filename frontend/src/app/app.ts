@@ -1953,6 +1953,9 @@ export class App implements OnInit, OnDestroy {
             : '/workbenches');
         }
         break;
+      case 'team':
+        this.studioTabState.open({ kind: 'team', personaId: route.personaId });
+        break;
       case 'deployment-dashboard':
         this.studioTabState.open({ kind: 'deployment-dashboard' });
         break;
