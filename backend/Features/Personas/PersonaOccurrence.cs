@@ -6,6 +6,7 @@ using AgentStudio.Bus;
 using AgentStudio.Registry;
 using AgentStudio.Shared;
 using AgentStudio.Security;
+using AgentStudio.Management;
 using AgentStudio.Tasks;
 using AgentStudio.Watcher;
 
@@ -159,6 +160,9 @@ public sealed class PersonaOccurrenceService
     private readonly WatcherProposalStore _proposals;
     private readonly AgentMessageBusStore _bus;
     private readonly AccessSecurityStore _security;
+    private readonly StudioBackupService _backups;
+    private readonly SecurityPostureService _posture;
+    private readonly HashSet<string> _wardenDays = new(StringComparer.Ordinal);
     private readonly string? _root;
 
     public PersonaOccurrenceService(PersonaSchedulingService scheduling, PersonaActivationStore activations,
@@ -166,7 +170,7 @@ public sealed class PersonaOccurrenceService
         WorkspaceRegistry workspaces,
         TaskScannerService cards,
         WatcherCaseStore cases, WatcherProposalStore proposals, AgentMessageBusStore bus,
-        AccessSecurityStore security,
+        AccessSecurityStore security, StudioBackupService backups, SecurityPostureService posture,
         IConfiguration configuration)
     {
         _scheduling = scheduling; _activations = activations; _items = items; _reports = reports;
@@ -174,7 +178,74 @@ public sealed class PersonaOccurrenceService
         _workspaces = workspaces;
         _cards = cards; _cases = cases; _proposals = proposals; _bus = bus;
         _security = security;
+        _backups = backups; _posture = posture;
         _root = configuration["TaskRepository"];
+    }
+
+    /// <summary>Daily model-free warden pass. It also runs when admission declines the model call.</summary>
+    public async Task RunWardenAsync(DateTime now, CancellationToken ct)
+    {
+        if (_root is null) return;
+        var day = now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var pending = _workspaces.List().SelectMany(workspace =>
+            _activations.List(workspace.Id).Personas.Select(p => p.Activation)
+                .Where(a => a?.RoleId == "operations-warden" &&
+                    a.State is PersonaStates.Active or PersonaStates.Shadow)
+                .Select(activation => (workspace, activation)))
+            .Where(row => row.activation is not null &&
+                !_wardenDays.Contains(row.workspace.Id + ":" + row.activation.PersonaId + ":" + day) &&
+                _scheduling.Receipts(row.workspace.Id).Any(receipt =>
+                    receipt.PersonaId == row.activation.PersonaId && receipt.CreatedAtUtc.Date == now.Date))
+            .ToArray();
+        if (pending.Length == 0) return;
+        BackupOverview? backup;
+        SecurityPostureResponse? security;
+        try { backup = _backups.Overview(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { backup = null; }
+        try { security = await _posture.ReadAsync(ct); }
+        catch (Exception ex) when (ex is IOException or HttpRequestException or TimeoutException) { security = null; }
+        var snapshot = OpsPostureReader.Read(now, backup, security);
+        foreach (var (workspace, activation) in pending)
+        {
+            if (activation is null) continue;
+            var runKey = workspace.Id + ":" + activation.PersonaId + ":" + day;
+            lock (_gate) if (!_wardenDays.Add(runKey)) continue;
+            var roleId = activation.RoleId ?? activation.Descriptor.Id;
+            var backupCard = OpsWardenEvaluator.OpenBackupCard(_cards.GetResidentIdentityFacts());
+            foreach (var finding in OpsWardenEvaluator.Evaluate(snapshot, activation.Descriptor))
+            {
+                var evidence = new[] { new PersonaEvidenceV1("ops-source:" + finding.Fact.Source, true),
+                    new PersonaEvidenceV1("ops-fact:" + finding.Fact.Id, true) };
+                var draft = new PersonaItemDraftV1(PersonaItemKinds.Finding, finding.Title,
+                    "Observed " + finding.Fact.Id + " as " + (finding.Fact.Value ?? "unknown") +
+                    " from " + finding.Fact.Source + "." +
+                    (finding.Fact.Id == "backup.schedule" && backupCard is not null
+                        ? " Proposed fix belongs to open backup card " + backupCard + "." : ""),
+                    null, evidence, finding.Impact,
+                    finding.Urgency, finding.Confidence, OpsWardenEvaluator.Fingerprint(finding.Fact),
+                    Area: finding.Fact.Id.StartsWith("backup.", StringComparison.Ordinal)
+                        ? "operations.backups" : "operations.security");
+                var item = _items.Upsert(workspace.Id, activation.PersonaId, roleId, runKey, draft,
+                    finding.Floor, now);
+                await PublishAsync(item, runKey, ct);
+                if (finding.Fact.Id != "backup.schedule" || finding.Fact.Value != "missing") continue;
+                var decision = OpsWardenDecision.ForMissingSchedule(now);
+                var request = _items.Upsert(workspace.Id, activation.PersonaId, roleId, runKey,
+                    decision, 70, now);
+                await PublishAsync(request, runKey, ct);
+                if (backupCard is not null)
+                {
+                    var proposal = OpsWardenFixProposal.ForOpenBackupCard(backupCard);
+                    if (!_items.List(workspace.Id).Any(existing => existing.PersonaId == activation.PersonaId
+                        && existing.Fingerprint == proposal.FingerprintKey && existing.State == "draft"))
+                    {
+                        var fix = _items.Upsert(workspace.Id, activation.PersonaId, roleId, runKey,
+                            proposal, 0, now);
+                        await PublishAsync(fix, runKey, ct);
+                    }
+                }
+            }
+        }
     }
 
     public PersonaLeaseV1? Claim(string hostId, DateTime now)
@@ -343,8 +414,14 @@ public sealed class PersonaOccurrenceService
                 string.Join(", ", receipt.TriggerRefs.Take(12)) + ".", 1_200), null, [], 1, 1, 0,
                 "stub:" + receipt.Key), 0),
         };
+        var missingSchedule = receipt.TriggerRefs.Any(trigger =>
+            trigger.StartsWith("backup:backup-not-configured", StringComparison.Ordinal) ||
+            trigger.StartsWith("backup:backup-disabled", StringComparison.Ordinal));
         foreach (var trigger in receipt.TriggerRefs)
         {
+            if (descriptor.Id == "operations-warden" && missingSchedule &&
+                (trigger.StartsWith("backup:backup-missing", StringComparison.Ordinal) ||
+                 trigger.StartsWith("backup:backup-stale", StringComparison.Ordinal))) continue;
             // The Watcher supplies typed fact floors and the descriptor can
             // raise them. Arbitrary model text never creates a fact floor.
             var fact = trigger.StartsWith("backup:backup-not-configured", StringComparison.Ordinal)
@@ -357,9 +434,14 @@ public sealed class PersonaOccurrenceService
             var floor = Math.Max(receipt.FactFloors.GetValueOrDefault(trigger),
                 PersonaImportanceService.DescriptorFloor(descriptor, fact));
             if (floor < 70) continue;
-            rows.Add((new PersonaItemDraftV1(PersonaItemKinds.Finding, Truncate("Persona fact: " + fact, 120),
+            var schedule = descriptor.Id == "operations-warden" && fact == "backup.none-scheduled";
+            rows.Add((new PersonaItemDraftV1(PersonaItemKinds.Finding,
+                schedule ? "No scheduled backup on the networked installation" : Truncate("Persona fact: " + fact, 120),
                 Truncate("Typed fact " + trigger + " remained active while the persona session was refused.", 1_200),
-                null, [new PersonaEvidenceV1(trigger, true)], 1, 1, 0, "floor:" + fact), floor));
+                null, schedule
+                    ? [new PersonaEvidenceV1(trigger, true), new PersonaEvidenceV1("ops-fact:backup.schedule", true)]
+                    : [new PersonaEvidenceV1(trigger, true)], schedule ? 5 : 1, schedule ? 5 : 1,
+                schedule ? .94 : 0, schedule ? "ops:backup.schedule:installation" : "floor:" + fact), floor));
         }
         return rows;
     }

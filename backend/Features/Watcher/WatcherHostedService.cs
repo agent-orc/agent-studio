@@ -150,6 +150,7 @@ public sealed class WatcherHostedService : BackgroundService
                 if (_occurrences is not null)
                 {
                     await _occurrences.PublishRefusalsAsync(receipts, nowUtc, ct);
+                    await _occurrences.RunWardenAsync(nowUtc, ct);
                     await _occurrences.RecomputeAllOpenAsync(nowUtc, ct);
                 }
             }
