@@ -248,7 +248,7 @@ public sealed partial class BatchGatePilotService
         {
             // AGT-3568: the successor tick request is durable; one exit consumes it.
             if (_store.TryConsumeSuccessorTick(project, manifest.BatchId))
-                _ = Task.Run(() => TickAsync(CancellationToken.None));
+                _ = ScheduleFollowUpTick();
             else if (!ct.IsCancellationRequested && StartsNextAfter(flight, detached))
                 StartClosedBatches(ct, project, followsCompletedFlight: true);
         }

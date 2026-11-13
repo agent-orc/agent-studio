@@ -77,6 +77,8 @@ public sealed partial class BatchGatePilotService
     internal Action? BeforeFormationAdmissionForTesting { get; set; }
     // AGT-3562: a hold before the reservation that ignores the lease deadline.
     internal Func<BatchGateManifest, Task>? BeforeReservationForTesting { get; set; }
+    // AGT-3755: holds a tick after it took the tick lock.
+    internal Func<Task>? DuringTickForTesting { get; set; }
 
     /// <summary>Per-task gate starts per review generation before GateInfra (D8).</summary>
     internal const int FallbackGateStartBudget = 2;
@@ -427,7 +429,7 @@ public sealed partial class BatchGatePilotService
     public object State(string project, int history = 10)
     {
         var options = _settings.Get(project).BatchGate;
-        var index = _services?.GetService<TaskIndexCache>();
+        var index = Service<TaskIndexCache>();
         var reviewFixWaits = index is null
             ? ReviewFixWaits(_scanner.ScanAllJobs(), project)
             : index.GetDerived("batch-review-fix:" + project, 1,
@@ -435,7 +437,7 @@ public sealed partial class BatchGatePilotService
         var pending = _store.ListPending().Where(item =>
             string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase)).ToArray();
         var slotUsage = _gateSlots is null ? null
-            : _services?.GetService<PullGateStore>() is { } pull
+            : Service<PullGateStore>() is { } pull
                 ? GateCapacityEndpoints.Usage(_gateSlots, pull) : _gateSlots.ReportedOrLocalSnapshot();
         // A read route starts no Git: risk and paths come from the planner tick's cache.
         HashSet<string> activeFallbacks;
@@ -445,8 +447,8 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null,
             slotUsage,
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
-            _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
-            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project),
+            _time.GetUtcNow(), Service<GateRunLedger>(), reviewFixWaits,
+            Service<GateCapacitySettings>()?.Current(), DetachedFlights(project),
             HasLiveFlight, RecoveryStatus,
             ActiveIsolationFlights(project), LeaseDeadlineDeferred()(project),
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
@@ -484,7 +486,8 @@ public sealed partial class BatchGatePilotService
     /// then runs its own pass, so an explicit tick never returns before the
     /// state it was asked to observe has been processed (AGT-3195).
     /// </summary>
-    public Task TickAsync(CancellationToken ct) => TickCoreAsync(ct, replanMovedBase: true);
+    public Task TickAsync(CancellationToken ct)
+        => Stopping ? Task.CompletedTask : TickCoreAsync(ct, replanMovedBase: true);
 
     private async Task TickCoreAsync(CancellationToken ct, bool replanMovedBase)
     {
@@ -492,6 +495,9 @@ public sealed partial class BatchGatePilotService
         await _tick.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (DuringTickForTesting is { } hold) await hold().ConfigureAwait(false);
+            // AGT-3755: a tick that waited for the lock across host stop ends here.
+            _shutdown.Token.ThrowIfCancellationRequested();
             // AGT-3563: every later step reads each manifest's phase record.
             ReconcilePhaseRecords();
             // AGT-3568: an intent a dead host left open owns its generations
@@ -1155,7 +1161,7 @@ public sealed partial class BatchGatePilotService
         if (pending.Count != formed.Members.Count) return false;
         var slots = _gateSlots is null
             ? new GateSlotUsage(1, Math.Max(1, ConfiguredGateSlots()))
-            : _services?.GetService<PullGateStore>() is { } pull
+            : Service<PullGateStore>() is { } pull
                 ? GateCapacityEndpoints.Usage(_gateSlots, pull)
                 : _gateSlots.ReportedOrLocalSnapshot();
         if (slots.Total < 2 || slots.Busy >= slots.Total) return false;
@@ -1220,7 +1226,7 @@ public sealed partial class BatchGatePilotService
                         && ReferenceEquals(current, done))
                         _runningStacks.Remove(manifest.Scope.Project);
                 }
-                _ = Task.Run(() => TickAsync(CancellationToken.None));
+                _ = ScheduleFollowUpTick();
             }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
         }
@@ -1390,7 +1396,7 @@ public sealed partial class BatchGatePilotService
                 }
                 else if (_store.HasEject(item.Subject.Project, item.Subject.TaskKey))
                     await HandOffEjectedAsync(item, fetchedBases, ct).ConfigureAwait(false);
-            if (pauseCause is not null && _services?.GetService<AgentMessageBusBridge>() is { } bus)
+            if (pauseCause is not null && Service<AgentMessageBusBridge>() is { } bus)
                 await bus.EmitBatchPauseHandoffAsync(manifest.Scope.Project, manifest.BatchId,
                     pauseCause.Event, released.Select(item => item.Subject.TaskKey).ToArray(), ct)
                     .ConfigureAwait(false);
@@ -2652,7 +2658,7 @@ public sealed partial class BatchGatePilotService
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var project = manifest.Scope.Project;
         var claimed = ClaimedBatchGateRunner.Enabled(_configuration)
-            ? _services?.GetService<ClaimedBatchGateRunner>() : null;
+            ? Service<ClaimedBatchGateRunner>() : null;
         var gateTask = claimed is not null
             ? RunClaimedGateAsync(claimed, run, repo, project, gated, level, linked.Token)
             : _gate.RunAsync(new BuildTestGateRequest(
@@ -2728,7 +2734,7 @@ public sealed partial class BatchGatePilotService
         {
             try
             {
-                if (_services?.GetService<GateRunLedger>() is { } ledger)
+                if (Service<GateRunLedger>() is { } ledger)
                     ledger.Append(GateRunLedger.FromResult(new BuildTestGateRequest(repo, run.CandidateSha, "batch-gate")
                     {
                         Project = project, GateId = "batch-gate", IntegrationRef = run.BaseSha,
@@ -2788,7 +2794,7 @@ public sealed partial class BatchGatePilotService
     private async Task EmitBatchShardHangsAsync(string project, BatchGateRunRecord run,
         BuildTestGateResult result)
     {
-        var bus = _services?.GetService<AgentMessageBusBridge>();
+        var bus = Service<AgentMessageBusBridge>();
         foreach (var hang in result.TestShards.SelectMany(suite => suite.Shards)
                      .Select(shard => shard.Hang).Where(item => item is not null))
         {
@@ -2881,7 +2887,7 @@ public sealed partial class BatchGatePilotService
         {
             var published = _store.ReadPublication(manifest.BatchId)?.VerifiedAtUtc;
             timeline = BatchMemberTimelineProjection.Build(_store, subject, manifest,
-                BatchMemberTimelineProjection.Rows(_services?.GetService<GateRunLedger>(),
+                BatchMemberTimelineProjection.Rows(Service<GateRunLedger>(),
                     manifest.Scope.Project, BatchMemberTimelineProjection.Days(
                         subject.ReviewCompletedAtUtc, published ?? _time.GetUtcNow())),
                 _store.ListPreChecks(manifest.Scope.Project),
@@ -3635,7 +3641,7 @@ public sealed partial class BatchGatePilotService
 
     private bool EngineDecisionPending(string occurrenceKey)
     {
-        var orchestration = _services?.GetService<MonolithOrchestrationStore>();
+        var orchestration = Service<MonolithOrchestrationStore>();
         var run = orchestration?.GetByIdempotencyKey(occurrenceKey);
         return run is not null && orchestration!.GetOccurrence(run.RunId) is { Shadow: false }
             && run.Status is "pending" or "leased" or "applying";
@@ -3688,7 +3694,7 @@ public sealed partial class BatchGatePilotService
         var mode = MonolithTransitionSwitch.For(_configuration, "GateResult");
         if (EngineDecisionPending(outcome.OccurrenceKey)) return true;
         if (mode == OrchestrationExecutionMode.Monolith) return false;
-        var orchestration = _services?.GetService<MonolithOrchestrationStore>()
+        var orchestration = Service<MonolithOrchestrationStore>()
             ?? throw new InvalidOperationException("The orchestration authority is unavailable.");
         // A retry after promotion must not inherit the shadow occurrence. The
         // engine applier never claims shadow runs, so that would hold the card.
@@ -3755,7 +3761,7 @@ public sealed partial class BatchGatePilotService
 
     private (MonolithOrchestrationStore Store, string RunId)? BatchShadowOccurrence(string occurrenceKey)
     {
-        var orchestration = _services?.GetService<MonolithOrchestrationStore>();
+        var orchestration = Service<MonolithOrchestrationStore>();
         var run = orchestration?.GetByIdempotencyKey(occurrenceKey);
         return run is null || orchestration!.GetOccurrence(run.RunId) is not { Shadow: true }
             ? null : (orchestration, run.RunId);
@@ -4096,6 +4102,8 @@ public sealed class BatchGatePilotHostedService : BackgroundService
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        // AGT-3755: a flight that ends now must not start a tick on a stopping host.
+        _pilot.BeginShutdown();
         try { await _pilot.WaitForFlightsAsync(includeFallbacks: true, cancellationToken).ConfigureAwait(false); }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
