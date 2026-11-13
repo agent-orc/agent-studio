@@ -79,18 +79,29 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
     /// The result commit itself is not an ancestor, yet the delivery is integrated.
     /// </summary>
     public static bool CarriesNetChangePublication(TaskInfo job, string branch, GitService? git)
+        => PublishedDelivery(job, branch, git) is { } context
+           && CarriesNetChangePublication(job, branch, git!, context);
+
+    private static bool CarriesNetChangePublication(TaskInfo job, string branch, GitService git,
+        (string Repo, string Delivery, string Published) context)
     {
-        if (job.State != TaskStates.Completed || git is null) return false;
-        var delivery = CurrentDeliverySha(job);
-        if (!ReviewSubjectStore.IsValidResultSha(delivery)) return false;
-        var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
-        if (repo is null) return false;
-        var published = git.GetBranchTip(repo, $"refs/remotes/origin/{branch}");
-        if (published is null) return false;
         var record = IntegrationVerificationStore.Read(job.FolderPath);
         return record is not null && IntegrationVerificationProjection.CarriesVerifiedDelivery(
-            record, branch, delivery, sha => git.IsAncestor(repo, sha, published),
-            sha => git.GetNetChangeSource(repo, sha));
+            record, branch, context.Delivery, sha => git.IsAncestor(context.Repo, sha, context.Published),
+            sha => git.GetNetChangeSource(context.Repo, sha));
+    }
+
+    /// <summary>State, delivery, repository and published tip shared by the carried-delivery checks.</summary>
+    private static (string Repo, string Delivery, string Published)? PublishedDelivery(
+        TaskInfo job, string branch, GitService? git)
+    {
+        if (job.State != TaskStates.Completed || git is null) return null;
+        var delivery = CurrentDeliverySha(job);
+        if (!ReviewSubjectStore.IsValidResultSha(delivery)) return null;
+        var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (repo is null) return null;
+        var published = git.GetBranchTip(repo, $"refs/remotes/origin/{branch}");
+        return published is null ? null : (repo, delivery!, published);
     }
 
     /// <summary>
@@ -98,28 +109,28 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
     /// delivery the published branch carries, by ancestry or as a net-change
     /// publication. The case is logged; the card stays Completed.
     /// </summary>
-    public static bool KeepCompletedAfterRecoveryMerge(TaskInfo job, string branch, string? failureCode,
+    private static bool KeepCompletedAfterRecoveryMerge(TaskInfo job, string branch, string? failureCode,
         GitService? git, ILogger logger)
     {
-        if (job.State != TaskStates.Completed || git is null) return false;
-        var delivery = CurrentDeliverySha(job);
-        if (!ReviewSubjectStore.IsValidResultSha(delivery)) return false;
-        var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
-        if (repo is null) return false;
-        var published = git.GetBranchTip(repo, $"refs/remotes/origin/{branch}");
-        if (published is null) return false;
-        var carriedBy = git.IsAncestor(repo, delivery!, published) ? "ancestry"
-            : CarriesNetChangePublication(job, branch, git) ? "net-change publication" : null;
+        if (PublishedDelivery(job, branch, git) is not { } context) return false;
+        var carriedBy = git!.IsAncestor(context.Repo, context.Delivery, context.Published) ? "ancestry"
+            : CarriesNetChangePublication(job, branch, git, context) ? "net-change publication" : null;
         if (carriedBy is null) return false;
         logger.LogWarning(
             "Recovery merge for completed {JobId} failed ({FailureCode}), but {Branch} carries delivery {DeliverySha} by {CarriedBy}; the card stays Completed",
-            job.Id, failureCode, branch, delivery, carriedBy);
+            job.Id, failureCode, branch, context.Delivery, carriedBy);
         return true;
     }
 
+    /// <summary>
+    /// The single keep-Completed decision after a failed acceptance integration.
+    /// <paramref name="recoveryMerge"/> marks a backstop recovery merge, which
+    /// additionally keeps a card whose delivery the published branch carries.
+    /// </summary>
     public static bool KeepCompleted(TaskInfo job, string branch, string? failureCode, GitService? git,
-        AgentMessageBusBridge? bus, ILogger logger)
+        AgentMessageBusBridge? bus, ILogger logger, bool recoveryMerge = false)
     {
+        if (recoveryMerge && KeepCompletedAfterRecoveryMerge(job, branch, failureCode, git, logger)) return true;
         if (job.State != TaskStates.Completed || git is null ||
             failureCode is not (AcceptedIntegrationFailureCodes.BranchSyncFailed or
                 AcceptedIntegrationFailureCodes.GitCredentialUnavailable or

@@ -154,8 +154,9 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                     ClearPendingTag(job);
                 }
                 else if (result.VerificationPending
-                         || !AcceptedIntegrationPublishedDeliveryGuard.KeepCompletedAfterRecoveryMerge(
-                             job, branch, AcceptedIntegrationFailureCodes.For(result), _git, _logger))
+                         || !AcceptedIntegrationPublishedDeliveryGuard.KeepCompleted(
+                             job, branch, AcceptedIntegrationFailureCodes.For(result), _git, _bus, _logger,
+                             recoveryMerge: true))
                 {
                     ReturnTransactionalAcceptToReview(
                         job,
