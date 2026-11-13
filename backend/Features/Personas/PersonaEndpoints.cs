@@ -17,6 +17,7 @@ public static class PersonaEndpoints
     public static void MapPersonaEndpoints(this WebApplication app)
     {
         var personas = app.MapGroup("/api/workspaces/{id}/personas");
+        PersonaManagerEndpoints.Map(personas);
 
         personas.MapGet("/items", (string id, PersonaItemStore items) => Results.Ok(items.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
@@ -38,26 +39,6 @@ public static class PersonaEndpoints
             })).RequirePermission(IamPermissions.WorkspaceAdminister);
         personas.MapGet("/reports", (string id, PersonaReportStore reports) => Results.Ok(reports.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
-        personas.MapGet("/manager-actions", (string id, PersonaManagerService managers) =>
-            Results.Ok(managers.List(id))).RequirePermission(IamPermissions.WorkspaceRead);
-        personas.MapPost("/manager-actions/{receiptId}/undo", async (string id, string receiptId,
-            HttpContext context, AccessSecurityStore security, PersonaManagerService managers) =>
-            {
-                try
-                {
-                    var owner = AccessSecurityEndpoints.RequireHuman(context, security);
-                    return Results.Ok(await managers.UndoAsync(id, receiptId, owner, context.RequestAborted));
-                }
-                catch (SecurityOperationException ex)
-                {
-                    return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status);
-                }
-                catch (PersonaManagerRefusal ex)
-                {
-                    return Results.Conflict(new { error = ex.Code });
-                }
-            }).RequirePermission(IamPermissions.WorkspaceAdminister);
-
         app.MapPost("/api/runner/personas/claim", async (HttpContext context,
             PersonaLeaseClaimRequest request, PersonaOccurrenceService occurrences, CancellationToken ct) =>
         {
