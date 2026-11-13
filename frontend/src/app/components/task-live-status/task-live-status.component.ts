@@ -10,6 +10,10 @@ import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
 import { openReviewLossHost, reviewLossHeadline, type ReviewLossHeadline } from './review-loss-headline';
 import { BatchGateService } from '../../services/batch-gate.service';
+import { batchMemberFor } from '../../models/batch-gate.model';
+import { batchAction, humanReviewAction, nextForHold, nextForTask, postProcessingWait,
+  type CauseHold } from './task-live-next';
+import { perTaskGateFor, perTaskGateView } from './task-live-per-task-gate';
 import {
   activityDetail, cliLabel, clock, dependencyWaitHeadline, elapsed, holdHeadline, idleHeadline, latestActivityAt, stepPrefix, timestamp,
 } from './task-live-status.util';
@@ -32,11 +36,6 @@ interface LiveStatusView {
   hold?: CauseHold;
 }
 
-interface CauseHold {
-  causeKey: string;
-  summary: string;
-}
-
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
 @Component({
@@ -57,10 +56,14 @@ export class TaskLiveStatusComponent {
   private readonly errors = inject(ErrorDialogService);
   private readonly batchGate = inject(BatchGateService);
   readonly switchingToAuto = signal(false);
-  readonly hasRecordedAttempt = computed(() => {
+  private readonly batchMember = computed(() => {
     const task = this.task();
-    return !!(task.liveStatus?.activeStep || task.execution || task.runActivity || task.runner);
+    if (task.state !== TaskState.AutoReview) return null;
+    return batchMemberFor(this.batchGate.state(task.projectName)(),
+      task.taskKey, task.key, task.displayKey, task.id);
   });
+  readonly hasRecordedAttempt = computed(() => (({ liveStatus, execution, runActivity, runner }) =>
+    !!(liveStatus?.activeStep || execution || runActivity || runner))(this.task()));
 
   constructor() {
     effect(onCleanup => {
@@ -95,27 +98,17 @@ export class TaskLiveStatusComponent {
     const task = this.task();
     const status = task.liveStatus;
     const causeHeld = causeHold(task);
-    const perTask = this.batchGate.state(task.projectName)()?.perTaskGates?.find(gate =>
-      gate.taskKey === task.taskKey || gate.taskKey === task.key || gate.taskKey === task.id);
-    if (perTask && task.state === TaskState.AutoReview) {
-      const started = timestamp(perTask.startedAtUtc);
-      const handoff = perTask.batchId
-        ? `batch ${perTask.batchId} paused: ${perTask.reason.replace(/^batch [^ ]+ paused:\s*/, '')}`
-        : perTask.reason;
-      return {
-        tone: perTask.running ? 'active' : 'waiting',
-        headline: perTask.running
-          ? `Per-task gate running on ${perTask.host || 'gate host'}${started === null ? '' : ` since ${clock(started)}`}`
-          : `Per-task gate queued (${perTask.position} of ${perTask.total}) after ${handoff}`,
-        detail: perTask.running ? 'Red escalates; green integrates.' : 'One full suite per member. Red escalates; green integrates.',
-        next: [],
-        attempt: status?.attempt ?? null,
-        perTaskGate: true,
-      };
+    const perTask = perTaskGateFor(this.batchGate.state(task.projectName)(), task);
+    if (perTask && task.state === TaskState.AutoReview) return { ...perTaskGateView(perTask), attempt: status?.attempt ?? null };
+    if (!status) {
+      if (causeHeld) return holdView(task, causeHeld, null, nextForHold(causeHeld), this.now());
+      return task.state === TaskState.HumanReview || task.state === TaskState.Escalated
+        ? humanReviewView(task)
+        : null;
     }
-    if (!status) return causeHeld ? holdView(task, causeHeld, null, [], this.now()) : null;
 
-    const next = (status.nextSteps ?? []).slice(0, 3).map(step => step.displayName);
+    const batchWorkflow = batchAction(this.batchMember());
+    const next = nextForTask(task, status, causeHeld, batchWorkflow);
     const active = status.activeStep;
     if (active) {
       const startedAt = timestamp(active.startedAt);
@@ -218,6 +211,18 @@ export class TaskLiveStatusComponent {
         attempt: status.attempt,
       };
     }
+
+    const wait = postProcessingWait(task, status.queue, batchWorkflow);
+    if (wait?.kind === 'batch') {
+      return {
+        tone: 'waiting',
+        headline: `Waiting for ${wait.action.toLowerCase()}`,
+        detail: activityDetail(task, status.latestEventAt, this.now()),
+        next: [wait.action],
+        attempt: status.attempt,
+      };
+    }
+
     // AGT-3579: the runner recorded why it is not picking this card (mode,
     // slots, quota defer, load throttle, provider limit). The sentence is the
     // runner's own; the headline names the reason the lane header counts.
@@ -244,11 +249,12 @@ export class TaskLiveStatusComponent {
     if (status.queue) {
       const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner'
         : status.queue.state === 'integration' ? 'Waiting for delivery integration' : 'Waiting for review slot';
-      const headline = status.queue.position != null
+      const workflowWait = wait?.kind === 'workflow' && status.queue.state !== 'integration' ? wait.action : null;
+      const headline = workflowWait ? `Waiting for ${workflowWait.toLowerCase()}` : (status.queue.position != null
         ? `${queuedHeadline} · position ${status.queue.position}`
         : status.queue.reason
           ? `${queuedHeadline} · ${status.queue.reason}`
-          : queuedHeadline;
+          : queuedHeadline);
       return {
         tone: 'waiting',
         headline,
@@ -334,5 +340,16 @@ function holdView(task: TaskInfo, hold: CauseHold, attempt: number | null, next:
     next,
     attempt,
     hold,
+  };
+}
+
+function humanReviewView(task: TaskInfo): LiveStatusView {
+  const action = humanReviewAction(task);
+  return {
+    tone: 'waiting',
+    headline: action === 'Delivery integration' ? 'Waiting for delivery integration' : 'Waiting for owner review',
+    detail: null,
+    next: [action],
+    attempt: null,
   };
 }

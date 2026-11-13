@@ -2207,7 +2207,7 @@ describe('TaskCardComponent — waits-on dependency chip (AGT-2029)', () => {
     expect(current.textContent).not.toContain('runner slot');
     expect(fixture.nativeElement.querySelector('[data-testid="task-card-waiting-on"]')).toBeNull();
     expect(fixture.nativeElement.querySelector('[data-testid="task-live-next"]')?.textContent)
-      .toContain('Agent execution');
+      .toContain('Dependency resolution → Runner pickup');
   });
 
   it('renders a cycle chip when the dependency graph is cyclic', async () => {
