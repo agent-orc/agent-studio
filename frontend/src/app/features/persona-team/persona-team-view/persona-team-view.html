@@ -1,0 +1,94 @@
+<main class="team-view" [attr.data-testid]="personaId() ? 'persona-page' : 'team-page'">
+  <header class="team-header">
+    <div>
+      @if (personaId()) { <button type="button" class="team-link" (click)="open(null)">← Team</button> }
+      <p class="team-kicker">Workspace personas</p>
+      <h1>{{ current()?.title ?? 'Team' }}</h1>
+      @if (current(); as person) { <p>{{ person.activation?.roleId ? roleLabel(person.activation!.roleId!) : roleLabel(person.aspect) }} · {{ person.id }}</p> }
+    </div>
+    <div class="team-actions">
+      @if (!personaId()) {
+        <label>Workspace <select data-testid="team-workspace" [value]="workspaceId()" (change)="selectWorkspace($any($event.target).value)">
+          @for (workspace of workspaces(); track workspace.id) { <option [value]="workspace.id">{{ workspace.displayName }}</option> }
+        </select></label>
+        <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label>
+        <button type="button" [appPendingButton]="busy() === 'Renew team grants'" [disabled]="!!busy()" (click)="action('renew-grants', 'Renew team grants', undefined, true)">Renew team grants</button>
+        <button type="button" [appPendingButton]="busy() === 'Stop all personas'" [disabled]="!!busy()" (click)="stopAll()" data-testid="team-stop-all">Stop all personas</button>
+        <button type="button" class="team-primary" (click)="tab.set('charter')" data-testid="team-activate">Activate persona</button>
+      } @else if (current(); as person) {
+        <button type="button" (click)="ask()">Ask</button>
+        <button type="button" [disabled]="!!busy()" (click)="change(person, 'run-now')">Run now</button>
+        @if (person.activation?.state === 'paused') { <button type="button" [disabled]="!!busy()" (click)="change(person, 'resume')">Resume</button> }
+        @else { <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'pause')">Pause</button> }
+        <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'deactivate')">Deactivate</button>
+      }
+    </div>
+  </header>
+  @if (loading()) { <app-loading-surface kind="list" label="Loading team…" /> }
+  @if (error()) { <p class="team-error" role="alert">{{ error() }} <button type="button" (click)="load()">Retry</button></p> }
+  @if (!personaId()) {
+    <section class="team-pool" aria-label="Weekly persona pool">
+      <div><span>Used</span><strong data-testid="team-used">{{ totals().used | number }}</strong></div>
+      <div><span>Allocated</span><strong data-testid="team-allocated">{{ totals().allocated | number }}</strong></div>
+      <div><span>Unallocated</span><strong data-testid="team-unallocated">{{ totals().unallocated | number }}</strong></div>
+      <div><span>Workspace pool limit</span><strong data-testid="team-pool">{{ totals().pool | number }}</strong></div>
+    </section>
+    @if (tab() === 'charter') {
+      <section class="team-catalogue"><h2>Activate a persona</h2><p>Activation requires an Owner step-up. Enter a verification code or use your passkey.</p><label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label>
+        @for (entry of entries(); track entry.id) {
+          @if (!entry.activation || entry.activation.state === 'inactive') {
+            <div class="team-row"><div><strong>{{ entry.title }}</strong><small>{{ roleLabel(entry.aspect) }} · {{ entry.descriptor.charter }}</small></div>
+              <button type="button" [disabled]="!!busy()" (click)="change(entry, 'activate')">Activate</button></div>
+          }
+        }
+        <button type="button" (click)="tab.set('feed')">Close</button>
+      </section>
+    }
+    @for (group of roleGroups(); track group.role) {
+      <section class="team-group"><h2>{{ roleLabel(group.role) }}</h2><div class="team-grid">
+        @for (card of group.cards; track card.entry.id) {
+          <article class="team-card" [class.team-card--critical]="card.highest !== null && card.highest >= 90" [attr.data-testid]="'team-card-' + card.entry.id">
+            <div class="team-card-heading"><button type="button" class="team-card-title" (click)="open(card.entry.id)">{{ card.entry.title }}</button>
+              <app-status-indicator [tone]="card.entry.activation?.state === 'active' ? 'success' : card.entry.activation?.state === 'shadow' ? 'info' : 'neutral'" [label]="card.entry.activation?.state ?? 'inactive'" /></div>
+            <p class="team-role">{{ card.entry.id }} · Rank: Probation</p>
+            <div class="team-meter-label"><span>Allowance</span><strong>{{ card.used | number }} / {{ card.allowance | number }}</strong></div>
+            <div class="team-meter" role="meter" [attr.aria-valuenow]="card.used" [attr.aria-valuemax]="card.allowance" aria-valuemin="0" aria-label="Weekly allowance"><span [style.width.%]="percent(card.used, card.allowance)"></span></div>
+            <dl><dt>Last report</dt><dd>{{ card.report ? (card.report.publishedAtUtc | date:'mediumDate') : 'None yet' }}</dd>
+              <dt>Reporting</dt><dd>{{ card.overdue ? 'Overdue' : 'On schedule' }}</dd>
+              <dt>Highest open</dt><dd [class.team-acute]="card.highest !== null && card.highest >= 90">{{ card.highest ?? 'None' }}</dd></dl>
+          </article>
+        }
+      </div></section>
+    }
+    @if (!loading() && cards().length === 0) { <p class="team-message">No personas are active in this workspace.</p> }
+  } @else if (current(); as person) {
+    <nav class="team-tabs" aria-label="Persona sections">
+      <app-segmented-control [options]="tabOptions" [value]="tab()" ariaLabel="Persona sections" (valueChange)="tab.set($event)" />
+    </nav>
+    @switch (tab()) {
+      @case ('feed') {
+        <div class="team-filters"><label>Sort <select [value]="sort()" (change)="sort.set($any($event.target).value)"><option value="importance">Importance</option><option value="time">Newest</option></select></label>
+          <label>Kind <select [value]="kind()" (change)="kind.set($any($event.target).value)"><option value="all">All</option><option value="finding">Findings</option><option value="proposal">Proposals</option><option value="decision-request">Decisions</option><option value="report-line">Report lines</option></select></label>
+          <label>State <select [value]="state()" (change)="state.set($any($event.target).value)"><option value="open">Open</option><option value="all">All</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option></select></label></div>
+        <div class="team-list">@for (item of feed(); track item.id) {
+          <article class="team-item" [class.team-item--critical]="isOpenPersonaItem(item) && item.importance >= 90">
+            <span class="team-importance">{{ item.importance }}</span><div><h2>{{ item.title }}</h2><p>{{ item.body }}</p><small>{{ item.kind }} · {{ item.state }} · Impact {{ item.impact }} · Urgency {{ item.urgency }} · Confidence {{ item.confidence }} · Floor {{ item.floor }}</small></div>
+            @if (item.kind === 'finding' && isOpenPersonaItem(item)) { <button type="button" [disabled]="!!busy()" (click)="decide(item, 'resolved')">Resolve</button> }
+          </article>
+        } @empty { <p class="team-message">No matching items.</p> }</div>
+      }
+      @case ('reports') { <div class="team-list">@for (report of personaReports(); track report.id) {
+        <article class="team-row"><div><h2>{{ report.template }} · {{ report.publishedAtUtc | date:'medium' }}</h2><p>{{ report.state }} · {{ report.reason }}</p><small>Sources read: {{ report.sourcesRead.join(', ') || 'None' }} · Missing: {{ report.sourcesMissing.join(', ') || 'None' }}</small></div></article>
+      } @empty { <p class="team-message">No reports yet.</p> }</div> }
+      @case ('proposals') { <div class="team-list">@for (item of proposals(); track item.id) {
+        <article class="team-row"><div><h2>{{ item.title }}</h2><p>{{ item.body }}</p><small>{{ item.state }} · Importance {{ item.importance }}</small></div>
+          <div class="team-actions"><button type="button" [disabled]="!!busy() || item.state !== 'draft'" (click)="decide(item, 'accepted')">Accept</button><button type="button" [disabled]="!!busy() || item.state !== 'draft'" (click)="decide(item, 'rejected')">Reject</button><button type="button" [disabled]="!!busy() || item.state !== 'draft'" (click)="decide(item, 'deferred')">Defer</button></div></article>
+      } @empty { <p class="team-message">No proposals yet.</p> }</div> }
+      @case ('budget') { <section class="team-pool"><div><span>Used this week</span><strong>{{ currentCard()?.used ?? 0 | number }}</strong></div><div><span>Allowance</span><strong>{{ currentCard()?.allowance ?? 0 | number }}</strong></div><div><span>Team pool</span><strong>{{ totals().pool | number }}</strong></div></section> }
+      @case ('charter') { <section class="team-charter"><h2>Charter</h2><p>{{ person.descriptor.charter }}</p><p>Role: {{ person.activation?.roleId || person.id }} · Revision: {{ person.activation?.descriptorRevision || person.revision }}</p>
+        @if (person.adoptableRevision) { <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label><button type="button" [disabled]="!!busy()" (click)="change(person, 'adopt')">Adopt revision {{ person.adoptableRevision }}</button> }
+        <h2>Revision history</h2><ul>@for (event of person.activation?.history ?? []; track $index) { <li>{{ event.at | date:'medium' }} · {{ event.action }} · {{ event.descriptorRevision }}</li> }</ul></section> }
+      @case ('history') { <div class="team-list">@for (event of person.activation?.history ?? []; track $index) { <div class="team-row"><span>{{ event.at | date:'medium' }}</span><strong>{{ event.action }}</strong><span>{{ event.state }}</span></div> } @empty { <p class="team-message">No history yet.</p> }</div> }
+    }
+  } @else if (!loading()) { <p class="team-message">Persona not found in this workspace.</p> }
+</main>

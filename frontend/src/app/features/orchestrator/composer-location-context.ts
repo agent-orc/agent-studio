@@ -188,6 +188,8 @@ export function buildComposerLocationContext(
       return { project: null, surface: 'Deployment dashboard' };
     case 'structure':
       return { project: null, surface: 'Structure' };
+    case 'team':
+      return { project: null, surface: 'Team', ...(tab.personaId ? { detail: tab.personaId, referenceKey: `persona:${tab.personaId}` } : {}) };
     case 'welcome':
       return { project: null, surface: 'Welcome' };
   }

@@ -26,7 +26,8 @@ export type StudioRoute =
   | { kind: 'task'; reference: string; tab: TaskDetailRouteTab; inspector: TaskInspectorRouteTab }
   | { kind: 'workspace-settings'; section: string; detail: string | null }
   | { kind: 'deployment-dashboard' }
-  | { kind: 'structure'; projectSlug?: string };
+  | { kind: 'structure'; projectSlug?: string }
+  | { kind: 'team'; personaId: string | null };
 
 /**
  * Parse the single canonical Studio route from the shared hash segment model.
@@ -61,6 +62,8 @@ export function parseStudioRoute(hash: string): StudioRoute | null {
   if (segments.length === 2 && segments[0] === 'workspace' && segments[1] === 'deployments') {
     return { kind: 'deployment-dashboard' };
   }
+  if (segments[0] === 'workspace' && segments[1] === 'team' && segments.length <= 3)
+    return { kind: 'team', personaId: segments[2] ?? null };
   if (segments.join('/') === 'workspace/operations/structure') return { kind: 'structure' };
   if (segments.length === 4 && segments[0] === 'projects' && segments[2] === 'operations' && segments[3] === 'structure')
     return { kind: 'structure', projectSlug: segments[1] };
@@ -140,6 +143,8 @@ export function studioRouteForTab(
       return null;
     case 'deployment-dashboard':
       return '/workspace/deployments';
+    case 'team':
+      return tab.personaId ? `/workspace/team/${encodeURIComponent(tab.personaId)}` : '/workspace/team';
     case 'structure':
       return tab.projectName ? `/projects/${studioProjectSlug(tab.projectName)}/operations/structure` : '/workspace/operations/structure';
     default:

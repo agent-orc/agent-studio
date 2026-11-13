@@ -148,6 +148,29 @@ public sealed class PersonaItemStore
         }
     }
 
+    public PersonaItemV1 Decide(string workspaceId, string itemId, string outcome, DateTime now)
+    {
+        lock (_gate)
+        {
+            var items = Load(workspaceId);
+            var index = items.FindIndex(item => item.Id == itemId);
+            if (index < 0) throw new KeyNotFoundException("Persona item not found.");
+            var current = items[index];
+            if (current.State is not ("open" or "draft" or "deferred"))
+                throw new InvalidOperationException("The persona item is already decided.");
+            if (current.Kind == PersonaItemKinds.Proposal
+                ? outcome is not ("accepted" or "rejected" or "deferred")
+                : outcome != "resolved")
+                throw new ArgumentException("This outcome does not apply to the item.");
+            var updated = current with { State = outcome, UpdatedAtUtc = now,
+                History = [.. current.History, new PersonaItemChangeV1(now, current.Importance,
+                    current.Importance, "owner-" + outcome, "owner-decision")] };
+            items[index] = updated;
+            Save(workspaceId, items);
+            return updated;
+        }
+    }
+
     public IReadOnlyList<PersonaItemV1> RecomputeOpen(string workspaceId, DateTime now)
     {
         lock (_gate)

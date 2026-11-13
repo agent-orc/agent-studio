@@ -14,6 +14,15 @@ namespace AgentStudio.Personas;
 /// <summary>Collects existing facts for the Watcher's persona admission step.</summary>
 public sealed class PersonaSweepCoordinator
 {
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PersonaTrigger> _manualRuns = new();
+
+    public bool RequestRun(string workspaceId, string personaId, DateTime now)
+    {
+        var activation = _activations.List(workspaceId).Personas.FirstOrDefault(p => p.Id == personaId)?.Activation;
+        if (activation is not { State: PersonaStates.Active or PersonaStates.Shadow }) return false;
+        _manualRuns[workspaceId + ":" + personaId] = new PersonaTrigger(now, "manual.run", "run-now:" + Guid.NewGuid().ToString("N"));
+        return true;
+    }
     private readonly PersonaActivationStore _activations;
     private readonly PersonaSchedulingService _scheduling;
     private readonly WorkspaceRegistry _workspaces;
@@ -89,6 +98,7 @@ public sealed class PersonaSweepCoordinator
                             o.Details["personaFact"], AgentStudio.Watcher.WatcherFingerprint.Compute(o),
                             o.Severity is "Critical" ? 90 : 0)));
                 }
+                if (_manualRuns.TryGetValue(workspace.Id + ":" + a.PersonaId, out var manual)) rows.Add(manual);
                 return (IReadOnlyList<PersonaTrigger>)rows;
             }, StringComparer.Ordinal);
             var zoneId = _workspaceSettings.Get(workspace.Id).UsageTimeZone;
@@ -124,6 +134,8 @@ public sealed class PersonaSweepCoordinator
                         _security.HasLivePersonaGrant(workspace.Id, activation.PersonaId),
                         route.Result.ShouldLaunch);
                 }, zone));
+            foreach (var activation in activations)
+                _manualRuns.TryRemove(workspace.Id + ":" + activation.PersonaId, out _);
         }
         return result;
     }
