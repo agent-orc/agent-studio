@@ -60,7 +60,7 @@ public sealed class PersonaActivationStoreTests : IDisposable
     }
 
     [Fact]
-    public void Activation_with_a_step_up_records_revision_digest_and_shadow_for_one_report_period()
+    public void Activation_with_a_step_up_records_revision_digest_and_warden_shadow_for_two_weeks()
     {
         var store = Store();
         var catalogue = new PersonaCatalogue().Find(Warden)!;
@@ -76,7 +76,7 @@ public sealed class PersonaActivationStoreTests : IDisposable
         Assert.Equal((PersonaStates.Shadow, PersonaSources.Catalogue, 1), (activation.State, activation.Source, activation.ActivationRevision));
         Assert.Equal(("2026.11.1", catalogue.Digest), (activation.DescriptorRevision, activation.DescriptorDigest));
         Assert.Equal(catalogue.Digest, PersonaDescriptorDigest.Compute(activation.Descriptor));
-        Assert.Equal((Now, Now.AddDays(1), _ownerId), (activation.ActivatedAt, activation.ShadowUntil, activation.ActivatedBy));
+        Assert.Equal((Now, Now.AddDays(14), _ownerId), (activation.ActivatedAt, activation.ShadowUntil, activation.ActivatedBy));
         Assert.Equal((5, 20, "A1"), (activation.Attributes.Thoroughness, activation.Attributes.SignalThreshold, activation.Attributes.Autonomy));
         Assert.Equal((100_000, 10), (activation.Allowance.TokensPerWeek, activation.Allowance.SessionsPerWeek));
         Assert.Equal(new PersonaScopeV1(["alpha"], ["operations.backups", "audit.chain"], ["docs/"]), activation.Scope,
@@ -95,9 +95,9 @@ public sealed class PersonaActivationStoreTests : IDisposable
         Assert.Equal(("persona.activate", $"persona:{Workspace}/{Warden}", $"human:{_ownerId}"), (audit.Operation, audit.Target, audit.Actor));
         Assert.True(_security.ControlPlaneAudit.VerifyChain().Ok);
 
-        // The record survives a restart, and the shadow period ends after one report period.
+        // The record survives a restart, and the warden shadow period ends after two weeks.
         var restarted = Store();
-        _clock.Advance(TimeSpan.FromDays(1) - TimeSpan.FromSeconds(1));
+        _clock.Advance(TimeSpan.FromDays(14) - TimeSpan.FromSeconds(1));
         Assert.Equal(PersonaStates.Shadow, Entry(restarted, Warden).Activation!.State);
         _clock.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(PersonaStates.Active, Entry(restarted, Warden).Activation!.State);

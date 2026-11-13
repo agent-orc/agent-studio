@@ -79,6 +79,8 @@ public static class PersonaFingerprint
 {
     public static string Compute(PersonaItemDraftV1 draft, PersonaGroundsV1? grounds = null)
     {
+        if (draft.FingerprintKey.StartsWith("ops:", StringComparison.Ordinal))
+            return draft.FingerprintKey;
         var caseFingerprint = grounds?.Sources.FirstOrDefault(source =>
             source.Kind == "watcher-case" && source.Fingerprint is not null &&
             draft.Evidence.Any(e => e.Ref == source.Ref))?.Fingerprint;
