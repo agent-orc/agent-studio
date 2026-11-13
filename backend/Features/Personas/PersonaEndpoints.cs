@@ -63,6 +63,22 @@ public static class PersonaEndpoints
             AccessSecurityEndpoints.Execute(() => issues.Get(id, issueId) is { } issue
                 ? Results.Text(WeeklyIssueHtml.Render(issue), "text/html; charset=utf-8")
                 : Results.NotFound())).RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/decks", (string id, PresenterDeckService decks) =>
+            Results.Ok(decks.List(id))).RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/decks/{deckId}", (string id, string deckId, PresenterDeckService decks) =>
+            AccessSecurityEndpoints.Execute(() => decks.Get(id, deckId) is { } deck
+                ? Results.Ok(deck) : Results.NotFound())).RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/decks/{deckId}/export", (string id, string deckId, string? audience,
+            string? format, PresenterDeckService decks) => AccessSecurityEndpoints.Execute(() =>
+        {
+            if (decks.Get(id, deckId) is not { } deck) return Results.NotFound();
+            if (audience is not null and not ("owner" or "stakeholder") ||
+                format is not null and not ("html" or "pdf"))
+                return Results.BadRequest(new { error = "deck-export-invalid", message = "Choose a known audience and format." });
+            if (audience == "stakeholder") deck = PresenterDeckAudience.Stakeholder(deck);
+            return format == "pdf" ? Results.File(PresenterDeckExport.Pdf(deck), "application/pdf", deck.Id + ".pdf")
+                : Results.Text(PresenterDeckExport.Html(deck), "text/html; charset=utf-8");
+        })).RequirePermission(IamPermissions.WorkspaceRead);
         personas.MapPost("/issues/compose", async (string id, bool? daily, HttpContext context,
             AccessSecurityStore security, WeeklyIssueService issues, CancellationToken ct) =>
         {
