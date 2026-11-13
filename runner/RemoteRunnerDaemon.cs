@@ -501,6 +501,7 @@ public sealed class RemoteRunnerDaemon
         var interactiveChat = new InteractiveChatAdmission(_options, _client, _log);
         var interactivePoll = interactiveChat.PollAsync(auxiliaryStop.Token);
         var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
+        var personaPoll = new PersonaLeaseRunner(_options, _client, _log).PollAsync(auxiliaryStop.Token);
         var oneShotPoll = new OneShotJobAdmission(_options, _client, _log, route: _oneShotClaimRoute).PollAsync(auxiliaryStop.Token);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
             new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log).PollAsync(auxiliaryStop.Token);
@@ -1057,6 +1058,7 @@ public sealed class RemoteRunnerDaemon
             await Task.WhenAll(codingHandoffs);
         await interactivePoll;
         await decisionPoll;
+        await personaPoll;
         await oneShotPoll;
         await repositoryProbePoll;
         await gitSetupPoll;

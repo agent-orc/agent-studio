@@ -3,6 +3,30 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+## Persona occurrences, PT-4
+
+PT-D4, PT-D5 and PT-D8 use the Dossier's recommended option B. The Watcher
+sweep admits an occurrence through PT-3's workspace-week ledger. A runner host
+claims its fenced persona lease, receives a bounded `PersonaGroundsV1` pack and
+runs one read-only digest call. The grounds pack contains only in-scope project
+references, Watcher cases, cards and prior item outcomes; it is capped at
+12,000 input tokens. Completion validates every reference and scope before
+writing a completed or failed receipt. Valid items enter the application-owned
+persona item store, then the Agent Message Bus as `Persona` messages. The
+importance service owns factor scoring, confidence caps, floors and urgency
+history. Admission refusals publish an immutable stub report with coverage,
+budget use and open items plus typed fact floors without a model call. The
+persona instance id and role id remain separate in the lease,
+receipt, item and bus participant.
+Weekly investigation leases require thoroughness 4 or 5, one in-scope local
+repository checkout and a 15-minute cap. The runner clones into a fresh
+read-only directory, exposes only read tools, disables MCP with a strict empty
+configuration, and removes runner and deploy credential variables. A missing
+local repository ends the lease with a failed receipt.
+Standalone Task Server runner hosts use `RUNNER_POST_MERGE_STATE_URL` as the Studio
+API authority for persona claim and completion, with the same service identity
+used by the existing post-merge state read. Hosts without that route wait.
+
 Review host load per core divides the host load average by the host CPU count.
 The review role's cgroup quota is a separate capacity limit and is never used
 as the denominator for host load. A known load or slot-capacity hold keeps a

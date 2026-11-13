@@ -143,6 +143,9 @@ builder.Services.AddSingleton<DecisionRuleVersionStore>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaCatalogue>(_ => new AgentStudio.Personas.PersonaCatalogue());
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaActivationStore>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaSchedulingService>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaItemStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaReportStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaOccurrenceService>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaSweepCoordinator>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddSingleton<ReviewInputDecisionGateway>();
@@ -1834,6 +1837,7 @@ if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
         var studioDecisionPath = (HttpMethods.IsGet(context.Request.Method)
                 && path.StartsWithSegments("/api/orchestration/decision-receipts"))
             || path.StartsWithSegments("/api/runner/orchestrator-decisions")
+            || path.StartsWithSegments("/api/runner/personas")
             || segments is ["api", "workspaces", _, "decision-rules", ..];
         if (context.Request.Path.StartsWithSegments("/api")
             && !context.Request.Path.StartsWithSegments("/api/v1")

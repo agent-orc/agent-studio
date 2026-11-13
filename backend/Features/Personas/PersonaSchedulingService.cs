@@ -8,8 +8,10 @@ public sealed record PersonaTrigger(DateTime At, string Type, string Ref, int Fl
 public static class PersonaOccurrenceStates
 {
     public const string Admitted = "admitted";
+    public const string Claimed = "claimed";
     public const string Waiting = "waiting";
     public const string Completed = "completed";
+    public const string Failed = "failed";
 }
 
 /// <summary>One durable admission or no-call receipt. PT-4 fills the usage when the session ends.</summary>
@@ -22,6 +24,17 @@ public sealed record PersonaOccurrenceReceipt(
 {
     public long Tokens => WorkspaceQuotaPolicy.ModelTokens(InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens);
     public IReadOnlyList<PersonaNoCallAttempt> NoCalls { get; init; } = [];
+    public string? ClaimToken { get; init; }
+    public DateTime? ClaimedAtUtc { get; init; }
+    public string? GroundsDigest { get; init; }
+    public string? DescriptorDigest { get; init; }
+    public string? Model { get; init; }
+    public string? ActualModel { get; init; }
+    public string? SessionId { get; init; }
+    public DateTime? FinishedAtUtc { get; init; }
+    public double? CostUsd { get; init; }
+    public string PriceStatus { get; init; } = "unknown";
+    public IReadOnlyDictionary<string, int> FactFloors { get; init; } = new Dictionary<string, int>();
 }
 
 public sealed record PersonaNoCallAttempt(DateTime AtUtc, string Reason);
@@ -68,7 +81,7 @@ public sealed class PersonaSchedulingService
         {
             var ids = _root is null || !Directory.Exists(_root) ? []
                 : Directory.GetFiles(_root, "*.json").Select(Path.GetFileNameWithoutExtension).ToArray();
-            return ids.Concat(_states.Keys).Distinct(StringComparer.Ordinal).SelectMany(id => Load(id).Receipts)
+            return ids.OfType<string>().Concat(_states.Keys).Distinct(StringComparer.Ordinal).SelectMany(id => Load(id).Receipts)
                 .Where(r => r.State == PersonaOccurrenceStates.Completed && r.Tokens > 0
                     && string.Equals(r.Project, project, StringComparison.OrdinalIgnoreCase)).ToArray();
         }
@@ -105,6 +118,27 @@ public sealed class PersonaSchedulingService
             var state = Load(workspaceId);
             var receipts = state.Receipts.ToList();
             var changed = new List<PersonaOccurrenceReceipt>();
+            for (var n = 0; n < receipts.Count; n++)
+            {
+                var claimed = receipts[n];
+                if (claimed.State == PersonaOccurrenceStates.Admitted &&
+                    claimed.CreatedAtUtc.AddMinutes(30) <= now)
+                {
+                    receipts[n] = claimed with { State = PersonaOccurrenceStates.Failed,
+                        Reason = "runner-lease-unclaimed",
+                        NoCalls = [.. claimed.NoCalls,
+                            new PersonaNoCallAttempt(now, "runner-lease-unclaimed")] };
+                    changed.Add(receipts[n]);
+                    continue;
+                }
+                if (claimed.State != PersonaOccurrenceStates.Claimed || claimed.ClaimedAtUtc is null ||
+                    claimed.ClaimedAtUtc.Value.AddMinutes(
+                        claimed.TriggerRefs.Contains("investigation", StringComparer.Ordinal) ? 15 : 5) > now)
+                    continue;
+                receipts[n] = claimed with { State = PersonaOccurrenceStates.Failed,
+                    Reason = "persona-lease-expired" };
+                changed.Add(receipts[n]);
+            }
             foreach (var activation in activations.Where(a => a.State is PersonaStates.Active or PersonaStates.Shadow))
             {
                 var due = Due(activation, now, triggers.GetValueOrDefault(activation.PersonaId) ?? [],
@@ -118,14 +152,22 @@ public sealed class PersonaSchedulingService
                 foreach (var (windowEnd, refs) in due)
                 {
                     var key = Key(workspaceId, activation.PersonaId, windowEnd, activation.DescriptorRevision);
+                    var floors = (triggers.GetValueOrDefault(activation.PersonaId) ?? [])
+                        .Where(t => refs.Contains(t.Ref) && t.Floor >= 70)
+                        .GroupBy(t => t.Ref, StringComparer.Ordinal)
+                        .ToDictionary(g => g.Key, g => g.Max(t => t.Floor), StringComparer.Ordinal);
                     var existing = receipts.FindIndex(r => r.Key == key);
                     if (existing >= 0)
                     {
                         var joined = receipts[existing].TriggerRefs.Concat(refs)
                             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
                         var current = receipts[existing];
-                        var updated = joined.SequenceEqual(current.TriggerRefs)
-                            ? current : current with { TriggerRefs = joined };
+                        var mergedFloors = current.FactFloors.Concat(floors)
+                            .GroupBy(pair => pair.Key, StringComparer.Ordinal)
+                            .ToDictionary(g => g.Key, g => g.Max(pair => pair.Value), StringComparer.Ordinal);
+                        var updated = joined.SequenceEqual(current.TriggerRefs) && mergedFloors.Count == current.FactFloors.Count
+                            && mergedFloors.All(pair => current.FactFloors.GetValueOrDefault(pair.Key) == pair.Value)
+                            ? current : current with { TriggerRefs = joined, FactFloors = mergedFloors };
                         if (current.State == PersonaOccurrenceStates.Waiting)
                         {
                             var retryBudget = BudgetLocked(state with { Receipts = receipts }, now, workspaceLimit, activations);
@@ -158,6 +200,8 @@ public sealed class PersonaSchedulingService
                         reason, refs, host)
                     {
                         NoCalls = reason is null ? [] : [new PersonaNoCallAttempt(now, reason)],
+                        FactFloors = floors,
+                        DescriptorDigest = activation.DescriptorDigest,
                     };
                     receipts.Add(receipt);
                     changed.Add(receipt);
@@ -171,7 +215,7 @@ public sealed class PersonaSchedulingService
     private static PersonaAdmissionFacts Available(PersonaAdmissionFacts raw,
         IReadOnlyList<PersonaOccurrenceReceipt> receipts, DateTime now)
     {
-        var occupied = receipts.Where(r => r.State == PersonaOccurrenceStates.Admitted
+        var occupied = receipts.Where(r => r.State is PersonaOccurrenceStates.Admitted or PersonaOccurrenceStates.Claimed
             && r.CreatedAtUtc.AddMinutes(30) > now).Select(r => r.HostId).ToHashSet();
         return raw with { IdleHostIds = raw.IdleHostIds.Where(id => !occupied.Contains(id)).ToArray() };
     }
@@ -187,13 +231,62 @@ public sealed class PersonaSchedulingService
             var state = Load(workspaceId);
             var current = state.Receipts.Single(r => r.Key == key);
             if (current.State == PersonaOccurrenceStates.Completed) return current;
-            if (current.State != PersonaOccurrenceStates.Admitted)
+            if (current.State is not (PersonaOccurrenceStates.Admitted or PersonaOccurrenceStates.Claimed))
                 throw new InvalidOperationException("Only an admitted occurrence can consume tokens.");
             var completed = current with { State = PersonaOccurrenceStates.Completed,
                 InputTokens = input, OutputTokens = output, CacheReadTokens = cacheRead,
                 CacheWriteTokens = cacheWrite, Project = project };
             Save(workspaceId, state with { Receipts = state.Receipts.Select(r => r.Key == key ? completed : r).ToList() });
             return completed;
+        }
+    }
+
+    public PersonaOccurrenceReceipt? Claim(string workspaceId, string key, string hostId, DateTime now,
+        string groundsDigest, string model)
+    {
+        lock (_gate)
+        {
+            var state = Load(workspaceId);
+            var current = state.Receipts.FirstOrDefault(r => r.Key == key);
+            if (current is null || current.State != PersonaOccurrenceStates.Admitted || current.HostId != hostId
+                || current.CreatedAtUtc.AddMinutes(30) <= now) return null;
+            var claimed = current with { State = PersonaOccurrenceStates.Claimed,
+                ClaimToken = Guid.NewGuid().ToString("N"), ClaimedAtUtc = now,
+                GroundsDigest = groundsDigest, Model = model };
+            Save(workspaceId, state with { Receipts = state.Receipts.Select(r => r.Key == key ? claimed : r).ToArray() });
+            return claimed;
+        }
+    }
+
+    public PersonaOccurrenceReceipt? Finish(string workspaceId, string key, string hostId,
+        string claimToken, bool success, string? reason, long input, long output, string? project,
+        string? actualModel = null, long cacheRead = 0, long cacheWrite = 0)
+    {
+        lock (_gate)
+        {
+            var state = Load(workspaceId);
+            var current = state.Receipts.FirstOrDefault(r => r.Key == key);
+            if (current is null || current.State != PersonaOccurrenceStates.Claimed
+                || current.HostId != hostId || current.ClaimToken != claimToken) return null;
+            var finished = current with { State = success ? PersonaOccurrenceStates.Completed : PersonaOccurrenceStates.Failed,
+                Reason = reason, InputTokens = Math.Max(0, input), OutputTokens = Math.Max(0, output),
+                CacheReadTokens = Math.Max(0, cacheRead), CacheWriteTokens = Math.Max(0, cacheWrite),
+                Project = project, ActualModel = actualModel, FinishedAtUtc = DateTime.UtcNow };
+            Save(workspaceId, state with { Receipts = state.Receipts.Select(r => r.Key == key ? finished : r).ToArray() });
+            return finished;
+        }
+    }
+
+    public void BindSession(string workspaceId, string key, string claimToken, string sessionId)
+    {
+        lock (_gate)
+        {
+            var state = Load(workspaceId);
+            var current = state.Receipts.Single(r => r.Key == key);
+            if (current.State != PersonaOccurrenceStates.Claimed || current.ClaimToken != claimToken)
+                throw new InvalidOperationException("Persona lease changed before session binding.");
+            Save(workspaceId, state with { Receipts = state.Receipts.Select(r => r.Key == key
+                ? current with { SessionId = sessionId } : r).ToArray() });
         }
     }
 
@@ -211,7 +304,7 @@ public sealed class PersonaSchedulingService
         if (budget.UsedTokens >= budget.PoolTokens) return "persona-pool-exhausted";
         if (budget.UsedSessions >= budget.Personas.Values.Sum(x => x.AllowanceSessions))
             return "persona-pool-sessions-exhausted";
-        var open = receipts.Where(r => r.State == PersonaOccurrenceStates.Admitted
+        var open = receipts.Where(r => r.State is PersonaOccurrenceStates.Admitted or PersonaOccurrenceStates.Claimed
             && r.CreatedAtUtc.AddMinutes(activation.Allowance.MinutesPerSession) > now).ToList();
         if (open.Any(r => r.PersonaId == activation.PersonaId)) return "persona-occurrence-open";
         if (open.Count >= maxOpen) return "workspace-occurrences-full";
@@ -233,7 +326,7 @@ public sealed class PersonaSchedulingService
         {
             var rows = week.Where(r => r.PersonaId == a.PersonaId).ToList();
             return new PersonaBudgetPersona(a.State == PersonaStates.Inactive ? 0 : a.Allowance.TokensPerWeek,
-                a.State == PersonaStates.Inactive ? 0 : a.Allowance.SessionsPerWeek,
+                a.State == PersonaStates.Inactive ? 0 : a.Allowance.SessionsPerWeek + (a.Allowance.InvestigationsPerWeek ?? 0),
                 rows.Sum(r => r.Tokens), rows.Count(r => r.State != PersonaOccurrenceStates.Waiting));
         }, StringComparer.Ordinal);
         return new(start, end, pool, week.Sum(r => r.Tokens),
@@ -259,6 +352,14 @@ public sealed class PersonaSchedulingService
             var scheduledUtc = TimeZoneInfo.ConvertTimeToUtc(scheduledLocal, timeZone);
             if (scheduledUtc >= activation.ActivatedAt)
                 windows[scheduledUtc] = new HashSet<string>(["cadence"], StringComparer.Ordinal);
+        }
+        if (activation.Attributes.Thoroughness >= 4 &&
+            activation.Allowance.InvestigationsPerWeek is > 0 &&
+            cadence.Investigation == "P7D" && elapsed >= 0 && elapsed % 7 == 0)
+        {
+            var investigationUtc = TimeZoneInfo.ConvertTimeToUtc(scheduledLocal, timeZone).AddSeconds(1);
+            if (investigationUtc <= now && investigationUtc >= activation.ActivatedAt)
+                windows[investigationUtc] = new HashSet<string>(["investigation"], StringComparer.Ordinal);
         }
         foreach (var trigger in triggers.Where(t => t.At >= activation.ActivatedAt && t.At <= now
             && activation.Descriptor.Triggers.Contains(t.Type, StringComparer.Ordinal)))

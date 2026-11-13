@@ -1366,6 +1366,39 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         }
     }
 
+    public async Task<PersonaLeaseWire?> ClaimPersonaAsync(string runnerId, CancellationToken ct)
+    {
+        var path = "/api/runner/personas/claim";
+        var url = _useV1 ? _options?.PostMergeStateUrl is { } studio ? studio + path : null : path;
+        if (url is null) return null;
+        try
+        {
+            return await PostJsonAsync<object, PersonaLeaseWire>(url,
+                new { runnerId }, ct);
+        }
+        catch (TaskServerException ex) when (ex.StatusCode == (int)HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    public async Task<bool> CompletePersonaAsync(PersonaLeaseCompletionWire completion, CancellationToken ct)
+    {
+        var path = "/api/runner/personas/complete";
+        var url = _useV1 ? _options?.PostMergeStateUrl is { } studio ? studio + path : null : path;
+        if (url is null) return false;
+        try
+        {
+            _ = await PostJsonAsync<PersonaLeaseCompletionWire, object>(url,
+                completion, ct);
+            return true;
+        }
+        catch (TaskServerException ex) when (ex.StatusCode is 409 or 422)
+        {
+            return false;
+        }
+    }
+
     public async Task<RemoteChatWorkClaimResponse> ClaimProjectChatWorkAsync(
         RemoteChatWorkClaimRequest request,
         CancellationToken ct)

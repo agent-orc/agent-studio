@@ -1186,6 +1186,8 @@ public sealed class AccessSecurityMiddleware
         if (path.StartsWith("/api/runner/lease", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/orchestrator-decisions/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/orchestrator-decisions/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/personas/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/personas/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/logs", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Logs;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
         if (HttpMethods.IsPost(method) && path.Equals("/api/model-selection/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
