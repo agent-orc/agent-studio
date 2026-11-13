@@ -31,6 +31,9 @@ export interface TriageActionPayload {
   /** Display label, used by the parent for confirmation toasts. */
   label: string;
   intent: TriageActionIntent;
+  reissueInstructions?: { findings: string[]; note: string };
+  operatorOverride?: boolean;
+  reason?: string;
 }
 
 export type TriageButtonVariant = 'primary' | 'secondary' | 'danger';
@@ -111,7 +114,7 @@ export const LANE_ACTIONS: Record<string, TriageButton[]> = {
   ],
   [TaskState.Escalated]: [
     { id: 'reissue-escalated',        label: 'Continue (reissue)',      variant: 'primary',   intent: { kind: 'move', targetState: TaskState.Ready } },
-    { id: 'accept-escalated',         label: 'Accept as-is',            variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Completed } },
+    { id: 'accept-escalated',         label: 'Accept with reason',      variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Completed } },
     { id: 'manual-resolve-escalated', label: 'Resolve manually',        variant: 'secondary', intent: { kind: 'move', targetState: TaskState.HumanReview } },
     { id: 'discard-escalated',        label: 'Abort',                   variant: 'danger',    intent: { kind: 'move', targetState: TaskState.Archive } },
   ],
@@ -266,6 +269,29 @@ export function laneActionsFor(state: string): TriageButton[] {
   return LANE_ACTIONS[state] ?? [];
 }
 
+/**
+ * Integration failure codes whose remedy is server checkout setup, not another
+ * coding attempt. Read from the structured failure, never from message text.
+ */
+const SERVER_CHECKOUT_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'server-checkout-missing',
+  'repository-root-unavailable',
+]);
+
+export function isServerCheckoutFailure(code: string | null | undefined): boolean {
+  return !!code && SERVER_CHECKOUT_FAILURE_CODES.has(code);
+}
+
+export function taskNeedsServerCheckout(info: TaskInfo): boolean {
+  return isServerCheckoutFailure(info.integration?.failure?.code);
+}
+
+/** Lane primary for one task; drops Reissue while the server checkout is missing. */
+export function primaryActionForTask(info: TaskInfo): TriageButton | null {
+  const action = primaryActionFor(info.state);
+  return action?.id === 'reissue-escalated' && taskNeedsServerCheckout(info) ? null : action;
+}
+
 export function laneLabelFor(state: string): string {
   return laneName(state);
 }
@@ -310,6 +336,15 @@ export function mergeAcceptViewFor(
   info: TaskInfo,
   landedStateHint: LandedState | null = null,
 ): MergeAcceptView {
+  if (!acceptanceRequiresIntegration(info)) {
+    return {
+      landed: false,
+      landedState: 'on-branch-only',
+      acceptLabel: 'Accept',
+      statusLabel: null,
+      statusTooltip: `Accept moves the card to ${laneName(TaskState.Completed)}.`,
+    };
+  }
   // Match the card merge-signal contract: only an attributed task commit is a
   // mergeable deliverable. A branch/base without one is a planning, docs,
   // results-only, or no-op outcome, even when its base is in the git graph.
@@ -364,6 +399,11 @@ export function mergeAcceptViewFor(
       ? `This task's work is already merged into develop at ${mergeSha}. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`
       : `This task's work is already merged into develop. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`,
   };
+}
+
+/** Concept and explicitly branch-free cards can be accepted without delivery integration. */
+export function acceptanceRequiresIntegration(info: TaskInfo): boolean {
+  return info.mode !== 'concept' && info.requiresIntegration !== false;
 }
 
 /** Owner-facing reason while the Human Review action is held. */

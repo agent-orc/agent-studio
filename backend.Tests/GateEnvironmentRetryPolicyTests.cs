@@ -303,6 +303,34 @@ public sealed class GateEnvironmentRetryPolicyTests
         Assert.Equal(GateEnvironmentRetryAction.Park, result.Action);
     }
 
+    /// <summary>
+    /// AGT-3695: a publication the lane lost is replayed by the same bounded
+    /// ladder and the operator's Retry integration; other push refusals are not.
+    /// </summary>
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void A_publication_the_lane_lost_takes_the_ladder_and_other_push_refusals_do_not(
+        bool replayAvailable, bool eligible)
+    {
+        var status = new TaskIntegrationStatus
+        {
+            Status = IntegrationStatuses.ConflictSkipped,
+            IntegrationBranch = "develop",
+            Failure = new TaskIntegrationFailure
+            {
+                Code = AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
+                Reason = "Publication stopped.",
+                ReplayAvailable = replayAvailable,
+            },
+        };
+
+        Assert.Equal(eligible, GateEnvironmentRetryFactsReader.IsGateEnvironmentFailure(status));
+        Assert.Equal(eligible ? GateEnvironmentRetryAction.Retry : GateEnvironmentRetryAction.Ignore,
+            DecideFacts(Task(TaskStates.AutoReview), status, true, 0, null, Failed,
+                GateEnvironmentRetryOptions.Default, Failed.AddMinutes(5)).Action);
+    }
+
     [Theory]
     [InlineData("Integration branch 'main' could not be fetched from origin: fatal: could not read Username for 'https://github.com': terminal prompts disabled")]
     [InlineData("Integration branch 'main' could not be fetched from origin: fatal: unable to access 'https://github.com/owner/private.git/': The requested URL returned error: 403")]

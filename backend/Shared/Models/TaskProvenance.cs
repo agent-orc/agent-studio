@@ -359,6 +359,13 @@ public sealed record TaskIntegrationVerification
     /// <summary>Why the card is verified or unverified. Tooltip and audit only.</summary>
     public string? Reason { get; init; }
 
+    /// <summary>
+    /// AGT-3753 - the first later first-parent commit no gate source counts,
+    /// as short SHA and subject, when acceptance turned a verified delivery
+    /// into unverified. <see cref="Reason"/> says why each source did not count it.
+    /// </summary>
+    public string? UncoveredPublication { get; init; }
+
     /// <summary>Later server document-key commits inspected as gate-neutral at acceptance.</summary>
     public IReadOnlyList<string> GateNeutralCommits { get; init; } = [];
 }
@@ -418,6 +425,12 @@ public sealed record TaskIntegrationFailure
     public string? Stage { get; init; }
     public string? EvidenceExcerpt { get; init; }
     public bool RebaseRecoveryAvailable { get; init; }
+
+    /// <summary>
+    /// AGT-3695: only the publication is missing; Retry integration replays the
+    /// unchanged delivery SHA without a new review round.
+    /// </summary>
+    public bool ReplayAvailable { get; init; }
 
     /// <summary>
     /// AGT-2749: whether the shared taxonomy attributes this failure to the

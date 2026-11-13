@@ -1,4 +1,6 @@
 import { GitHubAppService } from './features/github-app/github-app.service';
+import { ShellAccessService } from './services/shell-access.service';
+import { ProjectLookupService } from './services/project-lookup.service';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -12,17 +14,16 @@ import {
   ViewChild,
   ViewEncapsulation,
   OnDestroy,
+  afterEveryRender,
+  DestroyRef,
 } from '@angular/core';
 import { forkJoin } from 'rxjs';
-import { FormsModule } from '@angular/forms';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
   DossierGroupBoardComponent,
-  FiltersDropdownComponent,
   TaskColumnComponent,
   KanbanFilterSidesheetComponent, TagFiltersComponent, TagChipsComponent,
   LaneCollapseService,
-  ProjectTabsComponent,
   TypeFilterOption,
   BoardDragStateService,
   BoardMutationsService,
@@ -37,7 +38,7 @@ import {
   projectAutoInfo,
   projectRunnerIndicator,
 } from './features/board';
-import { CreateTaskDialogComponent } from './features/board/lazy';
+import { CreateTaskDialogComponent, FiltersDropdownComponent, ProjectTabsComponent } from './features/board/lazy';
 import {
   TaskDetailComponent,
   DetailLoadErrorComponent,
@@ -48,8 +49,9 @@ import {
   TriageController,
   LanePagerService,
   overflowActionsFor,
-  primaryActionFor,
+  primaryActionForTask,
   mergeAcceptViewFor,
+  acceptanceRequiresIntegration,
   acceptanceHoldReason,
   triageDecisionRefusal,
   triageDecisionRowState,
@@ -69,8 +71,7 @@ import {
   type ProjectRailKey,
 } from './features/project-detail/runtime';
 import {
-  AutoReviewIndicatorComponent,
-  StatusBarComponent, StatusBarUsageHostComponent, AccountControlComponent,
+  StatusBarComponent, AccountControlComponent,
   UiPreferencesService,
   WorkspaceBannerComponent,
   WorkspaceManagerService,
@@ -79,18 +80,20 @@ import {
   FirstRunLaunchService,
   type WorkspaceSettingsSection,
 } from './features/shell';
-import { WorkspaceCreateDialogComponent, OnboardProjectDialogComponent } from './features/shell/lazy';
+import {
+  AutoReviewIndicatorComponent,
+  OnboardProjectDialogComponent,
+  StatusBarUsageHostComponent,
+  WorkspaceCreateDialogComponent,
+} from './features/shell/lazy';
 import {
   buildDevtoolsMenuItems,
   DEVTOOLS_MENU_IDS,
 } from './features/dev-tools';
 import { E2ECleanupDialogComponent, TagManagerDialogComponent } from './features/dev-tools/lazy';
-import {
-  UpdateBlockModalComponent,
-  UpdateCenterComponent,
-  UpdateVersionBadgeComponent,
-} from './features/update';
-import { VerboseDebugOverlayComponent } from './features/verbose-debug/lazy';
+import { UpdateBlockModalComponent } from './features/update';
+import { UpdateCenterComponent, UpdateVersionBadgeComponent } from './features/update/lazy';
+import { VerboseDebugHostComponent, type VerboseDebugContext } from './features/verbose-debug/lazy';
 import {
   StudioShellComponent, TaskDefaultsControlComponent,
   StudioTabActionsComponent,
@@ -133,6 +136,7 @@ import { NotificationStackComponent } from './components/app-dialog/notification
 import { MediaLightboxComponent } from './components/media-lightbox/media-lightbox.component';
 import { MediaLightboxService } from './services/media-lightbox.service';
 import { OfflineBannerComponent } from './components/offline-banner/offline-banner.component';
+import { RecoverySignInNoticeComponent } from './components/recovery-sign-in-notice/recovery-sign-in-notice.component';
 import { PublicDemoBannerComponent } from './components/public-demo-banner/public-demo-banner.component';
 import { UpdateClientService } from './services/update.service';
 import { UpdateNotificationBridge } from './services/update-notification-bridge.service';
@@ -145,27 +149,19 @@ import { DevToolsService } from './services/dev-tools.service';
 import { FeatureFlagsService } from './services/feature-flags.service';
 import { TaskCompletionSoundService } from './services/task-completion-sound.service';
 import { TagRegistryStore } from './services/tag-registry.store';
+import { ReviewerSession } from './services/reviewer-session.service';
 import { CliCatalogStore } from './features/cli';
-import type { CliOutputLine } from './models/task.model';
-import type { RunTimeline } from './features/run-timeline';
 import type { TaskScreenshot } from './features/screenshots';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
-import { CostBreakdownService, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
+import { CostBreakdownService } from './features/tokens';
 import { CostBreakdownDialogComponent } from './features/tokens/lazy';
 import { LoadingSurfaceComponent } from './components/async-feedback';
-import { AuthGateComponent } from './components/auth-gate/auth-gate';
 import { AuthService } from './services/auth.service';
+import { AuthGateComponent } from './components/auth-gate/auth-gate';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
-interface VerboseDebugContext {
-  lines: CliOutputLine[];
-  runTimeline: RunTimeline | null;
-  screenshots: TaskScreenshot[];
-  tokenSummary: TaskTokenSummary | null;
-  job: TaskInfo | null;
-}
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -185,7 +181,6 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     ProjectOverlaysComponent,
     AutoReviewIndicatorComponent,
     StatusBarComponent, StatusBarUsageHostComponent, AccountControlComponent,
-    FormsModule,
     CreateTaskDialogComponent,
     DossierGroupBoardComponent,
     ErrorDialogComponent,
@@ -194,6 +189,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     MediaLightboxComponent,
     OfflineBannerComponent,
     PublicDemoBannerComponent,
+    RecoverySignInNoticeComponent,
     ProjectTabsComponent,
     E2ECleanupDialogComponent,
     TagManagerDialogComponent,
@@ -203,7 +199,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     UpdateVersionBadgeComponent,
     UpdateCenterComponent,
     UpdateBlockModalComponent,
-    VerboseDebugOverlayComponent,
+    VerboseDebugHostComponent,
     FiltersDropdownComponent,
     KanbanFilterSidesheetComponent, ActiveBoardFiltersComponent, TagFiltersComponent, TagChipsComponent,
     TooltipDirective,
@@ -238,10 +234,13 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   styleUrl: './app.scss',
 })
 export class App implements OnInit, OnDestroy {
+  readonly shellAccess = inject(ShellAccessService);
+  private readonly projectLookup = inject(ProjectLookupService);
   private readonly firstRunLaunch = inject(FirstRunLaunchService);
   private readonly gitHubApp = inject(GitHubAppService);
   readonly auth = inject(AuthService); private studioInitialized = false;
   readonly jobService = inject(TaskService);
+  private readonly reviewerSession = inject(ReviewerSession);
   readonly errorDialog = inject(ErrorDialogService);
   /** Drives the deferred confirm dialog mount; both dialogs stay out of the initial bundle. */
   readonly confirmDialog = inject(ConfirmDialogService);
@@ -401,6 +400,7 @@ export class App implements OnInit, OnDestroy {
   private hashListener: (() => void) | null = null;
   private kanbanKeyListener: ((ev: KeyboardEvent) => void) | null = null;
   readonly watchPaths = signal<WatchPathEntry[]>([]);
+  readonly watchPathsLoaded = signal(false);
   /**
    * Cycle 9 / ADR-0034: search query, four faceted filters, URL hash +
    * query-param round-trip, and `filteredGrouped` derivation all live
@@ -512,7 +512,14 @@ export class App implements OnInit, OnDestroy {
   }
 
   readonly projectNames = computed(() => {
-    return this.watchPaths().map((wp) => wp.name);
+    return !this.shellAccess.operator()
+      ? this.projectLookup.allProjects().map(project => project.displayName)
+      : this.watchPaths().map((wp) => wp.name);
+  });
+  readonly noProjectAccess = computed(() => {
+    const status = this.auth.status();
+    return status?.profile === 'networked' && status.authenticated && status.user?.role !== 'owner'
+      && (status.user?.projects.length === 0 || (this.watchPathsLoaded() && this.projectNames().length === 0));
   });
 
   // Cycle 9 / ADR-0034: filter signals + URL sync delegated to BoardFiltersService.
@@ -792,8 +799,32 @@ export class App implements OnInit, OnDestroy {
    * Cleared automatically after one animation cycle.
    */
   readonly justCreatedJobId = signal<string | null>(null);
+  private readonly destroyRef = inject(DestroyRef);
+  private detailPrefetchScheduled = false;
 
   constructor() {
+    // The deferred detail view can download after the board has painted. Keep
+    // its first-use network work out of the board's critical rendering path.
+    afterEveryRender(() => {
+      if (this.detailPrefetchScheduled || !document.querySelector('[data-testid="task-card"]')) return;
+      this.detailPrefetchScheduled = true;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.destroyRef.destroyed) return;
+        const preload = () => {
+          if (!this.destroyRef.destroyed) void import('./features/task-detail/task-detail');
+        };
+        if ('requestIdleCallback' in window) window.requestIdleCallback(preload, { timeout: 1000 });
+        else setTimeout(preload, 0);
+      }));
+    });
+    effect(() => {
+      if (this.shellAccess.operator() || !this.projectLookup.loaded()) return;
+      this.watchPaths.set(this.projectLookup.allProjects().map(project => ({
+        name: project.displayName,
+        path: project.storageLocation,
+        rootPath: project.rootPath ?? project.storageLocation,
+      })));
+    });
     effect(() => {
       const allowed = this.auth.studioAllowed();
       const statusKnown = this.auth.status() !== null;
@@ -1088,16 +1119,16 @@ export class App implements OnInit, OnDestroy {
   ngOnInit() { this.auth.initialize(); }
   private initializeStudio(): void {
     if (this.studioInitialized) return; this.studioInitialized = true;
-    this.orchestratorFeedStore.start();
+    if (this.shellAccess.operator()) this.orchestratorFeedStore.start();
     // Backlog-lane spec: hydrate the filter bar from the URL hash before
     // rendering so a bookmark or copy-paste lands on the same view.
     this.boardFilters.hydrateFromUrl();
-    this.loadTagRegistry();
+    if (this.shellAccess.operator()) this.loadTagRegistry();
     // ADR-0046: pre-fetch every CLI's model catalog at boot so the
     // chat-model badge, status-bar picker, and create dialog can render
     // their model lists synchronously instead of paying a round-trip on
     // first open.
-    this.cliCatalogStore.hydrateAll();
+    if (this.shellAccess.operator()) this.cliCatalogStore.hydrateAll();
     // 1-Hz wall-clock tick for the lane status RUNNING pill's elapsed
     // string. Light enough to leave running without gating - the only
     // consumer is the lane column's statusCluster computed.
@@ -1105,10 +1136,12 @@ export class App implements OnInit, OnDestroy {
     this.refresh();
     this.jobService.startLiveUpdates();
     this.projectHubUrls.start();
-    this.loadWatchPaths(false);
-    this.jobService.refreshRunnerStatus();
-    this.devTools.loadFlags();
-    this.clientService.refresh();
+    if (this.shellAccess.operator()) {
+      this.loadWatchPaths(false);
+      this.jobService.refreshRunnerStatus();
+      this.devTools.loadFlags();
+      this.clientService.refresh();
+    }
     this.jobSelection.restoreFromUrl();
 
     // Reconcile settings deep links with editor tabs.
@@ -1234,13 +1267,19 @@ export class App implements OnInit, OnDestroy {
   // <app-detail-header>, so the cluster needs its own seat there). All
   // actions route through the same TriageController paths as the kanban
   // panel; this is purely a second render site.
+  // AGT-3670: a Reviewer holds no lane move, edit, or delete; the overview's
+  // review panel carries its one decision.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
-    return sel ? primaryActionFor(sel.info.state) : null;
+    return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
+      && !this.reviewerSession.reviewsOnly(sel.info.projectName)
+      ? primaryActionForTask(sel.info) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
-    return sel ? overflowActionsFor(sel.info.state) : [];
+    return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
+      && !this.reviewerSession.reviewsOnly(sel.info.projectName)
+      ? overflowActionsFor(sel.info.state) : [];
   });
   /**
    * State-dependent presentation for the studio Human Review acceptance primary
@@ -1269,12 +1308,14 @@ export class App implements OnInit, OnDestroy {
   readonly studioPrimaryAwaitingGit = computed(() => {
     const p = this.studioTriagePrimary();
     if (!p || p.id !== 'mark-done') return false;
+    if (!acceptanceRequiresIntegration(this.selectedJob()!.info)) return false;
     const status = this.selectedJob()?.info.integration?.status;
     if (status === 'integrated' || status === 'not-applicable') return false;
     return this.jobDetailSig()?.gitInfoLoading() ?? false;
   });
   readonly studioPrimaryBlockedByIntegration = computed(() => {
     if (this.studioTriagePrimary()?.id !== 'mark-done') return false;
+    if (!acceptanceRequiresIntegration(this.selectedJob()!.info)) return false;
     const status = this.selectedJob()?.info.integration?.status;
     return status !== 'integrated' && status !== 'not-applicable';
   });
@@ -1399,6 +1440,7 @@ export class App implements OnInit, OnDestroy {
 
   private dispatchStudioTriage(info: TaskInfo, button: TriageButton): void {
     const id = button.id;
+    if (id === 'reissue-escalated' || id === 'accept-escalated') return this.jobDetailRef?.onTriageAction({ id, label: button.label, intent: button.intent });
     switch (button.intent.kind) {
       case 'move':
         this.onTriageMove(info, { targetState: button.intent.targetState, actionId: id });
@@ -1505,6 +1547,7 @@ export class App implements OnInit, OnDestroy {
     this.jobService.getWatchPaths().subscribe({
       next: (entries) => {
         this.watchPaths.set(entries);
+        this.watchPathsLoaded.set(true);
         if (entries.length > 0) this.createJobForm.newWatchPath = entries[0].path;
 
         // Purge stale project names that survived a registry rename / delete in
@@ -1909,6 +1952,9 @@ export class App implements OnInit, OnDestroy {
             ? `/projects/${studioProjectSlug(projectName)}/workbenches`
             : '/workbenches');
         }
+        break;
+      case 'team':
+        this.studioTabState.open({ kind: 'team', personaId: route.personaId });
         break;
       case 'deployment-dashboard':
         this.studioTabState.open({ kind: 'deployment-dashboard' });

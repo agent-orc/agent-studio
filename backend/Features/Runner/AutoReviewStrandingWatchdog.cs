@@ -22,6 +22,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     private readonly StallInterventionReceipts _receipts;
     private readonly IConfiguration _configuration;
     private readonly RemoteDeliveryIntegrationCoordinator? _integration;
+    private readonly V1ReviewExecutorRegistry? _reviewExecutors;
     private readonly ILogger<AutoReviewStrandingWatchdog> _logger;
     private readonly TimeProvider _time;
 
@@ -32,7 +33,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         AutoReviewDeliveryResumeService resume, HumanReviewEscalation escalation,
         StallInterventionStore records, StallInterventionReceipts receipts, IConfiguration configuration,
         ILogger<AutoReviewStrandingWatchdog> logger,
-        RemoteDeliveryIntegrationCoordinator? integration = null, TimeProvider? time = null)
+        RemoteDeliveryIntegrationCoordinator? integration = null,
+        V1ReviewExecutorRegistry? reviewExecutors = null, TimeProvider? time = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -49,6 +51,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         _receipts = receipts;
         _configuration = configuration;
         _integration = integration;
+        _reviewExecutors = reviewExecutors;
         _logger = logger;
         _time = time ?? TimeProvider.System;
     }
@@ -61,6 +64,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         var threshold = TimeSpan.FromMinutes(Math.Clamp(
             _configuration.GetValue<int?>("AutoReviewStranding:ThresholdMinutes") ?? 30, 1, 1440));
         var now = _time.GetUtcNow().UtcDateTime;
+        var reviewHostHold = TaskLiveStatusProjection.ReviewHostHold(
+            _reviewExecutors?.LatestReviewHostTelemetry(now));
         var pending = _batches.ListPending();
         var manifests = _batches.ListManifests();
         var activeBatchMembers = manifests
@@ -80,6 +85,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 var projection = _authority.GetTaskProjection(key);
                 var run = projection.CurrentRunAttempt;
                 var currentReview = ReviewForCurrentDelivery(projection.CurrentReviewAttempt, run);
+                var hostCapacityHeld = (_queue.PositionOf(card.ProjectName, card.Id) is not null
+                        || _queue.WaitStateOf(card.ProjectName, card.Id) is not null
+                        || currentReview is { State: AttemptLifecycleState.Pending or AttemptLifecycleState.Leased })
+                    && reviewHostHold is not null;
                 var writePrefix = $"auto-review-stranding:{card.ProjectName}:{key}:{card.EnteredLaneAt.Ticks}:";
                 var previous = interventions.Where(item => item.WriteKey.StartsWith(writePrefix, StringComparison.Ordinal)
                     && item.Status == StallInterventionStatuses.Verified).ToArray();
@@ -96,7 +105,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     { State: AttemptLifecycleState.Failed, Outcome: ReviewTerminalOutcome.InfrastructureFailure };
                 var facts = new AutoReviewStrandingFacts(withoutOwner, threshold,
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
-                        || IntegrationGateJournal.Read(card.FolderPath) is not null,
+                        || IntegrationGateJournal.Read(card.FolderPath) is not null
+                        || card.Phase == LifecyclePhases.Integrating,
                     currentReview?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased,
                     pending.Any(item => IsPendingForDelivery(item, card.ProjectName, key,
                         run, currentReview?.AttemptId))
@@ -119,7 +129,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     CauseWaitMarker.TryRead(card.FolderPath, _logger) is not null,
                     infraFailure,
                     infraFailure && _authority.HasReviewInfrastructureRetryBudget(currentReview!.AttemptId),
-                    infraFailure && _authority.HasScheduledReviewInfrastructureRetry(currentReview!.AttemptId));
+                    infraFailure && _authority.HasScheduledReviewInfrastructureRetry(currentReview!.AttemptId),
+                    hostCapacityHeld);
                 var action = MonolithTransitionAdapter.AutoReviewStranding(facts);
                 var route = new AutoReviewBatchRouteFacts(
                     currentReview?.Subject.Plan?.BuildTestDeferredToBatch == true,
@@ -148,12 +159,15 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     if (IsBatchMember(_batches, card.ProjectName, key, run, currentReview?.AttemptId)) continue;
                     var parked = await _escalation.EscalateAsync(card.Id, card.WatchPath,
                         card.ProjectName, HumanReviewEscalationCategories.Environmental,
-                        $"Auto Review had no active owner for {facts.WithoutOwner.TotalMinutes:0} minutes. {detail}",
-                        ct, expectedSourceState: TaskStates.AutoReview);
+                        HumanReviewEscalation.FormatReason(HumanReviewEscalationCategories.Environmental,
+                            ParkReason(facts, run, currentReview, detail)),
+                        ct, expectedSourceState: TaskStates.AutoReview,
+                        parkDetail: HumanReviewEscalationCategories.AutoReviewStranded);
                     done = parked.Status == MoveJobStatus.Success;
                     escalated = done;
                 }
-                interventions.Add(Publish(card, writeKey, action, done, escalated, detail, now, reviewMode));
+                interventions.Add(Publish(card, writeKey, action, done, escalated, detail, now,
+                    reviewMode, run, currentReview));
                 count++;
             }
             catch (Exception ex)
@@ -286,13 +300,36 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         }
         return (false, false, review is { Outcome: ReviewTerminalOutcome.InfrastructureFailure }
             ? $"Infrastructure retry limit reached. {ReviewFailureDetail(review)}"
-            : "There is no completed delivery or review step to recover.");
+            : TaskModes.IsReportOnly(card.Mode)
+                ? "Concept post-processing has no active owner. Requeue the report step or move this card to Human Review for a decision."
+                : run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null }
+                    ? review is null
+                        ? "The completed delivery has no review owner. Requeue the review step or send this card for an operator decision."
+                        : "The last review is terminal with no automatic recovery owner. Requeue the review step or send this card for an operator decision."
+                    : "Remote Review has no completed delivery or review step to recover. Requeue the review step or send this card for an operator decision.");
     }
 
     internal static string ReviewFailureDetail(ReviewAttemptDto review)
         => $"{ReviewAttemptChainEntry.ClassificationLabel(review.Outcome, review.FailureClassification)}: "
             + (string.IsNullOrWhiteSpace(review.TerminalReason)
                 ? "No review summary was recorded." : review.TerminalReason);
+
+    internal static string ParkReason(AutoReviewStrandingFacts facts, RunAttemptDto? run,
+        ReviewAttemptDto? review, string detail)
+    {
+        var runFact = run is { State: AttemptLifecycleState.Completed, TerminalAt: { } completed }
+            ? $"Last run completed at {completed.ToUniversalTime():yyyy-MM-dd HH:mm} UTC."
+            : "No completed run was recorded.";
+        var reviewFact = review is null ? "No review attempt was recorded."
+            : $"Last review ended as {review.FailureClassification ?? review.Outcome?.ToString() ?? review.State.ToString()}"
+                + (review.TerminalAt is { } ended ? $" at {ended.ToUniversalTime():yyyy-MM-dd HH:mm} UTC." : ".");
+        var retry = facts.InfrastructureRetryScheduled ? "Infrastructure retry is scheduled."
+            : facts.InfrastructureFailure && facts.InfrastructureRetryAvailable ? "Infrastructure retry is available."
+            : facts.InfrastructureFailure ? "Infrastructure retry budget is exhausted."
+            : "No infrastructure retry is scheduled.";
+        return $"Auto Review had no active owner for {facts.WithoutOwner.TotalMinutes:0} minutes. "
+            + $"{runFact} {reviewFact} {retry} {detail}";
+    }
 
     internal static bool ReviewMatchesCurrentRun(ReviewAttemptDto? review, RunAttemptDto? run)
         => review is not null && run is not null
@@ -382,8 +419,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         => prefix + interventions.Count(item => item.WriteKey.StartsWith(prefix, StringComparison.Ordinal));
 
     private StallInterventionRecord Publish(TaskInfo card, string writeKey, AutoReviewStrandingAction action,
-        bool succeeded, bool escalated, string detail, DateTime now, OrchestrationExecutionMode reviewMode)
+        bool succeeded, bool escalated, string detail, DateTime now, OrchestrationExecutionMode reviewMode,
+        RunAttemptDto? run, ReviewAttemptDto? review)
     {
+        var parked = escalated ? _scanner.FindJob(card.Id, card.WatchPath) : null;
         var record = new StallInterventionRecord
         {
             Id = StallInterventionStore.IdFor(writeKey), WriteKey = writeKey,
@@ -393,16 +432,100 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             Status = escalated ? StallInterventionStatuses.Escalated
                 : succeeded ? StallInterventionStatuses.Verified : StallInterventionStatuses.Failed,
             Project = card.ProjectName, AffectedCards = [card.Id],
-            Observed = "Card had no active Auto Review owner beyond the configured threshold.",
+            Observed = "Card had no active Auto Review owner beyond the configured threshold. "
+                + $"Run: {run?.AttemptId ?? "none"}; review: {review?.AttemptId ?? "none"}"
+                + (review?.FailureClassification is { } classification ? $" ({classification})." : "."),
             Done = detail,
             Why = $"In {reviewMode} mode, no running step, review, scheduled retry, cause breaker wait, "
-                + "batch gate entry, or queued round owned the card.",
+                 + "batch gate entry, or queued round owned the card.",
             Before = TaskStates.AutoReview, After = escalated ? TaskStates.Escalated : action.ToString(),
             Receipt = detail, DecidedAtUtc = now, ResolvedAtUtc = now,
+            ParkedAtUtc = parked?.EnteredLaneAt,
+            ParkedTaskWriteTicks = parked?.TaskJsonWriteTicks,
+            RunAttemptId = run?.AttemptId,
+            ReviewAttemptId = _authority.GetTaskProjection(CardKey(card)).CurrentReviewAttempt?.AttemptId,
+            DeliveryResultSha = run?.ResultSha,
+            Undoable = escalated && parked is not null,
+            Undo = escalated ? "Undo restores Auto Review while this card and delivery are unchanged." : "",
         };
         _records.Save(record);
         _receipts.Publish(record, _records.All());
         return record;
+    }
+
+    /// <summary>Restore only the exact park recorded by this watchdog receipt.</summary>
+    public async Task<StallInterventionUndoResult> UndoParkAsync(string id, string actor,
+        CancellationToken ct = default)
+    {
+        var record = _records.Find(id);
+        if (record is null) return new(false, "intervention-not-found", null);
+        if (record.Kind != "auto-review-stranded" || !record.Undoable || record.UndoneAtUtc is not null)
+            return new(false, "intervention-not-undoable", record);
+        var card = record.AffectedCards.Count == 1
+            ? _scanner.ScanAllJobs().FirstOrDefault(item => item.Id == record.AffectedCards[0]
+                && item.ProjectName == record.Project) : null;
+        if (!MatchesPark(record, card)) return new(false, "card-changed-since-park", record);
+        var moved = await _transitions.MoveAsync(card!.Id, TaskStates.AutoReview, card.WatchPath, ct,
+            cause: "system:auto-review-stranding-undo", expectedSourceState: TaskStates.Escalated,
+            expectedSourceEnteredLaneAt: record.ParkedAtUtc,
+            expectedSourceTaskJsonWriteTicks: record.ParkedTaskWriteTicks,
+            transitionCause: LaneChangeCauses.Delivered, transitionDetail: "auto-review-stranding-undo");
+        if (moved.Status != MoveJobStatus.Success)
+            return new(false, "card-changed-since-park", record);
+        var updated = record with
+        {
+            Status = StallInterventionStatuses.Undone, UndoneAtUtc = DateTime.UtcNow,
+            UndoneBy = actor, Undoable = false, RevertedBy = $"undo: {actor}",
+            Outcome = $"{actor} restored Auto Review for the unchanged delivery.",
+        };
+        _records.Save(updated);
+        _receipts.Publish(updated, _records.All());
+        return new(true, "undone", updated);
+    }
+
+    /// <summary>Start a new review attempt for the same immutable delivery.</summary>
+    public async Task<(bool Started, string Reason)> RetryParkedReviewAsync(TaskInfo card,
+        CancellationToken ct = default)
+    {
+        var record = _records.All().Where(item => item.Kind == "auto-review-stranded"
+            && item.Project == card.ProjectName && item.AffectedCards.Contains(card.Id))
+            .OrderByDescending(item => item.DecidedAtUtc).FirstOrDefault();
+        if (record is null || !MatchesPark(record, card)) return (false, "card-changed-since-park");
+        var projection = _authority.GetTaskProjection(CardKey(card));
+        var run = projection.CurrentRunAttempt;
+        var review = projection.CurrentReviewAttempt;
+        if (run is not { State: AttemptLifecycleState.Completed, ResultEnvelope: not null, ResultSha: not null }
+            || review?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased)
+            return (false, "review-delivery-unavailable");
+        var moved = await _transitions.MoveAsync(card.Id, TaskStates.AutoReview, card.WatchPath, ct,
+            cause: "system:auto-review-stranding-retry", expectedSourceState: TaskStates.Escalated,
+            expectedSourceEnteredLaneAt: record.ParkedAtUtc,
+            expectedSourceTaskJsonWriteTicks: record.ParkedTaskWriteTicks,
+            transitionCause: LaneChangeCauses.Delivered, transitionDetail: "auto-review-stranding-retry");
+        if (moved.Status != MoveJobStatus.Success) return (false, "card-changed-since-park");
+        var current = _scanner.FindJob(card.Id, card.WatchPath);
+        var started = current is not null && CreateReview(current, review, run, "operator-review-retry");
+        var updated = record with { Undoable = false, RevertedBy = "review-retry",
+            Outcome = started
+                ? "A fresh review attempt was started for the unchanged delivery."
+                : "Auto Review was restored, but the new review attempt could not start." };
+        _records.Save(updated);
+        _receipts.Publish(updated, _records.All());
+        return started ? (true, "review-started") : (false, "review-attempt-could-not-start");
+    }
+
+    private bool MatchesPark(StallInterventionRecord record, TaskInfo? card)
+    {
+        if (card is null || card.State != TaskStates.Escalated
+            || record.ParkedAtUtc is null || card.EnteredLaneAt != record.ParkedAtUtc
+            || record.ParkedTaskWriteTicks != card.TaskJsonWriteTicks) return false;
+        var marker = ParkedBlockerMarker.TryRead(card.FolderPath, _logger);
+        if (marker?.BlockerType != HumanReviewEscalationCategories.Environmental
+            || marker.CauseDetail != HumanReviewEscalationCategories.AutoReviewStranded) return false;
+        var projection = _authority.GetTaskProjection(CardKey(card));
+        return projection.CurrentRunAttempt?.AttemptId == record.RunAttemptId
+            && projection.CurrentRunAttempt?.ResultSha == record.DeliveryResultSha
+            && projection.CurrentReviewAttempt?.AttemptId == record.ReviewAttemptId;
     }
 
     private static string CardKey(TaskInfo card)

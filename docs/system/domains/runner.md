@@ -3,6 +3,35 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+## Persona occurrences, PT-4
+
+PT-D4, PT-D5 and PT-D8 use the Dossier's recommended option B. The Watcher
+sweep admits an occurrence through PT-3's workspace-week ledger. A runner host
+claims its fenced persona lease, receives a bounded `PersonaGroundsV1` pack and
+runs one read-only digest call. The grounds pack contains only in-scope project
+references, Watcher cases, cards and prior item outcomes; it is capped at
+12,000 input tokens. Completion validates every reference and scope before
+writing a completed or failed receipt. Valid items enter the application-owned
+persona item store, then the Agent Message Bus as `Persona` messages. The
+importance service owns factor scoring, confidence caps, floors and urgency
+history. Admission refusals publish an immutable stub report with coverage,
+budget use and open items plus typed fact floors without a model call. The
+persona instance id and role id remain separate in the lease,
+receipt, item and bus participant.
+Weekly investigation leases require thoroughness 4 or 5, one in-scope local
+repository checkout and a 15-minute cap. The runner clones into a fresh
+read-only directory, exposes only read tools, disables MCP with a strict empty
+configuration, and removes runner and deploy credential variables. A missing
+local repository ends the lease with a failed receipt.
+Standalone Task Server runner hosts use `RUNNER_POST_MERGE_STATE_URL` as the Studio
+API authority for persona claim and completion, with the same service identity
+used by the existing post-merge state read. Hosts without that route wait.
+
+Review host load per core divides the host load average by the host CPU count.
+The review role's cgroup quota is a separate capacity limit and is never used
+as the denominator for host load. A known load or slot-capacity hold keeps a
+pending Auto Review card out of the ownerless-card escalation path.
+
 Task Server connectivity stays capability-ready until three consecutive failed
 requests span at least 60 seconds. The capability detail retains the failure
 count, and the route advertises structured `since`, `httpStatus`, and `request`
@@ -925,9 +954,13 @@ unreported claim expires with its lease and is queued again.
   Changing a remotely placed project to local execution requires the Owner.
 - `runner/OneShotJobAdmission.cs`: coding and review hosts poll bounded model
   jobs independently of task claims. The review host starts this poll after
-  client registration. A missing claim route (HTTP 404) is logged once and
-  retried every five minutes; a successful poll logs restoration and returns
-  to the normal three-second interval.
+  client registration. A missing claim route (HTTP 404) or a refusal saying
+  networked one-shot execution requires the standalone Task Server is logged
+  once and retried every five minutes. `OneShotClaimRouteObservation` keeps the
+  condition with first and last seen time and the backoff, and the daemon sends
+  it as `HostTelemetrySnapshotDto.OneShotClaimRoute` with its minutely
+  capability advertisement. A successful poll clears it, logs restoration and
+  returns to the normal three-second interval.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -1842,9 +1875,14 @@ unreported claim expires with its lease and is queued again.
   identity. Each persisted Coding slot emits one startup reconciliation line:
   `reattached`, `purged` with the process-proof reason, or fail-closed
   `retained`. Missing or mismatched coding processes are actively released and
-  returned to Ready. A non-adoptable review is settled as `ReviewInfra` with
-  classification `ExecutorRestarted`, the completed-command count and duration,
-  the failed process proof, and the retry reason. DB lease presence alone is
+  returned to Ready. A review whose worker is gone while its lease is still
+  valid is relaunched within the same attempt and resumes from
+  `review-progress.json`; a stop during workspace preparation hands the slot
+  over and the replacement prepares again (AGT-3647). Only after
+  `DurableReviewProcess.MaximumWorkerRelaunches` relaunches is a non-adoptable
+  review settled as `ReviewInfra` with classification `ExecutorRestarted`, the
+  completed-command count and duration, the failed process proof, and the
+  retry reason. DB lease presence alone is
   never process-liveness evidence. systemd must use `KillMode=process`. It must
   also use `PrivateTmp=false`: a private-`/tmp` unit unmounts its namespace-scoped
   `/tmp` on every restart even though `KillMode=process` leaves the detached
@@ -1989,6 +2027,11 @@ unreported claim expires with its lease and is queued again.
   and does not shift the positions of eligible cards.
 - A re-open starts a new run. It must rerun pre steps, core, post steps, and
   append run history instead of flattening earlier evidence.
+- An operator's Escalated to Ready reissue carries the confirmed findings and
+  owner note in `operator-reissue.json`, written after the old review artifacts
+  rotate into history. The first pickup in that review epoch reads this handoff
+  even without the automatic reissue tag or an active prior pipeline record.
+  A later automatic reissue reads its new follow-up and review findings instead.
 - Before any automatic auto-review follow-up is persisted,
   `ReviewDecisionOrchestrator` compares its whitespace- and case-normalized
   base text with every prompt under `orchestrator-follow-up-history/`. A match
@@ -2674,7 +2717,11 @@ attempts, batch-gate pending records, card lane
 timestamps and claim failures, and the host release drift snapshot. Thresholds
 under `Watcher` are `HostTargetPercent` (85), `HostOverloadMinutes` (10),
 `MemoryUsedPercent` (90), `SwapBytesPerSecond` (65536), `IdleWaitMinutes` (15),
-`GatePendingHours` (2), `LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10).
+`LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10). Batch gate stalls use
+the running batch's configured `GateTimeoutMinutes`, measured from its gate
+run start. An idle plan with pending members is reported on the next sweep.
+The attention list groups these cases with batches and opens the project's
+batch panel.
 Every finding has a stable
 case fingerprint, subject, severity, since time, affected card count, evidence,
 and suggested action. A successful healthy sweep resolves an open operational

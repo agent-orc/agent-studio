@@ -30,7 +30,7 @@ namespace AgentStudio.Tests;
 /// ref and SHA, while acceptance validates current lineage, Git ancestry, and
 /// exact-tree gate evidence.
 /// </summary>
-public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
+public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 {
     // Generous on purpose: several call sites wait on a WebApplicationFactory's
     // first HTTP round trip, which JITs and spins up the whole app in-process.
@@ -669,6 +669,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.Equal(1, await reconciler.RunOnceAsync());
 
+        await WaitUntilAsync(() => deps.Timeline.ReadAll(
+            deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath)
+            .Any(entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested));
+
         var returned = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.AutoReview, returned.State);
         var requested = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
@@ -683,6 +687,15 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.True(integratedAt >= 0 && reviewedAt > integratedAt);
         Assert.Contains(deps.Timeline.ReadAll(returned.FolderPath),
             entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+
+        // A restarted reconciler sees the durable lane change but the review
+        // phase prevents a second integration or ReviewAttempt.
+        var restarted = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
+            deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
+            stranding: stranding, timeline: deps.Timeline);
+        Assert.Equal(0, await restarted.RunOnceAsync());
+        Assert.Equal(requested.AttemptId,
+            deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.AttemptId);
     }
 
     /// <summary>
@@ -784,6 +797,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.Equal(1, await reconciler.RunOnceAsync());
 
+        await WaitUntilAsync(() => deps.Scanner.FindJob(Slug, _watchPath)?.State == TaskStates.Ready);
+
         var queued = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.Ready, queued.State);
         Assert.Equal(ContinueModes.Steer, queued.PendingIntent?.Mode);
@@ -791,6 +806,134 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
         Assert.DoesNotContain(deps.Timeline.ReadAll(queued.FolderPath),
             entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Stale_integration_gate_does_not_delay_another_card_in_the_same_pass()
+    {
+        var deliverySha = PublishDelivery("blocked-stale.txt", "new delivery\n");
+        var gate = new BlockingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 20, string.Empty, "passed", true, false));
+        var deps = Build(deliverySha, gateRunner: gate, guarded: true);
+        var integratedSha = Git(_repo, "rev-parse", "origin/develop").Out.Trim();
+        const string secondId = "already-integrated";
+        var secondFolder = Path.Combine(_watchPath, TaskStates.AutoReview, secondId);
+        Directory.CreateDirectory(secondFolder);
+        File.WriteAllText(Path.Combine(secondFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = secondId, key = "AGT-INTEGRATED", title = "Already integrated",
+            state = TaskStates.AutoReview, order = 2, agent = "codex", mode = TaskModes.Coding,
+            phase = LifecyclePhases.Integrating,
+            projectName = Project, integrationBranch = "develop", codeActivityDetected = true,
+            commit = Commit(integratedSha), commits = new[] { Commit(integratedSha) },
+        }));
+        deps.Scanner.InvalidateCache();
+        var second = deps.Scanner.FindJob(secondId, _watchPath)!;
+        Assert.Equal(IntegrationStatuses.Integrated,
+            deps.Integration.BuildLookup([second])[second.TaskKey].Status);
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(deps.Merge, deps.Scanner,
+            deps.Provenance, deps.Pipeline, deps.Timeline, AgentRounds(deps),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, deps.Authority);
+        var stranding = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, null!, null!, deps.Settings, deps.Pipeline, null!,
+            deps.Transitions, null!, null!, null!, null!, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance, coordinator);
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
+            deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
+            stranding: stranding, timeline: deps.Timeline);
+
+        try
+        {
+            Assert.Equal(2, await reconciler.RunOnceAsync().WaitAsync(TimeSpan.FromSeconds(15)));
+            await gate.Entered.WaitAsync(AsyncTestDeadline);
+            Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(secondId, _watchPath)!.State);
+            Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+            Assert.Equal(0, await reconciler.RunOnceAsync().WaitAsync(TimeSpan.FromSeconds(15)));
+            Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        }
+        finally { gate.Release(); }
+        await WaitUntilAsync(() => deps.Timeline.ReadAll(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath)
+            .Any(entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Engine_delivery_chain_application_returns_while_stale_integration_gate_is_blocked()
+    {
+        var deliverySha = PublishDelivery("engine-stale.txt", "new delivery\n");
+        var gate = new BlockingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 20, string.Empty, "passed", true, false));
+        var deps = Build(deliverySha, gateRunner: gate, guarded: true, engineMode: true);
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(deps.Merge, deps.Scanner,
+            deps.Provenance, deps.Pipeline, deps.Timeline, AgentRounds(deps),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, deps.Authority);
+        var stranding = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, null!, null!, deps.Settings, deps.Pipeline, null!,
+            deps.Transitions, null!, null!, null!, null!, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance, coordinator);
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
+            deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
+            stranding: stranding, timeline: deps.Timeline);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var status = deps.Integration.BuildLookup([card])[card.TaskKey];
+        var facts = DeliveryChainReconciler.Facts(card, status, false);
+        var payload = new AiOperatorDecisionPayload(AiOperatorDeciders.DeliveryChain,
+            AiOperatorDecisionGateway.FactsSubjectKey("delivery", card.Id, facts), DeliveryChain: facts);
+        var decision = AiOperatorDecisionPolicy.Decide(payload);
+        Assert.Equal(AiOperatorEffects.ReturnToAutoReview, decision.Effect);
+        var applier = new DeliveryChainTestApplier(reconciler);
+        var store = new MonolithOrchestrationStore(Path.Combine(_tempDir, "engine-store"),
+            new FakeTimeProvider(), applier);
+        var run = store.CreateOperatorDecision(Project, Slug, AiOperatorDeciders.DeliveryChain,
+            JsonSerializer.Serialize(payload), payload.SubjectKey, TaskStates.HumanReview,
+            "attempt", 1, 1, null);
+        var claim = store.Claim(new Contract.OrchestrationClaimRequest("engine_test", "instance",
+            [Contract.OrchestrationStage.OperatorDecision]));
+        Assert.Equal(run.RunId, claim.Run?.RunId);
+
+        try
+        {
+            var completed = await store.CompleteAsync(run.RunId,
+                new Contract.CompleteOrchestrationStageRequest("engine_test", "instance",
+                    claim.Lease!.LeaseId, claim.Lease.Fence,
+                    Contract.OrchestrationStage.OperatorDecision, Contract.OrchestrationAction.Continue,
+                    JsonSerializer.Serialize(new { operatorDecision = decision }), "engine-write"),
+                CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.Equal("completed", completed.Status);
+            await gate.Entered.WaitAsync(AsyncTestDeadline);
+            Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        }
+        finally { gate.Release(); }
+        await WaitUntilAsync(() => deps.Timeline.ReadAll(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath)
+            .Any(entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested));
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var elapsed = Stopwatch.StartNew();
+        while (!condition())
+        {
+            Assert.True(elapsed.Elapsed < AsyncTestDeadline, "Timed out waiting for the delivery handoff.");
+            await Task.Delay(50);
+        }
+    }
+
+    private sealed class DeliveryChainTestApplier(DeliveryChainReconciler reconciler)
+        : IMonolithOrchestrationApplier
+    {
+        public Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
+            Contract.CompleteOrchestrationStageRequest completion, CancellationToken ct)
+            => reconciler.ApplyAsync(new AiOperatorApplication(occurrence.Run.RunId,
+                occurrence.Run.ProjectId, occurrence.Run.TaskId, occurrence.ExpectedSourceState,
+                completion.IdempotencyKey,
+                AiOperatorDecisionGateway.ReadPayload(occurrence.Run.PayloadJson),
+                AiOperatorDecisionGateway.ReadDecision(completion.OutputJson),
+                occurrence.AuthorityAttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch), ct);
     }
 
     [Theory]
@@ -878,6 +1021,87 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains(deps.Timeline.ReadAll(card.FolderPath), entry =>
             entry.Kind == TimelineEventKinds.StallInterventionRecorded
             && entry.Summary.Contains("ReviewInfra/ToolUnavailable"));
+    }
+
+    [Fact]
+    public async Task Stranding_park_receipt_can_be_undone_and_review_retried_for_unchanged_delivery()
+    {
+        var clock = VerificationFixtureAtUtc;
+        var deliverySha = PublishDelivery("stranded-review-retry.txt", "delivered work\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
+            seedContent: false, authorityClock: () => clock);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            clock.AddMinutes(-90), NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+        var created = deps.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            TaskKey, run.RepositoryId, deliverySha, run.AttemptId,
+            AttemptAuthorityService.Hash("requirements"), AttemptAuthorityService.Hash("policy"),
+            run.EvidenceDigests, "initial-failed-review"));
+        Assert.True(created.Accepted);
+        var claimed = deps.Authority.ClaimReview(created.AttemptId, "reviewer", "host", 60,
+            "claim-failed-review").ReviewAttempt!;
+        Assert.True(deps.Authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence,
+                claimed.AuthorityEpoch, "settle-failed-review"),
+            deliverySha, ReviewTerminalOutcome.ProductFailure,
+            "ReviewFailed", "Review host failed to finish.")).Accepted);
+        clock = VerificationFixtureAtUtc.AddMinutes(45);
+
+        var lifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var records = new StallInterventionStore(() => _tempDir);
+        var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var projector = new WatcherActivityProjector(log, deps.Scanner, deps.Configuration,
+            NullLogger<WatcherActivityProjector>.Instance);
+        var receipts = new StallInterventionReceipts(log, projector, deps.Scanner, deps.Timeline,
+            NullLogger<StallInterventionReceipts>.Instance);
+        var escalation = new HumanReviewEscalation(deps.States, deps.Transitions,
+            _tempDir, NullLogger.Instance, deps.Scanner);
+        var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            lifecycle, new BatchGateStore(_tempDir), null!, deps.Settings,
+            deps.Pipeline, new AutoReviewPostProcessingQueue(), deps.Transitions,
+            null!, escalation, records, receipts, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var first = Assert.Single(records.All());
+        var parked = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, parked.State);
+        Assert.Equal(HumanReviewEscalationCategories.Environmental,
+            parked.ParkedBlocker?.BlockerType);
+        Assert.Equal(ParkedBlockerConditionKinds.ReviewRetryAvailable,
+            parked.ParkedBlocker?.ConditionKind);
+        var recall = new ParkedBlockerProbe(attempts: deps.Authority).Evaluate(
+            ParkedBlockerCatalog.ConditionFor(HumanReviewEscalationCategories.AutoReviewStranded),
+            new ParkedBlockerContext(TaskKey: TaskKey), clock);
+        Assert.Equal(ParkedBlockerStatuses.Recallable, recall.Status);
+        Assert.True(first.Undoable);
+        Assert.Contains("Last run completed at", parked.ParkedBlocker?.Reason);
+        Assert.Contains("Last review ended as ReviewFailed", parked.ParkedBlocker?.Reason);
+
+        var undone = await watchdog.UndoParkAsync(first.Id, "operator");
+        Assert.True(undone.Undone, undone.Message);
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.False((await watchdog.UndoParkAsync(first.Id, "operator")).Undone);
+
+        // A second visit gets a distinct receipt, then Retry review mints a
+        // successor from the same immutable run without a coding attempt.
+        card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            clock.AddMinutes(-90), NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var second = records.All().Single(record => record.Id != first.Id);
+        var result = await watchdog.RetryParkedReviewAsync(deps.Scanner.FindJob(Slug, _watchPath)!);
+        Assert.True(result.Started, result.Reason);
+        var projection = deps.Authority.GetTaskProjection(TaskKey);
+        Assert.Equal(run.AttemptId, projection.CurrentRunAttempt?.AttemptId);
+        Assert.NotEqual(claimed.AttemptId, projection.CurrentReviewAttempt?.AttemptId);
+        Assert.Equal(AttemptLifecycleState.Pending, projection.CurrentReviewAttempt?.State);
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.False((await watchdog.UndoParkAsync(second.Id, "operator")).Undone);
     }
 
     [Fact]
@@ -1735,6 +1959,58 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
         Assert.Contains("delivered against brief", outcome.Message);
         Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.Contains(deps.Timeline.ReadAll(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.CompletionContentRefused
+                && entry.Details?.GetValueOrDefault("code") == "completion-content-gap"
+                && entry.Details?.GetValueOrDefault("text") == outcome.Message);
+    }
+
+    [Fact]
+    public async Task ChangedBrief_RequestsOnlyContentReviewForTheSameDeliveryRun()
+    {
+        var deliverySha = PublishDelivery("content-review.txt", "delivered result\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, briefVersion: "brief-v1");
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        BriefVersionStore.Record(card.FolderPath, "brief v2");
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _tempDir,
+                    ["WatchPaths:0:Name"] = Project,
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _repo,
+                    ["WatchPaths:0:RepositoryPath"] = _repo,
+                    ["DeliveryChain:Guarded"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<ProjectSettingsService>();
+                services.AddSingleton(deps.Settings);
+                services.RemoveAll<AttemptAuthorityService>();
+                services.AddSingleton(deps.Authority);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var response = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/content-review?watchPath={Uri.EscapeDataString(_watchPath)}", new { });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var review = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(review);
+        Assert.Equal(run.AttemptId, review.SourceRunAttemptId);
+        Assert.Equal(new[] { "requirement-fit" }, review.Subject.Plan!.RequiredAspects);
+        Assert.All(review.Subject.Plan.Commands, command => Assert.Equal("requirement-fit", command.Aspect));
+        Assert.Equal(TaskStates.AutoReview, factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(Slug, _watchPath)!.State);
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(
+                factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!.FolderPath),
+            row => row.Kind == TimelineEventKinds.ContentReviewRequested);
     }
 
     /// <summary>
@@ -3230,7 +3506,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
+        Assert.Contains("the integration verification check expected integrated-verified gate evidence", refused.Message);
         var overridden = await deps.Transitions.MoveAsync(
             Slug,
             TaskStates.Completed,
@@ -3421,7 +3697,11 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         else
         {
             Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
-            Assert.Contains(gateSecondPublication ? first : second, accepted.Message);
+            // AGT-3753: the refusal names the newest uncovered commit, not project.yml.
+            var uncovered = gateSecondPublication ? first : second;
+            Assert.Contains($"{uncovered[..7]} \"later published delivery\" has none", accepted.Message);
+            Assert.Contains("no published gate evidence for that tree", accepted.Message);
+            Assert.DoesNotContain("`.agent-studio/project.yml`", accepted.Message);
         }
     }
 
@@ -3467,7 +3747,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             Assert.Contains("full-suite batch base verdict", status.Verification?.Reason);
             if (outcome == "pass")
                 Assert.Contains(evidenceExists
-                        ? "is not counted: its gate profile digest is not the current profile"
+                        ? $"is not counted: its gate profile digest obsolete-profile is not the current gate profile {digest}"
                         : "is not counted: its evidence file is missing",
                     status.Verification?.Reason);
             else
@@ -3518,7 +3798,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains(ungated, refused.Message);
+        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
+        Assert.Contains($"{ungated[..7]} \"", refused.Message);
+        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
     [Theory]
@@ -3533,8 +3815,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
-        Assert.Contains(missingGateSha, refused.Message);
+        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
+        Assert.Contains($"{missingGateSha[..7]} \"", refused.Message);
+        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
     [Fact]
@@ -3545,7 +3828,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains(keySha, refused.Message);
+        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
+        Assert.Contains($"{keySha[..7]} \"", refused.Message);
+        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
     private (Deps Deps, string KeySha) PublishVerifiedDescriptorAndKey(
@@ -3627,8 +3912,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
-        Assert.Contains(unrelated, refused.Message);
+        Assert.Contains("the integration verification check expected integrated-verified gate evidence", refused.Message);
+        // AGT-3756: the refusal names the recorded tree that does not carry the delivery.
+        Assert.Contains($"verification tree {unrelated}", refused.Message);
     }
 
     [Fact]
@@ -3854,7 +4140,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, moved.Status);
-        Assert.Contains("integrated-unverified", moved.Message);
+        Assert.Contains("the integration verification check expected integrated-verified gate evidence", moved.Message);
     }
 
     [Theory]
@@ -4593,7 +4879,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         bool guarded = false,
         bool engineMode = false,
         Func<DateTime>? authorityClock = null,
-        BatchGateStore? batchGates = null)
+        BatchGateStore? batchGates = null,
+        string contentStatus = "pass",
+        string contentSummary = "The fixture delivery answers its brief.")
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -4731,7 +5019,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         }
         if (seedContent)
             SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion,
-                reviewPlan, reviewVerdicts);
+                reviewPlan, reviewVerdicts, contentStatus, contentSummary);
         pipeline.Begin(jobFolder, PipelineCatalogue.Standard, Project, Slug);
         Assert.NotNull(scanner.FindJob(Slug, _watchPath));
         // AGT-3076: the 11.10. crash rebuilt the attempt authority store into
@@ -4799,7 +5087,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     private void SeedPassedContentReview(
         AttemptAuthorityService authority, RunAttemptDto sourceRun,
         string folder, string deliverySha, string briefVersion,
-        Contract.ReviewPlanDto? plan = null, IReadOnlyList<Contract.ReviewVerdictDto>? verdicts = null)
+        Contract.ReviewPlanDto? plan = null, IReadOnlyList<Contract.ReviewVerdictDto>? verdicts = null,
+        string contentStatus = "pass", string contentSummary = "The fixture delivery answers its brief.")
     {
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
             TaskKey, "PROJ-FIXTURE", deliverySha, sourceRun.AttemptId,
@@ -4818,8 +5107,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             new Contract.ReviewEnvironmentDto("fixture-host", "fixture-reviewer", "fixture-instance",
                 "fixture-os", "fixture-arch", "fixture-runtime",
                 new Dictionary<string, string>(), new Dictionary<string, string>()),
-            [], [], verdicts ?? [new Contract.ReviewVerdictDto("requirement-fit", "pass", "Product",
-                "The fixture delivery answers its brief.")],
+            [], [], verdicts ?? [new Contract.ReviewVerdictDto("requirement-fit", contentStatus, "Product",
+                contentSummary, Missing: contentStatus == "pass" ? null : "The fixture names no missing file.")],
             AuthorityEpoch: review.AuthorityEpoch, BriefSha256: briefVersion);
         var entry = new RemoteReviewSettlementEntry
         {

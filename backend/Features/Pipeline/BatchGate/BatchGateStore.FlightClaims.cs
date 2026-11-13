@@ -70,7 +70,7 @@ public sealed partial class BatchGateStore
         int reservationDeadlineMinutes, DateTimeOffset nowUtc)
     {
         var folder = FlightClaimFolder(project);
-        using var guard = FileGuard(folder, "claim.lock");
+        using var guard = ExclusiveGuard(folder, "claim.lock");
         var current = ReadFlightClaim(project);
         var decision = MonolithTransitionAdapter.BatchFlightClaim(current?.Facts(nowUtc));
         if (!decision.Granted) return new(null, decision.Refusal, current);
@@ -115,7 +115,7 @@ public sealed partial class BatchGateStore
     public bool ReleaseFlightClaim(BatchFlightClaim held, string reason, DateTimeOffset nowUtc)
     {
         var folder = FlightClaimFolder(held.Project);
-        using var guard = FileGuard(folder, "claim.lock");
+        using var guard = ExclusiveGuard(folder, "claim.lock");
         if (ReadFlightClaim(held.Project) is not { End: null } current || !current.SameGrant(held))
             return false;
         WriteAtomic(Path.Combine(folder, FlightClaimName),
@@ -133,7 +133,7 @@ public sealed partial class BatchGateStore
         string reason, bool settled, DateTimeOffset nowUtc, bool ownerGone = false)
     {
         var folder = FlightClaimFolder(observed.Project);
-        using var guard = FileGuard(folder, "claim.lock");
+        using var guard = ExclusiveGuard(folder, "claim.lock");
         if (ReadFlightClaim(observed.Project) is not { End: null } current || !current.SameGrant(observed)
             || MonolithTransitionAdapter.BatchFlightClaimExpiryOf(
                 current.Facts(nowUtc) with { OwnerGone = ownerGone }) is not { } expiry)
@@ -151,7 +151,7 @@ public sealed partial class BatchGateStore
     public bool SettleFlightClaim(BatchFlightClaim expired, DateTimeOffset nowUtc)
     {
         var folder = FlightClaimFolder(expired.Project);
-        using var guard = FileGuard(folder, "claim.lock");
+        using var guard = ExclusiveGuard(folder, "claim.lock");
         if (ReadFlightClaim(expired.Project) is not { End: { Settled: false } end } current
             || !current.SameGrant(expired))
             return false;
@@ -160,23 +160,11 @@ public sealed partial class BatchGateStore
         return true;
     }
 
-    /// <summary>
-    /// The state history of a batch, oldest first. The flight claim reads it to
-    /// count earlier claim expiries of a member's batches.
-    /// </summary>
-    public IReadOnlyList<BatchGateState> StateHistory(string batchId)
-    {
-        var folder = Path.Combine(BatchDirectory(batchId), "state");
-        return !Directory.Exists(folder) ? []
-            : Directory.EnumerateFiles(folder, "*.json").Order(StringComparer.Ordinal)
-                .Select(Read<BatchGateState>).ToArray();
-    }
-
     private BatchFlightClaim? UpdateLive(BatchFlightClaim held, DateTimeOffset nowUtc,
         Func<BatchFlightClaim, BatchFlightClaim?> change)
     {
         var folder = FlightClaimFolder(held.Project);
-        using var guard = FileGuard(folder, "claim.lock");
+        using var guard = ExclusiveGuard(folder, "claim.lock");
         if (ReadFlightClaim(held.Project) is not { } current || !current.SameGrant(held)
             || !MonolithTransitionAdapter.BatchFlightClaimLive(current.Facts(nowUtc)))
             return null;

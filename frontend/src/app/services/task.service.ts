@@ -98,7 +98,7 @@ import type {
 import type { TaskPlanView } from '../features/plan-strip/plan.model';
 import type { RegressionRadarResult } from '../features/regression-radar';
 import { ErrorDialogService } from './error-dialog.service';
-import { AuthSessionState } from './auth.service';
+import { ShellAccessService } from './shell-access.service';
 import { JobsHubClient } from './jobs-hub-client.service';
 import type {
   ProjectDeploymentSummary,
@@ -382,10 +382,18 @@ function invalidOrchestratorContextKey<T>(): Observable<T> {
   }));
 }
 
+/** Answer of the Human Review decision routes (AGT-3670). */
+export interface HumanReviewDecisionResponse {
+  decision: 'accept' | 'send-back';
+  state: string;
+  /** For a send back: whether the follow-up is queued or only saved. */
+  followUp?: string | null;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TaskService {
+  private readonly shellAccess = inject(ShellAccessService);
   private http = inject(HttpClient);
-  private readonly authSession = inject(AuthSessionState);
   private errorDialog = inject(ErrorDialogService);
   private jobsHub = inject(JobsHubClient);
 
@@ -528,6 +536,7 @@ export class TaskService {
 
   /** Re-read slow-moving project settings used by the board and Explorer. */
   refreshLaneSortStrategies(): void {
+    if (!this.shellAccess.operator()) return;
     this.getAllProjectSettings().subscribe({
       next: (all) => {
         const map: Record<string, Record<string, string>> = {};
@@ -558,7 +567,7 @@ export class TaskService {
     }
 
     this.refreshGrouped(silent);
-    this.refreshRunnerStatus(silent);
+    if (this.shellAccess.operator()) this.refreshRunnerStatus(silent);
   }
 
   /**
@@ -934,6 +943,7 @@ export class TaskService {
     operatorOverride = false,
     runIntent: 'revoke' | 'steer' = 'revoke',
     withdrawFromBatch = false,
+    reissueInstructions?: { findings: string[]; note: string },
   ) {
     const body: {
       targetState: string;
@@ -942,16 +952,30 @@ export class TaskService {
       operatorOverride?: boolean;
       runIntent: 'revoke' | 'steer';
       withdrawFromBatch?: boolean;
+      reissueInstructions?: { findings: string[]; note: string };
     } = { targetState, runIntent };
     if (typeof targetIndex === 'number') body.targetIndex = targetIndex;
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
     if (withdrawFromBatch) body.withdrawFromBatch = true;
+    if (reissueInstructions) body.reissueInstructions = reissueInstructions;
     return this.http.post(
       `${this.taskV1Url(jobId)}/move`,
       body,
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath, targetState));
+  }
+
+  reviewContentAgainstCurrentBrief(jobId: string, watchPath?: string) {
+    return this.http.post<{ reviewAttemptId: string; briefVersion: string }>(
+      `${this.taskV1Url(jobId)}/content-review`, {}, this.withWatchPath(watchPath),
+    );
+  }
+
+  getBriefDifference(jobId: string, watchPath?: string) {
+    return this.http.get<{ fromVersion: string; toVersion: string; before: string; after: string }>(
+      `${this.taskV1Url(jobId)}/brief-difference`, this.withWatchPath(watchPath),
+    );
   }
 
   decideOlderBriefDelivery(jobId: string, decision: 'accept' | 'starting-point' | 'discard', watchPath?: string) {
@@ -1060,7 +1084,9 @@ export class TaskService {
     const params = opts?.includeArchived
       ? new HttpParams().set('includeArchived', 'true')
       : undefined;
-    return this.http.get<RegistryWorkspaceListItem[]>('/api/v1/workspaces', { params });
+    // Product sessions read the legacy listing, filtered by their project bindings.
+    return this.http.get<RegistryWorkspaceListItem[]>(
+      this.shellAccess.limited() ? '/api/workspaces' : '/api/v1/workspaces', { params });
   }
 
   /**
@@ -1072,7 +1098,8 @@ export class TaskService {
     const params = opts?.includeArchived
       ? new HttpParams().set('includeArchived', 'true')
       : undefined;
-    return this.http.get<RegistryProjectSummary[]>('/api/v1/projects', { params });
+    return this.http.get<RegistryProjectSummary[]>(
+      this.shellAccess.limited() ? '/api/projects' : '/api/v1/projects', { params });
   }
 
   /** F45b — create a workspace. Returns the new record. */
@@ -1414,7 +1441,7 @@ export class TaskService {
 
   /** AGT-3580: run project intake on one Ready card now instead of waiting for the next tick. */
   runTaskIntake(jobId: string, watchPath?: string) {
-    return this.http.post<{ outcome: string; reason: string }>(
+    return this.http.post<{ outcome: string; reason: string; details: string }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/intake`,
       { watchPath: watchPath ?? '' },
     );
@@ -2123,6 +2150,7 @@ export class TaskService {
     mode?: ContinueMode,
     modeOverride?: string,
     reason?: string,
+    baseRef?: string,
   ) {
     const body: {
       prompt: string;
@@ -2132,6 +2160,7 @@ export class TaskService {
       mode?: ContinueMode;
       modeOverride?: string;
       reason?: string;
+      baseRef?: string;
     } = { prompt };
     if (model) body.model = model;
     if (cliType) body.cliType = cliType;
@@ -2139,9 +2168,33 @@ export class TaskService {
     if (mode) body.mode = mode;
     if (modeOverride) body.modeOverride = modeOverride;
     if (reason) body.reason = reason;
+    // AGT-3483: one of the card's own result refs; the backend refuses any other.
+    if (baseRef) body.baseRef = baseRef;
     return this.http.post<ContinueTaskResponse>(
       `${this.taskV1Url(jobId)}/continue`,
       body,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-3670: the Human Review decision. Accept moves the card to Accepted;
+   * send back moves it to Ready and queues the note as the next run's
+   * follow-up. Both routes need `project.cards.review`, which the Reviewer
+   * role holds without any card write or run control.
+   */
+  acceptHumanReview(jobId: string, watchPath?: string, note?: string) {
+    return this.http.post<HumanReviewDecisionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/human-review/accept`,
+      note ? { note } : {},
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  sendBackHumanReview(jobId: string, note: string, watchPath?: string) {
+    return this.http.post<HumanReviewDecisionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/human-review/send-back`,
+      { note },
       this.withWatchPath(watchPath),
     );
   }
@@ -3108,8 +3161,7 @@ export class TaskService {
   }
 
   refreshRunnerStatus(silent = false): void {
-    // AGT-3668: runner status is installation-wide; the Product role never reads it.
-    if (this.authSession.productSession()) return;
+    if (!this.shellAccess.operator()) return;
     if (this.runnerRefreshInFlight) {
       this.runnerRefreshQueued = true;
       this.runnerRefreshQueuedSilent &&= silent;
@@ -3122,7 +3174,7 @@ export class TaskService {
     ).subscribe({
       next: (status) => this.runnerStatus.set(status),
       error: (err) => {
-        if (!silent) {
+        if (!silent && !(err instanceof HttpErrorResponse && err.status === 403)) {
           this.errorDialog.show(err, {
             title: 'Failed to load runner status',
             fallbackMessage: 'Failed to load runner status',
@@ -3150,7 +3202,7 @@ export class TaskService {
 
     // F35: prime the lane-strategy store immediately so the board shows the
     // right indicator on first paint, then refresh it on a slow cadence.
-    this.refreshLaneSortStrategies();
+    if (this.shellAccess.operator()) this.refreshLaneSortStrategies();
 
     // Primary path: react to mutation pushes the instant they arrive.
     this.startPushUpdates();
@@ -3170,7 +3222,7 @@ export class TaskService {
       // Sort strategy changes rarely; refresh it every other heartbeat.
       this.laneSortStrategyTick = (this.laneSortStrategyTick + 1) % 2;
       if (this.laneSortStrategyTick === 0) {
-        this.refreshLaneSortStrategies();
+        if (this.shellAccess.operator()) this.refreshLaneSortStrategies();
       }
     }, heartbeatMs);
   }
@@ -3231,7 +3283,7 @@ export class TaskService {
           !current || new Date(e.gitStateAt) > new Date(current) ? e.gitStateAt : current);
         this.scheduleSilentRefresh();
       },
-      runnerStatusChanged: () => this.refreshRunnerStatus(true),
+      runnerStatusChanged: () => { if (this.shellAccess.operator()) this.refreshRunnerStatus(true); },
       cliStarted: () => this.scheduleSilentRefresh(),
       cliFinished: () => this.scheduleSilentRefresh(),
       // Initial connect + every reconnect: re-pull the full board so anything

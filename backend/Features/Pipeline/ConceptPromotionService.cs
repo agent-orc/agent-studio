@@ -1,3 +1,7 @@
+using System.Text.Json.Nodes;
+using AgentStudio.Git;
+using AgentStudio.Shared;
+
 namespace AgentStudio.Pipeline;
 
 /// <summary>
@@ -11,16 +15,22 @@ public sealed class ConceptPromotionService
 
     private readonly AgentStudio.Tasks.TaskScannerService _scanner;
     private readonly AgentStudio.Tasks.TaskMutationService _mutations;
+    private readonly ManagedRepositoryMutationService _repositoryMutations;
+    private readonly AgentStudio.Docs.WorkbenchChangeNotifier _workbenchChanges;
     private readonly ILogger<ConceptPromotionService> _logger;
     private readonly object _gate = new();
 
     public ConceptPromotionService(
         AgentStudio.Tasks.TaskScannerService scanner,
         AgentStudio.Tasks.TaskMutationService mutations,
+        ManagedRepositoryMutationService repositoryMutations,
+        AgentStudio.Docs.WorkbenchChangeNotifier workbenchChanges,
         ILogger<ConceptPromotionService> logger)
     {
         _scanner = scanner;
         _mutations = mutations;
+        _repositoryMutations = repositoryMutations;
+        _workbenchChanges = workbenchChanges;
         _logger = logger;
     }
 
@@ -48,11 +58,121 @@ public sealed class ConceptPromotionService
                 });
         }).ToList();
 
+        var created = CreateCards(source, spawns).ToList();
+        MarkDossierAccepted(source, plan);
         return new PromoteConceptTasksResponse
         {
             Source = plan.Source,
-            Created = CreateCards(source, spawns).ToList(),
+            Created = created,
         };
+    }
+
+    /// <summary>
+    /// Promotes one proposal that is not in the Dossier's implementation list,
+    /// such as an accepted persona proposal, through the same spawn ledger.
+    /// The reason keys the ledger, so a repeated accept returns the same card.
+    /// </summary>
+    public PromotedConceptTask PromoteProposal(
+        TaskInfo source, PromoteConceptResponse plan, ConceptImplementationTask item, string reason)
+    {
+        var request = CodingRequest(plan.Source, item) with
+        {
+            Dossier = TaskDossierProvenance.FromImplementation(plan.Source.RepoRelativePath, item, 0)
+                with { ImplementationIndex = null },
+        };
+        return CreateCards(source, [new ConceptCardSpawn(reason, request)]).Single();
+    }
+
+    private void MarkDossierAccepted(TaskInfo source, PromoteConceptResponse plan)
+    {
+        var entry = _scanner.GetWatchPaths().FirstOrDefault(candidate =>
+            WatchPathComparison.PathsEqual(candidate.Path, source.WatchPath));
+        var root = !string.IsNullOrWhiteSpace(entry?.RepositoryPath)
+            ? entry.RepositoryPath : entry?.RootPath;
+        if (string.IsNullOrWhiteSpace(root))
+            throw new InvalidOperationException("The concept Dossier repository is unavailable.");
+        var relative = Path.GetDirectoryName(plan.Source.RepoRelativePath)?.Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(relative))
+            throw new InvalidOperationException("The concept Dossier path is unavailable.");
+        var descriptorRelative = relative + "/workbench.json";
+        var actor = source.Key ?? source.Id;
+        var checkoutReview = ConceptWorkbenchContract.ReviewDirectory(
+            root, relative, actor, allowAccepted: true);
+        if (!checkoutReview.IsComplete)
+        {
+            // A Remote merge lands in the integration worktree. Until the
+            // developer checkout reaches that commit, promotion reads the
+            // Dossier copy placed on the card and records acceptance there.
+            var placedCopy = ConceptWorkbenchStore.SnapshotRoot(source.FolderPath);
+            var placedDescriptor = Path.Combine(placedCopy, descriptorRelative);
+            if (!File.Exists(placedDescriptor))
+                throw new InvalidOperationException("The placed concept Dossier copy is unavailable.");
+            (bool Changed, string? WorkbenchId, string PreviousStatus) placed;
+            lock (_gate)
+                placed = WriteAcceptedDescriptor(placedDescriptor, actor);
+            PublishAcceptance(source.ProjectName, placed);
+            return;
+        }
+
+        var descriptorPath = Path.Combine(root, descriptorRelative);
+        (bool Changed, string? WorkbenchId, string PreviousStatus) accepted = default;
+        var result = _repositoryMutations.Execute(
+            source.ProjectName,
+            root,
+            $"concept-accepted-{actor}",
+            $"chore(dossier): accept concept {actor}",
+            [descriptorRelative],
+            () => accepted = WriteAcceptedDescriptor(descriptorPath, actor));
+        if (!result.Success)
+            throw new InvalidOperationException(
+                result.Error ?? "The concept Dossier could not be marked in implementation.");
+        PublishAcceptance(source.ProjectName, accepted);
+    }
+
+    private static (bool Changed, string? WorkbenchId, string PreviousStatus) WriteAcceptedDescriptor(
+        string path, string actor)
+    {
+        var descriptor = JsonNode.Parse(File.ReadAllText(path))?.AsObject()
+            ?? throw new InvalidDataException("The concept Dossier descriptor is invalid.");
+        var workbenchId = descriptor["id"]?.GetValue<string>();
+        var schema = descriptor["schemaVersion"]?.GetValue<int>() ?? 1;
+        var previousStatus = schema >= 2
+            ? "active" : descriptor["status"]?.GetValue<string>() ?? "decision-pending";
+        var alreadyAccepted = schema >= 2
+            ? descriptor["lifecycleState"]?.GetValue<string>() == "decided"
+            : descriptor["status"]?.GetValue<string>() == "decided";
+        if (alreadyAccepted) return (false, workbenchId, previousStatus);
+        var now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+        if (schema >= 2)
+        {
+            descriptor["lifecycleState"] = "decided";
+            descriptor["editedAt"] = now;
+            descriptor["editedBy"] = actor;
+            if (descriptor["lifecycleHistory"] is not JsonArray history)
+            {
+                history = [];
+                descriptor["lifecycleHistory"] = history;
+            }
+            history.Add(AgentStudio.Docs.DecisionRecordService.HistoryEntry(
+                "decided", actor, now, "Concept accepted and implementation slices created."));
+        }
+        else
+        {
+            descriptor["status"] = "decided";
+            descriptor["updatedAt"] = now;
+            descriptor["editedBy"] = actor;
+        }
+        File.WriteAllText(path, descriptor.ToJsonString(
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        return (true, workbenchId, previousStatus);
+    }
+
+    private void PublishAcceptance(
+        string project, (bool Changed, string? WorkbenchId, string PreviousStatus) accepted)
+    {
+        if (accepted.Changed && !string.IsNullOrWhiteSpace(accepted.WorkbenchId))
+            _workbenchChanges.PublishDecisionRecorded(
+                project, accepted.WorkbenchId, accepted.PreviousStatus, "decided");
     }
 
     /// <summary>

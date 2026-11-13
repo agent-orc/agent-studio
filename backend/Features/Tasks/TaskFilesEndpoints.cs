@@ -143,7 +143,17 @@ public static class TaskFilesEndpoints
             return response is null ? Results.NotFound() : Results.Ok(response);
         });
 
-        group.MapPut("/{jobId}/files/{fileName}", (string jobId, string fileName, string? project, string? watchPath, UpdateJobFileRequest req, TaskMutationService mutations, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapGet("/{jobId}/brief-difference", (string jobId, string? project, string? watchPath,
+            TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var card = scanner.FindJob(jobId, watchPath);
+            if (card is null) return Results.NotFound();
+            return BriefVersionStore.ReadDifference(card.FolderPath) is { } difference
+                ? Results.Ok(difference) : Results.NotFound();
+        });
+
+        group.MapPut("/{jobId}/files/{fileName}", (string jobId, string fileName, string? project, string? watchPath, UpdateJobFileRequest req, HttpContext context, TaskMutationService mutations, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (runner.IsJobLive(jobId, watchPath))
@@ -151,7 +161,8 @@ public static class TaskFilesEndpoints
 
             try
             {
-                var success = mutations.UpdateJobFile(jobId, fileName, req.Content, watchPath);
+                var success = mutations.UpdateJobFile(jobId, fileName, req.Content, watchPath,
+                    TaskCrudEndpoints.OperatorActor(context));
                 return success ? Results.Ok() : Results.NotFound("Job not found or file is not editable.");
             }
             catch (IOException ex)

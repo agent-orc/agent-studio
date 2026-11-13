@@ -9,7 +9,8 @@ namespace AgentStudio.Cli;
 /// <summary>
 /// One consumer's selection question plus the host facts only the caller
 /// knows: occupied slots, the claiming host's model acceptance and a lazy
-/// correctness floor.
+/// correctness floor. A <paramref name="Preview"/> call plans the same route
+/// but writes no ledger receipt, so a read-only forecast never changes routing.
 /// </summary>
 public sealed record ModelSelectionCall(
     SelectionRequest Request,
@@ -19,7 +20,8 @@ public sealed record ModelSelectionCall(
     Func<string, string?, bool>? HostAcceptsFallback = null,
     Func<ModelRoutingTier?>? CorrectnessFloor = null,
     string? DecisionKey = null,
-    bool RecordEveryCall = false)
+    bool RecordEveryCall = false,
+    bool Preview = false)
 {
     /// <summary>The selection call behind a legacy admission request (adapter until MS-6).</summary>
     public static ModelSelectionCall FromAdmission(QuotaAdmissionRequest request)
@@ -122,6 +124,8 @@ public sealed class ModelSelectionService : IModelSelectionService
     {
         ArgumentNullException.ThrowIfNull(call);
         var request = call.Request;
+        if (request.Consumer == SelectionConsumers.Persona)
+            request = request with { Required = request.Required with { SameClassOnly = true } };
         var project = string.IsNullOrWhiteSpace(request.Project)
             ? null
             : _projectSettings.Get(request.Project);
@@ -201,7 +205,7 @@ public sealed class ModelSelectionService : IModelSelectionService
                 : SelectionLedgerEntry.For(
             request, result, call.ExecutionPath,
             ModelSelectionLedger.NewId(), now);
-        if (entry is not null && _ledger is not null)
+        if (entry is not null && _ledger is not null && !call.Preview)
         {
             entry = entry with
             {

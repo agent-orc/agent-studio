@@ -21,7 +21,7 @@ export function dossierStatusLabel(item: DossierPresentationInput): string {
   switch (item.status) {
     case 'decision-pending': return 'Decision pending';
     case 'active': return item.phase ?? 'Active';
-    case 'decided': return 'Accepted / In progress';
+    case 'decided': return 'In implementation';
     case 'documented': return 'Documented';
     case 'archived': return 'Discarded';
     default: return item.status;

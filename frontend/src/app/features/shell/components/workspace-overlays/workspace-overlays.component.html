@@ -155,6 +155,23 @@
           <app-remote-hosts-panel [workspaces]="watchPaths()" (openTask)="openJobDetail.emit($event)" />
           }
         }
+        @case ('operations') {
+          <section class="ws-settings__section ws-settings__operations" data-testid="workspace-operations">
+            <header class="ws-settings__section-head">
+              <h2 class="ws-settings__panel-title">Installation operations</h2>
+              <p class="ws-settings__panel-desc">Hosts, quota, usage, security and backups for this installation.</p>
+            </header>
+            <nav class="ws-settings__operations-links" aria-label="Installation operations">
+              <button type="button" (click)="overlays.select('remote-hosts')">Hosts and environment</button>
+              <button type="button" (click)="overlays.select('caps')">CLI quota</button>
+              <button type="button" (click)="overlays.select('tokens')">Token usage</button>
+            </nav>
+            @defer (on immediate) {
+              <app-operations-security (openTask)="openJobDetail.emit($event)" />
+              <app-backup-status-panel />
+            }
+          </section>
+        }
         @case ('orchestrator') {
           <section class="ws-settings__section" data-testid="workspace-orchestrator">
             <header class="ws-settings__section-head">
@@ -187,7 +204,11 @@
         }
         @case ('retention') {
           @defer (on immediate) {
-          <app-retention-admin />
+          @if (auth.status()?.profile === 'networked') {
+            <app-retention-admin />
+          } @else {
+            <p>Retention management is available on a networked installation.</p>
+          }
           }
         }
         @case ('tokens') {

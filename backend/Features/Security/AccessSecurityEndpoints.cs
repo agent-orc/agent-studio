@@ -20,9 +20,11 @@ public static class AccessSecurityEndpoints
                 SecurityProfiles.ActiveProfile(configuration),
                 store.BootstrapRequired,
                 principal is not null,
-                principal is null ? null : ToResponse(principal.User),
+                principal is null ? null : SessionUser(principal.User, store, context),
                 BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration),
                 SecondFactorEnrollmentRequired: principal?.Session.SecondFactorEnrollmentOnly == true,
+                RecoveryCodesRemaining: principal?.Session.RecoveryCodesRemaining,
+                RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal?.Session),
                 RestoreNotice: principal?.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
         });
 
@@ -32,15 +34,20 @@ public static class AccessSecurityEndpoints
                 // The address is the client the edge resolved (Cloudflare or
                 // direct), forwarded by the trusted frontend hop (AGT-3230).
                 var audit = loggers.CreateLogger("AgentStudio.Security.Bootstrap");
+                var errors = AccessSecurityStore.BootstrapFieldErrors(request);
                 if (RequiresBootstrapCode(context, configuration) && !MatchesBootstrapCode(request.BootstrapCode, configuration))
                 {
                     audit.LogWarning("Owner bootstrap without a valid installer code from client {ClientAddress}", context.Connection.RemoteIpAddress);
-                    throw new SecurityOperationException(403, "bootstrap-code-required", "A valid installer owner code is required.");
+                    errors["bootstrapCode"] = ["A valid installer owner code is required."];
                 }
-                var created = store.Bootstrap(request, publicEntry: true);
+                if (errors.Count > 0)
+                    return Results.Json(new { error = "bootstrap-validation", message = "Check the owner details and try again.", errors },
+                        statusCode: StatusCodes.Status400BadRequest);
+                var created = store.Bootstrap(request, publicEntry: true,
+                    device: SessionDevice(context), address: SessionAddress(context));
                 audit.LogInformation("Owner {Username} bootstrapped from client {ClientAddress}", created.User.Username, context.Connection.RemoteIpAddress);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);
-                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken,
+                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(created.User, store, context), created.CsrfToken,
                     SecondFactorEnrollmentRequired: true));
             }));
 
@@ -79,12 +86,15 @@ public static class AccessSecurityEndpoints
                 var key = ClientThrottleKey(context.Connection.RemoteIpAddress);
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key,
                     request.SecondFactorCode, requireSecondFactor: true,
-                    device: context.Request.Headers.UserAgent.ToString()[..Math.Min(context.Request.Headers.UserAgent.ToString().Length, 160)],
-                    address: context.Connection.RemoteIpAddress?.ToString(), passkey: request.Passkey,
+                    device: SessionDevice(context),
+                    address: SessionAddress(context), passkey: request.Passkey,
                     origin: RequestOrigin(context), rpId: context.Request.Host.Host);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
-                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken,
-                    SecondFactorEnrollmentRequired: store.AuthenticateSession(result.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true,
+                var session = store.AuthenticateSession(result.SessionToken, touch: false)?.Session;
+                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(result.User, store, context), result.CsrfToken,
+                    SecondFactorEnrollmentRequired: session?.SecondFactorEnrollmentOnly == true,
+                    RecoveryCodesRemaining: session?.RecoveryCodesRemaining,
+                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(session),
                     RestoreNotice: result.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
             });
         });
@@ -92,12 +102,16 @@ public static class AccessSecurityEndpoints
         auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
             {
-                var accepted = store.AcceptInvitation(request, publicEntry: true);
+                var accepted = store.AcceptInvitation(request, publicEntry: true,
+                    device: SessionDevice(context), address: SessionAddress(context));
                 SetSessionCookies(context, accepted.SessionToken, accepted.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true,
-                    ToResponse(accepted.User), accepted.CsrfToken,
+                    SessionUser(accepted.User, store, context), accepted.CsrfToken,
                     SecondFactorEnrollmentRequired: store.AuthenticateSession(accepted.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true));
             }));
+
+        auth.MapGet("/invite/preview", (string token, AccessSecurityStore store, AgentStudio.Registry.ProjectRegistry registry)
+            => Execute(() => Results.Ok(store.PreviewInvitation(token, registry))));
 
         // The local profile treats X-Client-Id as attribution only, so it must not
         // become an alternate credential for any auth administration endpoint.
@@ -116,8 +130,10 @@ public static class AccessSecurityEndpoints
                     },
                     statusCode: StatusCodes.Status401Unauthorized)
                 : Results.Ok(new AuthStatusResponse(
-                    SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(principal.User),
+                    SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(principal.User, store, context),
                     SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly,
+                    RecoveryCodesRemaining: principal.Session.RecoveryCodesRemaining,
+                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal.Session),
                     RestoreNotice: principal.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
         });
 
@@ -208,6 +224,13 @@ public static class AccessSecurityEndpoints
             {
                 RequireOwner(context, store);
                 return Results.Ok(store.ListUsers().Select(ToResponse));
+            }));
+
+        auth.MapGet("/directory", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireHuman(context, store);
+                return Results.Ok(store.ListUsers().Select(user => new { user.Id, user.DisplayName }));
             }));
 
         auth.MapPost("/users", (CreateUserRequest request, HttpContext context, AccessSecurityStore store) =>
@@ -429,6 +452,15 @@ public static class AccessSecurityEndpoints
     private static bool RequiresBootstrapCode(HttpContext context, IConfiguration configuration)
         => SecurityProfiles.IsNetworked(configuration) && !ConnectionPeer.IsDirectLoopback(context);
 
+    private static string SessionDevice(HttpContext context)
+    {
+        var userAgent = context.Request.Headers.UserAgent.ToString();
+        return string.IsNullOrWhiteSpace(userAgent) ? "Browser" : userAgent[..Math.Min(userAgent.Length, 160)];
+    }
+
+    private static string SessionAddress(HttpContext context)
+        => context.Connection.RemoteIpAddress?.ToString() ?? "Local connection";
+
     private static bool MatchesBootstrapCode(string? candidate, IConfiguration configuration)
     {
         var expected = configuration["Security:BootstrapCode"];
@@ -440,7 +472,22 @@ public static class AccessSecurityEndpoints
 
     internal static AuthUserResponse ToResponse(StudioUser user)
         => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
-            user.ProductionApprovalProjects);
+            user.ProductionApprovalProjects, user.TotpSecret is not null || user.Passkeys.Count > 0,
+            user.FactorChangedAt ?? user.Passkeys.OrderByDescending(passkey => passkey.CreatedAt).FirstOrDefault()?.CreatedAt);
+
+    /// <summary>
+    /// The signed-in user's own record, with the projects where it reviews
+    /// (AGT-3670), named as the board names them: bindings hold project ids.
+    /// </summary>
+    private static AuthUserResponse SessionUser(StudioUser user, AccessSecurityStore store, HttpContext context)
+    {
+        var registry = context.RequestServices.GetService<AgentStudio.Registry.ProjectRegistry>();
+        var projects = store.ReviewerProjects(user.Id, (bound, requested) => ProjectAccessAuthorization.SameProject(bound, requested, registry))
+            .Select(project => project == ProjectAccessAuthorization.AllProjectsGrant
+                ? project : registry?.FindByIdOrDisplayName(project)?.DisplayName ?? project)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return ToResponse(user) with { ReviewerProjects = projects };
+    }
 
     /// <summary>
     /// SM-9 notices: a runner enrolled before project binding keeps all projects,
@@ -482,20 +529,21 @@ public static class AccessSecurityEndpoints
             || SecurityProfiles.IsNetworked(context.RequestServices.GetRequiredService<IConfiguration>());
         context.Response.Cookies.Append(
             https ? AccessSecurityStore.SessionCookieName : AccessSecurityStore.InsecureSessionCookieName,
-            token, SessionCookieOptions(https));
+            token, SessionCookieOptions(https, context.RequestServices.GetRequiredService<IConfiguration>()));
         context.Response.Cookies.Append(
             https ? "__Host-agentstudio-csrf" : "agentstudio-csrf",
             csrfToken, CsrfCookieOptions(https));
         context.Response.Headers.CacheControl = "no-store";
     }
 
-    private static CookieOptions SessionCookieOptions(bool https) => new()
+    private static CookieOptions SessionCookieOptions(bool https, IConfiguration? configuration = null) => new()
     {
         HttpOnly = true,
         Secure = https,
         SameSite = SameSiteMode.Strict,
         IsEssential = true,
-        Path = "/"
+        Path = "/",
+        MaxAge = configuration is null ? null : TimeSpan.FromMinutes(configuration.GetValue("Security:Session:AbsoluteMinutes", 10080))
     };
 
     private static CookieOptions CsrfCookieOptions(bool https) => new()

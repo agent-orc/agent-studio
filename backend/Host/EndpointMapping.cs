@@ -43,11 +43,13 @@ public static class EndpointMapping
         tasks.MapTaskCoreEndpoint();
         tasks.MapTaskDetailResources();
         tasks.MapBatchMoveEndpoints();
+        tasks.MapAcceptanceReadinessEndpoints();
         tasks.MapTaskFilesEndpoints();
         tasks.MapTaskRunnerEndpoints();
         tasks.MapTaskGitEndpoints();
         tasks.MapTaskClaudeEndpoints();
         tasks.MapTaskReviewEvidenceEndpoints();
+        tasks.MapHumanReviewDecisionEndpoints();
         tasks.MapTaskReviewObservationEndpoints();
         tasks.MapTaskExternalCompletionEndpoints();
         tasks.MapTaskCodeReviewEndpoints();
@@ -61,6 +63,7 @@ public static class EndpointMapping
         tasks.MapTaskDeliveryClaimEndpoint();
         tasks.MapTaskIntegrationRecoveryEndpoints();
         tasks.MapTaskIntegrationRetryEndpoints();
+        tasks.MapTaskReviewRetryEndpoints();
         tasks.MapTaskFailureContinuationEndpoints();
 
         app.MapCompletedLaneAuditEndpoints();

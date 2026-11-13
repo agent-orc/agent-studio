@@ -54,6 +54,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
+| Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
 | Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
@@ -99,7 +100,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Card detail deferred loading: interleaved DEMO-9 fixture and live seeded API comparisons (AGT-3536) | [measurement](../operations/performance/card-detail-deferred-loading-2026-11-05.md) |
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |
 | Areas and tags (classification vocabulary, glossaries, tag filters; AGT-2803) | [domains/areas-and-tags.md](../system/domains/areas-and-tags.md) |
-| Magazine (agent-maintained articles per installation, workspace and project, revisions, API and permissions; MAG-1, AGT-3714) | [domains/magazine.md](../system/domains/magazine.md) |
+| Magazine (agent-maintained articles and immutable persona issues, revisions, viewer, export, API and permissions; MAG-1, MAG-2, PT-8) | [domains/magazine.md](../system/domains/magazine.md) |
 | Proposed tagging golden set: 60 cards, 20 Dossiers, item rationales and area glossaries (AGT-2804) | [quality/tagging-golden-set/index.html](../quality/tagging-golden-set/index.html) |
 | Operator decision on the proposed tagging golden set and glossaries (AGT-2804) | [operations/tagging-golden-set-approval/index.html](../operations/tagging-golden-set-approval/index.html) |
 | Remote execution outcome and recovery | [contracts/run-outcome.md](../system/contracts/run-outcome.md#remote-execution-outcome-adapter) |
@@ -215,6 +216,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Wiki editing flow | [product/wiki-editing-and-branch-flow.md](./wiki-editing-and-branch-flow.md) |
 | Wiki document companion schema | [schemas/wiki-document-companion.schema.json](../app/schemas/wiki-document-companion.schema.json) |
 | Persona descriptor schema, starter catalogue and workspace activation (PT-1) | [schemas/persona.schema.json](../app/schemas/persona.schema.json) · [tasks domain](../system/domains/tasks.md#persona-catalogue-and-workspace-activation-pt-1) · [Dossier](../persona-team/index.html) |
+| Persona occurrence and item contract (PT-4) | [schemas/persona-item.schema.json](../app/schemas/persona-item.schema.json) · [runner domain](../system/domains/runner.md) · [Dossier](../persona-team/index.html) |
 | Wiki page lifecycle schema | [schemas/wiki-page-lifecycle.schema.json](../app/schemas/wiki-page-lifecycle.schema.json) |
 | Model qualification benchmark event schema | [schemas/model-qualification-event.schema.json](../app/schemas/model-qualification-event.schema.json) |
 | Model escalation and companion routing concept | [concepts/model-escalation-and-companion-routing.md](../concepts/model-escalation-and-companion-routing.md) |

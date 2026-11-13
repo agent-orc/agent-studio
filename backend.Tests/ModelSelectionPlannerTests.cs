@@ -77,6 +77,25 @@ public sealed class ModelSelectionPlannerTests
     }
 
     [Fact]
+    public void Persona_waits_when_configured_fallback_has_no_same_class_proof()
+    {
+        var request = Request() with
+        {
+            Consumer = SelectionConsumers.Persona,
+            Required = new SelectionRequirements(SameClassOnly: true),
+        };
+        var facts = Facts(97) with
+        {
+            ConfiguredFallbacks = [new SelectionRoute(CliTypes.Codex, ModelIds.Gpt56Sol, "high")],
+        };
+
+        var result = ModelSelectionPlanner.Plan(request, facts);
+
+        Assert.Equal(SelectionOutcome.Wait, result.Outcome);
+        Assert.Equal(request.Pins.Model, result.Route.Model);
+    }
+
+    [Fact]
     public void Hard_pin_waits_instead_of_switching()
     {
         var request = Request() with

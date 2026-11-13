@@ -21,6 +21,7 @@ public sealed class BreakGlassWindowTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _root,
+            ["Secrets:KeyFile"] = _root + ".kek",
             ["Security:Profile"] = "networked",
         }).Build();
         _store = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock);
@@ -38,12 +39,12 @@ public sealed class BreakGlassWindowTests : IDisposable
     {
         var owner = _store.AuthenticateSession(_token)!;
         Assert.Throws<SecurityOperationException>(() => _store.OpenBreakGlassWindow(owner, "missing", [_session], 2, "PROJ-002"));
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var credential = _store.IssueBreakGlassCredential(owner);
         var noFactor = Assert.Throws<SecurityOperationException>(() =>
             _store.OpenBreakGlassWindow(owner, credential, [_session], 2, "PROJ-002"));
         Assert.Equal("step-up-required", noFactor.Code);
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         Assert.Throws<SecurityOperationException>(() => _store.OpenBreakGlassWindow(owner, "wrong", [_session], 2, "PROJ-002"));
     }
 
@@ -51,13 +52,13 @@ public sealed class BreakGlassWindowTests : IDisposable
     public void Named_session_loses_elevation_at_the_two_hour_limit()
     {
         var owner = _store.AuthenticateSession(_token)!;
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var credential = _store.IssueBreakGlassCredential(owner);
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var window = _store.OpenBreakGlassWindow(owner, credential, [_session], 2, "PROJ-002");
         Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddHours(2), window.ExpiresAt);
         Assert.Equal(window.Id, _store.ActiveBreakGlassWindow(_session)?.Id);
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         Assert.Throws<SecurityOperationException>(() => _store.OpenBreakGlassWindow(owner, credential, [_session], 1, "PROJ-002"));
         _clock.Advance(TimeSpan.FromHours(2));
         Assert.Null(_store.ActiveBreakGlassWindow(_session));
@@ -68,9 +69,9 @@ public sealed class BreakGlassWindowTests : IDisposable
     public void Closing_is_idempotent_and_has_a_separate_host_journal()
     {
         var owner = _store.AuthenticateSession(_token)!;
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var credential = _store.IssueBreakGlassCredential(owner);
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var window = _store.OpenBreakGlassWindow(owner, credential, [_session], 1, "PROJ-002");
         _store.CloseBreakGlassWindow(window.Id, $"human:{owner.User.Id}");
         _store.CloseBreakGlassWindow(window.Id, $"human:{owner.User.Id}");
@@ -83,9 +84,9 @@ public sealed class BreakGlassWindowTests : IDisposable
     public void Closing_creates_exactly_one_review_card_listing_audit_entries()
     {
         var owner = _store.AuthenticateSession(_token)!;
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var credential = _store.IssueBreakGlassCredential(owner);
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var window = _store.OpenBreakGlassWindow(owner, credential, [_session], 1, "PROJ-002");
         _store.AppendBreakGlassRequestAudit(window, "operator-agent:test/session:test", "POST /api/tasks/sample",
             "ok", "sample", "sha256:test", 200);
@@ -107,18 +108,18 @@ public sealed class BreakGlassWindowTests : IDisposable
     public void Offline_host_entries_need_the_factor_and_stop_at_expiry()
     {
         var owner = _store.AuthenticateSession(_token)!;
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var credential = _store.IssueBreakGlassCredential(owner);
         var window = _store.OpenBreakGlassWindowOffline(owner.User.Username,
-            SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime), credential, [_session], 1, "PROJ-002");
+            FreshCode(), credential, [_session], 1, "PROJ-002");
         Assert.Throws<SecurityOperationException>(() => _store.AppendOfflineBreakGlassEntry(window.Id,
             owner.User.Username, "wrong", "service.restart", "sample", "ok"));
         _store.AppendOfflineBreakGlassEntry(window.Id, owner.User.Username,
-            SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime), "service.restart", "sample", "ok");
+            FreshCode(), "service.restart", "sample", "ok");
         Assert.Contains(_store.BreakGlassEntries(window.Id), entry => entry.Operation == "service.restart");
         _clock.Advance(TimeSpan.FromHours(1));
         Assert.Throws<SecurityOperationException>(() => _store.AppendOfflineBreakGlassEntry(window.Id,
-            owner.User.Username, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime),
+            owner.User.Username, FreshCode(),
             "service.restart", "sample", "ok"));
     }
 
@@ -126,9 +127,9 @@ public sealed class BreakGlassWindowTests : IDisposable
     public async Task Opening_alerts_the_owner_once()
     {
         var owner = _store.AuthenticateSession(_token)!;
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var credential = _store.IssueBreakGlassCredential(owner);
-        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime));
+        _store.VerifyStepUp(owner, FreshCode());
         var alerts = new RecordingAlerts();
         var service = new BreakGlassWindowService(_store, new RecordingCards(), alerts,
             new ControlPlaneAuditSinkOptions(ControlPlaneAuditSinkOptions.Https, new Uri("https://sink.example.test"), null, null),
@@ -138,6 +139,12 @@ public sealed class BreakGlassWindowTests : IDisposable
         Assert.Equal(window.Id, _store.ActiveBreakGlassWindow(_session)?.Id);
         Assert.Single(alerts.Raised);
         Assert.Equal("break-glass-open", alerts.Raised[0].Code);
+    }
+
+    private string FreshCode()
+    {
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        return SecondFactorCodes.CurrentTotp(_factor, _clock.GetUtcNow().UtcDateTime);
     }
 
     private sealed class RecordingCards : IBreakGlassReviewCardWriter
@@ -162,5 +169,5 @@ public sealed class BreakGlassWindowTests : IDisposable
         }
     }
 
-    public void Dispose() { try { Directory.Delete(_root, true); } catch (DirectoryNotFoundException) { } }
+    public void Dispose() { try { Directory.Delete(_root, true); } catch (DirectoryNotFoundException) { } File.Delete(_root + ".kek"); }
 }

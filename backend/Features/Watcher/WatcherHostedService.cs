@@ -1,4 +1,5 @@
 using AgentStudio.Tasks;
+using AgentStudio.Personas;
 
 namespace AgentStudio.Watcher;
 
@@ -45,6 +46,10 @@ public sealed class WatcherHostedService : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly ILogger<WatcherHostedService> _logger;
     private readonly TimeProvider _time;
+    private readonly PersonaSweepCoordinator? _personas;
+    private readonly PersonaOccurrenceService? _occurrences;
+    private readonly AgentStudio.Magazine.WeeklyIssueService? _weeklyIssues;
+    private readonly AgentStudio.Magazine.PresenterDeckService? _presenterDecks;
 
     public WatcherRunSnapshot Current { get; private set; } = WatcherRunSnapshot.Idle("Not run yet.");
 
@@ -60,7 +65,10 @@ public sealed class WatcherHostedService : BackgroundService
         TaskScannerService scanner,
         IConfiguration configuration,
         ILogger<WatcherHostedService> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        PersonaSweepCoordinator? personas = null, PersonaOccurrenceService? occurrences = null,
+        AgentStudio.Magazine.WeeklyIssueService? weeklyIssues = null,
+        AgentStudio.Magazine.PresenterDeckService? presenterDecks = null)
     {
         _probes = probes;
         _engine = engine;
@@ -74,6 +82,10 @@ public sealed class WatcherHostedService : BackgroundService
         _configuration = configuration;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _personas = personas;
+        _occurrences = occurrences;
+        _weeklyIssues = weeklyIssues;
+        _presenterDecks = presenterDecks;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -134,6 +146,28 @@ public sealed class WatcherHostedService : BackgroundService
                 _logger.LogWarning(ex, "watcher-probe-failed probe={Probe}", probe.Name);
             }
         }
+
+        // Persona admission is part of the same Watcher sweep. It only writes
+        // occurrence receipts; PT-4 owns the model call and publication.
+        if (_personas is not null)
+            try
+            {
+                var receipts = _personas.Sweep(nowUtc, observations);
+                if (_occurrences is not null)
+                {
+                    await _occurrences.PublishRefusalsAsync(receipts, nowUtc, ct);
+                    await _occurrences.RunWardenAsync(nowUtc, ct);
+                    await _occurrences.RecomputeAllOpenAsync(nowUtc, ct);
+                }
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "Persona admission sweep failed"); }
+
+        if (_weeklyIssues is not null)
+            try { await _weeklyIssues.ComposeDueAllAsync(nowUtc, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Weekly issue composition failed"); }
+        if (_presenterDecks is not null)
+            try { await _presenterDecks.ComposeDueAllAsync(nowUtc, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Presenter deck composition failed"); }
 
         var previouslyResolved = observations.Where(x => x.Subject is not null)
             .Where(x => _caseStore.Find(workspaceRoot, WatcherFingerprint.Compute(x))?.State == WatcherCaseStates.Resolved)

@@ -55,6 +55,7 @@ public static class BatchGateFailureRanking
     public static IReadOnlyList<BatchTestFailure> ReadEvidence(BatchGateExecutionFact fact)
     {
         if (fact.BatchId is null || fact.BatchRunId is null) return [];
+        if (string.IsNullOrWhiteSpace(fact.EvidenceGateRunId)) return [];
         if (!File.Exists(fact.EvidencePath))
             throw new FileNotFoundException("Batch gate failure ranking evidence is unavailable.", fact.EvidencePath);
         var found = new List<BatchTestFailure>();
@@ -190,12 +191,7 @@ public static class BatchGateFailureRanking
                 || !string.Equals(sha, fact.TestedSha, StringComparison.OrdinalIgnoreCase))
                 return -1;
             var gateRunId = String(root, "gateRunId");
-            if (fact.EvidenceGateRunId is { Length: > 0 } expected)
-            {
-                if (gateRunId != expected) return -1;
-            }
-            else if (gateRunId is not { Length: > 0 } || gateRunId != fact.BatchRunId)
-                return -1;
+            if (gateRunId != fact.EvidenceGateRunId) return -1;
             // A later progress snapshot for this execution must not replace its
             // completed evidence. Prefer a complete record before recency.
             return DateTimeOffset.TryParse(String(root, "gateCompletedAtUtc"), out _)

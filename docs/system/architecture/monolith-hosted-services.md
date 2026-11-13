@@ -97,6 +97,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | BoardShadowWorker | always | infra | Authority host. Idle unless `Board:Source` is `task-server-shadow` or `task-server`; then it mirrors the published task index generation into the Task Server board read model and records shadow differences by card and field (AGT-3317). Makes no transition decision. |
 | TaskFileMirrorWorker | always | infra | Authority host. Idle unless `TaskArtifacts:Source` is `task-server-shadow` or `task-server`; then it copies task folder files into the Task Server's `task_files` by content hash, off the request path, until the write cutover (AGT-3320). Makes no transition decision. |
 | OperatorCandidateAuditRepair | always | apply-recover | Authority host. Restores missing timeline audits from persisted operator candidate receipts at startup; makes no transition decision. |
+| PublishedGateEvidenceBackfill | always | apply-recover | Authority host. Adds missing published gate evidence once at startup from a card's own exact, passed, full-suite pre-develop gate receipt on a first-parent commit (AGT-3747), from every gate log of the card and keyed by published SHA (AGT-3756); logs its counts; idempotent, makes no transition decision. |
 | ResultSummaryRetryScheduler | !PD | apply-recover | Authority |
 | AttemptArchiveIndexWarmupService | always | infra | Authority host |
 | RemoteQueueStarvationWatchdog | !PD | report | Authority host |
@@ -124,6 +125,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | ChatNoteHostedService | !PD | report | Authority host |
 | PipelineHealthService | always | report | Authority host |
 | ApiStallDetector | always | report | Every API host. Logs an `api-stall` warning when its own timer tick runs late (GC pause or starved thread pool); no lane transition (AGT-3369). |
+| ApiHostDiskService | always | report | API host. Measures instance data and gate evidence mounts, reports disk pressure, and supplies claim admission; makes no lane transition decision. |
 | PublishEnvironmentReconciliationService | always | infra | Authority host. Polls website deployment state and releases stopped hosting reservations; no lane transition. |
 | StructureRegistryRefreshService | always | infra | Authority host. Refreshes cached registry metadata every six hours; no lane transition. |
 | RemoteGateOrphanSweepService | always | infra | Authority host. Cancels unowned SSH gate runs from prior Studio process instances and clears their durable records once the remote run directory is gone. |

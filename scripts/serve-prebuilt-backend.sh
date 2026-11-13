@@ -37,6 +37,10 @@ fi
 export API_REQUIRE_PREBUILT=1
 export API_START_TIMEOUT_SECS="${API_START_TIMEOUT_SECS:-90}"
 export TaskRepository="${PW_E2E_WORKSPACE}"
+# Enabling batch verification requires a configured remote gate host. The
+# isolated backend gets an unresolvable placeholder; no spec reaches it.
+export RemoteGate__SshHost="${RemoteGate__SshHost:-gate.e2e.invalid}"
+export RemoteGate__WorkerPath="${RemoteGate__WorkerPath:-/opt/agentstudio/remote-gate-worker}"
 export GIT_CONFIG_GLOBAL="${PW_E2E_WORKSPACE}/gitconfig"
 export HOME="${PW_E2E_WORKSPACE}/home"
 export XDG_CONFIG_HOME="${PW_E2E_WORKSPACE}/config"
@@ -71,6 +75,10 @@ export CopilotCli__Path="${PW_E2E_WORKSPACE}/bin/copilot"
 export GeminiCli__Path="${PW_E2E_WORKSPACE}/bin/gemini"
 export AntigravityCli__Path="${PW_E2E_WORKSPACE}/bin/antigravity"
 export Runner__Role=test-subject
+# Enabling the batch gate requires a remote gate host (AGT-3708). The .invalid
+# host never resolves, so no gate leaves the isolated stack.
+export RemoteGate__SshHost=gate-e2e.invalid
+export RemoteGate__WorkerPath=/opt/agentstudio-e2e/worker
 export WatchPaths__0__Name='Agent Studio Worktree'
 export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/agent-studio-worktree"
 export WatchPaths__0__RootPath="${PW_E2E_CHECKOUT}"
@@ -80,10 +88,16 @@ case "${PW_E2E_PROFILE:-standard}" in
   standard) ;;
   # operator-cli: a fresh networked monolith of its own, so the studio-op spec
   # bootstraps its Owner and API token without sharing first-run state.
-  networked-monolith|operator-cli)
+  # networked-checkout: a networked monolith whose project is URL-registered,
+  # so the first card must get its server checkout from the UI (AGT-3673).
+  networked-monolith|operator-cli|networked-checkout)
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    if [[ "${PW_E2E_PROFILE}" == networked-checkout ]]; then
+      source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
+      first_run_prepare
+    fi
     ;;
   # networked-https: a networked monolith with a second project, so a Product
   # session bound to the first one proves it never sees the other (AGT-3668).

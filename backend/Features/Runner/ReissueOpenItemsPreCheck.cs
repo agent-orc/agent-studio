@@ -61,6 +61,8 @@ public static class ReissueOpenItemsPreCheck
         /// <summary>The card carries the auto-review re-issue tag
         /// (<see cref="ReviewDecisionOrchestrator.ReissueTagId"/>).</summary>
         public bool HasReissueTag { get; init; }
+        /// <summary>Explicit instructions persisted by an operator reissue move.</summary>
+        public bool HasOperatorInstructions { get; init; }
 
         /// <summary>A prior pipeline run for this card has crossed the agent
         /// boundary - either completed normally or recorded core/post work
@@ -133,7 +135,7 @@ public static class ReissueOpenItemsPreCheck
     /// </summary>
     public static PreCheckDecision Evaluate(PreCheckInput input)
     {
-        var isReissue = input.HasReissueTag && input.PriorRunCompleted;
+        var isReissue = input.HasOperatorInstructions || (input.HasReissueTag && input.PriorRunCompleted);
         if (!isReissue)
             return new PreCheckDecision
             {

@@ -32,6 +32,7 @@ public sealed class PersonaActivationStoreTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _root,
+            ["Secrets:KeyFile"] = _root + ".kek",
             ["Security:Profile"] = "networked",
         }).Build();
         _security = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock);
@@ -59,7 +60,7 @@ public sealed class PersonaActivationStoreTests : IDisposable
     }
 
     [Fact]
-    public void Activation_with_a_step_up_records_revision_digest_and_shadow_for_one_report_period()
+    public void Activation_with_a_step_up_records_revision_digest_and_warden_shadow_for_two_weeks()
     {
         var store = Store();
         var catalogue = new PersonaCatalogue().Find(Warden)!;
@@ -75,13 +76,17 @@ public sealed class PersonaActivationStoreTests : IDisposable
         Assert.Equal((PersonaStates.Shadow, PersonaSources.Catalogue, 1), (activation.State, activation.Source, activation.ActivationRevision));
         Assert.Equal(("2026.11.1", catalogue.Digest), (activation.DescriptorRevision, activation.DescriptorDigest));
         Assert.Equal(catalogue.Digest, PersonaDescriptorDigest.Compute(activation.Descriptor));
-        Assert.Equal((Now, Now.AddDays(1), _ownerId), (activation.ActivatedAt, activation.ShadowUntil, activation.ActivatedBy));
+        Assert.Equal((Now, Now.AddDays(14), _ownerId), (activation.ActivatedAt, activation.ShadowUntil, activation.ActivatedBy));
         Assert.Equal((5, 20, "A1"), (activation.Attributes.Thoroughness, activation.Attributes.SignalThreshold, activation.Attributes.Autonomy));
         Assert.Equal((100_000, 10), (activation.Allowance.TokensPerWeek, activation.Allowance.SessionsPerWeek));
         Assert.Equal(new PersonaScopeV1(["alpha"], ["operations.backups", "audit.chain"], ["docs/"]), activation.Scope,
             new ScopeComparer());
         Assert.Equal(["observe", "persona.item.publish", "persona.report.publish", "persona.proposal.draft", "persona.decision.request"],
             activation.Operations);
+        Assert.Equal(Warden, activation.RoleId);
+        var principal = _security.FindPersonaPrincipal(Workspace, Warden)!;
+        Assert.Equal(Warden, principal.PersonaRoleId);
+        Assert.Equal(["alpha"], Assert.Single(_security.ListStandingGrants(principal.Id)).Scope.Projects);
         // The step-up is single use.
         Assert.Equal("step-up-required", Refused(() =>
             store.Activate(Workspace, "cost-controller", new PersonaActivateRequest(), owner)).Code);
@@ -90,9 +95,9 @@ public sealed class PersonaActivationStoreTests : IDisposable
         Assert.Equal(("persona.activate", $"persona:{Workspace}/{Warden}", $"human:{_ownerId}"), (audit.Operation, audit.Target, audit.Actor));
         Assert.True(_security.ControlPlaneAudit.VerifyChain().Ok);
 
-        // The record survives a restart, and the shadow period ends after one report period.
+        // The record survives a restart, and the warden shadow period ends after two weeks.
         var restarted = Store();
-        _clock.Advance(TimeSpan.FromDays(1) - TimeSpan.FromSeconds(1));
+        _clock.Advance(TimeSpan.FromDays(14) - TimeSpan.FromSeconds(1));
         Assert.Equal(PersonaStates.Shadow, Entry(restarted, Warden).Activation!.State);
         _clock.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(PersonaStates.Active, Entry(restarted, Warden).Activation!.State);
@@ -130,6 +135,24 @@ public sealed class PersonaActivationStoreTests : IDisposable
         Assert.Equal("step-up-required", Refused(() => store.Activate(Workspace, Warden, new PersonaActivateRequest(), owner)).Code);
         var again = store.Activate(Workspace, Warden, new PersonaActivateRequest(), SteppedUpOwner());
         Assert.Equal((PersonaStates.Shadow, 2, 6), (again.State, again.ActivationRevision, again.History.Count));
+    }
+
+    [Fact]
+    public void Retire_revokes_principal_and_keeps_the_archive_readable()
+    {
+        var store = Store();
+        store.Activate(Workspace, Warden, new PersonaActivateRequest(), SteppedUpOwner());
+        Assert.True(_security.HasLivePersonaGrant(Workspace, Warden));
+
+        var retired = store.Retire(Workspace, Warden, new PersonaChangeRequest("Charter closed"), Owner());
+
+        Assert.Equal(PersonaStates.Retired, retired.State);
+        Assert.Equal(PersonaStates.Retired, Entry(store, Warden).Activation!.State);
+        Assert.False(_security.HasLivePersonaGrant(Workspace, Warden));
+        Assert.Equal("persona-not-active", Refused(() =>
+            store.Activate(Workspace, Warden, new PersonaActivateRequest(), SteppedUpOwner())).Code);
+        Assert.Equal("persona-not-active", Refused(() =>
+            store.Resume(Workspace, Warden, new PersonaChangeRequest(), Owner())).Code);
     }
 
     [Fact]
@@ -228,6 +251,28 @@ public sealed class PersonaActivationStoreTests : IDisposable
         Assert.Contains("card.requeue", manager.Operations);
     }
 
+    [Fact]
+    public void Attribute_edit_validates_focus_and_autonomy_and_only_changes_activation_revision()
+    {
+        var store = Store();
+        var original = store.Activate(Workspace, Warden, new PersonaActivateRequest(), SteppedUpOwner());
+        var focus = original.Attributes.Focus!;
+        var invalidFocus = focus.ToDictionary(pair => pair.Key, pair => pair.Value);
+        invalidFocus[focus.Keys.First()]++;
+        Assert.Equal("invalid-persona-attributes", Refused(() => store.ChangeAttributes(Workspace, Warden,
+            new PersonaAttributeChangeRequest(new PersonaAttributesOverrideV1(Focus: invalidFocus)), Owner())).Code);
+        Assert.Equal("invalid-persona-attributes", Refused(() => store.ChangeAttributes(Workspace, Warden,
+            new PersonaAttributeChangeRequest(new PersonaAttributesOverrideV1(Autonomy: "A2")), Owner())).Code);
+        var changed = store.ChangeAttributes(Workspace, Warden,
+            new PersonaAttributeChangeRequest(new PersonaAttributesOverrideV1(Focus: focus,
+                Autonomy: "A0", RiskAppetite: "low", Thoroughness: 4, SignalThreshold: 55)), SteppedUpOwner());
+        Assert.Equal(original.ActivationRevision + 1, changed.ActivationRevision);
+        Assert.Equal(original.Allowance, changed.Allowance);
+        Assert.Equal(original.Scope, changed.Scope);
+        Assert.Equal("A0", changed.Attributes.Autonomy);
+        Assert.Equal("attributes", changed.History[^1].Action);
+    }
+
     private PersonaActivationStore Store(PersonaCatalogue? catalogue = null)
         => new(Path.Combine(_root, ".metadata", "personas"), catalogue ?? new PersonaCatalogue(), _security,
             id => string.Equals(id, Workspace, StringComparison.OrdinalIgnoreCase) ? Workspace : null, _clock);
@@ -247,6 +292,7 @@ public sealed class PersonaActivationStoreTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(30));
         var session = _security.Login("first.owner", Password, "persona-tests", SecondFactorCodes.CurrentTotp(_totpSecret, Now)).SessionToken;
         var owner = _security.AuthenticateSession(session)!;
+        _clock.Advance(TimeSpan.FromSeconds(30));
         _security.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_totpSecret, Now));
         return owner;
     }
@@ -276,5 +322,6 @@ public sealed class PersonaActivationStoreTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
+        File.Delete(_root + ".kek");
     }
 }

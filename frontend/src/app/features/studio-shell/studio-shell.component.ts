@@ -14,7 +14,6 @@ import {
   untracked,
   viewChildren,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { NgComponentOutlet } from '@angular/common';
 import { StudioHeaderCockpit, StudioNavigationHeaderComponent } from './studio-shell.header-cockpit';
 import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, WatchPathEntry, RegistryProjectUrl } from '../../models/task.model';
@@ -99,7 +98,7 @@ import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
+  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -151,6 +150,7 @@ export class StudioShellComponent {
   private readonly themeService = inject(ThemeService);
   readonly orchestratorFeed = inject(OrchestratorFeedStore);
   private readonly authSession = inject(AuthSessionState);
+  openTeam(): void { this.tabState.open({ kind: 'team', personaId: null }); }
   openInstallationMagazine(): void { this.tabState.open({ kind: 'magazine', scope: 'installation', label: 'Installation' }); }
   openWorkspaceMagazine(id: string, label: string): void { this.tabState.open({ kind: 'magazine', scope: `workspace:${id}`, label }); }
   magazineProjects(): MagazineChild[] { return this.registryProjects().map(project => ({ scope: `project:${project.id}`, label: project.displayName })); }
@@ -160,22 +160,20 @@ export class StudioShellComponent {
     return [];
   }
 
-  /** Tab list + active selection re-exposed for the template. */
   readonly tabs = this.tabState.tabs;
   readonly activeKey = this.tabState.activeKey;
   readonly activeTab = this.tabState.activeTab;
   readonly structureComponent = signal<Type<unknown> | null>(null);
   readonly magazineComponent = signal<Type<unknown> | null>(null);
+  readonly teamComponent = signal<Type<unknown> | null>(null);
+  private readonly teamLoader = effect(() => { if (this.activeTab()?.kind === 'team' && !this.teamComponent()) void import('../persona-team/persona-team-view/persona-team-view').then(m => this.teamComponent.set(m.PersonaTeamViewComponent)); });
   private readonly magazineLoader = effect(() => {
-    if (this.activeTab()?.kind === 'magazine' && !this.magazineComponent()) {
-      void import('../magazine/magazine-view/magazine-view').then(module => this.magazineComponent.set(module.MagazineViewComponent));
-    }
+    if (this.activeTab()?.kind === 'magazine' && !this.magazineComponent())
+      void import('../magazine/magazine-view/magazine-view').then(m => this.magazineComponent.set(m.MagazineViewComponent));
   });
   private readonly structureLoader = effect(() => {
-    if (this.activeTab()?.kind === 'structure' && !this.structureComponent()) {
-      void import('../structure/structure-view/structure-view.component').then(module =>
-        this.structureComponent.set(module.StructureViewComponent));
-    }
+    if (this.activeTab()?.kind === 'structure' && !this.structureComponent())
+      void import('../structure/structure-view/structure-view.component').then(m => this.structureComponent.set(m.StructureViewComponent));
   });
   readonly tabKey = studioTabKey;
   private readonly tabElements = viewChildren<ElementRef<HTMLElement>>('studioTab');
@@ -201,7 +199,7 @@ export class StudioShellComponent {
   private keepActiveTabVisible(behavior: ScrollBehavior): void {
     const activeKey = this.activeKey();
     const tabs = this.tabs();
-    if (!activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
+    if (tabs.length <= 1 || !activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
 
     const activeElement = this.tabElements()
       .find(ref => ref.nativeElement.dataset['tabKey'] === activeKey)
@@ -1171,6 +1169,8 @@ export class StudioShellComponent {
         return this.findProjectUrl(tab.projectName, tab.urlId)?.label || tab.urlId;
       case 'workspace-settings':
         return 'Workspace settings';
+      case 'team':
+        return tab.personaId === 'magazine' ? 'Magazine' : tab.personaId ? 'Persona · ' + tab.personaId : 'Team';
       case 'deployment-dashboard':
         return 'Deployment dashboard';
       case 'structure':

@@ -24,7 +24,7 @@
       <span class="studio-titlebar__separator" data-nav-inline-from="desktop">/</span>
     }
 
-    @if (activeTab()?.kind === 'board') {
+    @if (headerCockpit.shellAccess.operator() && activeTab()?.kind === 'board') {
       <app-develop-state-indicator [project]="activeProjectName()" />
     }
     @if (!productWithoutProject()) {
@@ -52,7 +52,7 @@
           <span class="studio-pill__caret" aria-hidden="true">▾</span>
         </button>
 
-        @if (activeProjectName(); as name) {
+        @if (headerCockpit.shellAccess.operator() && activeProjectName(); as name) {
           <button type="button" class="studio-auto-toggle studio-auto-toggle--inline"
                   [class.studio-auto-toggle--on]="autoModeFor(name) !== 'manual' && autoModeFor(name) !== 'paused'"
                   data-testid="studio-titlebar-auto-toggle"
@@ -88,13 +88,19 @@
     </button>
 
     <div class="studio-titlebar__actions" data-testid="studio-titlebar-actions">
+      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-team"
+              data-nav-inline-from="desktop" (click)="openTeam()">Team</button>
       <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-magazine"
               data-nav-inline-from="desktop" (click)="openInstallationMagazine()">Magazine</button>
-      <app-task-defaults-control (cliChange)="defaultCliChange.emit($event)"
-                                 (modelChange)="defaultModelChange.emit($event)" />
-      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-environment"
-              data-nav-inline-from="tablet" cacTooltip="Open live environment"
-              (click)="environmentOpen.set(true)">Environment</button>
+      @if (headerCockpit.shellAccess.operator()) {
+        @defer (on immediate) {
+          <app-task-defaults-control (cliChange)="defaultCliChange.emit($event)"
+                                     (modelChange)="defaultModelChange.emit($event)" />
+        }
+        <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-environment"
+                data-nav-inline-from="tablet" cacTooltip="Open live environment"
+                (click)="environmentOpen.set(true)">Environment</button>
+      }
       <button type="button"
               class="studio-titlebar__chatbtn"
               data-testid="studio-titlebar-chat"
@@ -113,15 +119,17 @@
               (click)="toggleTheme()">
         <app-studio-icon [name]="theme() === 'light' ? 'moon' : 'sun'" [size]="14"></app-studio-icon>
       </button>
-      <app-attention-control />
-      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-settings"
+      @if (headerCockpit.shellAccess.operator()) {
+        @defer (on immediate) { <app-attention-control /> }
+      }
+      @if (headerCockpit.shellAccess.operator()) { <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-settings"
               aria-label="Settings" cacTooltip="Workspace settings" (click)="toggleSettings.emit()">
         <app-studio-icon name="settings" [size]="14" /><span>Settings</span>
-      </button>
+      </button> }
       <app-account-control />
     </div>
   </app-studio-navigation-header>
-  <app-workspace-quota-banner />
+  @if (headerCockpit.shellAccess.operator()) { <app-workspace-quota-banner /> }
   @defer (when headerCockpit.detailFocus() !== null) {
   <app-usage-detail-surface surfaceId="studio-usage-detail"
                             [snapshot]="headerCockpit.usage.snapshot()"
@@ -481,6 +489,13 @@
           @if (tab.kind === 'magazine') {
             @if (magazineComponent(); as component) {
               <ng-container *ngComponentOutlet="component; inputs: { scope: tab.scope, label: tab.label, children: magazineChildren(tab.scope), projects: magazineProjects() }" />
+            }
+          }
+        }
+        @if (activeTab(); as tab) {
+          @if (tab.kind === 'team') {
+            @if (teamComponent(); as component) {
+              <ng-container *ngComponentOutlet="component; inputs: { personaId: tab.personaId, workspaces: registryWorkspaces() }" />
             }
           }
         }

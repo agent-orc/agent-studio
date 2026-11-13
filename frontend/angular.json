@@ -57,7 +57,11 @@
             ],
             "styles": [
               "src/styles.scss",
-              "node_modules/diff2html/bundles/css/diff2html.min.css"
+              {
+                "input": "node_modules/diff2html/bundles/css/diff2html.min.css",
+                "bundleName": "diff2html",
+                "inject": false
+              }
             ],
             "allowedCommonJsDependencies": [
               "@profoundlogic/hogan"
@@ -69,7 +73,7 @@
                 {
                   "type": "initial",
                   "maximumWarning": "2060kB",
-                  "maximumError": "2110kB"
+                  "maximumError": "2114kB"
                 },
                 {
                   "type": "anyComponentStyle",

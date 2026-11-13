@@ -54,6 +54,9 @@ describe('ExecutionAssignmentCardComponent', () => {
     request.flush({ pickupMode: 'manual', executionLocation: 'agent-runner-01' });
 
     expect(fixture.componentInstance.selectedHostId()).toBe('agent-runner-01');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="project-execution-save-confirmation"]')?.textContent)
+      .toContain('Execution location saved.');
     flushRunnerInfrastructureFailures(http);
     http.verify();
   });
@@ -202,6 +205,10 @@ describe('ExecutionAssignmentCardComponent', () => {
 
 function flushRunnerInfrastructureFailures(http: HttpTestingController): void {
   for (const request of http.match('/api/v1/management/runner-infrastructure-failures')) request.flush([]);
+  for (const request of http.match('/api/host/filesystems')) request.flush(
+    { error: 'host disk telemetry unavailable in component unit test' },
+    { status: 503, statusText: 'Service Unavailable' },
+  );
 }
 
 function flushHostRegistryFailure(http: HttpTestingController): void {

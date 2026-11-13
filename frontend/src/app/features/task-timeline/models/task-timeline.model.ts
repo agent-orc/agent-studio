@@ -66,6 +66,10 @@ export const TIMELINE_KIND = {
   followUpSuperseded: 'follow_up_superseded',
   steeringFeedback: 'steering_feedback',
   continuationBaseRecorded: 'continuation_base_recorded',
+  briefChanged: 'brief_changed',
+  completionContentRefused: 'completion_content_refused',
+  completionContentOverridden: 'completion_content_overridden',
+  contentReviewRequested: 'content_review_requested',
 } as const;
 
 /** The three terminals of the completion loop. */

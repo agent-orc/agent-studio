@@ -11,12 +11,17 @@ namespace AgentStudio.Git;
 public sealed record IntegrationWorktreeResolution(
     string? Path,
     IntegrationWorktreeAction Action,
-    string? Error)
+    string? Error,
+    bool CheckoutMissing = false)
 {
     public bool Success => !string.IsNullOrWhiteSpace(Path) && Error is null;
 
     public static IntegrationWorktreeResolution Failed(string error)
         => new(null, IntegrationWorktreeAction.Blocked, error);
+
+    /// <summary>No usable checkout exists on the server: setup, not a retry, is the remedy.</summary>
+    public static IntegrationWorktreeResolution MissingCheckout(string error)
+        => new(null, IntegrationWorktreeAction.Blocked, error, CheckoutMissing: true);
 
     public static IntegrationWorktreeResolution Prepared(string path, IntegrationWorktreeAction action)
         => new(path, action, null);
@@ -71,8 +76,11 @@ public sealed class IntegrationWorktreeProvider
         string? integrationBranch,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
-            return IntegrationWorktreeResolution.Failed("Could not resolve the project repository for the integration worktree.");
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !Directory.Exists(Path.Combine(repoRoot, ".git"))
+                && !File.Exists(Path.Combine(repoRoot, ".git")))
+            return IntegrationWorktreeResolution.MissingCheckout(
+                "This project needs a server checkout before delivery can integrate. Integration worktree preparation cannot continue. Open Project Settings, configure a checkout on the Studio server, then retry integration.");
         if (cancellationToken.IsCancellationRequested)
             return IntegrationWorktreeResolution.Failed("Integration worktree preparation was cancelled.");
 
@@ -90,7 +98,7 @@ public sealed class IntegrationWorktreeProvider
             _git.RefreshIntegrationBranch(repoRoot, integrationBranch!, cancellationToken);
         }
         if (line is not null && _git.GetBranchTip(repoRoot, line) is null)
-            return IntegrationWorktreeResolution.Failed(
+            return IntegrationWorktreeResolution.MissingCheckout(
                 $"Integration worktree base '{line}' is unavailable after fetch; preparation cannot use the developer checkout's HEAD.");
         var baseRef = line ?? "HEAD";
         var registered = _git.ListWorktrees(repoRoot)

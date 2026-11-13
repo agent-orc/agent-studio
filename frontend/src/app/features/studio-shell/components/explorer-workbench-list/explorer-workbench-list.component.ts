@@ -13,7 +13,6 @@ import {
   viewChildren,
 } from '@angular/core';
 import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
-import { TagChipsComponent } from '../../../../components/tag-chips/tag-chips.component';
 import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
@@ -40,7 +39,7 @@ interface WorkbenchNavigationGroup {
 @Component({
   selector: 'app-explorer-workbench-list',
   standalone: true,
-  imports: [TreeRowComponent, TagChipsComponent, ExplorerWorkbenchHistoryComponent],
+  imports: [TreeRowComponent, ExplorerWorkbenchHistoryComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './explorer-workbench-list.component.html',
   styleUrl: './explorer-workbench-list.component.scss',
@@ -72,13 +71,14 @@ export class ExplorerWorkbenchListComponent {
         id: 'needs-decision',
         label: 'Needs a decision',
         empty: 'No decisions waiting',
-        items: items.filter(item => item.status === 'decision-pending' || item.status === 'invalid'),
+        items: items.filter(item => this.openCount(item) > 0 || item.status === 'invalid'),
       },
       {
         id: 'in-implementation',
         label: 'In implementation',
         empty: 'No Dossiers in implementation',
-        items: items.filter(item => item.status === 'active' || item.status === 'decided'),
+        items: items.filter(item => (item.status === 'active' || item.status === 'decided')
+          && this.openCount(item) === 0),
       },
     ];
   });
@@ -86,8 +86,8 @@ export class ExplorerWorkbenchListComponent {
     this.dossierItems().filter(item => item.status === 'documented' || item.status === 'archived'));
   readonly pendingDecisionCount = computed(() =>
     (this.catalogue()?.items ?? [])
-      .filter(item => item.status === 'decision-pending')
       .reduce((count, item) => count + this.openCount(item), 0));
+  readonly dossierCount = computed(() => this.dossierItems().length);
   readonly sectionScope = computed(() => this.projectId()?.trim() || this.projectName());
 
   private readonly topics = viewChildren<ElementRef<HTMLElement>>('workbenchTopic');
@@ -195,7 +195,11 @@ export class ExplorerWorkbenchListComponent {
   }
 
   openCount(item: WorkbenchListItem): number {
-    return item.openDecisionCount ?? (item.status === 'decision-pending' ? 1 : 0);
+    if (item.status === 'decided' || item.status === 'documented' || item.status === 'archived')
+      return 0;
+    return item.openDecisionCount ?? (
+      item.status === 'decision-pending' || item.phase === 'decision-ready'
+        || item.lifecycleState === 'review-requested' ? 1 : 0);
   }
 
   accessibleMeta(item: WorkbenchListItem): string {
@@ -205,12 +209,13 @@ export class ExplorerWorkbenchListComponent {
   }
 
   navTooltip(item: WorkbenchListItem): string {
-    return [item.title, item.key, this.accessibleMeta(item)].filter(Boolean).join('\n');
+    const tags = item.tags?.length ? `Tags: ${item.tags.join(', ')}` : null;
+    return [item.title, item.key, this.accessibleMeta(item), tags].filter(Boolean).join('\n');
   }
 
   dossierAriaLabel(): string {
-    const count = this.pendingDecisionCount();
-    return count > 0 ? `Dossiers, ${count} decisions waiting` : 'Dossiers';
+    const count = this.dossierCount();
+    return count > 0 ? `Dossiers, ${count} dossiers` : 'Dossiers';
   }
 
   private dossierItems(): WorkbenchListItem[] {

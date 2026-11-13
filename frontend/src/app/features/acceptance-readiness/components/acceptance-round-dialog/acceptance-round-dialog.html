@@ -1,0 +1,24 @@
+<app-dialog eyebrow="Send a round" [title]="draft().item.title || draft().job.title" kind="primary" widthTier="lg"
+            testid="acceptance-round-dialog" (closeRequest)="close()" (backdropClick)="close()">
+  <p class="round-dialog__lead">The round goes through the normal continue path. Edit it before you send it.</p>
+  <label class="round-dialog__field">
+    <span class="round-dialog__label">Round prompt</span>
+    <textarea class="round-dialog__prompt" rows="10" data-testid="acceptance-round-prompt"
+              [value]="prompt()" (input)="prompt.set($any($event.target).value)"></textarea>
+  </label>
+  <label class="round-dialog__field">
+    <span class="round-dialog__label">Start from result ref</span>
+    <input type="text" class="round-dialog__ref" data-testid="acceptance-round-base-ref" spellcheck="false"
+           autocomplete="off" placeholder="The card's latest result" [value]="baseRef()"
+           (input)="baseRef.set($any($event.target).value)" />
+  </label>
+  @if (store.roundError(); as error) {
+    <p class="round-dialog__error" role="alert" data-testid="acceptance-round-error">{{ error }}</p>
+  }
+  <div footer>
+    <button type="button" class="btn btn--ghost" data-testid="acceptance-round-cancel" (click)="close()">Cancel</button>
+    <button type="button" class="btn btn--primary" data-testid="acceptance-round-send"
+            [appPendingButton]="store.sendingRound()" pendingLabel="Sending…"
+            [disabled]="!prompt().trim()" (click)="send()">Send round</button>
+  </div>
+</app-dialog>

@@ -72,6 +72,19 @@ picker, Project Chat and Add task dialog, and files a card. A second Product
 user whose only binding is removed sees the no-project sentence. With
 `JOB_RESULTS_DIR` set, it writes light, dark and 390 px screenshots to
 `product-session/` there.
+### Networked HTTPS profile
+
+`npm --prefix frontend run e2e -- e2e/security/reviewer-role.networked-https.spec.ts`
+selects the `networked-https` profile: a fresh networked monolith (as in
+`networked-monolith`) behind the same temporary localhost HTTPS proxy as
+`public-demo`. The proxy keeps the browser's Host and forwards the secure
+scheme, so the browser keeps the Secure `__Host-` session cookies and the
+backend's same-origin check sees the page's own origin. Specs run real
+sign-in, invitation, and second-factor flows in the browser with no cookie
+injection. Playwright ignores certificate errors only for this profile and
+`public-demo`. The Reviewer role spec (AGT-3670) writes its light, dark, and
+390 px screenshots and the review audit entries to
+`$JOB_RESULTS_DIR/reviewer-role/`.
 ### Networked owner setup over HTTPS
 
 Run `npm --prefix frontend run e2e -- e2e/security/owner-second-factor-human-pace.spec.ts`
@@ -83,6 +96,17 @@ Secure session cookie. The spec creates the owner in the sign-in gate, waits
 the disconnected live-update hub), then enrolls an authenticator with a code it
 computes from the shown secret (AGT-3614). With `JOB_RESULTS_DIR` set, it
 writes light, dark and 390 px screenshots to `owner-second-factor/`.
+
+### Networked project checkout journey
+
+Run `npm --prefix frontend run e2e -- e2e/security/networked-project-checkout.spec.ts`.
+The isolated `networked-checkout` profile uses the networked HTTPS monolith and
+a disposable Git origin. The browser creates the Owner and runner enrollment
+codes; the test starts coding and review hosts from those codes. It registers
+a project by URL, creates its first card, and verifies the integrated file on
+the origin. The spec makes no direct application API calls.
+With `JOB_RESULTS_DIR` set, it writes light, dark and 390 px checkout screenshots
+and an integration screenshot to `networked-project-checkout/`.
 
 ### Product card detail check
 
@@ -684,10 +708,11 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `unified-dialog-screenshots.spec.ts` | Unified confirm + notify visuals |
 | `visual-evidence-strip-and-reel.spec.ts` | Visual evidence: per-task strip + lightbox + workspace reel |
 
-### `usage-cockpit/` - 1 spec
+### `usage-cockpit/` - 2 specs
 
 | Spec | Summary |
 |------|---------|
+| `capacity-forecast.spec.ts` | Near-exhausted window states what is left; the usage detail Capacity section lists two Ready cards that would fall back, one flagged as not offered by the installed CLI (AGT-3584) |
 | `footer-subscription-usage.spec.ts` | One footer entry per subscription, stale age, host sign-in problem, top-right account and Settings, and responsive screenshots |
 
 ### `workspace/` - 8 specs

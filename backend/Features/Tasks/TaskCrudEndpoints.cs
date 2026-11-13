@@ -726,7 +726,7 @@ public static class TaskCrudEndpoints
             if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+                return ProductMoveRefusal(scanner.FindJob(jobId, watchPath)?.State, req.TargetState);
             var validation = ValidateTargetState(req.TargetState);
             if (validation != null) return validation;
             if (req.OperatorOverride && req.TargetState != TaskStates.Completed)
@@ -769,7 +769,7 @@ public static class TaskCrudEndpoints
             if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+                return ProductMoveRefusal(scanner.FindJob(jobId, watchPath)?.State, req.TargetState);
             var validation = ValidateTargetState(req.TargetState);
             if (validation != null) return validation;
             if (req.OperatorOverride && req.TargetState != TaskStates.Completed)
@@ -792,6 +792,80 @@ public static class TaskCrudEndpoints
             return await MoveOperatorWithRunIntentAsync(jobId, watchPath, req, ctx,
                 transitions, scanner, leases, authority, timeline, isolation, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        group.MapPost("/{jobId}/content-review", async (string jobId, string? project,
+            string? watchPath, HttpContext context, TaskScannerService scanner,
+            TaskTransitionService transitions, AttemptAuthorityService authority,
+            AgentStudio.Runner.RemoteReviewPlanBuilder plans,
+            AgentStudio.Projects.ProjectSettingsService projectSettings,
+            AgentStudio.Git.GitService git, TimelineLog timeline,
+            AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>
+        {
+            if (!ProjectAccessAuthorization.HasOperatorAuthority(context))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var card = scanner.FindJob(jobId, watchPath);
+            if (card is null) return Results.NotFound();
+            if (card.State != TaskStates.HumanReview)
+                return Results.Conflict(new { code = "content-review-state", error = "Review again is available in Human Review." });
+            var taskKey = card.Key ?? card.Id;
+            var run = authority.GetTaskProjection(taskKey).CurrentRunAttempt;
+            if (run is not { State: AttemptLifecycleState.Completed, ResultEnvelope: not null, ResultSha: not null })
+                return Results.Conflict(new { code = "content-review-delivery", error = "The current delivery has no completed run to review." });
+            var required = TaskModes.IsConcept(card.Mode) ? "concept-fit" : "requirement-fit";
+            var currentBrief = BriefVersionStore.ReadCurrent(card.FolderPath);
+            var repository = git.ResolveRepoRootForWatchPath(card.WatchPath);
+            var settings = projectSettings.Get(card.ProjectName);
+            var oldPlan = authority.GetTaskProjection(taskKey).CurrentReviewAttempt?.Subject.Plan;
+            var plan = plans.Build(card, repository, settings, oldPlan?.IntegrationRef,
+                run.ResultSha, immutableResultRef: run.ResultEnvelope.ImmutableRemoteRef);
+            var commands = plan.Commands.Where(command => command.Aspect == required).ToArray();
+            if (commands.Length == 0)
+                return Results.Conflict(new { code = "content-review-unavailable",
+                    error = $"No {required} review command is configured for this card." });
+            plan = plan with
+            {
+                Commands = commands,
+                RequiredAspects = [required],
+                BriefSha256 = currentBrief,
+                RequiresVisualReview = false,
+                CarriedVerdicts = null,
+                ScopedReview = null,
+                DeepReviewDecision = null,
+                VerifyReuseFromAttemptIds = null,
+                BuildTestDeferredToBatch = false,
+                VerifyDefinitionMissing = null,
+            };
+            var promptPath = Path.Combine(card.FolderPath, "prompt.md");
+            var requirements = File.Exists(promptPath) ? File.ReadAllText(promptPath) : card.Id;
+            var moved = await transitions.MoveAsync(jobId, TaskStates.AutoReview, watchPath, ct,
+                cause: OperatorActor(context), reason: "Review content against the current brief");
+            if (moved.Status != MoveJobStatus.Success)
+                return MoveResult(moved);
+            var review = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+                taskKey, run.RepositoryId, run.ResultSha, run.AttemptId,
+                AttemptAuthorityService.Hash(requirements),
+                AttemptAuthorityService.Hash("remote-review-policy:v1:current-brief"),
+                run.EvidenceDigests, $"content-review:{run.AttemptId}:{currentBrief}:{Guid.NewGuid():N}",
+                RepositoryUrl: run.ResultEnvelope.RepositoryUrl,
+                ResultRef: run.ResultEnvelope.ImmutableRemoteRef,
+                Plan: plan));
+            if (!review.Accepted)
+            {
+                await transitions.MoveAsync(jobId, TaskStates.HumanReview, watchPath, ct,
+                    cause: TimelineActors.System, reason: "Content review request failed");
+                return Results.Conflict(new { code = "content-review-create-failed", error = review.Message });
+            }
+            timeline.Append(moved.NewFolderPath ?? card.FolderPath, TimelineEventKinds.ContentReviewRequested,
+                OperatorActor(context), $"Reviewing {required} again against brief {currentBrief}.",
+                details: new Dictionary<string, string>
+                {
+                    ["briefVersion"] = currentBrief,
+                    ["reviewAttemptId"] = review.AttemptId,
+                    ["aspect"] = required,
+                });
+            return Results.Ok(new { reviewAttemptId = review.AttemptId, briefVersion = currentBrief });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
 
         group.MapPost("/{jobId}/older-brief-delivery/decision", async (
             string jobId, string? project, string? watchPath,
@@ -1079,17 +1153,9 @@ public static class TaskCrudEndpoints
             {
                 try
                 {
-                    CliModelCatalog catalogue;
-                    try
-                    {
-                        catalogue = await cliRouter.Get(requestedCli).GetModelCatalogAsync(false, ct);
-                    }
-                    catch when (requestedCli is CliTypes.Claude or CliTypes.Codex)
-                    {
-                        catalogue = requestedCli == CliTypes.Claude
-                            ? ClaudeModelDiscovery.FallbackCatalog("creation-registry-fallback")
-                            : CodexModelDiscovery.FallbackCatalog("creation-registry-fallback");
-                    }
+                    // AGT-3709: a cold catalogue starts the CLI in a PTY; create
+                    // never waits for that and answers from the registry instead.
+                    var catalogue = await RequestPathModelCatalogue.GetAsync(cliRouter, requestedCli, ct);
                     var recommendation = modelRouting.Recommend(
                         req.TaskType,
                         catalogue,
@@ -1583,11 +1649,24 @@ public static class TaskCrudEndpoints
     internal static readonly string OperatorAuthorityRequired =
         "operatorOverride needs the Admin or Owner role in this project.";
 
-    private static async Task<IResult> MoveOperatorWithRunIntentAsync(
+    internal static IResult ProductMoveRefusal(string? currentState, string? targetState)
+    {
+        var message = currentState == TaskStates.HumanReview && targetState == TaskStates.Ready
+            ? "Your role can accept this card but cannot move it back to Ready; ask a project Admin or Owner to send it back."
+            : "Your role cannot move this card to that lane; ask a project Admin or Owner to make the move.";
+        return Results.Json(new { code = "product-move-forbidden", message },
+            statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    /// <param name="expectedState">
+    /// When set, the move happens only from this lane, checked under the claim
+    /// gate (the Human Review decision, AGT-3670); another lane answers 409.
+    /// </param>
+    internal static async Task<IResult> MoveOperatorWithRunIntentAsync(
         string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
         TaskTransitionService transitions, TaskScannerService scanner, RunLeaseService leases,
         AttemptAuthorityService authority, TimelineLog timeline,
-        AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct)
+        AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct, string? expectedState = null)
     {
         // Completion and claim use this same gate. Keep the lane move and its
         // authority decision in one ordering so neither can settle in between.
@@ -1596,6 +1675,9 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
+            if (expectedState is not null && card.State != expectedState)
+                return Results.Json(new { error = "lane-changed", message = $"The card left {expectedState}.", state = card.State },
+                    statusCode: StatusCodes.Status409Conflict);
             var attention = context.RequestServices.GetRequiredService<AgentStudio.Operator.OperatorCoordinationStore>();
             var actor = AgentStudio.Operator.OperatorEndpoints.Actor(context);
             var owner = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
@@ -1662,6 +1744,7 @@ public static class TaskCrudEndpoints
                 cause: OperatorActor(context), reason: request.Reason,
                 operatorOverride: request.OperatorOverride,
                 archiveOverride: request.ArchiveOverride,
+                reissueInstructions: request.ReissueInstructions,
                 batchWithdrawalId: activeBatch?.BatchId);
             var moved = activeBatch is null ? await Move()
                 : await batchGuard.WithdrawAsync(activeBatch, Move);

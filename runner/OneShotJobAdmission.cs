@@ -6,27 +6,27 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentRunner;
 
 internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClient client, Action<string> log,
-    Func<TimeSpan, CancellationToken, Task>? delay = null)
+    Func<TimeSpan, CancellationToken, Task>? delay = null, OneShotClaimRouteObservation? route = null,
+    Func<DateTime>? clock = null)
 {
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan RouteBackoff = TimeSpan.FromMinutes(5);
+    private readonly OneShotClaimRouteObservation _route = route ?? new();
+
     private Task WaitAsync(TimeSpan interval, CancellationToken cancellationToken)
         => delay is null ? Task.Delay(interval, cancellationToken) : delay(interval, cancellationToken);
 
     public async Task PollAsync(CancellationToken shutdown)
     {
-        var missingRouteLogged = false;
         while (!shutdown.IsCancellationRequested)
         {
             try
             {
                 var work = await client.ClaimOneShotJobAsync(options.RunnerId, shutdown);
-                if (missingRouteLogged)
-                {
-                    log("one-shot-job-poll-restored");
-                    missingRouteLogged = false;
-                }
+                if (_route.Clear()) log("one-shot-job-poll-restored");
                 if (work is null)
                 {
-                    await WaitAsync(TimeSpan.FromSeconds(3), shutdown);
+                    await WaitAsync(PollInterval, shutdown);
                     continue;
                 }
                 await ExecuteAsync(work, shutdown);
@@ -34,11 +34,13 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
-                var missingRoute = ex is TaskServerException { StatusCode: 404 };
-                if (!missingRoute || !missingRouteLogged)
-                    log($"one-shot-job-poll-failed error={ex.GetType().Name}: {ex.Message}");
-                if (missingRoute) missingRouteLogged = true;
-                try { await WaitAsync(missingRoute ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(3), shutdown); }
+                var condition = OneShotClaimRouteObservation.Classify(ex);
+                var entered = condition is not null && _route.Observe(condition,
+                    ((TaskServerException)ex).StatusCode, ex.Message, RouteBackoff, (clock ?? (() => DateTime.UtcNow))());
+                if (condition is null || entered)
+                    log($"one-shot-job-poll-failed error={ex.GetType().Name}: {ex.Message}"
+                        + (entered ? $" condition={condition} backoff={(int)RouteBackoff.TotalSeconds}s" : string.Empty));
+                try { await WaitAsync(condition is null ? PollInterval : RouteBackoff, shutdown); }
                 catch (OperationCanceledException) { break; }
             }
         }
@@ -94,7 +96,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
     }
 
     internal async Task<ProcessResult> RunBoundedTurnAsync(OneShotJobRequest request, string directory,
-        CancellationToken ct)
+        CancellationToken ct, bool readOnlyTools = false, bool personaIsolation = false)
     {
         var start = new ProcessStartInfo
         {
@@ -107,11 +109,14 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             CreateNoWindow = true,
         };
         WorkerEdgeCredentialBoundary.RemoveFrom(start.Environment);
+        if (personaIsolation)
+            WorkerEdgeCredentialBoundary.RemovePersonaDeploymentCredentials(start.Environment);
         if (request.Cli == "claude")
         {
+            if (personaIsolation) start.ArgumentList.Add("--restricted");
             foreach (var arg in new[] { "-p", "--output-format", "stream-json", "--input-format",
                          "stream-json", "--verbose", "--model", request.Model,
-                         "--tools", "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}" })
+                         "--tools", readOnlyTools ? "Read,Glob,Grep" : "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}" })
                 start.ArgumentList.Add(arg);
         }
         else

@@ -167,6 +167,12 @@ public static class TimelineEventKinds
     public const string IntegrationOverridden = "integration_overridden";
     /// <summary>Written exception to the current-brief content acceptance gate.</summary>
     public const string CompletionContentOverridden = "completion_content_overridden";
+    /// <summary>An attempted acceptance was refused by the current-brief content gate.</summary>
+    public const string CompletionContentRefused = "completion_content_refused";
+    /// <summary>The authored brief changed after a delivery or review.</summary>
+    public const string BriefChanged = "brief_changed";
+    /// <summary>An owner requested a content-only review of the current brief.</summary>
+    public const string ContentReviewRequested = "content_review_requested";
     /// <summary>
     /// AGT-3467: the settlement journal of the card's current review reads as
     /// repair, so completion has no content verdict. Written once per review
@@ -275,6 +281,8 @@ public static class TimelineEventKinds
     public const string StallInterventionRecorded = "stall_intervention_recorded";
     /// <summary>A stale delivery verdict caused a fresh ReviewAttempt request.</summary>
     public const string DeliveryReviewRequested = "delivery_review_requested";
+    /// <summary>A stale verdict returned to Auto Review and queued integration of its current delivery.</summary>
+    public const string DeliveryIntegrationRequested = "delivery_integration_requested";
     /// <summary>
     /// The task was completed out-of-band (operator chat, external agent, a
     /// remote host) and reconciled through

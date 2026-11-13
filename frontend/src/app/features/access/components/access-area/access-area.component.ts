@@ -1,4 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, effect, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
 import { scopeLabel, type AccessUser } from '../../models/access.model';
 import { isOperatorAgentAccount } from '../../models/operator-agent.model';
 import { AccessService } from '../../services/access.service';
@@ -20,6 +23,7 @@ import { AccessServiceAccountsComponent } from '../access-service-accounts/acces
 import { AccessStandingGrantsComponent } from '../access-standing-grants/access-standing-grants.component';
 import { SessionManagerComponent } from '../session-manager/session-manager.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 
 /**
  * The one Access area: users with their role bindings, groups, service
@@ -35,7 +39,7 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
   imports: [
     AccessBackupActivityComponent, AccessBindingsComponent, AccessBreakGlassComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
     AccessOperatorAgentsComponent, AccessOperatorApprovalsComponent, AccessOperatorKillSwitchComponent, AccessRunnersComponent,
-    AccessServiceAccountsComponent, AccessStandingGrantsComponent, SessionManagerComponent, StatusIndicatorComponent,
+    AccessServiceAccountsComponent, AccessStandingGrantsComponent, SessionManagerComponent, StatusIndicatorComponent, DatePipe,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-area.component.html',
@@ -43,6 +47,9 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
 })
 export class AccessAreaComponent implements OnInit {
   readonly access = inject(AccessService);
+  private readonly http = inject(HttpClient);
+  readonly factorEvents = signal<readonly { sequence: number; at: string; actor: string; session?: string | null; operation: string; target?: string | null }[]>([]);
+  private readonly confirmDialog = inject(ConfirmDialogService);
   readonly operators = inject(OperatorAgentsService);
   readonly standingGrants = inject(StandingGrantsService);
   readonly approvals = inject(OperatorApprovalsService);
@@ -80,6 +87,7 @@ export class AccessAreaComponent implements OnInit {
   });
 
   ngOnInit(): void {
+    void this.loadFactorEvents();
     void this.access.load();
     void this.operators.load();
     void this.standingGrants.load();
@@ -89,6 +97,7 @@ export class AccessAreaComponent implements OnInit {
 
   /** Reloads everything, including an open operator activity view. */
   reload(): void {
+    void this.loadFactorEvents();
     void this.access.load();
     void this.operators.load();
     void this.standingGrants.load();
@@ -97,6 +106,12 @@ export class AccessAreaComponent implements OnInit {
     if (this.operators.killSwitch()) void this.operators.loadKillSwitch();
     const activity = this.operators.activityState();
     if (activity === 'ready' || activity === 'error') void this.operators.loadActivity();
+  }
+
+  private async loadFactorEvents(): Promise<void> {
+    try {
+      this.factorEvents.set(await firstValueFrom(this.http.get<readonly { sequence: number; at: string; actor: string; session?: string | null; operation: string; target?: string | null }[]>('/api/auth/audit/factors')));
+    } catch { this.factorEvents.set([]); }
   }
 
   /** Each scope the user holds a role in, directly or through a group. */
@@ -117,9 +132,10 @@ export class AccessAreaComponent implements OnInit {
     return status === 'Active' ? 'success' : status === 'Invited' ? 'info' : 'neutral';
   }
 
-  status(user: AccessUser): 'Disabled' | 'Invited' | 'Active' {
+  status(user: AccessUser): 'Disabled' | 'Invited' | 'Active' | 'No access' {
     if (user.disabled) return 'Disabled';
-    return this.access.pendingInvitations().has(user.id) ? 'Invited' : 'Active';
+    if (this.access.pendingInvitations().has(user.id)) return 'Invited';
+    return this.grants(user).length ? 'Active' : 'No access';
   }
 
   async resetPassword(user: AccessUser): Promise<void> {
@@ -129,7 +145,19 @@ export class AccessAreaComponent implements OnInit {
   }
 
   async toggleDisabled(user: AccessUser): Promise<void> {
-    if (!this.access.busy()) await this.access.setUserDisabled(user.id, !user.disabled);
+    if (this.access.busy()) return;
+    if (!user.disabled) {
+      const confirmed = await this.confirmDialog.confirm({
+        eyebrow: 'Confirm disable',
+        title: 'Disable this user?',
+        message: 'Open sessions end immediately. The user cannot sign in until enabled again.',
+        detail: user.displayName,
+        confirmLabel: 'Disable',
+        kind: 'danger',
+      });
+      if (!confirmed) return;
+    }
+    await this.access.setUserDisabled(user.id, !user.disabled);
   }
 
   private roleName(id: string): string {

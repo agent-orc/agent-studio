@@ -9,6 +9,39 @@ import { NotificationService } from '../../../../services/notification.service';
 const AVAILABLE = () => of({ available: true, reason: null });
 
 describe('IntegrationDeadEndComponent', () => {
+  it('offers Retry integration as the single primary action for a refused publication (AGT-3695)', async () => {
+    const retryIntegration = vi.fn(() => of({ status: 'integrated' }));
+    const refresh = vi.fn();
+    await TestBed.configureTestingModule({
+      imports: [IntegrationDeadEndComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        { provide: TaskService, useValue: { retryIntegration, refresh, checkFailureContinuation: AVAILABLE } },
+        { provide: NotificationService, useValue: { success: vi.fn(), error: vi.fn() } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(IntegrationDeadEndComponent);
+    fixture.componentRef.setInput('jobId', 'task-3649');
+    fixture.componentRef.setInput('watchPath', '/project/tasks');
+    const reason = 'Publication stopped: the approved merge result c58e247 is not on the local develop integration line.';
+    fixture.componentRef.setInput('status', {
+      status: 'conflict-skipped', integrationBranch: 'develop', deliveryRef: 'task/AGT-3649', sha: null, detail: reason,
+      failure: { code: 'integration-push-blocked', label: 'Integration push blocked', reason,
+        rebaseRecoveryAvailable: false, replayAvailable: true },
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const panel = fixture.nativeElement as HTMLElement;
+    expect(panel.textContent).toContain('Push blocked');
+    expect(panel.textContent).toContain(reason);
+    expect(panel.querySelectorAll('.dead-end__actions button')).toHaveLength(1);
+    expect(panel.querySelector('[data-testid="dead-end-continue"]')).toBeNull();
+    (panel.querySelector('[data-testid="dead-end-retry"].dead-end__primary') as HTMLButtonElement).click();
+    expect(retryIntegration).toHaveBeenCalledWith('task-3649', '/project/tasks');
+    expect(refresh).toHaveBeenCalledWith(true);
+  });
+
   it('queues a continuation on the same task when the primary action is clicked', async () => {
     const continueFromFailure = vi.fn(() => of({ status: 'queued', stage: 'integration reach', taskKey: 'AGT-2909', savedReason: 'lane-not-runnable' }));
     const refresh = vi.fn();
@@ -27,6 +60,7 @@ describe('IntegrationDeadEndComponent', () => {
     fixture.componentRef.setInput('status', {
       status: 'pending', integrationBranch: 'develop', deliveryRef: 'task/AGT-2909',
       sha: null, detail: 'Delivery is not on develop.',
+      failure: { code: 'delivery-pending', label: 'Delivery pending', reason: 'Delivery is not on develop.' },
     });
     fixture.detectChanges();
     await fixture.whenStable();
@@ -54,7 +88,10 @@ describe('IntegrationDeadEndComponent', () => {
     }).compileComponents();
     const fixture = TestBed.createComponent(IntegrationDeadEndComponent);
     fixture.componentRef.setInput('jobId', 'task-2909');
-    fixture.componentRef.setInput('status', { status: 'pending', detail: 'Delivery pending.' });
+    fixture.componentRef.setInput('status', {
+      status: 'pending', detail: 'Delivery pending.',
+      failure: { code: 'delivery-pending', label: 'Delivery pending', reason: 'Delivery pending.' },
+    });
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
@@ -84,6 +121,10 @@ describe('IntegrationDeadEndComponent', () => {
       fixture.componentRef.setInput('watchPath', '/project/tasks');
       fixture.componentRef.setInput('status', {
         status: 'not-applicable', integrationBranch: 'develop', deliveryRef: null, sha: null, detail: null,
+        failure: {
+          code: 'delivery-gate-failed', label: 'Delivery gate failed',
+          reason: 'The recorded delivery gate failed.',
+        },
       });
       fixture.detectChanges();
       await fixture.whenStable();

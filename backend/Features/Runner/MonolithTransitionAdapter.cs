@@ -91,6 +91,9 @@ public static class MonolithTransitionAdapter
     public static int GateStartsAfterCancellation(int startsBeforeThisRun, string? reason, bool serviceStopping)
         => GateCancellationPolicy.ChargedStartsAfterCancellation(startsBeforeThisRun, reason, serviceStopping);
 
+    public static int GateStartsAfterServiceRestart(int chargedStarts, string? runByInstance, string currentInstance)
+        => GateCancellationPolicy.ChargedStartsAfterServiceRestart(chargedStarts, runByInstance, currentInstance);
+
     public static PerTaskFallbackWaitDecision PerTaskFallbackEngineWait(EngineDecisionWaitFacts facts)
         => PerTaskFallbackWaitPolicy.EngineDecision(facts);
 
@@ -133,6 +136,20 @@ public static class MonolithTransitionAdapter
     public static bool IsGateQueueOverrun(string? budgetName, string? budgetPhase)
         => GateQueueStallPolicy.IsQueueOverrun(budgetName, budgetPhase);
 
+    public static bool GateHostUnavailable(bool failed, bool cancelled, string? evidence, int failingItems)
+        => GateHostOutagePolicy.IsHostUnavailable(failed, cancelled, evidence, failingItems);
+
+    public static bool GateHostMayStartRun(DateTimeOffset? outageSinceUtc, DateTimeOffset lastAttemptUtc,
+        int failedProbes, DateTimeOffset nowUtc)
+        => GateHostOutagePolicy.MayStartRun(outageSinceUtc, lastAttemptUtc, failedProbes, nowUtc);
+
+    public static bool GateHostOutageEscalates(DateTimeOffset outageSinceUtc, DateTimeOffset nowUtc,
+        TimeSpan escalateAfter, bool alreadyEscalated)
+        => GateHostOutagePolicy.EscalatesGate(outageSinceUtc, nowUtc, escalateAfter, alreadyEscalated);
+
+    public static string GateHostWaitingReason(DateTimeOffset outageSinceUtc)
+        => GateHostOutagePolicy.WaitingReason(outageSinceUtc);
+
     public static bool GateQueueStallReminds(DateTimeOffset lastRaisedAtUtc, DateTimeOffset nowUtc)
         => GateQueueStallPolicy.RemindsStall(lastRaisedAtUtc, nowUtc);
 
@@ -146,8 +163,74 @@ public static class MonolithTransitionAdapter
     public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
         => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
 
-    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed)
-        => BatchGateStartPolicy.Order(formed);
+    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
+        DateTimeOffset nowUtc)
+        => BatchGateStartPolicy.Order(formed, nowUtc);
+
+    public static BatchRepackDecision BatchRepack(BatchRepackFacts facts)
+        => BatchFormationPolicy.Repack(facts);
+
+    public static (bool Overlap, string Detail) BatchRepackExclusion(BatchPlannerCard card,
+        IReadOnlyList<BatchPlannerCard> selected, int maximumSize, string overlap)
+        => BatchFormationPolicy.RepackExclusion(card, selected, maximumSize, overlap);
+
+    public static IReadOnlyList<BatchPlannerCard> BatchLargestCompatible(IReadOnlyList<BatchPlannerCard> ordered,
+        int maximumSize, string overlap)
+        => BatchFormationPolicy.LargestCompatible(ordered, maximumSize, overlap);
+
+    public static IReadOnlyList<string> BatchConflictingFiles(BatchPlannerCard left, BatchPlannerCard right)
+        => BatchFormationPolicy.ConflictingFiles(left, right);
+
+    public static BatchCloseSelection BatchCloseSelection(IReadOnlyCollection<string> eligibleKeys,
+        IReadOnlyList<string> proposedKeys, int minimumSize, int maximumSize)
+        => BatchFormationPolicy.CloseSelection(eligibleKeys, proposedKeys, minimumSize, maximumSize);
+
+    public static BatchFormationRoute BatchLookAheadRoute(string decision)
+        => BatchFormationPolicy.LookAheadRoute(decision);
+
+    public static bool BatchConsumesCloseNow(BatchFormationRoute route)
+        => BatchFormationPolicy.ConsumesCloseNow(route);
+
+    public static IReadOnlyList<string> BatchLookAheadCloseKeys(IEnumerable<string> provenGreenKeys,
+        IEnumerable<string> proposedMembers)
+        => BatchFormationPolicy.LookAheadCloseKeys(provenGreenKeys, proposedMembers);
+
+    public static IReadOnlyList<string> BatchSnapshotEligible(IEnumerable<(string TaskKey, bool Excluded)> members)
+        => BatchFormationPolicy.SnapshotEligible(members);
+
+    public static AgentStudio.TaskServer.Contracts.BatchGate.BatchPlanDecision BatchPlanWithExcluded(
+        AgentStudio.TaskServer.Contracts.BatchGate.BatchPlanDecision plan,
+        IReadOnlyList<AgentStudio.TaskServer.Contracts.BatchGate.BatchPlanExcludedMember> excluded)
+        => BatchFormationPolicy.WithExcluded(plan, excluded);
+
+    public static BatchThresholdPlan BatchThresholdPlan(bool closed, bool perTask, string? formationReason,
+        int queuedPartners, int eligibleCount, int currentCount)
+        => BatchFormationPolicy.ThresholdPlan(closed, perTask, formationReason, queuedPartners, eligibleCount,
+            currentCount);
+
+    public static BatchAdmissionVerdict BatchAdmitMember(bool generationSuperseded, bool policyExcluded,
+        bool operatorEject)
+        => BatchFormationPolicy.AdmitMember(generationSuperseded, policyExcluded, operatorEject);
+
+    public static BatchAdmissionReplay BatchAdmitReplay(int conflictedFiles, bool success, bool hasTip,
+        bool mappingComplete, bool unattributableFailure)
+        => BatchFormationPolicy.AdmitReplay(conflictedFiles, success, hasTip, mappingComplete, unattributableFailure);
+
+    public static BatchAdmissionOutcome BatchAdmissionOutcome(bool baseMoved, bool replacement, int rejected,
+        int admitted, int minimumSize)
+        => BatchFormationPolicy.AdmissionOutcome(baseMoved, replacement, rejected, admitted, minimumSize);
+
+    public static BatchIntentDecision BatchIntent(BatchIntentFacts facts)
+        => BatchFormationPolicy.Decide(facts);
+
+    public static BatchIntentStep BatchIntentRecovery(BatchIntentRecoveryFacts facts)
+        => BatchFormationPolicy.Recover(facts);
+
+    public static bool BatchMayRetirePredecessors(BatchPhase? successorPhase)
+        => BatchFormationPolicy.MayRetirePredecessors(successorPhase);
+
+    public static bool BatchPhaseIsTerminal(BatchPhase phase)
+        => BatchPhaseTransitionPolicy.IsTerminal(phase);
 
     public static bool BatchFlightLeaseDeadlinePassed(DateTimeOffset startedAtUtc, bool leaseClaimed,
         DateTimeOffset nowUtc, int deadlineMinutes)
@@ -157,6 +240,11 @@ public static class MonolithTransitionAdapter
         bool batchRetired, bool gateRan, bool reformedIntoSuccessor, bool followsCompletedFlight)
         => BatchGateStartPolicy.StartsNextAfterFlight(cancelledAtLeaseDeadline, batchStillFormed,
             batchRetired, gateRan, reformedIntoSuccessor, followsCompletedFlight);
+
+    public static bool BatchEndInterruptedIsolation(bool red, bool flightActive,
+        bool hasPendingMember, bool allMembersHaveFindings)
+        => BatchGateStartPolicy.EndInterruptedIsolation(red, flightActive,
+            hasPendingMember, allMembersHaveFindings);
 
     public static string BatchFlightLeaseDeadlineReason(int deadlineMinutes)
         => BatchGateStartPolicy.LeaseDeadlineReason(deadlineMinutes);

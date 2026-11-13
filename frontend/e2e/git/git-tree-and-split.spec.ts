@@ -161,6 +161,19 @@ test.describe('Git pane — tree view and split layout', () => {
       const diff = page.getByTestId('git-diff');
       await expect(diff.locator('.d2h-file-wrapper')).toBeVisible({ timeout: 10_000 });
 
+      // diff2html's stylesheet is not in the global bundle (AGT-3745); the
+      // loader links it directly after the app stylesheet, ahead of component
+      // styles, and the diff renders only after it loaded.
+      const sheet = await page.evaluate(() => {
+        const link = document.querySelector<HTMLLinkElement>('link[href="diff2html.css"]');
+        return {
+          after: link?.previousElementSibling?.getAttribute('href') ?? null,
+          rules: link?.sheet?.cssRules.length ?? 0,
+        };
+      });
+      expect(sheet.after).toMatch(/^styles[^/]*\.css$/);
+      expect(sheet.rules).toBeGreaterThan(0);
+
       await page.screenshot({ path: 'e2e/_baselines/git-tree-inpane.png', fullPage: false });
 
       // Maximize the pane: expect tree on the left, diff on the right.

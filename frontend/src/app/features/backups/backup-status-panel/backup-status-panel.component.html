@@ -4,6 +4,7 @@
       <div>
         <h3 id="operations-backups-title">Installation backups</h3>
         <p>Encrypted backups of the whole installation, verified by a restore and copied off this host.</p>
+        <a data-testid="operations-backups-content-list" href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/setup/studio-backup-restore.md#credential-content-list" target="_blank" rel="noopener noreferrer">Archive credential content list</a>
       </div>
       <button type="button" class="backup-status__refresh" data-testid="operations-backups-refresh" (click)="load()">Refresh</button>
     </header>
@@ -16,7 +17,13 @@
         <ul class="backup-status__warnings" data-testid="operations-backups-warnings">
           @for (warning of o.warnings; track warning.code) {
             <li [attr.data-code]="warning.code" [attr.data-severity]="warning.severity">
-              <app-status-indicator [compact]="true" [wrap]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
+              @if (warning.code === 'backup-not-configured') {
+                <app-status-indicator [compact]="true" tone="warning" label="Backups are off" />
+                <span>The backup key must be stored on the host and configured as <code>Backup:KeyFile</code>. This requires host access.</span>
+                <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/studio-backup-restore.md" target="_blank" rel="noopener noreferrer">Open backup runbook</a>
+              } @else {
+                <app-status-indicator [compact]="true" [wrap]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
+              }
             </li>
           }
         </ul>
@@ -50,9 +57,12 @@
         <div data-testid="operations-backups-offhost">
           <dt>Off-host copy</dt>
           <dd>
-            <app-status-indicator [compact]="true" [tone]="offHostTone(o.offHost)" [label]="offHostLabel(o.offHost)" [detail]="o.offHost.lastError" />
+            <app-status-indicator [compact]="true" [wrap]="true" [tone]="offHostTone(o.offHost)" [label]="offHostLabel(o.offHost)" [detail]="o.offHost.lastError" />
             @if (o.lastGood; as good) { <small data-testid="operations-backups-offhost-id">Newest backup: <code>{{ good.id }}</code></small> }
             @if (o.offHost.target) { <small>{{ o.offHost.target }}</small> }
+            @if (o.offHost.listing; as listing) {
+              <small data-testid="operations-backups-offhost-listing" [attr.data-listing-state]="listing.state">{{ offHostListingSummary(listing) }}</small>
+            }
           </dd>
         </div>
         <div data-testid="operations-backups-schedule">
@@ -71,6 +81,71 @@
           <dd>@if (o.secretKeyId) { <code>{{ o.secretKeyId }}</code> } @else { None }</dd>
         </div>
       </dl>
+      @if (o.lastRestore; as restore) {
+        <section class="backup-status__block" data-testid="operations-backups-restore" aria-labelledby="operations-backups-restore-title">
+          <h4 id="operations-backups-restore-title">Restored from a backup</h4>
+          <p>
+            Restored <time [attr.datetime]="restore.restoredAt">{{ restore.restoredAt | date:'medium':'UTC' }} UTC</time>
+            by {{ restore.restoredBy }} from backup {{ restore.backupId }}, made
+            <time [attr.datetime]="restore.archiveCreatedAt">{{ restore.archiveCreatedAt | date:'medium':'UTC' }} UTC</time>
+            on {{ restore.archiveHost }}.
+          </p>
+          <p data-testid="operations-backups-restore-loss">Work done on the old host after {{ restore.archiveCreatedAt | date:'medium':'UTC' }} UTC is not in this installation.</p>
+          <dl class="backup-status__facts">
+            <div><dt>Archive</dt><dd>{{ restore.archiveFileName }}</dd></div>
+            <div><dt>Backup key</dt><dd>{{ restore.keyId }}</dd></div>
+            <div><dt>Secret store key</dt><dd>{{ restore.secretKeyCopyId ?? restore.secretKeyId ?? 'None' }}</dd></div>
+            <div><dt>Files restored</dt><dd>{{ restore.filesRestored }}</dd></div>
+            <div><dt>Checkouts cloned</dt><dd>{{ restore.checkoutsCloned }}</dd></div>
+          </dl>
+        </section>
+      }
+      @if (o.lastVerification; as v) {
+        @if (v.proved?.length || v.notProved?.length) {
+          <section class="backup-status__block" data-testid="operations-backups-verification-scope" aria-labelledby="operations-backups-scope-title">
+            <h4 id="operations-backups-scope-title">What the last verification shows</h4>
+            <div class="backup-status__scope">
+              <div>
+                <h5>Proved</h5>
+                <ul data-testid="operations-backups-verification-proved">
+                  @for (line of v.proved ?? []; track line) { <li>{{ line }}</li> }
+                </ul>
+              </div>
+              <div>
+                <h5>Not proved</h5>
+                <ul data-testid="operations-backups-verification-not-proved">
+                  @for (line of v.notProved ?? []; track line) { <li>{{ line }}</li> }
+                </ul>
+              </div>
+            </div>
+          </section>
+        }
+      }
+      @if (o.offHost.listing; as listing) {
+        @if (listing.state !== 'listed' && listing.state !== 'not-configured' && listing.detail) {
+          <p class="backup-status__note" data-testid="operations-backups-offhost-listing-detail">{{ listing.detail }}</p>
+        }
+        @if (listing.notInCatalog.length) {
+          <section class="backup-status__block" data-testid="operations-backups-offhost-unknown" aria-labelledby="operations-backups-unknown-title">
+            <h4 id="operations-backups-unknown-title">Archives at the off-host target that this host does not know</h4>
+            <p>They were made by another host or before a restore. Fetch one with an account that may read the target to restore it.</p>
+            <div class="backup-status__table-wrap">
+              <table>
+                <thead><tr><th scope="col">Archive</th><th scope="col">Size</th><th scope="col">Written</th></tr></thead>
+                <tbody>
+                  @for (archive of listing.notInCatalog; track archive.fileName) {
+                    <tr [attr.data-backup-id]="archive.id">
+                      <th scope="row">{{ archive.fileName }}</th>
+                      <td>{{ formatBytes(archive.sizeBytes) }}</td>
+                      <td><time [attr.datetime]="archive.modifiedAt">{{ archive.modifiedAt | date:'medium':'UTC' }} UTC</time></td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </section>
+        }
+      }
       @if (o.backups.length) {
         <div class="backup-status__table-wrap">
           <table data-testid="operations-backups-list">
@@ -80,7 +155,7 @@
                 <tr [attr.data-backup-id]="item.id">
                   <th scope="row"><time [attr.datetime]="item.createdAt">{{ item.createdAt | date:'medium':'UTC' }} UTC</time></th>
                   <td>{{ formatBytes(item.sizeBytes) }}</td>
-                  <td>{{ item.fileCount }}</td>
+                  <td><a [attr.href]="'/api/v1/management/backups/' + item.id + '/contents'" target="_blank" rel="noopener noreferrer" [attr.aria-label]="'Archive content list for ' + item.id">{{ item.fileCount }}</a></td>
                   <td>{{ verificationLabel(item.verification) }}</td>
                   <td>{{ itemOffHostLabel(item.offHost) }}</td>
                 </tr>

@@ -3,7 +3,7 @@
     [collapsible]="true"
     [collapsed]="isCollapsed('workspace')"
     title="Workspaces"
-    [count]="totalProjectCount()"
+    [count]="registryWorkspaces().length"
     testid="studio-explorer-workspace-head"
     (collapsedChange)="setCollapsed('workspace', $event)">
     @if (isCollapsed('workspace') && allAutoPickupAggregate().state !== 'off') {
@@ -66,6 +66,7 @@
             level="root"
             glyph="folder"
             [chevron]="isCollapsed('ws:' + g.id) ? 'collapsed' : 'expanded'"
+            [chevronTestid]="'studio-explorer-ws-chevron-' + g.id"
             [label]="g.displayName"
             [count]="g.projects.length"
             [testid]="'studio-explorer-ws-group-' + g.id"
@@ -129,6 +130,7 @@
               <app-tree-row class="studio-project-row" level="root"
                             [hasActions]="true"
                             [chevron]="isExpanded(p.name) ? 'expanded' : 'collapsed'"
+                            [chevronTestid]="'studio-explorer-project-chevron-' + p.name"
                             [glyphChar]="p.initial"
                             [glyphColor]="p.color"
                             [label]="p.displayLabel"
@@ -168,7 +170,7 @@
               <!-- Project destinations stay nested below the project row. -->
               <div class="studio-tree-children">
                 <app-tree-row level="child" glyph="grid"
-                              label="Board"
+                              label="Board · active work" [tooltip]="boardActiveWorkTooltip"
                               [ariaLabel]="'Board, ' + boardLaneCountsLabel(p)"
                               [active]="p.isActive && activeProjectSurface() === 'board'"
                               [ariaCurrent]="p.isActive && activeProjectSurface() === 'board' ? 'page' : null"

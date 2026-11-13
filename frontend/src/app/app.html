@@ -1,4 +1,5 @@
-@if (auth.studioAllowed()) {
+@if (auth.studioAllowed() && !noProjectAccess()) {
+    <app-recovery-sign-in-notice />
     <app-offline-banner />
     <app-public-demo-banner />
     @defer (when codexSignInRequest() !== null) { <app-codex-sign-in-dialog /> }
@@ -110,7 +111,7 @@
             (triagePrimary)="onStudioTriagePrimary()"
             (triageMenuItem)="onStudioTriageMenuItemClick($event)" />
         </div>
-        <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure' || studioTabState.activeTab()?.kind === 'magazine'">
+        <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure' || studioTabState.activeTab()?.kind === 'magazine' || studioTabState.activeTab()?.kind === 'team'">
           <app-workspace-banner [projects]="bannerProjects()" />
           @if (triage.moveRefusal(); as refusal) {
             @if (selectedJob()?.info?.taskKey === refusal.taskKey) {
@@ -332,7 +333,7 @@
       <!-- Dialogs and overlays follow regardless of the active shell. -->
 <!-- <app-update-banner /> moved into <app-notification-stack> in F40 so
            the update strip docks alongside other banner notifications. -->
-      <app-update-center />
+      @defer (when updateClient.centerOpen()) { <app-update-center /> }
       <app-update-block-modal />
       @defer (when confirmDialog.active() !== null; prefetch on idle) { <app-confirm-dialog /> }
       @if (workspaceManager.createOpen()) {
@@ -363,11 +364,11 @@
         @defer (on immediate) {
         <app-create-job-dialog
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
-          [cliTypeDraft]="createJobForm.newCliType"
+          [cliTypeDraft]="createJobForm.newCliType()"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
           [submitting]="createJobForm.submitting()"
-          [defaultsPending]="createJobForm.defaultsPending()"
-          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
+          [defaultsPending]="createJobForm.agentPending()"
+          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit()"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
           (watchPathChange)="createJobForm.selectProject($event)"
@@ -409,21 +410,11 @@
         (uxuiActionQueued)="onUxuiActionQueued($event)"
         (openTask)="onOpenTaskFromReel($event)" />
       }
-      @defer (when verboseDebugContext() !== null) {
-        @if (verboseDebugContext(); as ctx) {
-          <app-verbose-debug-overlay
-            data-testid="app-verbose-debug-overlay"
-            [lines]="ctx.lines"
-            [runTimeline]="ctx.runTimeline"
-            [screenshots]="ctx.screenshots"
-            [tokenSummary]="ctx.tokenSummary"
-            [job]="ctx.job"
-            [source]="ctx.job?.id ?? 'cli-output.log'"
-            (closeRequest)="closeVerboseDebug()" />
-        }
-      }
+      @defer (when verboseDebugContext() !== null) { <app-verbose-debug-host [context]="verboseDebugContext()" (closeRequest)="closeVerboseDebug()" /> }
       </div>
     } @else {
+    <!-- Legacy layout (VS Code layout switched off): its header chrome loads on demand. -->
+    @defer (on immediate) {
     <div class="app"
          [class.app--vscode-layout]="featureFlags.vsCodeLayout()"
          [class.app--vscode-meta-open]="featureFlags.vsCodeLayout() && featureFlags.vsCodeMetaOpen()"
@@ -447,8 +438,12 @@
           (toggleAuto)="onToggleAuto($event)"
           (openShell)="openProjectShell($event)" />
         <div class="header__actions">
-          <app-task-defaults-control (cliChange)="onDefaultCliChange($event)"
-                                     (modelChange)="onDefaultModelChange($event)" />
+          @if (shellAccess.operator()) {
+            @defer (on immediate) {
+              <app-task-defaults-control (cliChange)="onDefaultCliChange($event)"
+                                         (modelChange)="onDefaultModelChange($event)" />
+            }
+          }
           @if (gitStateAgeLabel(); as age) {
             <span class="git-state-stamp"
                   data-testid="git-state-stamp"
@@ -460,7 +455,9 @@
               Git state: {{ age }}
             </span>
           }
-          <app-auto-review-indicator />
+          @if (shellAccess.operator()) {
+            @defer (on immediate) { <app-auto-review-indicator /> }
+          }
           @if (updateClient.enabled) { <app-update-version-badge /> }
           <label class="client-filter" data-testid="client-filter">
             <span class="client-filter__label">Owner:</span>
@@ -510,7 +507,7 @@
 
 <!-- <app-update-banner /> moved into <app-notification-stack> in F40 so
            the update strip docks alongside other banner notifications. -->
-      <app-update-center />
+      @defer (when updateClient.centerOpen()) { <app-update-center /> }
       <app-update-block-modal />
       <app-workspace-banner [projects]="bannerProjects()" />
 
@@ -721,11 +718,11 @@
         @defer (on immediate) {
         <app-create-job-dialog
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
-          [cliTypeDraft]="createJobForm.newCliType"
+          [cliTypeDraft]="createJobForm.newCliType()"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
           [submitting]="createJobForm.submitting()"
-          [defaultsPending]="createJobForm.defaultsPending()"
-          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
+          [defaultsPending]="createJobForm.agentPending()"
+          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit()"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
           (watchPathChange)="createJobForm.selectProject($event)"
@@ -787,21 +784,12 @@
       <app-notification-stack />
       @defer (when mediaLightboxOpen() !== null) { <app-media-lightbox /> }
 
-      @defer (when verboseDebugContext() !== null) {
-        @if (verboseDebugContext(); as ctx) {
-          <app-verbose-debug-overlay
-            data-testid="app-verbose-debug-overlay"
-            [lines]="ctx.lines"
-            [runTimeline]="ctx.runTimeline"
-            [screenshots]="ctx.screenshots"
-            [tokenSummary]="ctx.tokenSummary"
-            [job]="ctx.job"
-            [source]="ctx.job?.id ?? 'cli-output.log'"
-            (closeRequest)="closeVerboseDebug()" />
-        }
-      }
+      @defer (when verboseDebugContext() !== null) { <app-verbose-debug-host [context]="verboseDebugContext()" (closeRequest)="closeVerboseDebug()" /> }
     </div>
     }
+    }
+} @else if (noProjectAccess()) {
+  <main data-testid="no-project-access" class="no-project-access"><p>You currently have no access to any project. Ask the owner.</p></main>
 } @else {
-  @defer (on immediate) { <app-auth-gate /> }
+  @defer (on immediate) { <app-auth-gate /> } <!-- Signed-in sessions never render the gate; its forms code loads with it. -->
 }

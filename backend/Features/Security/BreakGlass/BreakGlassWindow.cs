@@ -92,9 +92,11 @@ public sealed partial class AccessSecurityStore
             else
             {
                 var user = next.Users.First(item => item.Id == ownerId);
-                if (user.TotpSecret is null || string.IsNullOrWhiteSpace(offlineFactor)
-                    || !SecondFactorCodes.VerifyTotp(user.TotpSecret, offlineFactor, now))
+                if (OpenTotp(user) is not { } seed || string.IsNullOrWhiteSpace(offlineFactor)
+                    || SecondFactorCodes.MatchTotpStep(seed, offlineFactor, now) is not { } acceptedStep
+                    || (user.LastAcceptedTotpStep is { } previousStep && acceptedStep <= previousStep))
                     throw new SecurityOperationException(403, "break-glass-second-factor-invalid", "A current authenticator code is required.");
+                next.Users[next.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
             }
             var window = new BreakGlassWindow
             {
@@ -183,9 +185,12 @@ public sealed partial class AccessSecurityStore
                 ?? throw new SecurityOperationException(403, "break-glass-window-ended", "The window is not active.");
             var owner = state.Users.FirstOrDefault(user => user.Id == window.OwnerId && user.Username == username && !user.Disabled);
             if (owner is null || !ActiveOwnerIds(state.Users, state.RoleBindings, state.Groups).Contains(owner.Id)
-                || owner.TotpSecret is null || string.IsNullOrWhiteSpace(factor)
-                || !SecondFactorCodes.VerifyTotp(owner.TotpSecret, factor, Now))
+                || OpenTotp(owner) is not { } seed || string.IsNullOrWhiteSpace(factor)
+                || SecondFactorCodes.MatchTotpStep(seed, factor, Now) is not { } acceptedStep
+                || (owner.LastAcceptedTotpStep is { } previousStep && acceptedStep <= previousStep))
                 throw new SecurityOperationException(403, "break-glass-second-factor-invalid", "An active Owner's current authenticator code is required.");
+            state.Users[state.Users.IndexOf(owner)] = owner with { LastAcceptedTotpStep = acceptedStep };
+            SaveLocked(state);
             AppendBreakGlassAudit(window, operation, outcome, $"human:{owner.Id}",
                 new { window.SessionIds, host = true }, target);
         }

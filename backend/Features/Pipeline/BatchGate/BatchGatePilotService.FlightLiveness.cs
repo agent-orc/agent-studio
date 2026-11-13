@@ -18,6 +18,39 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public sealed partial class BatchGatePilotService
 {
+    public sealed record RecoveryDelay(string Reason, DateTimeOffset NextRetryAtUtc);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, RecoveryDelay> _recoveryDelays = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string BatchId, string Reason), byte> _loggedRecoveryDelays = new();
+
+    public bool HasLiveFlight(string batchId)
+    {
+        var manifest = TryReadManifest(batchId);
+        return manifest is not null && _store.LiveFlightClaim(manifest.Scope.Project, _time.GetUtcNow()) is { } claim
+            && (claim.BatchId == batchId || claim.BatchId == manifest.ParentBatchId);
+    }
+
+    public RecoveryDelay RecoveryStatus(string batchId)
+        => _recoveryDelays.TryGetValue(batchId, out var delay) ? delay
+            : new RecoveryDelay("recovery has not run", _time.GetUtcNow().AddSeconds(30));
+
+    public bool RunningWithoutFlight(BatchGateManifest manifest, BatchGateState state, DateTimeOffset now)
+        => IsStaleRunning(state.Phase, state.RecordedAtUtc, now, HasLiveFlight(manifest.BatchId),
+            _settings.Get(manifest.Scope.Project).BatchGate.GateTimeoutMinutes);
+
+    public static bool IsStaleRunning(BatchPhase phase, DateTimeOffset started, DateTimeOffset now,
+        bool liveFlight, int gateTimeoutMinutes)
+        => phase == BatchPhase.Running && !liveFlight
+            && now - started > TimeSpan.FromMinutes(gateTimeoutMinutes) + BatchGateLeaseService.Ttl;
+
+    private void RecordRecoveryDelay(BatchGateManifest manifest, string reason)
+    {
+        var next = new RecoveryDelay(reason, _time.GetUtcNow().AddSeconds(30));
+        _recoveryDelays[manifest.BatchId] = next;
+        if (_loggedRecoveryDelays.TryAdd((manifest.BatchId, reason), 0))
+            _logger.LogWarning("batch-recovery-skipped batch={BatchId} reason={Reason} nextRetryAt={NextRetryAtUtc}",
+                manifest.BatchId, reason, next.NextRetryAtUtc);
+    }
+
     /// <summary>
     /// One ordinary batch flight of this process: a join handle beside the
     /// durable claim. No start decision reads it. Mutable fields are guarded
@@ -54,7 +87,8 @@ public sealed partial class BatchGatePilotService
         $"{Environment.MachineName}/{Environment.ProcessId}/{Guid.NewGuid():N}";
 
     private IReadOnlyList<BatchGateManifest> OrderForStart(IReadOnlyList<BatchGateManifest> formed)
-        => BatchGateFlightQueue.Order(_store, formed, LeaseDeadlineDeferred());
+        => BatchGateFlightQueue.Order(_store, formed, LeaseDeadlineDeferred(), _time.GetUtcNow(),
+            project => _settings.Get(project).BatchGate.MaximumWaitMinutes);
 
     internal IReadOnlyList<BatchGateManifest> StartOrderForTesting(IReadOnlyList<BatchGateManifest> formed)
         => OrderForStart(formed);
@@ -524,8 +558,9 @@ public sealed partial class BatchGatePilotService
                 // The claim then expires by its heartbeat.
                 _logger.LogWarning(ex, "batch-flight-claim-release-failed batch={BatchId}", manifest.BatchId);
             }
-            if (_replanAfterBatch.TryRemove(manifest.BatchId, out _))
-                _ = Task.Run(() => TickAsync(CancellationToken.None));
+            // AGT-3568: the successor tick request is durable; one exit consumes it.
+            if (_store.TryConsumeSuccessorTick(project, manifest.BatchId))
+                _ = ScheduleFollowUpTick();
             else if (!ct.IsCancellationRequested && StartsNextAfter(flight, detached))
                 StartClosedBatches(ct, project, followsCompletedFlight: true);
         }

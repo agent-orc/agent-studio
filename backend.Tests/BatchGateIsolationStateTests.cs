@@ -38,6 +38,17 @@ public sealed class BatchGateIsolationStateTests : IDisposable
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
 
     [Fact]
+    public void State_exposes_the_latest_phase_start_and_live_flight_status()
+    {
+        var manifest = CloseParent();
+        var state = State();
+        var batch = state.GetProperty("batches").EnumerateArray()
+            .Single(item => item.GetProperty("batchId").GetString() == manifest.BatchId);
+        Assert.Equal(Now, batch.GetProperty("phaseAtUtc").GetDateTimeOffset());
+        Assert.False(batch.GetProperty("liveFlight").GetBoolean());
+    }
+
+    [Fact]
     public void Proven_red_finding_carries_the_proving_run_and_its_failed_tests()
     {
         var parent = CloseParent();
@@ -127,6 +138,26 @@ public sealed class BatchGateIsolationStateTests : IDisposable
             "run-2", Base, Base, "proven-green", "", Now.AddMinutes(5)));
 
         Assert.Null(_store.IsolationEvidencePath("project", parent.BatchId, "task-2"));
+    }
+
+    [Fact]
+    public void State_names_live_isolation_and_the_interrupted_terminal_time()
+    {
+        var parent = CloseParent();
+        var active = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true), now: Now,
+            activeIsolationFlights: new HashSet<string> { parent.BatchId }),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var running = Assert.Single(active.GetProperty("batches").EnumerateArray());
+        Assert.True(running.GetProperty("isolationActive").GetBoolean());
+        Assert.Equal(Now, running.GetProperty("phaseAtUtc").GetDateTimeOffset());
+
+        _store.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest,
+            BatchPhase.Paused, Candidate, 2, Now.AddMinutes(1), "isolation interrupted"));
+        var ended = Assert.Single(State().GetProperty("batches").EnumerateArray());
+        Assert.False(ended.GetProperty("isolationActive").GetBoolean());
+        Assert.Equal("isolation interrupted", ended.GetProperty("phaseReason").GetString());
+        Assert.Equal(Now.AddMinutes(1), ended.GetProperty("phaseAtUtc").GetDateTimeOffset());
     }
 
     private JsonElement State()

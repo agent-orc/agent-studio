@@ -51,6 +51,10 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.followUpSuperseded]: 'Follow-up superseded',
   [TIMELINE_KIND.steeringFeedback]: 'Steering receipt',
   [TIMELINE_KIND.continuationBaseRecorded]: 'Run base recorded',
+  [TIMELINE_KIND.briefChanged]: 'Brief changed',
+  [TIMELINE_KIND.completionContentRefused]: 'Acceptance refused',
+  [TIMELINE_KIND.completionContentOverridden]: 'Accepted with a reason',
+  [TIMELINE_KIND.contentReviewRequested]: 'Content review requested',
 };
 
 /** Where a round's run base came from (AGT-3483), keyed by the event's `base` or `reason` detail. */
@@ -78,6 +82,7 @@ const HIDDEN_BY_KIND: Readonly<Record<string, ReadonlySet<string>>> = {
   [TIMELINE_KIND.steeringFeedback]: new Set(['identity', 'current']),
   // The title names the origin and the summary the mode; `source` is the entry point.
   [TIMELINE_KIND.continuationBaseRecorded]: new Set(['source', 'base', 'mode']),
+  [TIMELINE_KIND.completionContentRefused]: new Set(['text']),
 };
 
 /** Details shown even when the prose already carries them: the fact the row exists for. */
@@ -87,6 +92,17 @@ const ALWAYS_SHOWN_BY_KIND: Readonly<Record<string, ReadonlySet<string>>> = {
 };
 
 const DETAIL_LABELS_BY_KIND: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  [TIMELINE_KIND.completionContentRefused]: {
+    code: 'Refusal code',
+    currentBriefVersion: 'Current brief',
+    deliveryBriefVersion: 'Delivery brief',
+    reviewBriefVersion: 'Reviewed brief',
+  },
+  [TIMELINE_KIND.completionContentOverridden]: {
+    currentBriefVersion: 'Current brief',
+    deliveryBriefVersion: 'Delivery brief',
+    reviewBriefVersion: 'Reviewed brief',
+  },
   [TIMELINE_KIND.continuationBaseRecorded]: {
     ref: 'Base ref',
     sha: 'Base SHA',
@@ -158,6 +174,8 @@ export function timelineEventTitle(event: TaskTimelineEvent): string {
     if (decision === 'accept') return 'Human review accepted';
     if (decision === 'reject') return 'Human review rejected';
     if (decision === 'reissue') return 'Human review requested changes';
+    // AGT-3670: the Reviewer's send back; the summary carries the note.
+    if (decision === 'send-back') return 'Human review sent back';
   }
 
   if (event.kind === TIMELINE_KIND.operatorRequeued) {

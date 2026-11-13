@@ -16,6 +16,10 @@ namespace AgentStudio.Pipeline;
 /// The merged candidate failed on a tip that is red on its own, so the next
 /// gate tests the delivery on its own base.
 /// </param>
+/// <param name="FallbackGateRunBy">
+/// Service instance that charged the per-task gate start now in flight. A
+/// later instance that finds it refunds that start (AGT-3647).
+/// </param>
 public sealed record BatchGateOwnership(
     string ReviewAttemptId, BatchGateSubject Subject,
     string? BatchId = null, string? BatchRunId = null,
@@ -24,7 +28,8 @@ public sealed record BatchGateOwnership(
     int FallbackGateStarts = 0, string? ContainedInSha = null,
     string? FallbackBaseSha = null, string? FallbackCandidateSha = null,
     string? FallbackCandidateTreeSha = null, bool FallbackOwnBase = false,
-    bool CascadeDeferred = false);
+    bool CascadeDeferred = false, string? FallbackGateRunBy = null,
+    DateTimeOffset? FallbackGateStartedAtUtc = null, string? FallbackGateHost = null);
 
 /// <summary>Card-local admission marker. Its presence makes lane release fail closed.</summary>
 public static class BatchGateOwnershipStore

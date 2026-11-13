@@ -30,6 +30,9 @@ public sealed class StudioEndpointsTests
         var bootstrap = await client.PostAsJsonAsync(
             "/api/v1/studio/auth/bootstrap", new StudioBootstrapRequest("owner", "correct horse battery staple"));
         Assert.Equal(HttpStatusCode.Created, bootstrap.StatusCode);
+        Assert.Contains(bootstrap.Headers.GetValues("Set-Cookie"), value =>
+            value.StartsWith("ts-studio-session=", StringComparison.Ordinal)
+            && value.Contains("max-age=604800", StringComparison.OrdinalIgnoreCase));
         var session = await bootstrap.Content.ReadFromJsonAsync<StudioAuthSessionDto>();
         Assert.NotNull(session);
         Assert.Equal(StudioUserRoles.Owner, session!.Status.User!.Role);
@@ -42,6 +45,8 @@ public sealed class StudioEndpointsTests
         var code = SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime);
         (await enrollmentClient.PostAsJsonAsync("/api/v1/studio/auth/totp/confirm", new StudioConfirmTotpRequest(code)))
             .EnsureSuccessStatusCode();
+        clock.Advance(TimeSpan.FromSeconds(30));
+        var signInCode = SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime);
 
         var secondBootstrap = await client.PostAsJsonAsync(
             "/api/v1/studio/auth/bootstrap", new StudioBootstrapRequest("owner2", "another long enough password"));
@@ -54,9 +59,13 @@ public sealed class StudioEndpointsTests
         Assert.Equal("invalid-credentials", (await badLogin.Content.ReadFromJsonAsync<ApiError>())!.Code);
 
         var login = await client.PostAsJsonAsync(
-            "/api/v1/studio/auth/login", new StudioLoginRequest("owner", "correct horse battery staple", code));
+            "/api/v1/studio/auth/login", new StudioLoginRequest("owner", "correct horse battery staple", signInCode));
         login.EnsureSuccessStatusCode();
         var loginSession = (await login.Content.ReadFromJsonAsync<StudioAuthSessionDto>())!;
+        var replay = await client.PostAsJsonAsync(
+            "/api/v1/studio/auth/login", new StudioLoginRequest("owner", "correct horse battery staple", signInCode));
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+        Assert.Equal("invalid-second-factor", (await replay.Content.ReadFromJsonAsync<ApiError>())!.Code);
 
         using var authed = Client(factory);
         authed.DefaultRequestHeaders.Add("X-Studio-Session-Token", loginSession.SessionToken);

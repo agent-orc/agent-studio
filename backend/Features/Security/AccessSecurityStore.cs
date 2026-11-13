@@ -2,13 +2,15 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Net;
 using System.Security.Cryptography;
+using System.Text;
+using AgentStudio.Secrets;
 
 namespace AgentStudio.Security;
 
 /// <summary>
 /// Small-organization security store. The state file contains password, session,
-/// enrollment, API token, and Runner credential hashes only. Plaintext credentials are
-/// returned once by the operation that creates them and are never persisted.
+/// API token and Runner credential hashes, plus KEK-sealed TOTP seeds. Plaintext
+/// credentials are returned once by the operation that creates them and are never persisted.
 /// Role bindings, groups, and service accounts live in the same state file;
 /// see <c>Iam/AccessSecurityStore.Iam.cs</c>.
 /// </summary>
@@ -48,17 +50,21 @@ public sealed partial class AccessSecurityStore
     private readonly Func<string, string> _hashPassword;
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
+    private readonly IKeyEncryptionKeySource _totpKeys;
     private bool _lastSeenDirty;
 
-    public AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger, TimeProvider? clock = null)
-        : this(configuration, logger, clock, PasswordSecretHasher.VerifyPassword)
+    public AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger, TimeProvider? clock = null,
+        IKeyEncryptionKeySource? keys = null)
+        : this(configuration, logger, clock, PasswordSecretHasher.VerifyPassword, keys: keys)
     {
     }
 
     internal AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger,
-        TimeProvider? clock, Func<string, string, bool> verifyPassword, Func<string, string>? hashPassword = null)
+        TimeProvider? clock, Func<string, string, bool> verifyPassword, Func<string, string>? hashPassword = null,
+        IKeyEncryptionKeySource? keys = null)
     {
         _configuration = configuration;
+        _totpKeys = keys ?? new ConfiguredKeyEncryptionKeySource(configuration);
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
         _verifyPassword = verifyPassword;
@@ -95,7 +101,8 @@ public sealed partial class AccessSecurityStore
         get { lock (_gate) return StateLocked().Users.Count == 0; }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) Bootstrap(BootstrapRequest request, bool publicEntry = false)
+    public (StudioUser User, string SessionToken, string CsrfToken) Bootstrap(BootstrapRequest request, bool publicEntry = false,
+        string? device = null, string? address = null)
     {
         ValidateUsername(request.Username);
         ValidatePassword(request.Password, request.Username);
@@ -119,7 +126,7 @@ public sealed partial class AccessSecurityStore
                 new IamGrantRequest(IamRoles.Owner, IamScope.Workspace), IamBindingSources.Bootstrap, user.Id);
             state.RoleBindings.Add(binding);
             state.IamVersion = CurrentIamVersion;
-            var created = CreateSessionLocked(state, user, enrollmentOnly: publicEntry);
+            var created = CreateSessionLocked(state, user, device, address, enrollmentOnly: publicEntry);
             SaveLocked(state);
             AuditBindings(user.Id, "binding.add", [binding]);
             return (user, created.Token, created.Csrf);
@@ -255,9 +262,12 @@ public sealed partial class AccessSecurityStore
                     if (usernameRecorded && _usernameLoginAttempts[normalized].Failures >= _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20)
                         && EnsureLoginCapacityLocked(_usernameClientDelays, loginKey!, MaxDelayEntries))
                         _usernameClientDelays[loginKey!] = now + TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
-                    throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
+                    throw current?.Disabled == true && ReferenceEquals(current, candidate) && passwordMatches
+                        ? new SecurityOperationException(403, "account-disabled", "This account is disabled. Ask the owner.")
+                        : new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
                 }
 
+                int? recoveryRemaining = null;
                 var hasFactor = !string.IsNullOrEmpty(current.TotpSecret) || current.Passkeys.Count > 0;
                 var needsEnrollment = requireSecondFactor && RequiresSecondFactor(state, current.Id) && !hasFactor;
                 if (hasFactor)
@@ -266,7 +276,7 @@ public sealed partial class AccessSecurityStore
                     {
                         if (passkey is not null)
                             VerifyPasskeyLocked(state, current, passkey, normalized + "|" + clientKey, origin, rpId);
-                        else VerifySecondFactorLocked(state, current, secondFactorCode);
+                        else recoveryRemaining = VerifySecondFactorLocked(state, current, secondFactorCode);
                     }
                     catch (SecurityOperationException ex) when (ex.Code is "invalid-second-factor" or "invalid-passkey")
                     {
@@ -285,6 +295,16 @@ public sealed partial class AccessSecurityStore
                 _recentSuccessfulLogins[loginKey!] = now;
                 _usernameClientDelays.Remove(loginKey!);
                 var created = CreateSessionLocked(state, current, device, address, needsEnrollment);
+                if (recoveryRemaining is { } remaining)
+                {
+                    state.Sessions[state.Sessions.IndexOf(created.Session)] = created.Session with
+                    {
+                        RecoveryCodeUsedAt = now, RecoveryCodesRemaining = remaining,
+                        RecoveryEnrollmentAllowed = true
+                    };
+                    AppendIamAudit(current.Id, "recovery-code.used", "user", current.Id,
+                        new { sessionId = created.Session.Id, remaining }, created.Session.Id);
+                }
                 SaveLocked(state);
                 return (current, created.Token, created.Csrf);
             }
@@ -350,10 +370,12 @@ public sealed partial class AccessSecurityStore
         lock (_gate)
         {
             var state = StateLocked();
-            if (!state.Users.Any(x => x.Id == principal.User.Id && !x.Disabled))
+            var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled);
+            if (user is null)
                 throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            RequireEnrollmentStepUpLocked(state, principal, user);
             var secret = SecondFactorCodes.NewTotpSecret();
-            _pendingTotpSecrets[principal.User.Id] = secret;
+            _pendingTotpSecrets[principal.Session.Id] = secret;
             return secret;
         }
     }
@@ -365,20 +387,30 @@ public sealed partial class AccessSecurityStore
             var state = StateLocked();
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
-            if (!_pendingTotpSecrets.TryGetValue(user.Id, out var secret)
-                || !SecondFactorCodes.VerifyTotp(secret, code, Now))
+            RequireEnrollmentStepUpLocked(state, principal, user);
+            if (!_pendingTotpSecrets.TryGetValue(principal.Session.Id, out var secret)
+                || SecondFactorCodes.MatchTotpStep(secret, code, Now) is not { } acceptedStep)
                 throw new SecurityOperationException(400, "invalid-second-factor", "The authenticator code is invalid.");
             var recovery = SecondFactorCodes.NewRecoveryCodes();
+            var replacing = user.TotpSecret is not null;
             state.Users[state.Users.IndexOf(user)] = user with
             {
                 TotpSecret = secret,
+                FactorChangedAt = Now,
+                LastAcceptedTotpStep = acceptedStep,
                 RecoveryCodeHashes = recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
             };
-            _pendingTotpSecrets.Remove(user.Id);
+            _pendingTotpSecrets.Remove(principal.Session.Id);
             var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id);
             if (session is not null)
-                state.Sessions[state.Sessions.IndexOf(session)] = session with { SecondFactorEnrollmentOnly = false };
+                state.Sessions[state.Sessions.IndexOf(session)] = session with
+                { SecondFactorEnrollmentOnly = false, StepUpVerifiedAt = null, RecoveryEnrollmentAllowed = false,
+                    RecoveryCodesRemaining = null };
             SaveLocked(state);
+            AppendIamAudit(user.Id, replacing ? "factor.replaced" : "factor.bound", "user", user.Id,
+                new { sessionId = principal.Session.Id, factor = "totp" }, principal.Session.Id);
+            AppendIamAudit(user.Id, "recovery-codes.regenerated", "user", user.Id,
+                new { sessionId = principal.Session.Id, remaining = recovery.Count }, principal.Session.Id);
             return recovery;
         }
     }
@@ -390,7 +422,7 @@ public sealed partial class AccessSecurityStore
             var state = StateLocked();
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
-            VerifySecondFactorLocked(state, user, code);
+            VerifySecondFactorLocked(state, user, code, principal.Session.Id);
             MarkStepUpLocked(state, principal);
             SaveLocked(state);
         }
@@ -400,6 +432,10 @@ public sealed partial class AccessSecurityStore
     {
         lock (_gate)
         {
+            var state = StateLocked();
+            var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            RequireEnrollmentStepUpLocked(state, principal, user);
             var challenge = WebAuthnProofs.NewChallenge();
             StorePasskeyChallengeLocked("register:" + principal.Session.Id, challenge);
             return challenge;
@@ -414,6 +450,7 @@ public sealed partial class AccessSecurityStore
             var state = StateLocked();
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            RequireEnrollmentStepUpLocked(state, principal, user);
             var key = "register:" + principal.Session.Id;
             if (!_passkeyChallenges.Remove(key, out var pending) || pending.ExpiresAt <= Now)
                 throw new SecurityOperationException(400, "passkey-challenge-expired", "Start passkey setup again.");
@@ -435,12 +472,20 @@ public sealed partial class AccessSecurityStore
             {
                 Passkeys = [.. user.Passkeys, new StudioPasskey(proof.CredentialId,
                     name.Length > 80 ? name[..80] : name, publicKey, 0, Now)],
+                FactorChangedAt = Now,
                 RecoveryCodeHashes = recovery.Count == 0 ? user.RecoveryCodeHashes : recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
             };
             var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id);
             if (session is not null)
-                state.Sessions[state.Sessions.IndexOf(session)] = session with { SecondFactorEnrollmentOnly = false };
+                state.Sessions[state.Sessions.IndexOf(session)] = session with
+                { SecondFactorEnrollmentOnly = false, StepUpVerifiedAt = null, RecoveryEnrollmentAllowed = false,
+                    RecoveryCodesRemaining = null };
             SaveLocked(state);
+            AppendIamAudit(user.Id, "factor.bound", "user", user.Id,
+                new { sessionId = principal.Session.Id, factor = "passkey" }, principal.Session.Id);
+            if (recovery.Count > 0)
+                AppendIamAudit(user.Id, "recovery-codes.regenerated", "user", user.Id,
+                    new { sessionId = principal.Session.Id, remaining = recovery.Count }, principal.Session.Id);
             return recovery;
         }
     }
@@ -576,22 +621,48 @@ public sealed partial class AccessSecurityStore
         state.Sessions[state.Sessions.IndexOf(session)] = session with { StepUpVerifiedAt = null };
     }
 
-    private void VerifySecondFactorLocked(SecurityState state, StudioUser user, string? code)
+    private void RequireEnrollmentStepUpLocked(SecurityState state, HumanPrincipal principal, StudioUser user)
+    {
+        if (user.TotpSecret is null && user.Passkeys.Count == 0) return;
+        var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id && x.UserId == user.Id);
+        if (session is null || session.ExpiresAt <= Now || session.AbsoluteExpiresAt <= Now
+            || !(IsRecoveryEnrollmentAllowed(session)
+                || session.StepUpVerifiedAt is { } verifiedAt && verifiedAt <= Now && Now - verifiedAt <= TimeSpan.FromMinutes(5)))
+            throw new SecurityOperationException(403, "step-up-required", "Verify your current factor before adding an authenticator or passkey.");
+    }
+
+    public bool IsRecoveryEnrollmentAllowed(StudioSession? session)
+        => session is { RecoveryEnrollmentAllowed: true, RecoveryCodeUsedAt: { } usedAt }
+           && usedAt <= Now && Now - usedAt <= TimeSpan.FromMinutes(5);
+
+    private int? VerifySecondFactorLocked(SecurityState state, StudioUser user, string? code, string? sessionId = null)
     {
         if (string.IsNullOrEmpty(user.TotpSecret) && user.Passkeys.Count == 0)
             throw new SecurityOperationException(403, "second-factor-required", "Register a second factor before signing in.");
         if (string.IsNullOrWhiteSpace(code))
             throw new SecurityOperationException(401, "second-factor-required", "A second factor is required.");
-        if (user.TotpSecret is not null && SecondFactorCodes.VerifyTotp(user.TotpSecret, code, Now)) return;
+        if (OpenTotp(user) is { } seed
+            && SecondFactorCodes.MatchTotpStep(seed, code, Now) is { } acceptedStep
+            && (user.LastAcceptedTotpStep is null || acceptedStep > user.LastAcceptedTotpStep))
+        {
+            state.Users[state.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
+            return null;
+        }
         var recoveryHash = user.RecoveryCodeHashes.FirstOrDefault(hash => SecondFactorCodes.VerifyRecoveryCode(code, hash));
         if (recoveryHash is not null)
         {
+            var remaining = user.RecoveryCodeHashes.Count - 1;
             state.Users[state.Users.IndexOf(user)] = user with
             {
                 RecoveryCodeHashes = user.RecoveryCodeHashes.Where(hash => hash != recoveryHash).ToList()
             };
             SaveLocked(state);
-            return;
+            if (sessionId is not null)
+            {
+                AppendIamAudit(user.Id, "recovery-code.used", "user", user.Id,
+                    new { sessionId, remaining }, sessionId);
+            }
+            return remaining;
         }
         throw new SecurityOperationException(401, "invalid-second-factor", "The second factor is invalid.");
     }
@@ -703,7 +774,8 @@ public sealed partial class AccessSecurityStore
             (user, var bindings) = AddUserGrantsLocked(state, user, grants, actingUserId);
             state.Invitations.Add(new StudioInvitation
             {
-                Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt
+                Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt,
+                InvitedBy = actingUserId
             });
             SaveLocked(state);
             AuditBindings(actingUserId, "binding.add", bindings);
@@ -711,7 +783,8 @@ public sealed partial class AccessSecurityStore
         }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) AcceptInvitation(AcceptInvitationRequest request, bool publicEntry = false)
+    public (StudioUser User, string SessionToken, string CsrfToken) AcceptInvitation(AcceptInvitationRequest request, bool publicEntry = false,
+        string? device = null, string? address = null)
     {
         if (!TryTokenParts(request.Token, "inv", out var id))
             throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
@@ -732,10 +805,34 @@ public sealed partial class AccessSecurityStore
             };
             state.Users[state.Users.IndexOf(user)] = updated;
             state.Invitations[state.Invitations.IndexOf(invitation)] = invitation with { UsedAt = Now };
-            var session = CreateSessionLocked(state, updated,
+            var session = CreateSessionLocked(state, updated, device, address,
                 enrollmentOnly: publicEntry && RequiresSecondFactor(state, updated.Id));
             SaveLocked(state);
             return (updated, session.Token, session.Csrf);
+        }
+    }
+
+    public object PreviewInvitation(string token, AgentStudio.Registry.ProjectRegistry registry)
+    {
+        if (!TryTokenParts(token, "inv", out var id))
+            throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var invitation = state.Invitations.FirstOrDefault(x => x.Id == id);
+            if (invitation is null || invitation.UsedAt is not null || invitation.ExpiresAt <= Now
+                || !PasswordSecretHasher.VerifySecret(token, invitation.TokenHash))
+                throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+            var user = state.Users.FirstOrDefault(x => x.Id == invitation.UserId && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+            var bindings = state.RoleBindings.Where(x => x.PrincipalKind == IamPrincipalKind.User && x.PrincipalId == user.Id).ToList();
+            var inviter = state.Users.FirstOrDefault(x => x.Id == invitation.InvitedBy)?.DisplayName ?? "Installation owner";
+            return new { user.Username, user.DisplayName, Inviter = inviter,
+                Role = string.Join(", ", bindings.Select(x => IamRoles.All.FirstOrDefault(role => role.Id == x.Role)?.DisplayName ?? x.Role).Distinct()),
+                Projects = bindings.Select(x => x.Scope.Kind == IamScopeKind.Workspace ? "Workspace"
+                        : registry.FindById(x.Scope.Project!)?.DisplayName ?? x.Scope.Project ?? "Workspace")
+                    .Distinct().ToArray(),
+                invitation.ExpiresAt, SecondFactorRequired = user.Role is StudioRoles.Owner or StudioRoles.Operator };
         }
     }
 
@@ -1093,7 +1190,9 @@ public sealed partial class AccessSecurityStore
         var session = new StudioSession
         {
             Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), CsrfHash = PasswordSecretHasher.HashSecret(csrf),
-            CreatedAt = now, LastSeenAt = now, Device = device, Address = address,
+            CreatedAt = now, LastSeenAt = now,
+            Device = string.IsNullOrWhiteSpace(device) ? "Browser" : device,
+            Address = string.IsNullOrWhiteSpace(address) ? "Local connection" : address,
             SecondFactorEnrollmentOnly = enrollmentOnly,
             ExpiresAt = Min(now.AddMinutes(_configuration.GetValue("Security:Session:IdleMinutes", 480)), absolute), AbsoluteExpiresAt = absolute
         };
@@ -1171,6 +1270,14 @@ public sealed partial class AccessSecurityStore
         SecurityState loaded;
         try { loaded = persisted ? JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(StatePath), Json) ?? new() : new(); }
         catch (Exception ex) { throw new InvalidOperationException($"Security state at '{StatePath}' cannot be read safely.", ex); }
+        var legacyTotp = loaded.Users.Any(user => user.TotpSecret is { Length: > 0 } value && !value.StartsWith(TotpPrefix, StringComparison.Ordinal));
+        // Sealed seeds stay sealed in memory and open only where a code is verified, so commands that
+        // never check a code, such as the out-of-band kill switch, work without the secret store key.
+        if (legacyTotp && persisted)
+            SaveLocked(loaded);
+        SealLegacyTotpSnapshots();
+        foreach (var temporary in Directory.EnumerateFiles(SecurityFolder, "access-state*.tmp"))
+            File.Delete(temporary);
         if (!NeedsIamMigration(loaded))
         {
             _state = loaded;
@@ -1207,11 +1314,75 @@ public sealed partial class AccessSecurityStore
         Directory.CreateDirectory(SecurityFolder);
         RestrictDirectoryPermissions(SecurityFolder);
         var temp = StatePath + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(state, Json));
+        var persisted = Copy(state);
+        persisted = persisted with { Users = state.Users.Select(user => user with { TotpSecret = SealTotp(user) }).ToList() };
+        File.WriteAllText(temp, JsonSerializer.Serialize(persisted, Json));
         RestrictPermissions(temp);
         File.Move(temp, StatePath, true);
         RestrictPermissions(StatePath);
         _state = state;
+    }
+
+    private const string TotpPrefix = "sealed:v1:";
+
+    private string? SealTotp(StudioUser user)
+    {
+        if (string.IsNullOrEmpty(user.TotpSecret) || user.TotpSecret.StartsWith(TotpPrefix, StringComparison.Ordinal))
+            return user.TotpSecret;
+        var sealedValue = SecretEnvelope.Seal(_totpKeys.Load(createIfMissing: CanCreateTotpKey()), TotpIdentity(user.Id), 1,
+            Encoding.UTF8.GetBytes(user.TotpSecret));
+        return TotpPrefix + Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(sealedValue));
+    }
+
+    private string? OpenTotp(StudioUser user)
+    {
+        if (user.TotpSecret is not { Length: > 0 } value) return user.TotpSecret;
+        if (!value.StartsWith(TotpPrefix, StringComparison.Ordinal)) return value;
+        try
+        {
+            var sealedValue = JsonSerializer.Deserialize<SealedSecretVersion>(
+                Convert.FromBase64String(value[TotpPrefix.Length..]))
+                ?? throw new SecretIntegrityException("The stored authenticator seed is empty.");
+            var plaintext = SecretEnvelope.Open(_totpKeys.Load(createIfMissing: false),
+                sealedValue, TotpIdentity(user.Id), 1);
+            try { return Encoding.UTF8.GetString(plaintext); }
+            finally { CryptographicOperations.ZeroMemory(plaintext); }
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or SecretIntegrityException or SecretKeyUnavailableException)
+        {
+            throw new InvalidOperationException("The stored authenticator seed cannot be opened with the configured secret store key.", ex);
+        }
+    }
+
+    private static string TotpIdentity(string userId) => "studio-user-totp:" + userId;
+
+    private bool CanCreateTotpKey()
+    {
+        var items = Path.Combine(SecretStorePaths.DataRoot(_configuration), "items");
+        return !Directory.Exists(items) || !Directory.EnumerateDirectories(items).Any();
+    }
+
+    private void SealLegacyTotpSnapshots()
+    {
+        foreach (var path in Directory.EnumerateFiles(SecurityFolder, "access-state.v*.json"))
+        {
+            SecurityState snapshot;
+            try { snapshot = JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(path), Json)
+                ?? throw new InvalidOperationException("The access-state migration snapshot is empty."); }
+            catch (JsonException ex) { throw new InvalidOperationException("An access-state migration snapshot cannot be read safely.", ex); }
+            if (!snapshot.Users.Any(user => user.TotpSecret is { Length: > 0 } value
+                && !value.StartsWith(TotpPrefix, StringComparison.Ordinal))) continue;
+            var sealedSnapshot = snapshot with { Users = snapshot.Users.Select(user => user with
+            {
+                TotpSecret = user.TotpSecret is { Length: > 0 } value && !value.StartsWith(TotpPrefix, StringComparison.Ordinal)
+                    ? SealTotp(user) : user.TotpSecret
+            }).ToList() };
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(sealedSnapshot, Json));
+            RestrictPermissions(temp);
+            File.Move(temp, path, true);
+            RestrictPermissions(path);
+        }
     }
 
     private void RestrictPermissions(string path)
@@ -1266,6 +1437,21 @@ public sealed partial class AccessSecurityStore
     private static bool IsValidUsername(string normalized)
         => normalized.Length is >= 3 and <= 64
             && normalized.All(ch => char.IsLetterOrDigit(ch) || ch is '.' or '_' or '-');
+    public static Dictionary<string, string[]> BootstrapFieldErrors(BootstrapRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        var username = NormalizeUsername(request.Username);
+        if (!IsValidUsername(username))
+            errors["username"] = ["Username must be 3 to 64 letters, digits, dots, underscores, or hyphens."];
+        var passwordErrors = new List<string>();
+        var password = request.Password ?? string.Empty;
+        if (password.Length is < 12 or > 128)
+            passwordErrors.Add("Password must be 12 to 128 characters.");
+        if (username.Length > 0 && password.Contains(username, StringComparison.OrdinalIgnoreCase))
+            passwordErrors.Add("Password must not contain the username.");
+        if (passwordErrors.Count > 0) errors["password"] = [.. passwordErrors];
+        return errors;
+    }
     private static void ValidatePassword(string? password, string username)
     {
         password ??= string.Empty;

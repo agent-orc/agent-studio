@@ -88,6 +88,11 @@ public sealed partial class BatchGatePilotService
             green.Add(finding.TaskKey);
         foreach (var child in children.Where(item => item.State.Phase == BatchPhase.Red))
         {
+            // A red phase also records transport and cancellation failures. Only
+            // an executed deterministic verdict can identify an offender.
+            var run = _store.ListRuns(child.Manifest.BatchId).LastOrDefault();
+            var verdict = run is null ? null : _store.ReadVerdict(child.Manifest.BatchId, run.BatchRunId);
+            if (verdict?.Classification != "DeterministicSuiteRed") continue;
             var unknown = child.Manifest.Members.Where(member => !green.Contains(member.TaskKey)).ToArray();
             if (unknown.Length == 1)
                 Record(unknown[0], "proven-red", Evidence(child.Manifest));
@@ -118,10 +123,15 @@ public sealed partial class BatchGatePilotService
     private BatchGateIsolationFinding? ProvenRed(BatchGatePendingRecord item)
         => _store.ListIsolationFindings(item.Subject.Project).LastOrDefault(finding =>
             finding.Status == "proven-red"
+            && IsDeterministicFinding(finding)
             && finding.TaskKey == item.Subject.TaskKey
             && finding.RunAttempt == item.Subject.RunAttempt
             && string.Equals(finding.ResultSha, item.Subject.ResultSha,
                 StringComparison.OrdinalIgnoreCase));
+
+    private bool IsDeterministicFinding(BatchGateIsolationFinding finding)
+        => finding.ProvingBatchId is { } batchId && finding.ProvingRunId is { } runId
+            && _store.ReadVerdict(batchId, runId)?.Classification == "DeterministicSuiteRed";
 
     private bool ProvenGreen(BatchGatePendingRecord item, string baseSha)
         => _store.ListIsolationFindings(item.Subject.Project).Any(finding =>
@@ -161,7 +171,10 @@ public sealed partial class BatchGatePilotService
                 value.Contains("Failed", StringComparison.OrdinalIgnoreCase)
                 || value.Contains("Error", StringComparison.OrdinalIgnoreCase)).Take(12);
             var excerpt = failed is null ? string.Empty : string.Join("\n", failed);
-            return "Batch isolation proved this delivery red. " + gate?.Reason
+            var tests = gate is null ? [] : BatchGateProbeClassifier.FailedTests(gate);
+            return "Batch isolation proved this delivery red. "
+                + (tests.Count == 0 ? string.Empty : "Failing tests: " + string.Join(", ", tests) + ". ")
+                + gate?.Reason
                 + (excerpt.Length == 0 ? string.Empty : "\n" + excerpt[..Math.Min(excerpt.Length, 2000)])
                 + "\nEvidence: " + evidencePath;
         }

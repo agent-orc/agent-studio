@@ -81,6 +81,21 @@ public abstract partial class BatchGatePilotServiceTests
 /// </summary>
 public sealed class BatchGateEngineApplierContractTests : BatchGatePilotServiceTests
 {
+    [Fact]
+    public async Task Engine_gate_infrastructure_park_retains_the_gate_category_and_sentence()
+    {
+        using var factory = BuildFactory();
+        var (_, arranged, _, _, _) = await ApplyContractCaseAsync(factory, "GateResult",
+            nameof(TransitionAction.Escalate), "batch-infrastructure");
+        var task = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(arranged.TaskId, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, task.State);
+        Assert.True(task.ParkedBlocker?.BlockerType == HumanReviewEscalationCategories.GateInfrastructure,
+            $"Parked as {task.ParkedBlocker?.BlockerType}: {task.ParkedBlocker?.Reason}; "
+            + $"cause={task.ParkedBlocker?.Cause}; detail={task.ParkedBlocker?.CauseDetail}");
+        Assert.Contains("retry the gate", task.ParkedBlocker?.Reason);
+    }
+
     [Theory]
     [MemberData(nameof(ApplierContractData))]
     public async Task Applier_contract_applies_the_effect_of_every_engine_decision(string profile, string action,
@@ -1060,7 +1075,8 @@ public abstract partial class BatchGatePilotServiceTests
         "CodingCompletion" => ArrangeCoding(factory, Enum.Parse<TransitionAction>(action)),
         "ReviewReport" or "OperatorSweep" => ArrangeReview(factory, profile, Enum.Parse<TransitionAction>(action),
             variant),
-        "GateResult" => ArrangeGate(factory, Enum.Parse<TransitionAction>(action), variant == "batch-hold"),
+        "GateResult" => ArrangeGate(factory, Enum.Parse<TransitionAction>(action), variant == "batch-hold",
+            variant == "batch-infrastructure"),
         "BatchPlan" => ArrangeBatchPlan(),
         _ => throw new ArgumentOutOfRangeException(nameof(profile), profile, null),
     };
@@ -1184,7 +1200,7 @@ public abstract partial class BatchGatePilotServiceTests
 
     /// <summary>A card in Auto Review whose build and test gate reported a result.</summary>
     private protected ArrangedDecision ArrangeGate(WebApplicationFactory<Program> factory, TransitionAction action,
-        bool batchHold)
+        bool batchHold, bool batchInfrastructure = false)
     {
         var member = SeedMember(factory, ContractKey, "docs/applier.md", settleReview: false, deferredPlan: false);
         var source = factory.Services.GetRequiredService<AttemptAuthorityService>().GetRun(member.RunAttemptId)!;
@@ -1194,12 +1210,15 @@ public abstract partial class BatchGatePilotServiceTests
             ["monolithGateResult"] = true,
             ["gateAttemptId"] = source.AttemptId,
             ["automaticRoundsUsed"] = 0,
-            ["maximumCardRounds"] = 4,
-            ["gateReason"] = GateReasonText,
+            ["maximumCardRounds"] = batchInfrastructure ? 0 : 4,
+            ["gateReason"] = batchInfrastructure
+                ? "[gate-infrastructure] The verification gate could not run. Check the host and retry the gate."
+                : GateReasonText,
+            ["infrastructureFailure"] = batchInfrastructure,
             ["gates"] = new[] { new { status = passed ? "passed" : "failed" } },
             ["targetState"] = batchHold ? TaskStates.HumanReview : null,
             ["reviewOutcome"] = batchHold ? "Pass" : null,
-            ["reviewAttemptId"] = batchHold ? member.ReviewAttemptId : null,
+            ["reviewAttemptId"] = batchHold || batchInfrastructure ? member.ReviewAttemptId : null,
         }.Where(pair => pair.Value is not null).ToDictionary());
         return new ArrangedDecision(ContractKey, Contract.OrchestrationStage.GateDispatch, payload,
             $"gate-result:{ContractKey}:{source.AttemptId}:{member.ResultSha}:{(passed ? "Ok" : "Fail")}",

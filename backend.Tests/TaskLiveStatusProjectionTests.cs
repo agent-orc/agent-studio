@@ -116,6 +116,48 @@ public sealed class TaskLiveStatusProjectionTests
     }
 
     [Fact]
+    public void Build_AutoReviewDoesNotListFinishedCoreStepAsNext()
+    {
+        var result = TaskLiveStatusProjection.Build(
+            Job() with { Mode = TaskModes.Concept }, Pipeline(),
+            new PipelineExecutionRecord { Attempt = 1, Steps = [] },
+            new ProjectSettings(), () => [], queue: null);
+
+        Assert.DoesNotContain(result.NextSteps, step => step.StepId == "core");
+        Assert.Equal("Tests and evidence", result.NextSteps[0].DisplayName);
+    }
+
+    [Fact]
+    public void ReviewQueue_HostSaturationExplainsHoldInsteadOfQueuePosition()
+    {
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Pending, null, "normal", Now.AddMinutes(-11), "review_1");
+        var host = new AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto(
+            Now, null, 38.4, null, null, null, null, null, null, null, null, 1, 0)
+        {
+            ReviewPlane = new AgentStudio.TaskServer.Contracts.ReviewPlaneBudgetDto(
+                Now, "max", 12, null, 12, 2.4, 480, 3, null, 0, false),
+        };
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", 1), null, null, Now, host)!;
+
+        Assert.Null(queue.Position);
+        Assert.Equal("Review host saturated: load/core 3.2 > 1.0", queue.Reason);
+        var conceptQueue = TaskLiveStatusProjection.ReviewQueueFor(
+            false, null, null, 1, null, Now, host)!;
+        Assert.Null(conceptQueue.Position);
+        Assert.Equal(queue.Reason, conceptQueue.Reason);
+
+        var noSlots = host with
+        {
+            Load1 = 0,
+            ReviewPlane = host.ReviewPlane! with { CurrentCeiling = 0 },
+        };
+        Assert.Contains("no review slots available", TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", 1), null, null, Now, noSlots)!.Reason);
+    }
+
+    [Fact]
     public void Queue_ReportsAndClearsExistingReviewSlotPosition()
     {
         var queue = new AgentStudio.Runner.AutoReviewPostProcessingQueue();
@@ -212,16 +254,61 @@ public sealed class TaskLiveStatusProjectionTests
         var due = Now.AddMinutes(3);
         var current = new BoardReviewActivity(
             AttemptLifecycleState.Failed, null, CreatedAt: Now.AddMinutes(-10), AttemptId: "review_1",
-            Outcome: ReviewTerminalOutcome.InfrastructureFailure, PendingInfrastructureRetryAt: due);
+            Outcome: ReviewTerminalOutcome.InfrastructureFailure, PendingInfrastructureRetryAt: due,
+            FailureClassification: "SnapshotUnavailable", HostId: "agent-runner-01",
+            TerminalAt: Now.AddMinutes(-1), PendingInfrastructureRetryNumber: 2);
 
         var queue = TaskLiveStatusProjection.ReviewQueueFor(
             true, current, new ReviewQueueEntry("normal", null), null,
             Wait(PostProcessingCardResult.AwaitingCanonicalReviewVerdict, "agent-runner-01-review is registered and active"),
             Now)!;
 
-        Assert.Equal(TaskLiveQueueStates.Queued, queue.State);
+        Assert.Equal(TaskLiveQueueStates.RetryScheduled, queue.State);
         Assert.Equal("infrastructureFailure", queue.Outcome);
-        Assert.Equal($"review ended (infrastructureFailure); retry scheduled for {Utc(due)}", queue.Reason);
+        Assert.Equal(TaskLiveReviewLossCauses.Infrastructure, queue.Lost!.Cause);
+        Assert.Equal("SnapshotUnavailable", queue.Lost.Classification);
+        Assert.Equal(new TaskLiveReviewRetry { Number = 2, Budget = 2, DueAt = due }, queue.Retry);
+        Assert.Equal(
+            $"Review lost: review infrastructure failed (SnapshotUnavailable) (agent-runner-01, {Utc(Now.AddMinutes(-1))}). "
+            + $"Automatic retry 2 of 2 at {Utc(due)}.",
+            queue.Reason);
+    }
+
+    // AGT-3690 (S5-F14): the playthrough killed the review host mid-review.
+    // The card must name the restart, the host, when it happened, and which
+    // automatic retry comes next, not only the outcome enum.
+    [Fact]
+    public void ReviewQueue_ReviewHostRestart_NamesTheHostTheTimeAndTheNextRetry()
+    {
+        // clock-independent: the projection reads the nowUtc passed below, never the wall clock.
+        var lostAt = new DateTime(2026, 11, 10, 1, 27, 16, DateTimeKind.Utc);
+        var due = lostAt.AddMinutes(1);
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Failed, null, CreatedAt: lostAt.AddMinutes(-1), AttemptId: "review_s5",
+            ExecutorId: "first-run-review", AcquiredAt: lostAt.AddMinutes(-1),
+            Outcome: ReviewTerminalOutcome.InfrastructureFailure, PendingInfrastructureRetryAt: due,
+            FailureClassification: "ExecutorRestarted", HostId: "lab-review-host",
+            TerminalAt: lostAt, PendingInfrastructureRetryNumber: 1);
+
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", null), null, null, lostAt.AddSeconds(5))!;
+
+        Assert.Equal(TaskLiveQueueStates.RetryScheduled, queue.State);
+        Assert.Equal(
+            new TaskLiveReviewLoss
+            {
+                Cause = TaskLiveReviewLossCauses.HostRestarted,
+                Classification = "ExecutorRestarted",
+                HostId = "lab-review-host",
+                ExecutorId = "first-run-review",
+                At = lostAt,
+            },
+            queue.Lost);
+        Assert.Equal(new TaskLiveReviewRetry { Number = 1, Budget = 2, DueAt = due }, queue.Retry);
+        Assert.Equal(
+            "Review lost: review host restarted (lab-review-host, 2026-11-10 01:27:16Z). "
+            + "Automatic retry 1 of 2 at 2026-11-10 01:28:16Z.",
+            queue.Reason);
     }
 
     // QS-123: the fourth infrastructure failure, retry budget spent, nothing
@@ -240,9 +327,45 @@ public sealed class TaskLiveStatusProjectionTests
 
         Assert.Equal(TaskLiveQueueStates.Stalled, queue.State);
         Assert.Equal("infrastructureFailure", queue.Outcome);
+        Assert.Null(queue.Retry);
+        Assert.Equal(TaskLiveReviewLossCauses.Infrastructure, queue.Lost!.Cause);
         Assert.Equal(
-            "review ended (infrastructureFailure); no new review attempt; operator decision needed",
+            "Review lost: review infrastructure failed. No automatic retry is scheduled; operator decision needed.",
             queue.Reason);
+    }
+
+    [Fact]
+    public void ReviewQueue_ReviewHostRestartWithoutARetry_IsStalledAndStillNamesTheRestart()
+    {
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Failed, null, CreatedAt: Now.AddHours(-1), AttemptId: "review_last",
+            ExecutorId: "first-run-review", Outcome: ReviewTerminalOutcome.InfrastructureFailure,
+            FailureClassification: "ExecutorRestarted", HostId: "lab-review-host", TerminalAt: Now.AddMinutes(-2));
+
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", null), null, null, Now)!;
+
+        Assert.Equal(TaskLiveQueueStates.Stalled, queue.State);
+        Assert.Equal(TaskLiveReviewLossCauses.HostRestarted, queue.Lost!.Cause);
+        Assert.Equal(
+            $"Review lost: review host restarted (lab-review-host, {Utc(Now.AddMinutes(-2))}). "
+            + "No automatic retry is scheduled; operator decision needed.",
+            queue.Reason);
+    }
+
+    [Fact]
+    public void ReviewQueue_InconclusiveReviewWithoutASuccessor_KeepsTheOutcomeWording()
+    {
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Failed, null, CreatedAt: Now.AddHours(-1), AttemptId: "review_inconclusive",
+            Outcome: ReviewTerminalOutcome.Inconclusive);
+
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", null), null, null, Now)!;
+
+        Assert.Equal(TaskLiveQueueStates.Stalled, queue.State);
+        Assert.Null(queue.Lost);
+        Assert.Equal("review ended (inconclusive); no new review attempt; operator decision needed", queue.Reason);
     }
 
     [Fact]
@@ -273,7 +396,7 @@ public sealed class TaskLiveStatusProjectionTests
             true, current, new ReviewQueueEntry("normal", null), null,
             Wait(PostProcessingCardResult.AwaitingDeliveryIntegration, null), Now)!;
 
-        Assert.Equal(TaskLiveQueueStates.Queued, queue.State);
+        Assert.Equal(TaskLiveQueueStates.Integration, queue.State);
         Assert.Equal("waiting for delivery integration", queue.Reason);
     }
 
@@ -292,6 +415,7 @@ public sealed class TaskLiveStatusProjectionTests
             true, current, new ReviewQueueEntry("normal", null), null,
             Wait(reason, "lane write failed"), Now)!;
 
+        Assert.Equal(TaskLiveQueueStates.Integration, queue.State);
         Assert.Equal(expected, queue.Reason);
     }
 
@@ -308,6 +432,14 @@ public sealed class TaskLiveStatusProjectionTests
         Assert.Equal("waiting for review executor: agent-runner-01-review is registered and active", queue.Reason);
         Assert.Equal(2, slotted.Position);
         Assert.Null(TaskLiveStatusProjection.ReviewQueueFor(false, null, null, null, null, Now));
+    }
+
+    [Fact]
+    public void ReviewQueue_LegacyIntegrationWait_IsNotAReviewWait()
+    {
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(false, null, null, null,
+            Wait(PostProcessingCardResult.AwaitingDeliveryIntegration, null), Now)!;
+        Assert.Equal(TaskLiveQueueStates.Integration, queue.State);
     }
 
     [Fact]

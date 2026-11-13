@@ -54,10 +54,40 @@ export function whenDiff2HtmlSettled(): Promise<void> {
     : Promise.resolve();
 }
 
+/** Non-injected global style bundle declared in `angular.json`. */
+export const DIFF2HTML_STYLESHEET = 'diff2html.css';
+
+const stylesheetLoads = new WeakMap<Document, Promise<void>>();
+
+/**
+ * Links diff2html's stylesheet once, directly after the app stylesheet, so
+ * component `::ng-deep` overrides still come later in the cascade, as they
+ * did when the stylesheet was part of the global bundle. Resolves when the
+ * sheet has loaded (or failed) so a diff never paints unstyled. A page
+ * without the app stylesheet (the unit-test build) has no bundle to link.
+ */
+export function loadDiff2HtmlStylesheet(doc: Document = document): Promise<void> {
+  const pending = stylesheetLoads.get(doc);
+  if (pending) return pending;
+  const appStylesheet = doc.querySelector<HTMLLinkElement>('link[rel="stylesheet"][href*="styles"]');
+  if (!appStylesheet) return Promise.resolve();
+  const link = doc.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = DIFF2HTML_STYLESHEET;
+  const load = new Promise<void>(resolve => {
+    link.addEventListener('load', () => resolve(), { once: true });
+    link.addEventListener('error', () => resolve(), { once: true });
+  });
+  stylesheetLoads.set(doc, load);
+  appStylesheet.after(link);
+  return load;
+}
+
 async function importDiff2Html(): Promise<Diff2HtmlModule> {
   const [main, types] = await Promise.all([
     import('diff2html/lib-esm/diff2html.js'),
     import('diff2html/lib-esm/types.js'),
+    loadDiff2HtmlStylesheet(),
   ]);
   diff2htmlModuleCache = {
     html: main.html as unknown as Diff2HtmlRenderer,

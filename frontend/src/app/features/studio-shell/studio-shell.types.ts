@@ -9,7 +9,7 @@
  */
 
 /** Discrete tab kinds the editor area can host. */
-export type StudioTabKind = 'board' | 'feed' | 'task' | 'hub' | 'magazine' | 'workbenches' | 'workbench' | 'diff' | 'activity' | 'url-preview' | 'workspace-settings' | 'deployment-dashboard' | 'structure' | 'welcome';
+export type StudioTabKind = 'board' | 'feed' | 'task' | 'hub' | 'magazine' | 'workbenches' | 'workbench' | 'diff' | 'activity' | 'url-preview' | 'workspace-settings' | 'deployment-dashboard' | 'structure' | 'team' | 'welcome';
 
 /** Sidebar panel kinds reachable from the ActivityBar. */
 export type StudioPanelKind = 'explorer' | 'filters' | 'cli' | 'activity' | 'settings' | 'chats';
@@ -130,11 +130,12 @@ export interface WorkspaceSettingsTab { kind: 'workspace-settings'; }
 /** Workspace deployment matrix, independent of the selected project. */
 export interface DeploymentDashboardTab { kind: 'deployment-dashboard'; }
 export interface StructureTab { kind: 'structure'; projectName?: string; }
+export interface TeamTab { kind: 'team'; personaId: string | null; }
 
 /** Welcome screen — no real tab, no key. */
 export interface WelcomeTab { kind: 'welcome'; }
 
-export type StudioTab = BoardTab | FeedTab | MagazineTab | TaskTab | HubTab | WorkbenchesTab | WorkbenchTab | DiffTab | ActivityTab | UrlPreviewTab | WorkspaceSettingsTab | DeploymentDashboardTab | StructureTab | WelcomeTab;
+export type StudioTab = BoardTab | FeedTab | MagazineTab | TaskTab | HubTab | WorkbenchesTab | WorkbenchTab | DiffTab | ActivityTab | UrlPreviewTab | WorkspaceSettingsTab | DeploymentDashboardTab | StructureTab | TeamTab | WelcomeTab;
 
 /**
  * Build the stable target identity for a tab. Replaceable substate is omitted:
@@ -165,6 +166,7 @@ export function studioTabKey(tab: StudioTab): string {
     case 'workspace-settings': return 'workspace-settings';
     case 'deployment-dashboard': return 'deployment-dashboard';
     case 'structure': return `structure:${tab.projectName ?? 'workspace'}`;
+    case 'team': return `team:${tab.personaId ?? 'all'}`;
     case 'welcome':  return 'welcome';
   }
 }

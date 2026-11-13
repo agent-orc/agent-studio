@@ -38,6 +38,8 @@ public sealed class TransitionDecisionBoundaryTests
         "BatchGateStartPolicy",
         // AGT-3569: the durable flight claim of a batch scope.
         "BatchFlightClaimPolicy",
+        // AGT-3568: formation planner (repack, formation intents, intent recovery).
+        "BatchFormationPolicy",
     ];
 
     [Fact]

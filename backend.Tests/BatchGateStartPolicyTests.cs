@@ -3,15 +3,27 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-/// <summary>AGT-3562, AGT-3710: first in, first out start order and pre-lease deadline of batch flights.</summary>
+/// <summary>AGT-3562, AGT-3710, AGT-3568: first in, first out start order with a maximum wait, and pre-lease deadline of batch flights.</summary>
 public sealed class BatchGateStartPolicyTests
 {
+    [Theory]
+    [InlineData(true, false, true, false, true)]
+    [InlineData(true, false, false, false, true)]
+    [InlineData(true, false, false, true, false)]
+    [InlineData(true, true, true, false, false)]
+    [InlineData(false, false, true, false, false)]
+    public void Only_an_unfinished_red_parent_without_a_live_flight_ends_isolation(
+        bool red, bool active, bool pending, bool allFound, bool expected)
+        => Assert.Equal(expected, BatchGateStartPolicy.EndInterruptedIsolation(
+            red, active, pending, allFound));
+
     // clock-independent: the pure policy receives an explicit now; fixture instants meet only each other.
     private static readonly DateTimeOffset At = new(2026, 11, 5, 12, 59, 0, TimeSpan.Zero);
 
     private static BatchGateStartCandidate Batch(string id, DateTimeOffset queuedSince,
-        long firstSequence = 1, bool stacked = false, bool child = false, bool deferred = false)
-        => new(id, queuedSince, firstSequence, stacked, child, deferred);
+        long firstSequence = 1, bool stacked = false, bool child = false, bool deferred = false,
+        int maximumWait = BatchGateStartPolicy.DefaultMaximumWaitMinutes)
+        => new(id, queuedSince, firstSequence, stacked, child, deferred, maximumWait);
 
     [Fact]
     public void Formed_batches_start_in_formation_order_regardless_of_size_or_input_order()
@@ -29,9 +41,9 @@ public sealed class BatchGateStartPolicyTests
         };
 
         Assert.Equal(["b80b7541", "fa98470e", "0d8df544", "64bda9c0", "17d2ad28", "3735f957"],
-            BatchGateStartPolicy.Order(batches));
-        Assert.Equal(BatchGateStartPolicy.Order(batches),
-            BatchGateStartPolicy.Order(batches.Reverse()));
+            BatchGateStartPolicy.Order(batches, At));
+        Assert.Equal(BatchGateStartPolicy.Order(batches, At),
+            BatchGateStartPolicy.Order(batches.Reverse(), At));
     }
 
     [Fact]
@@ -42,7 +54,7 @@ public sealed class BatchGateStartPolicyTests
         var sameSequence = Batch("bbbb", At, firstSequence: 7);
 
         Assert.Equal(["zzzz", "aaaa", "bbbb"],
-            BatchGateStartPolicy.Order([sameSequence, later, earlier]));
+            BatchGateStartPolicy.Order([sameSequence, later, earlier], At));
     }
 
     [Fact]
@@ -54,7 +66,7 @@ public sealed class BatchGateStartPolicyTests
         var deferred = Batch("deferred", At.AddMinutes(-120), deferred: true);
 
         Assert.Equal(["stacked", "child", "ordinary", "deferred"],
-            BatchGateStartPolicy.Order([deferred, ordinary, child, stacked]));
+            BatchGateStartPolicy.Order([deferred, ordinary, child, stacked], At));
     }
 
     [Fact]
@@ -67,7 +79,59 @@ public sealed class BatchGateStartPolicyTests
         for (var minute = 10; minute <= 30; minute += 10)
             waiting.Add(Batch($"large-{minute}", At.AddMinutes(minute - 1), firstSequence: minute));
 
-        Assert.Equal("small", BatchGateStartPolicy.Order(waiting)[0]);
+        Assert.Equal("small", BatchGateStartPolicy.Order(waiting, At)[0]);
+    }
+
+    [Fact]
+    public void Ordinary_batch_past_its_maximum_wait_starts_before_child_batches()
+    {
+        // A chain of child batches (documentation successors, recovered
+        // diagnostic children) could otherwise hold an ordinary batch back
+        // for as long as children keep forming.
+        var ordinary = Batch("ordinary", At.AddMinutes(-45));
+        var child = Batch("child", At.AddMinutes(-5), child: true);
+        var stacked = Batch("stacked", At.AddMinutes(-1), stacked: true);
+
+        Assert.Equal(["stacked", "ordinary", "child"],
+            BatchGateStartPolicy.Order([child, ordinary, stacked], At));
+        Assert.True(BatchGateStartPolicy.Overdue(ordinary, At));
+    }
+
+    [Fact]
+    public void Maximum_wait_is_inclusive_and_read_per_batch()
+    {
+        var waiting = Batch("waiting", At.AddMinutes(-44));
+        var child = Batch("child", At, child: true);
+
+        Assert.Equal(["child", "waiting"], BatchGateStartPolicy.Order([waiting, child], At));
+        Assert.Equal(["waiting", "child"], BatchGateStartPolicy.Order([waiting, child], At.AddMinutes(1)));
+        Assert.Equal(["waiting", "child"], BatchGateStartPolicy.Order(
+            [Batch("waiting", At.AddMinutes(-10), maximumWait: 10), child], At));
+    }
+
+    [Fact]
+    public void Deferred_batch_stays_last_even_past_its_maximum_wait()
+    {
+        // A flight refused its lease would otherwise hold the slot again at once.
+        var deferred = Batch("deferred", At.AddHours(-3), deferred: true);
+        var ordinary = Batch("ordinary", At.AddMinutes(-1));
+        var child = Batch("child", At, child: true);
+
+        Assert.False(BatchGateStartPolicy.Overdue(deferred, At));
+        Assert.Equal(["child", "ordinary", "deferred"],
+            BatchGateStartPolicy.Order([deferred, ordinary, child], At));
+    }
+
+    [Fact]
+    public void Maximum_wait_never_reorders_ordinary_batches_by_size_or_age()
+    {
+        // Overdue and waiting ordinary batches keep first in, first out order.
+        var overdue = Batch("overdue", At.AddMinutes(-90), firstSequence: 9);
+        var older = Batch("older-overdue", At.AddMinutes(-120), firstSequence: 1);
+        var young = Batch("young", At.AddMinutes(-3), firstSequence: 2);
+
+        Assert.Equal(["older-overdue", "overdue", "young"],
+            BatchGateStartPolicy.Order([young, overdue, older], At));
     }
 
     [Theory]

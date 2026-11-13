@@ -71,7 +71,8 @@ public sealed class ControlPlaneAuditLog
         if (AgentStudio.Shared.OperatorActorScope.Current is { } op)
         {
             if (!string.IsNullOrWhiteSpace(actor) && actor != op.Actor
-                && !AgentStudio.Shared.TimelineActors.IsHuman(actor) && !AgentStudio.Shared.TimelineActors.IsOperatorAgent(actor))
+                && !AgentStudio.Shared.TimelineActors.IsHuman(actor) && !AgentStudio.Shared.TimelineActors.IsOperatorAgent(actor)
+                && !AgentStudio.Shared.TimelineActors.IsPersona(actor))
                 reported = actor;
             actor = op.Actor;
             session = op.SessionId;
@@ -131,6 +132,52 @@ public sealed class ControlPlaneAuditLog
         var lines = SnapshotLines();
         for (var index = lines.Count - 1; index >= 0 && result.Count < limit; index--)
             if (Parse(lines[index]) is { } entry && filter(entry)) result.Add(entry);
+        return result;
+    }
+
+    /// <summary>Reads recent entries from the file tail and stops at the time boundary.</summary>
+    public IReadOnlyList<ControlPlaneAuditEntry> ReadNewestSince(
+        DateTimeOffset since, Func<ControlPlaneAuditEntry, bool> filter, int limit)
+    {
+        var result = new List<ControlPlaneAuditEntry>();
+        if (limit <= 0 || !File.Exists(FilePath)) return result;
+        long length;
+        lock (_gate) length = new FileInfo(FilePath).Length;
+        using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var chunk = new byte[16 * 1024];
+        var reversed = new List<byte>();
+        var position = Math.Min(length, stream.Length);
+        if (position == 0) return result;
+        stream.Position = position - 1;
+        var firstLine = stream.ReadByte() != '\n';
+        var boundary = since.AddMinutes(-2);
+        while (position > 0)
+        {
+            var size = (int)Math.Min(chunk.Length, position);
+            position -= size;
+            stream.Position = position;
+            stream.ReadExactly(chunk.AsSpan(0, size));
+            for (var index = size - 1; index >= 0; index--)
+            {
+                if (chunk[index] != '\n') { reversed.Add(chunk[index]); continue; }
+                if (firstLine && reversed.Count > 0) { reversed.Clear(); firstLine = false; continue; }
+                firstLine = false;
+                if (reversed.Count == 0) continue;
+                reversed.Reverse();
+                var entry = Parse(Encoding.UTF8.GetString(reversed.ToArray()));
+                reversed.Clear();
+                if (entry is null) continue;
+                if (entry.At < boundary) return result;
+                if (entry.At >= since && filter(entry)) result.Add(entry);
+                if (result.Count >= limit) return result;
+            }
+        }
+        if (reversed.Count > 0 && !firstLine)
+        {
+            reversed.Reverse();
+            if (Parse(Encoding.UTF8.GetString(reversed.ToArray())) is { } entry
+                && entry.At >= since && filter(entry)) result.Add(entry);
+        }
         return result;
     }
 

@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-12
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -29,6 +29,27 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+The batch gate state read reports `phaseAtUtc` for each batch and
+`startedAtUtc` for each run. A `Running` phase also reports whether this
+process owns a live flight and, when it does not, the recovery delay and next
+retry. The operator attention feed raises `batch.running-without-gate` once a
+persisted Running phase without a live flight exceeds the configured gate
+timeout plus the two-minute coordinator lease TTL. Recovery contention is
+logged once per batch and reason; the pilot retries on its 30-second tick.
+
+An interrupted deterministic red batch ends as `Paused` with reason
+`isolation interrupted` on the next pilot tick when unresolved members remain.
+The pilot derives any child findings, releases the parent members to planning,
+and keeps that terminal state visible in the batch article and card. A live
+isolation flight alone blocks continue, steer, and requeue; a persisted red
+verdict by itself is not a live flight. Coordinator leases record the local
+process identity so a restarted host can reclaim a dead process's lease
+without waiting for its two-minute expiry.
+The batch state response exposes `phaseAtUtc`, `isolationActive`, and
+`isolationPending` on each batch. The card and batch panel use those facts to
+name the active or interrupted wait without treating a stored red child as a
+live process.
+
 The batch gate state read reports `phaseReason` and `phaseAtUtc` for a stopped batch and
 `causedByTaskKey` when a member eject or lost review generation caused
 abandonment. Explicit operator withdrawals are retained as batch withdrawal
@@ -43,6 +64,25 @@ lease deadline in the state response and panel. The project's durable flight
 claim (AGT-3569: owner, fence, step, step deadline, heartbeat and how it ended)
 is the state's `flightClaim`; the pilot holds no authoritative task map.
 
+The batch panel eject request stores its operator and reason. State reads expose
+`ejectRequests` with `pending` until the member leaves batch ownership and
+`released` afterwards. A red parent with no active isolation is abandoned on
+the next pilot tick, its ownership markers are cleared, and the requested
+member enters the per-task fallback path. Eject is refused while red isolation
+owns the batch; the response tells the operator to wait for isolation to finish.
+An active batch also refuses eject until it finishes or pauses, with a response
+that names the phase and tells the operator to resolve a stuck batch gate.
+
+When a paused batch hands its members to per-task verification, the state read
+reports `perTaskGates` in queue order. Each row names the review generation,
+one-based position, total handoffs, batch, cause, and current gate host and
+start time while its flight is active. The board uses this projection for the
+card CURRENT line and lane counts. Each member receives a full suite as a gate
+slot opens; a red gate escalates that card, and a green gate integrates it. The
+batch panel lists the queue in order and excludes its members from cards waiting
+for another batch. The handoff writes one operator-feed event per paused batch
+with its members.
+
 ### Gate run ledger (AGT-3500)
 
 The instance-local gate run ledger lives under `gate-run-ledger` beside the
@@ -52,6 +92,8 @@ create-only JSON record, retained for 90 days. `GET
 returns newest-first rows and a total count. The `type` filter accepts the
 stored run types: `batch-gate`, `batch-base`, `batch-pre-check`,
 `per-task-fallback`, `per-task-gate`, and `clean-diagnostic-rerun`.
+Failed-test ranking retries unreadable evidence only within the same 90-day
+window. An execution without its gate run ID is permanently unattributed.
 
 Rows carry request, slot, lease, command start and finish times, process and
 shard evidence (including class names and measured class durations), rerun cost,
@@ -98,8 +140,10 @@ publication locks are keyed by project and integration branch; the aggregate
 merge-busy flag still drains stable deployment.
 The threshold batch planner selects a per-task gate when one eligible card
 reaches its deadline without a batch partner, or an operator closes below the
-minimum batch size. The plan state names that trigger. This path does not use
-title urgency, risk, or changed-path overlap. Its fallback gate does not own
+minimum batch size. The plan state names that trigger. The persisted plan records
+each excluded task key and its rule; overdue status uses each task's own review
+completion time and deadline. Excluded tasks stay out of proposed members.
+This path does not use title urgency, risk, or changed-path overlap. Its fallback gate does not own
 the project batch reservation. A later direct integration must hold the
 reservation through its merge gate and possible rollback. It acquires the
 reservation after the per-project merge lock, so a queued per-task integration
@@ -459,25 +503,48 @@ phase `Unknown` and is skipped by recovery until a state exists. The next pilot
 tick writes its first record. The recovery scan logs this condition once per
 manifest and store instance.
 
-### Flight queue order (AGT-3710)
+A record that does not deserialize is quarantined per record (AGT-3681,
+`BatchGateStore.Quarantine.cs`). `ListManifests` and `ListRecoverableManifests`
+skip an unreadable manifest, `ListRuns` skips an unreadable run record, and
+`LatestState` answers `Unknown` with reason `batch-state-record-unreadable` when
+the newest state row is unreadable; it never falls back to an older row, whose
+phase the batch may already have left. A direct read of one named record
+(`ReadManifest`, `ReadRun`) raises `BatchGateRecordUnreadableException`, a
+`JsonException`, and the pilot's recovery skips that batch. The quarantine is an
+in-memory projection of the files: `ListQuarantined` drops a record whose file
+is removed, superseded by a newer state row, or reads again after a change. The
+decision stream publishes each record once as `batch.record-unreadable`, and the
+state route lists them under `quarantined`.
+
+### Flight queue order (AGT-3710, AGT-3568)
 
 Each project runs one ordinary batch flight at a time, so formed batches wait
 in a flight queue. `BatchGateStartPolicy.Order` (orchestration decisions) fixes
 the queue, and `BatchGateFlightQueue` applies it in the start pass, in recovery,
-and in the state read:
+and in the state read. The rule is first in, first out with a maximum wait
+(AGT-3568 chose this explicit fairness rule over the size preference of
+AGT-3562, which let larger, younger batches overtake older ones):
 
 1. A stacked successor (`stackedOnBatchId`) starts first: it already gated
    against the candidate of a predecessor whose publication is in progress.
-2. A child batch (`parentBatchId`: an isolation, bisection, or documentation
+2. An ordinary batch that has waited the project's `maximumWaitMinutes`
+   (default 45) since its formation time starts next, oldest first. Child
+   batches cannot hold it back longer than that.
+3. A child batch (`parentBatchId`: an isolation, bisection, or documentation
    successor child) continues its parent's flight and starts next.
-3. A batch whose last flight was cancelled at its lease deadline goes last.
-4. Every other formed batch starts first in, first out: the oldest durable
+4. Every other ordinary batch starts first in, first out: the oldest durable
    formation time first, then the lowest member `enqueueSequence`, then the
    batch ID. The formation time is the close time of the first batch of its
    re-form chain (`reformedFromBatchId`), or the recorded `queuedSinceUtc` of a
    repacked replacement, which keeps the place of the oldest batch it
-   replaced. Size does not reorder the queue; `maximumWaitMinutes` no longer
-   affects the order.
+   replaced.
+5. A batch whose last flight was cancelled at its lease deadline goes last,
+   even past its maximum wait, so a refused flight cannot take the slot again
+   at once.
+
+Size never reorders the queue, and the maximum wait never reorders ordinary
+batches among themselves: an overdue batch is always older than a waiting one
+of the same project.
 
 Only the head ordinary batch of a project may stack on the running flight, so
 a younger batch on the running base cannot overtake an older one. Batch
@@ -1230,6 +1297,13 @@ as before.
   `Category!=MachineBound` and every other category filter therefore apply
   exactly as in the unsharded run. The complement filter names hundreds of
   classes, which is why it is not passed on the command line.
+- **Hang bound.** A shard with no result or output ends after the larger of ten
+  minutes and twice its own estimated duration. VSTest blame-hang starts at
+  90% of that bound and records the test sequence without a dump. A complete
+  TRX report starts a separate two-minute host-exit grace. The shard evidence
+  names the stall and recent tests; the gate treats it as infrastructure red.
+  The [batch gate operations page](../../operations/gates/batch-gate.md#test-shard-hang-bound-and-operator-evidence-agt-3751)
+  describes what the operator sees.
 - **Parallel lanes on one host.** The gate's own machine slot is one lane. It
   takes additional slots that are free at that moment for more lanes, so
   `RemoteGate:GateSlots` times `RemoteGate:ProcessorCount` still bounds the
@@ -1535,12 +1609,13 @@ artifact on `pipeline-execution.json`. Findings are report-only in this phase:
 they do not reissue or block a delivery. The evidence supports the shadow
 comparison before Quality Studio's verdict contract can decide a review.
 - `backend/Features/Pipeline/ConceptWorkbenchContract.cs`,
-  `ConceptWorkbenchPublisher.cs`, and `ConceptPromotionService.cs`: the
-  document-first concept contract. One isolated concept run may author exactly
-  one `docs/<slug>/` dossier, publishes it through the managed project-artifact
-  commit boundary, verifies the source-card key plus `decision-pending` status
-  and task-file links, waits for human sight review, then creates coding cards
-  from the descriptor.
+  `ConceptDeliveryPostSteps.cs`, `ConceptDossierSnapshot.cs`, and
+  `ConceptPromotionService.cs`: the document-first concept contract. One
+  Remote concept run may author exactly one `docs/<slug>/` dossier. The
+  reviewed task-branch merge integrates it after a pre-merge Dossier placement
+  check. The post-steps verify the source-card key plus `decision-pending`
+  status and task-file links, wait for human sight review, then create coding
+  cards from the descriptor.
 - `backend/Features/Docs/DossierMaintenanceService.cs` and
   `DossierImplementationContract.cs`: resolve a delivery card's Dossiers from
   `references.workbenches` or descriptor `sourceTaskKeys`, frame the CORE run,
@@ -1714,9 +1789,11 @@ comparison before Quality Studio's verdict contract can decide a review.
   names the current Attempt and that Git already projects the delivery as
   `integrated`. A passed gate on the delivery's recorded verification tree
   remains valid after the branch advances when that tree is on the published
-  first-parent line and every later publication has its own passed per-task or
-  batch gate. A rewritten tree or a later publication without gate evidence
-  refuses acceptance. The completion claim names the gate that verified the
+  first-parent line and later publications have passed per-task or batch gates.
+  A later exact full-suite gate on a first-parent publication covers earlier
+  ungated publications that its tree contains. A partial or red later gate does
+  not. A rewritten tree or an uncovered later publication refuses acceptance.
+  The completion claim names the gate that verified the
   delivery. Acceptance then performs only the lane move. It never fetches,
   merges, gates, resets the merge row, or enqueues `AcceptedIntegrationQueue`.
   An unintegrated delivery returns the typed `IntegrationFailed` move outcome
@@ -2412,9 +2489,11 @@ move-error dialog.
 - Remote Review command execution survives a planned Review daemon restart.
   Recovered attempts retain their original fence and containment namespace and
   resume before load-aware admission evaluates any fresh slot. Completed
-  commands are not relaunched. If process adoption cannot be proven, the
-  attempt ends visibly as `ReviewInfra / ExecutorRestarted` with the failed
-  proof, completed-command count and duration, and retry reason. Replaying the
+  commands are not relaunched. If process adoption cannot be proven while the
+  lease is valid, the worker is started again for the same attempt and
+  resumes from its checkpoint (AGT-3647). Only a worker that dies again after
+  two relaunches ends the attempt visibly as `ReviewInfra / ExecutorRestarted`
+  with the failed proof, completed-command count and duration, and retry reason. Replaying the
   fixed report key with another terminal payload is rejected.
 - Any operation that can advance `main` must call `PreMainTestGate` first and
   proceed only on an `Ok` result with `FullSuiteRequired` and `FullSuiteRan` set.
@@ -2873,11 +2952,43 @@ operator changes cause the step to fail before its writer runs.
   `5-human-review` or `5e-escalated`, without repeating the research or moving
   the card. A present verdict, also `concerns`, is not reviewed again for the
   same delivery and brief.
-- The concept pipeline is distinct from the report-only pipeline. It runs in an
-  isolated worktree, permits a diff only inside one
-  `docs/<slug>/` directory, and never merges that task branch.
-  Dossier placement publishes `workbench.json` plus `index.html` through the
-  managed project-artifact commit boundary. Concept review checks alternatives,
+- The concept pipeline is distinct from the report-only pipeline. It runs on a
+  Remote runner (local concept runs are not admitted, see
+  `RemoteExecutionRequirement`) and permits a diff only inside one
+  `docs/<slug>/` directory. Concept delivery integration has one contract
+  (AGT-3696): the reviewed task-branch merge that every Remote delivery takes
+  through `RemoteDeliveryIntegrationCoordinator`. There is no managed
+  project-artifact copy of the Dossier. `ConceptDeliveryPostSteps` brackets that
+  merge, independent of `ReviewDecisionOrchestrator:Enabled`:
+  - Before the merge, Dossier placement fetches the fenced result and requires
+    its diff against the integration line to stay inside exactly one
+    `docs/<slug>/` directory. The Dossier at that commit must pass the
+    concept contract, and `results/deliverables.md` must name it. The
+    backend-owned `status.md` keeps that reference, as summary generation
+    does. A refused delivery merges nothing. Its merge row records failure
+    code `concept-dossier-rejected` with `Dossier placement failed:
+    <findings>`. The delivery-chain reconciler then escalates the
+    integrating card with that reason.
+  - After the merge, placement writes `.metadata/concept-workbench.json` with
+    the integrated commit. Concept review reruns on that commit. The step then
+    writes the `concept-sight-review` marker. An integrated but incomplete
+    Dossier enters Human Review with `Concept review failed: <findings>`.
+  - Both steps read git objects through `ConceptDossierSnapshot`, because the
+    merge runs in the integration worktree and does not update the developer
+    checkout. Placement stores the Dossier's two contract files at the
+    integrated commit under the card's `.metadata/concept-dossier/`.
+    `promote-concept` reads the checkout first and falls back to that copy,
+    so its read request spawns no git process. When the checkout still lacks
+    the integrated Dossier, promotion records the accepted state on that
+    placed copy; a complete checkout Dossier uses the managed repository
+    mutation path (AGT-3670).
+  - A concept delivery never joins a batch, so it always takes this
+    per-delivery merge.
+  - A new `workbench.json` without a document key gets one in the integration
+    merge itself (`IncludeDocumentKeysInIntegrationMerge` amends the merge).
+    The integration line then moves to that keyed merge before the gate runs.
+    Before AGT-3696 publication refused the keyed SHA as `sha-not-on-branch`.
+  Concept review checks alternatives,
   recommendation, evidence, open decisions, implementation-card source data,
   the own-card `sourceTaskKeys` entry, `status=decision-pending`, and the dossier
   path in both `results/deliverables.md` and `status.md`. New scaffolds use the
@@ -2886,10 +2997,12 @@ operator changes cause the step to fail before its writer runs.
   `concept`. The template includes the canonical append-only Implementation
   section and log markers. Its implementation convention requires one
   `implementationTasks` entry per independently reviewable slice, never one
-  open-ended all-recommendations entry. The local concept pipeline does not run
-  build, test, code aspects, or integration. A concept delivery entering Remote
-  Review retains its project build and lint commands and adds the read-only
-  `aspect-concept-fit` content check. Its project pipeline-step setting controls
+  open-ended all-recommendations entry. The concept pipeline runs no code
+  aspects. A Remote Review diff confined to one `docs/<slug>/` Dossier runs
+  the read-only `aspect-concept-fit` check and skips repository dependency
+  preparation, build, test, and lint with a recorded reason (AGT-3698).
+  Diffs outside that shape retain ordinary verification and are refused by
+  Dossier placement before integration. The project pipeline-step setting controls
   model, thinking level, CLI, and prompt. The frozen ReviewSubject records the
   `prompt.md` SHA-256; a missing content verdict or a changed brief cannot
   settle as `Pass`. The grade lists skipped applicable aspects with reasons.
@@ -3206,8 +3319,10 @@ whose `task.integration` said `integrated`. Two defects met.
   gate after later publications only when its recorded verification tree is on
   the published branch's first-parent line. One bounded first-parent range from
   that tree to the current tip identifies the later publication commits. Each
-  must be covered by its own passed per-task gate or by a passed batch gate
-  spanning those commits. Batch evidence cannot substitute for the original
+  must be covered by its own passed per-task gate, by a passed batch gate
+  spanning those commits, or by a later exact full-suite gate on a containing
+  first-parent publication. The latter names its covering publication in the
+  acceptance reason. Batch evidence cannot substitute for the original
   tree's first-parent ancestry. A branch rewrite or an uncovered later
   publication is refused; acceptance evidence names the gate that verified
   the delivery.

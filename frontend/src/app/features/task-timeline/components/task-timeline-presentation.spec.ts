@@ -20,6 +20,22 @@ function event(overrides: Partial<TaskTimelineEvent> = {}): TaskTimelineEvent {
 }
 
 describe('task timeline presentation', () => {
+  it('shows the refusal code and brief versions beside a refused acceptance', () => {
+    const refused = event({
+      kind: TIMELINE_KIND.completionContentRefused,
+      actor: 'human:owner',
+      summary: 'Completion refused: delivered against brief v1, current v2.',
+      details: {
+        code: 'completion-content-gap', text: 'Completion refused: delivered against brief v1, current v2.',
+        deliveryBriefVersion: 'v1', reviewBriefVersion: 'v1', currentBriefVersion: 'v2',
+      },
+    });
+    expect(timelineEventTitle(refused)).toBe('Acceptance refused');
+    expect(timelineEventSummary(refused)).toContain('delivered against brief v1');
+    expect(timelineDetailEntries(refused).map(entry => entry.label)).toContain('Refusal code');
+    expect(timelineDetailEntries(refused).map(entry => entry.label)).toContain('Current brief');
+    expect(timelineDetailEntries(refused).some(entry => entry.key === 'text')).toBe(false);
+  });
   it('provides a quiet human label for every closed event kind', () => {
     for (const kind of Object.values(TIMELINE_KIND)) {
       const label = timelineKindLabel(kind);
@@ -135,6 +151,18 @@ describe('task timeline presentation', () => {
     expect(timelineEventSummary(preStep)).toBeNull();
     expect(timelineEventTitle(review)).toBe('Human review accepted');
     expect(timelineEventSummary(review)).toBeNull();
+  });
+
+  it('titles a Reviewer send back and keeps its note in the summary (AGT-3670)', () => {
+    const sentBack = event({
+      kind: TIMELINE_KIND.humanReviewDecided,
+      actor: 'human:Rui Reviewer',
+      summary: 'Rui Reviewer sent the card back: The header is still loud.',
+      details: { decision: 'send-back', reviewer: 'Rui Reviewer', note: 'The header is still loud.' },
+    });
+
+    expect(timelineEventTitle(sentBack)).toBe('Human review sent back');
+    expect(timelineEventSummary(sentBack)).toBe('Rui Reviewer sent the card back: The header is still loud.');
   });
 
   it.each([

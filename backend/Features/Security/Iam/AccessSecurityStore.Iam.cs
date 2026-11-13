@@ -78,6 +78,28 @@ public sealed partial class AccessSecurityStore
         return PermissionEvaluator.Evaluate(permission, subject, bindings, target, sameProject);
     }
 
+    /// <summary>
+    /// The projects where the user reviews through the Reviewer role and holds
+    /// no card write (AGT-3670). The Studio offers the Human Review decision
+    /// there instead of lane controls; the routes still decide every request.
+    /// A workspace Reviewer binding without a workspace card write is <c>*</c>.
+    /// </summary>
+    public IReadOnlyList<string> ReviewerProjects(string userId, Func<string, string, bool>? sameProject = null)
+    {
+        var (subject, bindings) = PrincipalBindings(IamPrincipalKind.User, userId);
+        var reviewer = bindings
+            .Where(binding => binding.Role == IamRoles.Reviewer && PermissionEvaluator.AppliesTo(binding, subject)).ToList();
+        if (reviewer.Count == 0) return [];
+        if (reviewer.Any(binding => binding.Scope.Kind == IamScopeKind.Workspace))
+            return PermissionEvaluator.Evaluate(IamPermissions.ProjectCardsWrite, subject, bindings, PermissionTarget.WorkspaceWide, sameProject).Allowed
+                ? [] : [ProjectAccessAuthorization.AllProjectsGrant];
+        return reviewer.Select(binding => binding.Scope.Project).OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(project => !PermissionEvaluator.Evaluate(IamPermissions.ProjectCardsWrite, subject, bindings,
+                PermissionTarget.ForProject(project), sameProject).Allowed)
+            .ToList();
+    }
+
     public PermissionDecision AuthorizeServiceAccount(
         string accountId, string permission, PermissionTarget target, Func<string, string, bool>? sameProject = null)
         => CheckPermission(IamPrincipalKind.ServiceAccount, accountId, permission, target, sameProject);
@@ -130,7 +152,7 @@ public sealed partial class AccessSecurityStore
             if (account is null || token is null || account.DisabledAt is not null || token.RevokedAt is not null
                 || token.ExpiresAt <= now || !PasswordSecretHasher.VerifySecret(bearer!, token.SecretHash)) return null;
             var apiToken = account.Origin == ServiceAccountOrigins.ApiToken;
-            if (apiToken != (prefix == "api") || IsOperatorAgent(account)) return null;
+            if (apiToken != (prefix == "api") || IsOperatorPrincipal(account)) return null;
             if (apiToken && !state.Users.Any(user => user.Id == account.CreatedBy && !user.Disabled)) return null;
             if (token.LastUsedAt is null || now - token.LastUsedAt >= TimeSpan.FromMinutes(1))
             {
@@ -167,7 +189,8 @@ public sealed partial class AccessSecurityStore
                 {
                     timestamp, serviceAccountId = principal.AccountId, tokenId = principal.TokenId,
                     tokenName = principal.AccountName, actor = principal.ActorId, createdBy = principal.CreatedBy,
-                    method, path, status, sessionId = op.SessionId, delegatedBy = op.DelegatedBy,
+                    method, path, status, sessionId = op.SessionId, occurrenceId = principal.OccurrenceId,
+                    delegatedBy = op.DelegatedBy,
                     operation = policy?.Operation?.Id, tier = policy?.Operation?.Tier.ToString(), grantId = policy?.GrantId,
                     approvalId = policy?.ApprovalId, policyReason = policy?.Reason,
                 }
@@ -329,6 +352,9 @@ public sealed partial class AccessSecurityStore
             if (IsOperatorAgent(account))
                 throw new SecurityOperationException(409, "operator-agent-account",
                     "An operator agent holds only Owner-started sessions; start a session instead.");
+            if (account.Origin == ServiceAccountOrigins.Persona)
+                throw new SecurityOperationException(409, "persona-account",
+                    "A persona principal holds only platform-minted occurrence sessions.");
             if (account.Origin == ServiceAccountOrigins.ApiToken)
                 throw new SecurityOperationException(409, "api-token-account",
                     "A migrated API token keeps its single token; issue a new API token instead.");
@@ -735,17 +761,17 @@ public sealed partial class AccessSecurityStore
     /// Append-only IAM audit: who changed which binding, group, service
     /// account, token, or legacy role, and when (injected clock).
     /// </summary>
-    private void AppendIamAudit(string? actingUserId, string action, string targetKind, string targetId, object? details)
+    private void AppendIamAudit(string? actingUserId, string action, string targetKind, string targetId, object? details, string? sessionId = null)
     {
         Directory.CreateDirectory(SecurityFolder);
         var file = Path.Combine(SecurityFolder, IamAuditFileName);
         var timestamp = Now;
-        var legacy = new { timestamp, actor = actingUserId ?? "system", action, targetKind, targetId, details };
+        var legacy = new { timestamp, actor = actingUserId ?? "system", sessionId, action, targetKind, targetId, details };
         File.AppendAllText(file, JsonSerializer.Serialize(legacy) + Environment.NewLine);
         RestrictPermissions(file);
         ControlPlaneAudit.Append(new ControlPlaneAuditRecord(
             ControlPlaneAuditStreams.Iam, actingUserId is null ? "system" : AgentStudio.Shared.TimelineActors.Human(actingUserId),
-            action, "ok", $"{targetKind}:{targetId}", Details: legacy, At: timestamp,
+            action, "ok", $"{targetKind}:{targetId}", Session: sessionId, Details: legacy, At: timestamp,
             ParameterDigest: details is null ? null : ControlPlaneAuditLog.Sha256Hex(JsonSerializer.Serialize(details))));
     }
 

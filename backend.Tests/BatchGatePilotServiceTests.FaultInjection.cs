@@ -21,9 +21,9 @@ public sealed class BatchGatePilotFaultInjectionTests : BatchGatePilotServiceTes
     // counting facts pin them, so the crash theories cover every write.
     // AGT-3569 added the flight claim: its grant, step changes and release,
     // and the formed journal entry naming each claim.
-    private const int PublicationWrites = 41;
+    private const int PublicationWrites = 43;
     private const int BaseMoveWrites = 50;
-    private const int IsolationWrites = 68;
+    private const int IsolationWrites = 70;
 
     // Each scenario's crash points are their own test class, so the gate runs
     // them in parallel with the rest of the suite instead of after this class.

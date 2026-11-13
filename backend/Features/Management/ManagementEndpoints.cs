@@ -60,6 +60,21 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(backups.Overview());
         });
+        group.MapGet("/backups/{id}/contents", (HttpContext context, string id,
+            StudioBackupService backups, IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            try
+            {
+                var contents = backups.ReadContents(id);
+                return contents is null ? Results.NotFound() : Results.Ok(contents);
+            }
+            catch (Exception ex) when (ex is BackupException or IOException or UnauthorizedAccessException)
+            {
+                return Results.Problem("The archive content list could not be read.", statusCode: 422);
+            }
+        });
         group.MapGet("/diagnostics", (HttpContext context, ManagementService service, IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -69,11 +84,18 @@ public static class ManagementEndpoints
         group.MapGet("/remote-hosts", (
             HttpContext context,
             AgentStudio.Runner.V1ReviewExecutorRegistry registry,
+            AgentStudio.Runner.AttemptAuthorityService authority,
             IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            return Results.Ok(registry.ListCapabilitySnapshots());
+            // AGT-3690: the restart history is durable authority state; the
+            // registry only knows the newest restart of the current instance.
+            return Results.Ok(registry.ListCapabilitySnapshots()
+                .Select(snapshot => authority.ListReviewDaemonRestarts(snapshot.RunnerId) is { Count: > 0 } restarts
+                    ? snapshot with { ReviewRestarts = restarts }
+                    : snapshot)
+                .ToArray());
         });
         group.MapGet("/runner-infrastructure-failures", (
             HttpContext context,

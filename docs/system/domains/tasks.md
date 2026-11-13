@@ -97,6 +97,18 @@ and the creation-only `mutation.key`,
 process count. The spans are stage costs; their sum can be below wall time
 because validation and response coordination are outside them.
 
+When a create request leaves the model or thinking level to policy, the create
+path previews the routing policy over the CLI model catalogue. It waits at most
+250 ms for that catalogue (`RequestPathModelCatalogue`) and otherwise uses the
+registry catalogue, because a cold Claude or Codex catalogue starts the CLI in
+a PTY and made `POST /api/tasks` take about 9 s (AGT-3709). The discovery
+continues in the background and warms the cache. The Create dialog's
+`GET /api/cli/model-routing/recommendation` uses the same bound. A failed
+Claude or Codex PTY discovery is not retried for five minutes; reads answer
+from the cached or registry catalogue meanwhile. `mutation.key` splits into
+`mutation.key.floor` (highest resident key) and `mutation.key.registry` (the
+`projects.json` counter write, which waits on the registry lock and fsync).
+
 `GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
 They include identity, lane, sort and filter fields, card badges, a commit
 count and latest short commit label, and the branch facts needed for the Git
@@ -224,9 +236,14 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   `acceptanceScope`. Promotion rejects an open-ended entry such as `implement
   all recommendations`; use one entry per slice.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
-  (`409`) a follow-up prompt that reads as a code-change request, naming the
-  card's mode and the matching promotion path (`promote-concept` or
-  `promote-to-coding`) in the message. This is `ContinueModeGuardPolicy`
+  (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
+  code-change request. The `message` names the card's mode and the two ways
+  forward in words, never as API paths, because the continue panel shows it:
+  the panel offers "Keep in <mode> mode and send" (the same round with
+  `modeOverride`) and "Promote to implementation" (`promote-concept` from the
+  Dossier proposals, or the `promote-to-coding` form) as buttons (AGT-3700).
+  A follow-up that names a Dossier section, decision (`D3`), option, or open
+  question is a Dossier edit and is never refused. This is `ContinueModeGuardPolicy`
   (`backend/Shared/Runner/ContinueModeGuardPolicy.cs`): a card repurposed into
   a concept card must not silently re-run in concept mode against an
   implementation prompt, do no implementation, and escalate with no useful
@@ -264,7 +281,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   active and no isolation finding released it. Eject
   (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
   allowed (AGT-3483, `BatchIsolationGuard`).
-  The read-only failure continuation check reports the same isolation reason
+- An Escalated to Ready operator move can include `reissueInstructions` with up
+  to twelve selected findings and an optional owner note. The move persists
+  that handoff for the next run after rotating the old review artifacts.
+- The read-only failure continuation check reports the same isolation reason
   and marks the action unavailable, so task detail disables it with that reason
   as its tooltip (AGT-3687).
 
@@ -1021,6 +1041,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
   A new delivery epoch or result SHA, or a delivery no longer integrated in the
   published branch, makes the verdict stale and returns the card to Auto Review.
+  Stale-verdict recovery records the integration request and returns from the
+  delivery-chain pass before the per-project merge gate finishes. Its completion
+  requests a fresh review or queues a merge round. After a restart, the
+  reconciler resumes a returned Auto Review card whose latest lane change was
+  the stale-verdict transition and whose review is still pending recovery.
   Older claims without these delivery fields remain accepted while Git reports
   the delivery integrated. An explicit operator override remains accepted for
   its recorded delivery; advancing the target branch does not reopen it.
@@ -1163,6 +1188,13 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   leaving a parked lane always clears the marker (see Parked-card blocker and
   recall below). Both hooks are best-effort primes: a missed one still
   self-heals on the next watch event or periodic sweep.
+- After a successful integration push, `GitService` advances the local
+  `origin/<branch>` tracking ref to the pushed SHA with a compare-and-swap. A
+  newer tracking ref stays ahead. This gives integration status the publication
+  fact even when `url.insteadOf` prevents Git from updating the tracking ref
+  during the push. The resume retry record always has a due time, including
+  waits owned by integration; the post-processing backstop rechecks those cards
+  without a GET route fetching from origin (AGT-3620).
 - A move may set `operatorOverride: true` only when targeting `6-completed`.
   This is an explicit, one-shot operator waiver, never a default. Pipeline
   history and `status.md` retain the override and reason. Concept and other
@@ -1331,9 +1363,18 @@ again, so a body the middleware reads differently cannot widen the rules.
 |---|---|---|---|
 | Create | `POST /api/tasks` | `POST .../tasks` | Target lane absent, Backlog, or Ready. |
 | Edit fields | `PUT .../{id}/title`, `tags`, `references`, `waits-on`, `files/prompt.md` | `PUT .../{taskIdentity}`, `title`, `tags`, `references` | Card in Backlog or Ready, and the requested `state` keeps it there. A Task Server update with `mechanicalDelta` is denied. |
-| Move | `POST .../{id}/move`, `POST .../{id}/state` | `POST .../{taskIdentity}/move`, `PUT .../{taskIdentity}/state` | Backlog and Ready among each other, or Human Review to Completed. Backend `operatorOverride` and `archiveOverride` are denied. |
+| Move | `POST .../{id}/move`, `PUT .../{id}/state` | `POST .../{taskIdentity}/move`, `PUT .../{taskIdentity}/state` | Backlog and Ready among each other, or Human Review to Completed. Backend `operatorOverride` and `archiveOverride` are denied. |
 | Read a result file | `GET .../{id}/results/{**path}` | `GET .../{taskIdentity}/results/{**path}` | Only `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp`, `.html`, `.htm`, and `.md`. Both the requested path and the resolved artifact must match, so a folder-prefix match cannot return a log, TRX, JSONL, or other raw output. |
 | Release | `PUT .../{id}/release` | `PUT .../{taskIdentity}/release` | Requires the production approval grant for the project. |
+
+The board card menu lists only Product-permitted move targets for the card's
+current lane and shows no mutation rows for a Viewer. A refused Product move on
+either backend route returns HTTP 403 with `code: product-move-forbidden` and a
+one-sentence `message` explaining that a project Admin or Owner can make the
+move. Acceptance that lacks a passing verification gate points to
+`.agent-studio/project.yml` `commands.build` and `commands.test` and the Admin
+or Owner who can configure them; it does not expose a tree SHA or internal
+verification state.
 
 A backend Product create carries no run controls. The handler clears `model`,
 `cliType`, `thinkingLevel`, `modelExplicit`, `thinkingLevelExplicit`, `mode`,
@@ -1396,6 +1437,13 @@ with `403` and no body. Task Server denies with `403` and
 `task-server.Tests/IdentityBootstrapTests.cs`. The role summary is in
 [security overview](../../operations/security/overview.md).
 
+A Reviewer session (AGT-3670) is not a Product session. It reads cards like a
+Viewer and decides a card in Human Review through
+`POST /api/tasks/{jobId}/human-review/accept` and
+`POST /api/tasks/{jobId}/human-review/send-back`; the note of a send back
+becomes the next run's follow-up. The decision and its audit are described in
+[Who reviews cards](../../operations/security/overview.md#who-reviews-cards-the-reviewer-role-agt-3670).
+
 ## Parked-card blocker and recall
 
 Every move into `5-human-review` or `5e-escalated` writes a machine-readable
@@ -1434,6 +1482,13 @@ decision of whoever parked the card, and re-queueing remains the operator lane
 move that opens a fresh review-attempt epoch. A condition no probe can decide is
 reported as `undeterminable` rather than optimistically as resolved.
 
+An Auto Review watchdog park is typed `environmental` with the
+`auto-review-stranded` cause detail and a
+`review-retry-available` condition checked against the current immutable run.
+The card offers Retry review on that delivery and links the watchdog receipt;
+the receipt's Undo restores Auto Review only if the parked card and delivery
+have not changed since that intervention.
+
 `TaskInfo.ParkedBlocker` is a read-time projection of that marker, never
 persisted on `task.json`. It carries the lane age (`parkedForSeconds`), so a card
 that has sat unlooked-at for days is visible as such. The board card leaves the
@@ -1464,6 +1519,10 @@ Second, a parked card
 never reports zero open items - `ParkedOpenItems` is applied where a summary stub
 is PRODUCED (`HumanReviewEscalation.BuildStatusStub` and the
 `TaskTransitionService` result scaffold), never by rewriting an agent's own text.
+The result scaffold treats a Human Review marker whose only reason is
+`Parked with no recorded cause.` and which has no question as ordinary review,
+so it does not invent a person or an open decision. A stated park still has an
+open item.
 The Task Detail renders the park ABOVE the derived escalation headline, because
 the park is a fact and the headline is an inference; the board distinguishes a
 card waiting on a person from one waiting on a fix.
@@ -1535,6 +1594,19 @@ current/delivery/review brief versions, and content finding in the completion
 claim and a `completion_content_overridden` timeline entry. The Human Review
 delivery panel displays these grounds, the content citations, and ran/skipped
 aspects before acceptance.
+
+When the delivery or verdict brief version differs from the current brief,
+Human Review announces the acceptance block before the owner acts. Prompt edits
+record `brief_changed` and retain the immediately preceding text for a brief
+difference view. A refused acceptance records `completion_content_refused` with
+the refusal code, text, actor, and all three brief versions. The owner can
+request a content-only remote ReviewAttempt for the same completed RunAttempt;
+its plan contains only `requirement-fit` or `concept-fit` and uses the current
+brief. This does not create a coding RunAttempt. The owner can instead accept
+with an override reason of at least eight characters, which the completion
+claim and timeline retain with the actor and brief versions. A new content
+verdict alone does not make an older delivery current; accepting that delivery
+still needs the written override.
 
 Human Review acceptance also matches the card's review subject against the
 attempt authority store (`AcceptanceAttemptLineagePolicy`, pure, matrix-tested;
@@ -1611,6 +1683,43 @@ membership), `GET /api/projects/{id}/delivery-claims` (sweep), and
 `POST /api/projects/{id}/delivery-claims/reconcile` (repairs only the caches
 that contradict positive containment, and reports what changed). Full
 rationale: [the completion contract](../../concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817).
+
+### Human Review acceptance readiness (AGT-3564)
+
+`POST /api/tasks/acceptance-readiness` answers, for each named Human Review
+card (or every Human Review card of `project`), what its acceptance would
+answer now. `TaskTransitionService.PreviewCompletion` runs the admission checks
+of a Human Review to Completed move without an override through the same
+`AdmitTransition` method that `MoveAsync` calls, so the checks and their order
+are one implementation: decision guard, run-attempt lineage, content verdict,
+batch-gate release, integration and gate verification, completion contract,
+and claim binding. It moves nothing and writes nothing. It does not report an
+unusable settlement, and it neither records nor repairs a batch containment, so
+a card the move could still repair reads as refused, never the other way round.
+The route is a POST because those checks read Git and read requests serve
+published facts only (AGT-3321); it needs `project.read` on every card.
+
+`AcceptanceReadinessPolicy` (pure, one test row per class) turns the answer
+into one class: `ready`, `review-concerns` (with the aspect, the concern text
+and the missing item from the settlement), `integrated-unverified` (also a
+batch gate without passing evidence), `not-integrated`, `verdict-stale`
+(verdict or delivery for an older brief, or a review of another run),
+`no-content-verdict`, `blocked` (any other refusal, in the completion's
+wording), `waiting-deploy`, and `owner-decision`. Only a park outranks the
+admission: a park reason that waits for a deploy or a live measurement, or a
+park for a person (`operator-decision`, `agent-needs-input`,
+`needs-human-input`, a decision request, or a pending decision card). A refused
+class also carries a prefilled round: the refusal, the concern, and the card's
+latest result ref (`ContinueRoundBasePolicy`, AGT-3483).
+
+The Human Review lane groups its cards by class and filters by All, Ready, and
+Not ready; the lane count stays the sum of what it shows. Each card names its
+reason and links its review evidence tab. "Accept N ready" confirms, then sends
+the ready cards the filter shows through the normal `POST /api/tasks/batch-move`,
+so every card passes the full completion again and may still be refused; the
+lane lists each card's result and checks again. "Send a round to close the
+gap" opens the prefilled prompt and result ref for editing, and nothing is
+sent until the owner confirms it through `POST .../continue` with `baseRef`.
 
 ## Task-tab refinement projection
 
@@ -1754,6 +1863,20 @@ scheduling (PT-3) read these records.
 - **Audit.** Every change appends `persona.activate`, `persona.pause`,
   `persona.resume`, `persona.deactivate`, `persona.fork` or `persona.adopt` to
   the IAM audit with target `persona:<workspace>/<personaId>`.
+- **Character sheet (PT-7).** `PUT .../personas/{personaId}/attributes` requires
+  an Owner and fresh step-up, validates focus weights at 100 and A2 only for
+  managers, and creates a new activation revision without changing the
+  allowance. The Sheet tab states each attribute's effect.
+  `GET .../personas/{personaId}/sheet` projects 30-day, lifetime and
+  activation-revision records from persona items, occurrence receipts and
+  reports. Rates include denominators and hide below five decided items;
+  priced cost uses the historical token price catalogue and unknown-price
+  sessions remain separate. Misses count externally raised Critical items
+  with a matching scoped area and incident-tagged cards with an explicit
+  `area:<area>` tag; an earlier item from this persona suppresses a miss.
+  Experience uses
+  accepted importance with a 90-day half-life. Rank is eligibility for Owner
+  review only and never changes grants or allowances.
 
 ## Dossier links and retired parent fields
 
@@ -1946,6 +2069,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   option IDs, rationale, operator and decision time, but projects no settled
   promotion decision. The descriptor keeps its current status, and the normal
   prepare and confirm path remains available for a later promotion decision.
+  Concept promotion marks the descriptor `decided` after creating its slice
+  cards, retains those recorded choices, and can be retried without duplicating
+  the cards or lifecycle transition.
 - A delivering card resolved through `references.workbenches` or a descriptor
   `sourceTaskKeys` back edge receives the Dossier maintenance prompt contract.
   It appends only its own dated implementation entry between the canonical log
@@ -2330,9 +2456,18 @@ every byte of it is a byte the client already holds.
   complement of `LegacyTask`, so the board tells a canonical card from a legacy
   one without the authority lock; the board path makes no `GetTaskProjection`
   call for it. `liveStatus.queue.state` is `reviewing` (the lease holder and
-  its start), `queued` (the claimable position, a scheduled retry, or a missing
-  executor registration) or `stalled` (a terminal non-Pass review with nothing
-  scheduled, or no review attempt at all; an operator has to decide). A review
+  its start), `queued` (the claimable position or a missing executor
+  registration), `retry-scheduled` or `stalled` (a terminal non-Pass review
+  with nothing scheduled, or no review attempt at all; an operator has to
+  decide). AGT-3690: an infrastructure failure also carries `queue.lost` (the
+  report's failure classification, the lease host and executor, and when the
+  attempt ended), and a scheduled retry carries `queue.retry` (number, budget,
+  due time) under `retry-scheduled`. A review host restart
+  (`ExecutorRestarted`) reads "Review lost: review host restarted (host,
+  time). Automatic retry 1 of 3 at time." and the host name links to the
+  host. The snapshot fields behind it (`FailureClassification`, `HostId`,
+  `TerminalAt`, `PendingInfrastructureRetryNumber`) are folded into the board
+  signature. A review
   that passed and waits for integration, a legacy card and a report-only card
   keep the local post-processing wait sentence. Every attempt-authority read
   is keyed by `TaskIdentity.AuthorityKey` (the task.json `key`, then the

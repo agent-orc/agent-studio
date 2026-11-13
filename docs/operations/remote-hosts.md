@@ -199,9 +199,13 @@ For the Codex CLI `0.166.0` release, keep Claude Code at `2.1.305`:
    `agent-runner.service` and `agent-runner-review.service` before activating
    `0.166.0` and restarting the units. Active attempts finish during the drain.
 2. On KORI, publish the new `runner/Dockerfile` image for each distributed
-   review container. Drain its review claims and wait for active attempts to
-   finish before replacing the container. Recreating a busy review container
-   interrupts the attempts inside it.
+   review container. Drain its review claims (`studio-op host drain
+   <client-id>`) and wait until `studio-op host status <client-id>` reports
+   `drained` before replacing the container; resume it with `studio-op host
+   resume <client-id>` once the new container is verified. A drained container
+   claims no new review, so a container on the old image cannot pick one up
+   during the update. A worker a recreate still kills is relaunched for the same
+   attempt by the replacement daemon ([deploy drain procedure](deploy-drain-procedure.md)).
 3. Publish the new `deploy/work-container/Dockerfile` image and promote its
    immutable digest through the work container image manifest. Existing
    per-attempt containers keep their old digest and finish; new attempts use

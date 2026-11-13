@@ -91,6 +91,14 @@ at 100%. Full hosting slots are a separate `hosting-full` state that refuses
 only new deploys ("All N hosting slots are in use; new deploys wait until an
 environment stops.").
 
+Persona scheduling uses the same workspace snapshot but pauses at `warning`,
+including when the meter is incomplete. Card admission keeps its existing
+100% threshold. Each completed persona occurrence contributes its receipt's
+tokens to the project token ledger as consumer `persona:<id>`. The separate
+persona pool defaults to 10% of `ModelTokensPerWeek`, or 1,200,000 tokens when
+the workspace has no token limit; an Owner can set the pool through
+`PUT /api/workspaces/{id}/personas/budget`.
+
 New coding runs, review and gate claims, publish and deploy actions check
 quota at admission. The monolith gate store reads the queued subjects'
 projects from the task index once per claim and asks at most once per project,

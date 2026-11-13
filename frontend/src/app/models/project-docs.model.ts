@@ -301,6 +301,10 @@ export interface WorkbenchDecisionResult {
   spawnedTaskKeys: string[];
   responses: WorkbenchDecisionResponse[];
   idempotent: boolean;
+  /** Spawned cards the server removed because the decision was not recorded. */
+  removedTaskIds?: string[];
+  /** Spawned cards that stay on the board without a Dossier link. */
+  retainedTaskIds?: string[];
   /**
    * The server-validated task draft for a feature decision. The backend never
    * creates the card itself: the client owns task creation through the existing
@@ -335,6 +339,8 @@ export interface ConfirmWorkbenchDecisionRequest {
   responses: WorkbenchDecisionResponse[];
   /** Keys of cards the client already created for this decision, if any. */
   spawnedTaskKeys?: string[];
+  /** Job ids of those cards; the server removes them when the decision is not recorded. */
+  spawnedTaskIds?: string[];
   cliType?: string | null;
   model?: string | null;
   thinkingLevel?: string | null;
@@ -372,6 +378,8 @@ export interface WorkbenchListItem {
   decisionStage?: WorkbenchDecisionStage | null;
   /** Dossier-level gate count until inline decision points extend it. */
   openDecisionCount?: number;
+  /** Operator choices recorded before concept acceptance. */
+  recordedResponses?: WorkbenchDecisionResponse[];
   documentation?: WorkbenchDocumentationProjection | null;
   /** Missing means this Dossier has never received a relevance review. */
   review?: WorkbenchReview | null;
