@@ -24,7 +24,11 @@ public sealed record PersonaGroundsV1(int SchemaVersion, string OccurrenceKey, s
     public int OmittedSourceCount { get; init; }
     public IReadOnlyList<string> AllowedProjects { get; init; } = [];
     public IReadOnlyList<string> AllowedAreas { get; init; } = [];
+    public IReadOnlyList<PersonaManagerGroundItemV1> ManagerItems { get; init; } = [];
 }
+public sealed record PersonaManagerGroundItemV1(string Id, string Kind, int Impact, int Urgency,
+    double Confidence, int Floor, int Score, string PersonaId, string Fingerprint,
+    IReadOnlyList<string> Links);
 public sealed record PersonaOccurrenceResponseV1(IReadOnlyList<PersonaItemDraftV1> Items);
 public sealed record PersonaLeaseV1(string Key, string ClaimToken, string WorkspaceId,
     string PersonaId, string RoleId, string Prompt, string Model, string Thinking,
@@ -168,13 +172,15 @@ public sealed class PersonaOccurrenceService
     private readonly WatcherProposalStore _proposals;
     private readonly AgentMessageBusStore _bus;
     private readonly AccessSecurityStore _security;
+    private readonly PersonaManagerService _managers;
     private readonly StudioBackupService _backups;
     private readonly SecurityPostureService _posture;
     private readonly OpsPostureSnapshotStore _opsSnapshots;
     private readonly HashSet<string> _wardenDays = new(StringComparer.Ordinal);
     private readonly string? _root;
 
-    public PersonaOccurrenceService(PersonaSchedulingService scheduling, PersonaActivationStore activations,
+    public PersonaOccurrenceService(PersonaManagerService managers,
+        PersonaSchedulingService scheduling, PersonaActivationStore activations,
         PersonaItemStore items, PersonaReportStore reports, ProjectRegistry projects,
         WorkspaceRegistry workspaces,
         TaskScannerService cards,
@@ -183,6 +189,7 @@ public sealed class PersonaOccurrenceService
         OpsPostureSnapshotStore opsSnapshots,
         IConfiguration configuration)
     {
+        _managers = managers;
         _scheduling = scheduling; _activations = activations; _items = items; _reports = reports;
         _projects = projects;
         _workspaces = workspaces;
@@ -279,7 +286,8 @@ public sealed class PersonaOccurrenceService
                         activation.Scope.Projects.Contains(c.ProjectName, StringComparer.OrdinalIgnoreCase))))
                     continue;
                 var grounds = BuildGrounds(receipt, activation);
-                var investigation = receipt.TriggerRefs.Contains("investigation", StringComparer.Ordinal);
+                var investigation = activation.Descriptor.Kind != "manager"
+                    && receipt.TriggerRefs.Contains("investigation", StringComparer.Ordinal);
                 if (investigation && activation.Attributes.Thoroughness < 4) continue;
                 var json = JsonSerializer.Serialize(grounds, StrictJson);
                 var digest = "sha256:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
@@ -481,7 +489,27 @@ public sealed class PersonaOccurrenceService
     public async Task RecomputeAllOpenAsync(DateTime now, CancellationToken ct)
     {
         foreach (var workspace in _workspaces.List().Select(w => w.Id))
+        {
             await RecomputeOpenAsync(workspace, now, ct);
+            var chief = _activations.List(workspace).Personas.FirstOrDefault(p =>
+                p.Activation is { State: PersonaStates.Active }
+                && (p.Activation.RoleId ?? p.Activation.Descriptor.Id) == "chief-of-staff");
+            if (chief is not null && _security.HasLivePersonaGrant(workspace, chief.Id)
+                && _items.List(workspace).Any(i => i.Kind == PersonaItemKinds.DecisionRequest
+                    && i.State == "open" && i.DeadlineUtc <= now))
+            {
+                var session = _security.MintPersonaOccurrenceSession(workspace, chief.Id,
+                    "manager-decision-expiry:" + now.ToString("yyyyMMddHHmm"), 5);
+                var grantId = _security.ListStandingGrants(session.Principal.Id)
+                    .First(g => g.RevokedAt is null && g.ExpiresAt > now).Id;
+                foreach (var item in _items.ExpireStaleDecisionRequests(workspace, now))
+                {
+                    await _managers.RecordExpiryAsync(workspace, chief.Id, item.Id,
+                        session.Session.Id, grantId, now, ct);
+                    await PublishAsync(item, "manager-sweep", ct);
+                }
+            }
+        }
     }
 
     public async Task PublishCompletionLifecycleAsync(PersonaLeaseCompletion completion,
@@ -525,6 +553,13 @@ public sealed class PersonaOccurrenceService
 
     private PersonaGroundsV1 BuildGrounds(PersonaOccurrenceReceipt receipt, PersonaActivationV1 activation)
     {
+        if (activation.Descriptor.Kind == "manager")
+        {
+            // Manager decisions use only validated item fields. Do not add card, Dossier,
+            // watcher or prior-outcome summaries here: those can contain untrusted prose.
+            return PersonaManagerPolicy.Grounds(receipt, activation,
+                _items.List(receipt.WorkspaceId));
+        }
         var allowed = _projects.List().Where(p => p.WorkspaceId == receipt.WorkspaceId && !p.Archived
             && (activation.Scope.Projects.Contains("*") || activation.Scope.Projects.Contains(p.Id)
                 || activation.Scope.Projects.Contains(p.DisplayName, StringComparer.OrdinalIgnoreCase)))

@@ -71,6 +71,10 @@ public static class OperatorOperationIds
     public static readonly IReadOnlyList<string> PersonaManager =
         [PersonaProposalAccept, PersonaImportanceAdjust, PersonaBudgetRebalance, PersonaPause];
     public static readonly IReadOnlyList<string> PersonaAll = [.. PersonaPublish, .. PersonaManager];
+    // The chief of staff also requeues through the persona operation route; card.requeue
+    // stays a plain T1 operator operation and never requires a persona principal elsewhere.
+    public static readonly IReadOnlyList<string> PersonaManagerRoute = [.. PersonaManager, CardRequeue];
+    public static readonly IReadOnlyList<string> PersonaRoute = [.. PersonaPublish, .. PersonaManagerRoute];
 }
 
 /// <summary>One catalogued operation: exactly one tier and the kind of scope it acts on.</summary>
@@ -305,7 +309,7 @@ public static class OperatorOperationCatalog
                 IamEnvironments.Production => OperatorOperationIds.ProductionPromote,
                 _ => null,
             },
-            OperatorRouteRefinement.PersonaOperation => OperatorOperationIds.PersonaAll.Contains(facts.PersonaOperationId ?? "")
+            OperatorRouteRefinement.PersonaOperation => OperatorOperationIds.PersonaRoute.Contains(facts.PersonaOperationId ?? "")
                 ? facts.PersonaOperationId : null,
             _ => rule.OperationId,
         };
@@ -319,7 +323,7 @@ public static class OperatorOperationCatalog
         OperatorRouteRefinement.GateEvidence => [rule.OperationId, OperatorOperationIds.GateBypass],
         OperatorRouteRefinement.ReleaseDeployment =>
             [OperatorOperationIds.StageDeploy, OperatorOperationIds.ProductionPromote, OperatorOperationIds.GateBypass],
-        OperatorRouteRefinement.PersonaOperation => OperatorOperationIds.PersonaAll,
+        OperatorRouteRefinement.PersonaOperation => OperatorOperationIds.PersonaRoute,
         _ => [rule.OperationId],
     };
 

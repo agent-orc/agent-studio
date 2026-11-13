@@ -144,6 +144,7 @@ builder.Services.AddSingleton<AgentStudio.Personas.PersonaCatalogue>(_ => new Ag
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaActivationStore>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaSchedulingService>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaItemStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaManagerService>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaProposalLifecycle>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaReportStore>();
 builder.Services.AddSingleton<AgentStudio.Personas.OpsPostureSnapshotStore>();

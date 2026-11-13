@@ -27,7 +27,7 @@ public sealed record PersonaItemDraftV1(string Kind, string Title, string Body, 
     string? DossierKey = null, string? DossierSection = null,
     string? DraftTitle = null, string? DraftPrompt = null, string? Area = null);
 public sealed record PersonaItemChangeV1(DateTime AtUtc, int PreviousImportance, int Importance,
-    string Reason, string OccurrenceKey);
+    string Reason, string OccurrenceKey, int? ManagerAdjustment = null);
 public sealed record PersonaItemV1(string Id, string PersonaId, string RoleId, string Kind,
     string Title, string Body, string? Project, IReadOnlyList<PersonaEvidenceV1> Evidence,
     int Impact, int Urgency, double Confidence, int Floor, int Importance,
@@ -134,7 +134,8 @@ public sealed class PersonaItemStore
             if (priorIndex >= 0)
             {
                 var previous = items[priorIndex];
-                score = Math.Max(score, previous.Floor);
+                score = Math.Clamp(score + ManagerAdjustment(previous),
+                    Math.Max(floor, previous.Floor), 100);
                 item = previous with { Title = draft.Title, Body = draft.Body, Evidence = draft.Evidence,
                     Impact = draft.Impact, Urgency = draft.Urgency, Confidence = confidence,
                     Floor = Math.Max(floor, previous.Floor), Importance = score, UpdatedAtUtc = now,
@@ -168,6 +169,69 @@ public sealed class PersonaItemStore
     public PersonaItemV1? Find(string workspaceId, string itemId)
     {
         lock (_gate) return Load(workspaceId).FirstOrDefault(item => item.Id == itemId);
+    }
+
+    public PersonaItemV1 Adjust(string workspaceId, string itemId, int adjustment,
+        string reason, string actor, DateTime now)
+    {
+        if (adjustment is < -15 or > 15 || adjustment == 0)
+            throw new PersonaManagerRefusal("adjustment-out-of-bounds");
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new PersonaManagerRefusal("reason-required");
+        lock (_gate)
+        {
+            var items = Load(workspaceId);
+            var index = items.FindIndex(i => i.Id == itemId);
+            if (index < 0 || !PersonaItemStates.IsDecidable(items[index].State))
+                throw new PersonaManagerRefusal("item-not-open");
+            var old = items[index];
+            var score = Math.Clamp(old.Importance + adjustment, old.Floor, 100);
+            if (score != old.Importance + adjustment)
+                throw new PersonaManagerRefusal("importance-floor-or-ceiling");
+            var next = old with { Importance = score, UpdatedAtUtc = now,
+                History = [.. old.History, new PersonaItemChangeV1(now, old.Importance,
+                    score, "manager-adjustment:" + reason.Trim(), actor, adjustment)] };
+            items[index] = next;
+            Save(workspaceId, items);
+            return next;
+        }
+    }
+
+    public PersonaItemV1 UndoManagerItem(string workspaceId, string itemId,
+        int? expectedImportance, int? restoreImportance, bool unaccept, string actor, DateTime now,
+        bool unexpire = false)
+    {
+        lock (_gate)
+        {
+            var items = Load(workspaceId);
+            var index = items.FindIndex(i => i.Id == itemId);
+            if (index < 0) throw new PersonaManagerRefusal("item-not-found");
+            var old = items[index];
+            if (unaccept && old.State != "accepted" || unexpire && old.State != "expired")
+                throw new PersonaManagerRefusal("undo-state-changed");
+            var adjustmentToRemove = expectedImportance is { } expected && restoreImportance is { } restore
+                ? expected - restore : 0;
+            if (expectedImportance is { } expectedScore && old.Importance != expectedScore)
+                throw new PersonaManagerRefusal("undo-state-changed");
+            if (adjustmentToRemove != 0 && ManagerAdjustment(old) == 0)
+                throw new PersonaManagerRefusal("undo-state-changed");
+            var nextAdjustment = ManagerAdjustment(old) - adjustmentToRemove;
+            var score = adjustmentToRemove == 0 ? restoreImportance ?? old.Importance
+                : Math.Clamp(PersonaImportanceService.Score(old.Impact, old.Urgency,
+                    old.Confidence, old.Floor) + nextAdjustment, old.Floor, 100);
+            if (score < old.Floor) throw new PersonaManagerRefusal("importance-floor-or-ceiling");
+            var next = old with { Importance = score,
+                State = unaccept ? "draft" : unexpire ? "open" : old.State,
+                PromotedTaskKey = unaccept ? null : old.PromotedTaskKey,
+                UpdatedAtUtc = now,
+                History = [.. old.History, new PersonaItemChangeV1(now, old.Importance,
+                    score, adjustmentToRemove == 0 ? "owner-undo"
+                        : "owner-undo-adjustment", actor,
+                    adjustmentToRemove == 0 ? null : -adjustmentToRemove)] };
+            items[index] = next;
+            Save(workspaceId, items);
+            return next;
+        }
     }
 
     /// <summary>
@@ -205,7 +269,8 @@ public sealed class PersonaItemStore
                 var item = items[n];
                 if (item.State is not ("open" or "draft")) continue;
                 var urgency = PersonaImportanceService.Urgency(now, item.CreatedAtUtc, item.DeadlineUtc, item.Urgency);
-                var score = PersonaImportanceService.Score(item.Impact, urgency, item.Confidence, item.Floor);
+                var score = Math.Clamp(PersonaImportanceService.Score(item.Impact, urgency,
+                    item.Confidence, item.Floor) + ManagerAdjustment(item), item.Floor, 100);
                 if (score == item.Importance && urgency == item.Urgency) continue;
                 items[n] = item with { Urgency = urgency, Importance = score, UpdatedAtUtc = now,
                     History = [.. item.History, new PersonaItemChangeV1(now, item.Importance, score,
@@ -216,6 +281,31 @@ public sealed class PersonaItemStore
             return changed;
         }
     }
+
+    public IReadOnlyList<PersonaItemV1> ExpireStaleDecisionRequests(string workspaceId, DateTime now)
+    {
+        lock (_gate)
+        {
+            var items = Load(workspaceId);
+            var expired = new List<PersonaItemV1>();
+            for (var index = 0; index < items.Count; index++)
+            {
+                var item = items[index];
+                if (item.Kind != PersonaItemKinds.DecisionRequest || item.State != "open"
+                    || item.DeadlineUtc is null || item.DeadlineUtc > now) continue;
+                var next = item with { State = "expired", UpdatedAtUtc = now,
+                    History = [.. item.History, new PersonaItemChangeV1(now, item.Importance,
+                        item.Importance, "decision-request-expired", "manager-sweep")] };
+                items[index] = next;
+                expired.Add(next);
+            }
+            if (expired.Count > 0) Save(workspaceId, items);
+            return expired;
+        }
+    }
+
+    private static int ManagerAdjustment(PersonaItemV1 item) =>
+        item.History.Sum(change => change.ManagerAdjustment ?? 0);
 
     private List<PersonaItemV1> Load(string workspaceId)
     {
