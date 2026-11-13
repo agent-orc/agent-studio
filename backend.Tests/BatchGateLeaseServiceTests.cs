@@ -42,6 +42,7 @@ public sealed class BatchGateLeaseServiceTests
             Assert.True(leases.IsBusy(scope));
             Assert.True(leases.IsCurrent(first));
             Assert.Null(leases.TryAcquire(scope, "host-b"));
+            Assert.Equal("lease held by host-a", leases.RecoveryBlocker(scope));
             now += TimeSpan.FromMinutes(3);
             Assert.False(leases.IsBusy(scope));
             var second = leases.TryAcquire(scope, "host-b")!;
@@ -69,6 +70,7 @@ public sealed class BatchGateLeaseServiceTests
             using (var guard = new FileStream(Path.Combine(folder, "lock"),
                        FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
+                Assert.Equal("lock busy", leases.RecoveryBlocker(scope));
                 Assert.True(leases.IsBusy(scope));
                 Assert.Null(leases.Renew(lease));
                 Assert.False(leases.IsCurrent(lease));
@@ -77,6 +79,8 @@ public sealed class BatchGateLeaseServiceTests
             Assert.True(leases.IsCurrent(lease));
             Assert.True(leases.Release(lease));
             Assert.False(leases.IsBusy(scope));
+            File.WriteAllText(Path.Combine(folder, "lease.json"), "{broken");
+            Assert.Equal("lease record unreadable", leases.RecoveryBlocker(scope));
         }
         finally
         {

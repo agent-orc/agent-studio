@@ -143,6 +143,13 @@
   -webkit-line-clamp: 1;
 }
 
+// A stranded batch needs its recovery blocker and next retry visible in the list.
+.attention-list__row[data-attention-type='batch.running-without-gate'] .attention-list__reason {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
 .attention-list__action,
 .attention-list__link {
   flex: 0 0 auto;

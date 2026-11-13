@@ -66,7 +66,7 @@ public sealed class OperatorWatcherCaseFactSource(WatcherCaseStore cases, string
 }
 
 /// <summary>Red and isolating batches, and quarantined batch records, from the batch gate store.</summary>
-public sealed class OperatorBatchGateFactSource(BatchGateStore store) : IOperatorDecisionFactSource
+public sealed class OperatorBatchGateFactSource(BatchGateStore store, BatchGatePilotService? pilot = null) : IOperatorDecisionFactSource
 {
     // A closed manifest never changes, and a published or abandoned batch
     // never changes phase again: each is read once per folder.
@@ -74,7 +74,8 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store) : IOperato
     private readonly HashSet<string> _settled = new(StringComparer.Ordinal);
 
     public IReadOnlyList<string> Types { get; } =
-        [OperatorDecisionTypes.BatchRed, OperatorDecisionTypes.BatchIsolating, OperatorDecisionTypes.BatchRecordUnreadable];
+        [OperatorDecisionTypes.BatchRed, OperatorDecisionTypes.BatchIsolating, OperatorDecisionTypes.BatchRecordUnreadable,
+         OperatorDecisionTypes.BatchRunningWithoutGate];
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
     {
@@ -99,11 +100,24 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store) : IOperato
             }
             batches.Add((manifest, state));
         }
-        return
-        [
-            .. OperatorDecisionFacts.FromBatches(batches),
-            .. OperatorDecisionFacts.FromQuarantinedBatchRecords(store.ListQuarantined()),
-        ];
+        var facts = OperatorDecisionFacts.FromBatches(batches).ToList();
+        facts.AddRange(OperatorDecisionFacts.FromQuarantinedBatchRecords(store.ListQuarantined()));
+        if (pilot is not null)
+            foreach (var (manifest, state) in batches)
+            {
+                if (state is null || !pilot.RunningWithoutFlight(manifest, state, new DateTimeOffset(nowUtc))) continue;
+                var delay = pilot.RecoveryStatus(manifest.BatchId);
+                var cards = manifest.Members.Select(member => member.TaskKey).ToArray();
+                facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.BatchRunningWithoutGate,
+                    $"{OperatorDecisionTypes.BatchRunningWithoutGate}|{manifest.BatchId}|{state.RecordedAtUtc:O}",
+                    manifest.Scope.Project, cards.Length == 1 ? cards[0] : null,
+                    $"Batch running without a live gate: recovery has not run ({delay.Reason}). "
+                        + $"Next automatic retry at {delay.NextRetryAtUtc:HH:mm:ss} UTC.",
+                    state.RecordedAtUtc.UtcDateTime,
+                    [new OperatorEvidenceLink("batch-gate-state", "/api/projects/"
+                        + Uri.EscapeDataString(manifest.Scope.Project) + "/batch-gate/state")], cards));
+            }
+        return facts;
     }
 
     private BatchGateState? LatestState(string folder)

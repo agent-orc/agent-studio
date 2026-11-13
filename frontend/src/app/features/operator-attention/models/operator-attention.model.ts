@@ -60,6 +60,7 @@ const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
   'human-review.ready': 'human-review',
   'batch.red': 'batch',
   'batch.isolating': 'batch',
+  'batch.running-without-gate': 'batch',
   'batch.record-unreadable': 'batch-record',
   'batch-gate.stuck': 'batch',
   'push.pending-overdue': 'push',

@@ -43,6 +43,10 @@
     }
     @if (record(); as batch) {
       <p>Phase: {{ batch.phase }} · Latest run: {{ batch.runs[batch.runs.length - 1]?.outcome ?? (batch.phase === 'running' ? 'running' : 'interrupted') }}</p>
+      <p class="batch-detail__time" data-testid="task-batch-phase-time">{{ batch.phase }} {{ timeLine(batch.phaseAtUtc) }}</p>
+      @for (run of batch.runs; track run.batchRunId) {
+        <p class="batch-detail__time">{{ run.host }} · {{ run.outcome ?? 'running' }} {{ timeLine(run.startedAtUtc, run.finishedAtUtc) }}</p>
+      }
       @if (publishedSha(batch.publication); as sha) { <p>Published candidate: <code>{{ sha }}</code></p> }
     }
     @if (isolation(); as isolation) {

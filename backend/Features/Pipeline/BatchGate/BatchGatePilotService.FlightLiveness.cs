@@ -14,6 +14,38 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public sealed partial class BatchGatePilotService
 {
+    public sealed record RecoveryDelay(string Reason, DateTimeOffset NextRetryAtUtc);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, RecoveryDelay> _recoveryDelays = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string BatchId, string Reason), byte> _loggedRecoveryDelays = new();
+
+    public bool HasLiveFlight(string batchId)
+    {
+        lock (_runningBatches)
+            return _batchFlights.Values.Any(flight => flight.Manifest.BatchId == batchId
+                && flight.Task is { IsCompleted: false } && !flight.Cancelled);
+    }
+
+    public RecoveryDelay RecoveryStatus(string batchId)
+        => _recoveryDelays.TryGetValue(batchId, out var delay) ? delay
+            : new RecoveryDelay("recovery has not run", _time.GetUtcNow().AddSeconds(30));
+
+    public bool RunningWithoutFlight(BatchGateManifest manifest, BatchGateState state, DateTimeOffset now)
+        => IsStaleRunning(state.Phase, state.RecordedAtUtc, now, HasLiveFlight(manifest.BatchId),
+            _settings.Get(manifest.Scope.Project).BatchGate.GateTimeoutMinutes);
+
+    public static bool IsStaleRunning(BatchPhase phase, DateTimeOffset started, DateTimeOffset now,
+        bool liveFlight, int gateTimeoutMinutes)
+        => phase == BatchPhase.Running && !liveFlight
+            && now - started > TimeSpan.FromMinutes(gateTimeoutMinutes) + BatchGateLeaseService.Ttl;
+
+    private void RecordRecoveryDelay(BatchGateManifest manifest, string reason)
+    {
+        var next = new RecoveryDelay(reason, _time.GetUtcNow().AddSeconds(30));
+        _recoveryDelays[manifest.BatchId] = next;
+        if (_loggedRecoveryDelays.TryAdd((manifest.BatchId, reason), 0))
+            _logger.LogWarning("batch-recovery-skipped batch={BatchId} reason={Reason} nextRetryAt={NextRetryAtUtc}",
+                manifest.BatchId, reason, next.NextRetryAtUtc);
+    }
     /// <summary>One ordinary batch flight; mutable fields are guarded by <c>_runningBatches</c>.</summary>
     private sealed class BatchFlight(BatchGateManifest manifest, DateTimeOffset startedAtUtc,
         CancellationTokenSource beforeLease, bool followsCompletedFlight)

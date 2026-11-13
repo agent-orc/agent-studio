@@ -18,6 +18,31 @@ public static class PersonaEndpoints
     {
         var personas = app.MapGroup("/api/workspaces/{id}/personas");
 
+        personas.MapGet("/items", (string id, PersonaItemStore items) => Results.Ok(items.List(id)))
+            .RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/reports", (string id, PersonaReportStore reports) => Results.Ok(reports.List(id)))
+            .RequirePermission(IamPermissions.WorkspaceRead);
+
+        app.MapPost("/api/runner/personas/claim", async (HttpContext context,
+            PersonaLeaseClaimRequest request, PersonaOccurrenceService occurrences, CancellationToken ct) =>
+        {
+            if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is RunnerPrincipal principal
+                && principal.RunnerId != request.RunnerId) return Results.Unauthorized();
+            return Results.Ok(await occurrences.ClaimAsync(request.RunnerId, DateTime.UtcNow, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+        app.MapPost("/api/runner/personas/complete", async (HttpContext context,
+            PersonaLeaseCompletion completion, PersonaOccurrenceService occurrences, CancellationToken ct) =>
+        {
+            if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is RunnerPrincipal principal
+                && principal.RunnerId != completion.RunnerId) return Results.Unauthorized();
+            var (accepted, error) = await occurrences.CompleteAsync(completion, DateTime.UtcNow, ct);
+            await occurrences.PublishCompletionLifecycleAsync(completion, error, ct);
+            return accepted ? Results.Ok(new { accepted = true })
+                : Results.Json(new { accepted = false, error }, statusCode:
+                    error == "stale-persona-lease" ? StatusCodes.Status409Conflict :
+                        StatusCodes.Status422UnprocessableEntity);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+
         personas.MapGet("", (string id, PersonaActivationStore store) =>
             AccessSecurityEndpoints.Execute(() => Results.Ok(store.List(id))));
 

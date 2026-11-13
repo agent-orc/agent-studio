@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, O
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
-import { batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards } from '../../../models/batch-gate.model';
+import { batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine } from '../../../models/batch-gate.model';
 import { formatDurationMinutes } from '../../../models/duration-format';
 import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
@@ -57,6 +57,7 @@ export class BatchPanelComponent implements OnDestroy {
   readonly riskLabel = batchRiskLabel;
   readonly replayLabel = batchReplayLabel;
   readonly publishedSha = batchPublishedSha;
+  readonly timeLine = batchTimeLine;
   phaseReasonLabel(reason: string | null | undefined): string | null {
     if (!reason) return null;
     const pause = 'paused-to-per-task-gate: ';
@@ -92,6 +93,7 @@ export class BatchPanelComponent implements OnDestroy {
     }
   }
   readonly runStatus = batchRunStatus;
+  readonly runIsRunning = batchRunIsRunning;
   readonly runEvidenceUrl = batchRunEvidenceUrl;
   private readonly references = inject(TaskReferenceNavigationService);
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
@@ -142,6 +144,9 @@ export class BatchPanelComponent implements OnDestroy {
     const stamp = value ? Date.parse(value) : NaN;
     if (!Number.isFinite(stamp)) return 'Unknown';
     return new Date(stamp).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+  retryTime(value: string): string {
+    return `${new Date(value).toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' })} UTC`;
   }
   duration(start?: string | null, end?: string | null): string {
     if (!start) return 'Waiting';

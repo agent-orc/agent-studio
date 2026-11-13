@@ -17,7 +17,8 @@ public sealed record BatchTriageFlightFacts(string BatchId, string? ParentBatchI
 /// proven or pre-checked red.
 /// </summary>
 public sealed record BatchTriageMemberFacts(
-    string Status, string? FlightPhase, string? FlightPhaseReason, bool Isolating, bool Red);
+    string Status, string? FlightPhase, string? FlightPhaseReason, bool Isolating, bool Red,
+    bool LiveFlight = true);
 
 /// <summary>Project facts that hold every member: gate on, a push pending, a flight open, the planner's decision.</summary>
 public sealed record BatchTriageProjectFacts(
@@ -50,6 +51,11 @@ public static class BatchTriagePolicy
 
     public static BatchTriageOperation NextOperation(BatchTriageMemberFacts member, BatchTriageProjectFacts project)
     {
+        if (member.Status == "in-batch" && !member.LiveFlight
+            && member.FlightPhase is ("running" or "assembling" or "assembled"))
+            return new(member.Isolating ? BatchTriageOperations.Eject : BatchTriageOperations.Wait,
+                "stale-running-state",
+                "The batch says running, but this process has no live gate flight. Recovery retries on the next tick.");
         if (member.Isolating)
             return new(BatchTriageOperations.Eject, "isolation-active",
                 "The flight isolates a red batch; eject is the only member action until isolation ends.");
@@ -69,12 +75,17 @@ public static class BatchTriagePolicy
 
     private static BatchTriageOperation InFlight(BatchTriageMemberFacts member) => member.FlightPhase switch
     {
+        "formed" when !member.LiveFlight => new(BatchTriageOperations.Wait, "flight-awaiting-start",
+            "The batch is formed and awaits its gate flight."),
         "paused" when member.FlightPhaseReason == "integration-branch-red" => new(BatchTriageOperations.Wait,
             "integration-branch-red", "The integration branch is red; the batch resumes or rebuilds when the base changes."),
         "paused" => new(BatchTriageOperations.Wait, "flight-paused",
             "The flight is paused; the next planner tick returns its members to their per-task gates."),
         "green" or "publishing" => new(BatchTriageOperations.Wait, "flight-publishing",
             "The flight is green and publishing."),
+        "red" => new(BatchTriageOperations.Wait, "flight-red", "The batch gate is red; read the failing evidence."),
+        _ when !member.LiveFlight => new(BatchTriageOperations.Wait, "flight-not-live",
+            "The stored batch phase has no live gate flight in this process; read its state and recovery status."),
         _ => new(BatchTriageOperations.Wait, "flight-running", "The flight is running its gate."),
     };
 

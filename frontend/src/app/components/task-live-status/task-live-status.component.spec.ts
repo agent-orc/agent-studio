@@ -44,6 +44,7 @@ describe('TaskLiveStatusComponent', () => {
 
   beforeEach(async () => {
     navigation.openReferenceOrNotify.mockClear();
+    batchState.set(null);
     await TestBed.configureTestingModule({
       imports: [TaskLiveStatusComponent],
       providers: [provideZonelessChangeDetection(),
@@ -159,7 +160,55 @@ describe('TaskLiveStatusComponent', () => {
 
     expect(fixture.nativeElement.textContent).toContain('Waiting for review slot · position 3');
     expect(fixture.nativeElement.textContent).toContain('Next');
-    expect(fixture.nativeElement.textContent).toContain('Requirement fit');
+    expect(fixture.nativeElement.querySelector('[data-testid="task-live-next"]')?.textContent).toContain('Review');
+    expect(fixture.nativeElement.textContent).not.toContain('Requirement fit');
+  });
+
+  it.each([
+    { reason: 'waiting for batch gate verdict', current: 'Waiting for batch verdict', next: 'Batch verdict' },
+    { reason: 'waiting for delivery integration', current: 'Waiting for delivery integration', next: 'Delivery integration' },
+    { reason: 'review ended; operator action needed', current: 'Waiting for operator decision', next: 'Operator decision' },
+  ])('uses the Post Processing wait for NEXT: $next', ({ reason, current, next }) => {
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 2, activeStep: null,
+        nextSteps: [{ stepId: 'pre-loop-guard', displayName: 'Loop check' }],
+        queue: { kind: 'review', reason }, latestEventAt: null,
+      },
+    }));
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[data-testid="task-live-current"]')?.textContent).toContain(current);
+    expect(root.querySelector('[data-testid="task-live-next"]')?.textContent).toContain(next);
+    expect(root.textContent).not.toContain('Loop check');
+  });
+
+  it('takes the batch verdict from the shared batch member state', () => {
+    batchState.set({
+      plan: { decision: 'wait', reason: 'batch formed', proposedMembers: [], targetSize: 2, upcoming: [] },
+      pending: [], batches: [],
+      members: { 'demo::AGT-2315': { status: 'in-batch', batchId: 'batch-1', phase: 'gate-running' } },
+    });
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 2, activeStep: null,
+        nextSteps: [{ stepId: 'pre-loop-guard', displayName: 'Loop check' }],
+        queue: { kind: 'review', position: 1 }, latestEventAt: null,
+      },
+    }));
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[data-testid="task-live-current"]')?.textContent).toContain('Waiting for batch verdict');
+    expect(root.querySelector('[data-testid="task-live-next"]')?.textContent).toContain('Batch verdict');
+    expect(root.textContent).not.toContain('Loop check');
+  });
+
+  it('shows the owner decision in Human Review without a pipeline record', () => {
+    fixture.componentRef.setInput('task', task({ state: '5-human-review', liveStatus: null }));
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[data-testid="task-live-current"]')?.textContent).toContain('Waiting for owner review');
+    expect(root.querySelector('[data-testid="task-live-next"]')?.textContent).toContain('Owner decision');
   });
 
   it('does not claim the next attempt is running before any event exists', () => {
@@ -567,7 +616,7 @@ describe('TaskLiveStatusComponent', () => {
     expect(current.textContent).not.toContain('runner slot');
     expect(current.textContent).not.toContain('position 4');
     expect(fixture.nativeElement.textContent).toContain('Next');
-    expect(fixture.nativeElement.textContent).toContain('Agent execution');
+    expect(fixture.nativeElement.textContent).toContain('Dependency resolution → Runner pickup');
 
     fixture.componentRef.setInput('task', {
       ...open,

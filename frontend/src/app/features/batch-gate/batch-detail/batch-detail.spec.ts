@@ -35,6 +35,14 @@ describe('BatchDetailComponent', () => {
     expect(host.querySelector('[data-testid="task-batch-open-panel"]')!.classList).toContain('studio-button');
   });
 
+  it('shows the batch phase and run start on the card', async () => {
+    const batch = { ...redHalvingState.batches[1], phaseAtUtc: '2026-11-09T21:11:00Z',
+      runs: [{ ...redHalvingState.batches[1].runs[0], startedAtUtc: '2026-11-09T21:11:00Z' }] };
+    const { host } = await mount({ ...redHalvingState, batches: [redHalvingState.batches[0], batch] }, { id: 'AGT-2' });
+    expect(host.querySelector('[data-testid="task-batch-phase-time"]')?.textContent).toContain('running since 21:11 UTC');
+    expect(host.textContent).toContain('since 21:11 UTC');
+  });
+
   it('counts a queued member', async () => {
     const { host } = await mount(redHalvingState, { id: 'AGT-1' });
     expect(host.querySelector('[data-testid="task-batch-summary"]')!.textContent).toContain('pending');

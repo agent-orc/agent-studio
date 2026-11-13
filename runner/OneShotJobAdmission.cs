@@ -96,7 +96,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
     }
 
     internal async Task<ProcessResult> RunBoundedTurnAsync(OneShotJobRequest request, string directory,
-        CancellationToken ct)
+        CancellationToken ct, bool readOnlyTools = false, bool personaIsolation = false)
     {
         var start = new ProcessStartInfo
         {
@@ -109,11 +109,14 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             CreateNoWindow = true,
         };
         WorkerEdgeCredentialBoundary.RemoveFrom(start.Environment);
+        if (personaIsolation)
+            WorkerEdgeCredentialBoundary.RemovePersonaDeploymentCredentials(start.Environment);
         if (request.Cli == "claude")
         {
+            if (personaIsolation) start.ArgumentList.Add("--restricted");
             foreach (var arg in new[] { "-p", "--output-format", "stream-json", "--input-format",
                          "stream-json", "--verbose", "--model", request.Model,
-                         "--tools", "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}" })
+                         "--tools", readOnlyTools ? "Read,Glob,Grep" : "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}" })
                 start.ArgumentList.Add(arg);
         }
         else

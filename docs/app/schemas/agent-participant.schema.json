@@ -23,9 +23,10 @@
         "SupportingAgent",
         "SystemReview",
         "Runtime",
-        "External"
+        "External",
+        "Persona"
       ],
-      "description": "Coarse role on the bus. User is a real human input, Orchestrator is the per-project or global pickup loop, Supervisor is the Layer 2 health watcher, CodingAgent is the active CLI editing the repo, SupportingAgent is a user-triggered meta worker (audits, councils, design loops), SystemReview is the Layer 3 master-of-disaster monitor, Runtime is the application itself when it logs lifecycle, External covers integrations such as relay or companion app."
+      "description": "Coarse role on the bus. Persona identifies a named character acting in a role; multiple personas may share one role. Other kinds describe users, orchestrators, supervisors, agents, runtime and integrations."
     },
     "displayName": {
       "type": "string",
