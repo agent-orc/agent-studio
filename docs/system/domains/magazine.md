@@ -8,6 +8,13 @@ magazine for the installation, one per workspace, and one per project
 (AGT-3601) composes immutable workspace issues from persona items and cites
 workspace article revisions.
 
+PT-11 adds a monthly team review to the first weekly issue of each month.
+Its immutable snapshot covers the previous calendar month per persona, with
+importance-weighted accepted value per 100,000 tokens, cost per accepted
+finding, noise, Owner rating counts, linked misses and rule-based suggestions.
+The issue keeps persona and role separate, so several personas can share a
+role. Suggestions require an Owner decision; publication never retires a persona.
+
 Code: `backend/Features/Magazine/`. CLI: `studio-op magazine publish`
 ([studio-op](../../operations/setup/studio-op.md#magazine)).
 

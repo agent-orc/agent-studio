@@ -31,4 +31,11 @@ describe('persona team projection', () => {
     expect(['open', 'draft', 'deferred'].map(state => isOpenPersonaItem(item('A', state, 50)))).toEqual([true, true, true]);
     expect(['accepted', 'rejected', 'resolved'].map(state => isOpenPersonaItem(item('A', state, 50)))).toEqual([false, false, false]);
   });
+  it('keeps retired personas visible without marking their reports overdue', () => {
+    const retired = entry('A', 'security');
+    retired.activation!.state = 'retired';
+    const cards = personaCards([retired], null, [], [], new Date('2026-11-13'));
+    expect(cards).toHaveLength(1);
+    expect(cards[0].overdue).toBe(false);
+  });
 });

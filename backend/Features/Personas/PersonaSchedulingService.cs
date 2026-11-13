@@ -335,8 +335,8 @@ public sealed class PersonaSchedulingService
         var byPersona = activations.ToDictionary(a => a.PersonaId, a =>
         {
             var rows = week.Where(r => r.PersonaId == a.PersonaId).ToList();
-            return new PersonaBudgetPersona(a.State == PersonaStates.Inactive ? 0 : a.Allowance.TokensPerWeek,
-                a.State == PersonaStates.Inactive ? 0 : a.Allowance.SessionsPerWeek + (a.Allowance.InvestigationsPerWeek ?? 0),
+            return new PersonaBudgetPersona(a.State is PersonaStates.Inactive or PersonaStates.Retired ? 0 : a.Allowance.TokensPerWeek,
+                a.State is PersonaStates.Inactive or PersonaStates.Retired ? 0 : a.Allowance.SessionsPerWeek + (a.Allowance.InvestigationsPerWeek ?? 0),
                 rows.Sum(r => r.Tokens), rows.Count(r => r.State != PersonaOccurrenceStates.Waiting));
         }, StringComparer.Ordinal);
         return new(start, end, pool, week.Sum(r => r.Tokens),

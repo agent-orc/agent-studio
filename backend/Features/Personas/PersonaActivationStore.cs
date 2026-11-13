@@ -14,6 +14,8 @@ public static class PersonaStates
     public const string Paused = "paused";
     /// <summary>Deactivated: grants revoked, history kept.</summary>
     public const string Inactive = "inactive";
+    /// <summary>Terminal archive: feed and stats stay readable, and the principal is revoked.</summary>
+    public const string Retired = "retired";
 }
 
 public static class PersonaSources
@@ -203,7 +205,7 @@ public sealed partial class PersonaActivationStore
             foreach (var entry in _catalogue.Entries)
             {
                 var activation = ActivationOf(state, entry.Descriptor.Id);
-                var adoptable = activation is not null && activation.State != PersonaStates.Inactive
+                var adoptable = activation is not null && activation.State is not (PersonaStates.Inactive or PersonaStates.Retired)
                                 && activation.DescriptorDigest != entry.Digest ? entry.Descriptor.Revision : null;
                 entries.Add(Entry(entry.Descriptor, entry.Digest, PersonaSources.Catalogue, null, adoptable, activation, now));
             }
@@ -228,6 +230,7 @@ public sealed partial class PersonaActivationStore
             var state = StateLocked(Workspace(workspaceId));
             var (source, descriptor, digest) = Descriptor(state, personaId);
             var existing = ActivationOf(state, personaId);
+            if (existing?.State == PersonaStates.Retired) throw NotActive();
             if (existing is not null && existing.State != PersonaStates.Inactive)
                 throw new SecurityOperationException(409, "persona-active",
                     "This persona is already activated. Deactivate it first, or adopt a newer revision.");
@@ -263,7 +266,7 @@ public sealed partial class PersonaActivationStore
         {
             var state = StateLocked(Workspace(workspaceId));
             var current = ActivationOf(state, personaId) ?? throw NotActive();
-            if (current.State == PersonaStates.Inactive) throw NotActive();
+            if (current.State is PersonaStates.Inactive or PersonaStates.Retired) throw NotActive();
             var settings = current.Settings with { Attributes = request.Attributes };
             var (attributes, _, _) = Effective(current.Descriptor, settings, "invalid-persona-attributes");
             _security.ConsumePersonaActivationStepUp(owner);
@@ -289,7 +292,7 @@ public sealed partial class PersonaActivationStore
         => Transition(workspaceId, personaId, request, owner, "pause", (activation, now) => activation.State switch
         {
             PersonaStates.Paused => null,
-            PersonaStates.Inactive => throw NotActive(),
+            PersonaStates.Inactive or PersonaStates.Retired => throw NotActive(),
             _ => activation with { State = PersonaStates.Paused, PausedAt = now },
         });
 
@@ -347,7 +350,7 @@ public sealed partial class PersonaActivationStore
             {
                 State = now < activation.ShadowUntil ? PersonaStates.Shadow : PersonaStates.Active, PausedAt = null,
             },
-            PersonaStates.Inactive => throw NotActive(),
+            PersonaStates.Inactive or PersonaStates.Retired => throw NotActive(),
             _ => null,
         });
 
@@ -356,7 +359,15 @@ public sealed partial class PersonaActivationStore
         => Transition(workspaceId, personaId, request, owner, "deactivate", (activation, now) => activation.State switch
         {
             PersonaStates.Inactive => null,
+            PersonaStates.Retired => throw NotActive(),
             _ => activation with { State = PersonaStates.Inactive, PausedAt = null, DeactivatedAt = now },
+        });
+
+    public PersonaActivationV1 Retire(string workspaceId, string personaId, PersonaChangeRequest request, HumanPrincipal owner)
+        => Transition(workspaceId, personaId, request, owner, "retire", (activation, now) => activation.State switch
+        {
+            PersonaStates.Retired => null,
+            _ => activation with { State = PersonaStates.Retired, PausedAt = null, DeactivatedAt = now },
         });
 
     /// <summary>Emergency team stop leaves descriptor snapshots and history available for later reactivation.</summary>
@@ -368,7 +379,7 @@ public sealed partial class PersonaActivationStore
             var state = StateLocked(Workspace(workspaceId));
             var principalIds = _security.StopAllPersonaPrincipals(state.WorkspaceId, owner.User.Id);
             var now = Now;
-            var activations = state.Activations.Select(activation => activation.State == PersonaStates.Inactive
+            var activations = state.Activations.Select(activation => activation.State is PersonaStates.Inactive or PersonaStates.Retired
                 ? activation : activation with
                 {
                     State = PersonaStates.Inactive, PausedAt = null, DeactivatedAt = now,
@@ -435,7 +446,7 @@ public sealed partial class PersonaActivationStore
                 ?? throw new SecurityOperationException(409, "catalogue-entry-missing",
                     $"The catalogue no longer has '{fork.ForkOf}', so there is no revision to adopt.");
             var activation = ActivationOf(state, personaId);
-            var live = activation is not null && activation.State != PersonaStates.Inactive;
+            var live = activation is not null && activation.State is not (PersonaStates.Inactive or PersonaStates.Retired);
 
             PersonaDescriptorV1 descriptor;
             string digest;
@@ -501,7 +512,8 @@ public sealed partial class PersonaActivationStore
             var current = ActivationOf(state, personaId) is { } stored ? Project(stored, now) : throw NotActive();
             var changed = change(current, now);
             if (changed is null) return current;
-            if (action == "deactivate") _security.StopPersonaPrincipal(state.WorkspaceId, personaId, owner.User.Id, "persona deactivated");
+            if (action is "deactivate" or "retire") _security.StopPersonaPrincipal(state.WorkspaceId, personaId, owner.User.Id,
+                action == "retire" ? "persona retired" : "persona deactivated");
             changed = changed with
             {
                 History = [.. current.History, new PersonaActivationEventV1(now, owner.User.Id, action, changed.State,

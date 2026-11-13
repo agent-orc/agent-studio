@@ -247,6 +247,9 @@ public sealed class PersonaManagerService
                 {
                     var old = _items.Find(workspaceId, request.ItemId ?? "")
                         ?? throw new PersonaManagerRefusal("item-not-found");
+                    if (_activations.List(workspaceId).Personas.FirstOrDefault(p => p.Id == old.PersonaId)
+                        ?.Activation?.State == PersonaStates.Retired)
+                        throw new PersonaManagerRefusal("persona-retired");
                     RequireItemScope(activation, old);
                     var next = _items.Adjust(workspaceId, old.Id, request.Adjustment ?? 0,
                         request.Reason, actor, now);
