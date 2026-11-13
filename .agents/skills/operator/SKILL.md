@@ -116,7 +116,7 @@ its class code. The cursor is saved, so the next `watch` resumes after it.
 | 22 | `decision-card.opened` | Owner decision. Log it as `observed`; do not act. |
 | 23 | `backend.stalled`, `progress.idle-with-ready` | `studio-op capacity`, then `studio-op triage`. |
 | 24 | `batch.red`, `batch.isolating`, `batch.record-unreadable` | Runbook "Stuck batch flight", "Base-verdict quarantine" or "Unreadable batch record". |
-| 25 | `push.pending-overdue` | Runbook "Lost pending push". |
+| 25 | `push.pending-overdue`, `push.blocked` | Runbook "Lost pending push"; for `push.blocked`, use the card's Retry integration. |
 | 26 | `quota.exhausted`, `quota.fallback-active` | `studio-op capacity`; wait for the reset or change a step model (below). |
 | 27 | `stream.gap` | Events were lost: `studio-op triage` and `studio-op capacity` before the next watch. |
 | 28 | watcher lease lost | Someone took over. Stop the loop and tell the Owner. |

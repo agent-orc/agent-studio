@@ -5,10 +5,8 @@ import { RollbackRequest, RollbackResponse, TriggerRequest, TriggerResponse, Upd
 import { PublicDemoModeService } from './public-demo-mode.service';
 
 export function resolveUpdateServiceUrl(href: string, configured?: string): string | null {
-  if (configured) return configured;
-  const url = new URL(href);
-  if (url.protocol === 'https:') return null;
-  return `${url.protocol}//${url.hostname}:5039`;
+  void href;
+  return configured || null;
 }
 
 /** Studio backend route that reads the Update Service trigger token file. */
@@ -16,7 +14,7 @@ export const UPDATE_TOKEN_ROUTE = '/api/update-service/token';
 export const UPDATE_TOKEN_HEADER = 'X-Update-Token';
 
 /**
- * Talks to the standalone UpdateService (default port 5039). The endpoint
+ * Talks to the optional standalone UpdateService when its URL is configured. The endpoint
  * is *not* proxied through ng-serve: the whole point of the separate
  * process is that it stays reachable while the main backend (port 5031)
  * restarts. We therefore hit it via an absolute URL that matches the
@@ -37,7 +35,7 @@ export class UpdateClientService {
   private readonly http = inject(HttpClient);
   private readonly publicDemo = inject(PublicDemoModeService);
 
-  /** Resolves the base URL for the UpdateService (host of the FE, port 5039). */
+  /** Resolves the explicitly configured UpdateService URL. */
   private readonly baseUrl = (() => {
     if (typeof window === 'undefined') return null;
     // A hosted HTTPS Studio does not expose the machine-local UpdateService.

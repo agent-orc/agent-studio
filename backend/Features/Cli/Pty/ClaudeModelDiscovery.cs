@@ -38,6 +38,15 @@ public sealed class ClaudeModelDiscovery
 
     private CliModelCatalog? _memCache;
     private DateTime _memCacheAt = DateTime.MinValue;
+    private DateTime _ptyFailedAt = DateTime.MinValue;
+
+    /// <summary>
+    /// AGT-3709: after a failed PTY discovery, requests answer from the cached
+    /// or registry catalogue for this long instead of starting the CLI again.
+    /// Without it every request, and every request queued on the gate, spent
+    /// up to 17 s re-running a discovery that kept failing.
+    /// </summary>
+    internal static readonly TimeSpan PtyFailureBackoff = TimeSpan.FromMinutes(5);
     private int _networkedRegistryLogged;
 
     public ClaudeModelDiscovery(ILogger<ClaudeModelDiscovery> logger, IConfiguration config,
@@ -84,15 +93,19 @@ public sealed class ClaudeModelDiscovery
             }
         }
 
+        if (!forceRefresh && InFailureBackoff()) return Publish(BackoffCatalog());
+
         await _gate.WaitAsync(ct);
         try
         {
             if (!forceRefresh && _memCache != null && DateTime.UtcNow - _memCacheAt < Ttl)
                 return Publish(_memCache);
+            if (!forceRefresh && InFailureBackoff()) return Publish(BackoffCatalog());
 
             try
             {
                 var fresh = await DiscoverViaPtyAsync(cliPath, ct);
+                _ptyFailedAt = DateTime.MinValue;
                 _memCache = fresh;
                 _memCacheAt = fresh.FetchedAt;
                 TrySaveDisk(fresh);
@@ -101,6 +114,7 @@ public sealed class ClaudeModelDiscovery
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Claude PTY model discovery failed; falling back to registry catalog");
+                _ptyFailedAt = DateTime.UtcNow;
                 if (_memCache != null) return Publish(WithSource(_memCache, "pty-failed-mem-cache"));
                 var fromDisk = TryLoadDisk();
                 if (fromDisk != null)
@@ -114,6 +128,11 @@ public sealed class ClaudeModelDiscovery
         }
         finally { _gate.Release(); }
     }
+
+    private bool InFailureBackoff() => DateTime.UtcNow - _ptyFailedAt < PtyFailureBackoff;
+
+    private CliModelCatalog BackoffCatalog() =>
+        WithSource(_memCache ?? TryLoadDisk() ?? FallbackCatalog(), "pty-failure-backoff");
 
     /// <summary>
     /// Publish the model ids this catalogue actually reports as available into

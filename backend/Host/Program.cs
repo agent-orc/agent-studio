@@ -101,7 +101,7 @@ try
             .CreateLogger("AgentStudio.State.LocalStateStartup"));
 }
 catch (Exception exception) when (exception is AgentStudio.TaskServer.Contracts.LocalStateRootUnavailableException
-    or IOException or UnauthorizedAccessException)
+    or IOException or UnauthorizedAccessException or InvalidDataException)
 {
     Log.Fatal("local-state-startup-failed {Reason}", exception.Message);
     await Log.CloseAndFlushAsync();
@@ -220,6 +220,21 @@ if (underTestHost)
         Directory.CreateDirectory(iso);
         builder.Configuration["TaskRepository"] = iso;
     }
+}
+
+try
+{
+    AgentStudio.Pipeline.BatchGateStorageRoot.Prepare(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"],
+        new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger)
+            .CreateLogger("AgentStudio.Pipeline.BatchGateStorageRoot"));
+}
+catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+{
+    Log.Fatal("batch-state-startup-failed {Reason}", exception.Message);
+    await Log.CloseAndFlushAsync();
+    Environment.ExitCode = 1;
+    return;
 }
 
 var startupSecurityProfile = SecurityProfiles.ActiveProfile(builder.Configuration);
@@ -1447,6 +1462,10 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPen
     jobId => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
         && TaskScannerService.FindMatches(live, jobId, null) is [var task, ..]
         ? OperatorDecisionFacts.CardKey(task) : null));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBlockedPublicationFactSource(
+    () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
+    task => sp.GetRequiredService<AgentStudio.Pipeline.PipelineExecutionLog>().Read(task.FolderPath)?.Steps
+        .LastOrDefault(step => step.StepId == AgentStudio.Pipeline.PipelineCatalogue.MergeIntoDevelopStepId)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
     sp.GetRequiredService<ProviderLimitRegistry>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();

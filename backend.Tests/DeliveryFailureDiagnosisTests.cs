@@ -166,6 +166,40 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Equal(DeliveryFailureDiagnosis.Intermittent, normalized.FailureClassification);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void Unattributed_backend_test_failure_remains_a_non_blocking_review_concern(int baselineExit)
+    {
+        var failed = FailedCommand("verify-4", DeliveryFailureDiagnosis.Environment, false) with
+        {
+            BaselineSha = "base",
+            BaselineExitCode = baselineExit,
+            Diagnosis = new DeliveryFailureDiagnosisResult(
+                DeliveryFailureDiagnosis.Environment, 0.9,
+                [ReviewUnattributedTestFailurePolicy.EvidencePrefix + "failure names vary"]),
+        };
+        var report = EmptyReport("ReviewInfra") with
+        {
+            Commands =
+            [
+                failed,
+                failed with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat",
+                    Diagnosis = null },
+            ],
+            Verdicts = [new ReviewVerdictDto("build-tests", "concerns",
+                DeliveryFailureDiagnosis.Environment, "failure names vary")],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("Pass", normalized.Outcome);
+        Assert.Null(normalized.FailureClassification);
+        Assert.Equal("concerns", Assert.Single(normalized.Verdicts).Status);
+        Assert.Equal(ReviewFailureOwner.Tolerated,
+            ReviewFailureAttributionPolicy.Attribute(null, failed));
+    }
+
     [Fact]
     public void Product_diagnosis_on_a_run_the_clean_repeat_cleared_is_invalid_evidence()
     {

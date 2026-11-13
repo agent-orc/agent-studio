@@ -79,6 +79,7 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
             failureCode is not (AcceptedIntegrationFailureCodes.BranchSyncFailed or
                 AcceptedIntegrationFailureCodes.GitCredentialUnavailable or
                 AcceptedIntegrationFailureCodes.WorktreeUnavailable or
+                AcceptedIntegrationFailureCodes.ServerCheckoutMissing or
                 AcceptedIntegrationFailureCodes.NoTaskBranch)) return false;
         var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
         var delivery = DeliveryRefResolver.Resolve(job.Id, job.FolderPath);

@@ -25,6 +25,7 @@ describe('operator attention model', () => {
     expect(attentionClassOf('batch.record-unreadable')).toBe('batch-record');
     expect(attentionClassOf('batch-gate.stuck')).toBe('batch');
     expect(attentionClassOf('push.pending-overdue')).toBe('push');
+    expect(attentionClassOf('push.blocked')).toBe('push-blocked');
     expect(attentionClassOf('quota.exhausted')).toBe('quota');
     expect(attentionClassOf('quota.fallback-active')).toBe('quota');
     expect(attentionClassOf('backend.stalled')).toBe('host');
@@ -56,6 +57,13 @@ describe('operator attention model', () => {
     const [escalation] = groupAttention([orphan]);
     expect(attentionTarget(orphan, escalation.spec)).toBe('activity');
     expect(attentionActionLabel(orphan, escalation.spec)).toBe('Open Activity');
+  });
+
+  it('opens the card of a blocked push (AGT-3695)', () => {
+    const [blocked] = groupAttention([item('push.blocked')]);
+    expect(blocked.spec.label).toBe('Push blocked');
+    expect(attentionTarget(blocked.items[0], blocked.spec)).toBe('card');
+    expect(attentionActionLabel(blocked.items[0], blocked.spec)).toBe('Open card');
   });
 
   it('opens the batch gate for an unreadable batch record, and Activity when it names no project', () => {

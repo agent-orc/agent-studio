@@ -1,6 +1,6 @@
 <main class="auth-gate" data-testid="auth-gate">
   <form class="auth-gate__panel" (ngSubmit)="submit()" [attr.novalidate]="auth.status()?.bootstrapRequired ? '' : null">
-    <div class="auth-gate__brand">Agent Software Studio</div>
+    <div class="auth-gate__brand">Agent Studio</div>
     @if (auth.loading()) {
       <p class="auth-gate__muted">Connecting securely...</p>
     } @else if (auth.ownerRecoveryCode(); as recoveryCode) {
@@ -29,11 +29,11 @@
     } @else if ((auth.status()?.secondFactorEnrollmentRequired || auth.factorRecommendation()) && !auth.status()?.user?.mustChangePassword) {
       <h1>Set up a second factor</h1>
       <p class="auth-gate__muted">{{ auth.status()?.secondFactorEnrollmentRequired ? 'A second factor is required before you can use Studio.' : 'A second factor is recommended to protect your account. You can add one now or continue to Studio.' }}</p>
-      <p class="auth-gate__muted">Add this secret to an authenticator app, then enter its six-digit code.</p>
       @if (!totpSecret()) {
         <button type="button" (click)="beginTotp()" [disabled]="submitting()">Set up authenticator</button>
       } @else {
         <output data-testid="totp-secret">{{ totpSecret() }}</output>
+        <p class="auth-gate__muted">Add this secret to an authenticator app, then enter its six-digit code.</p>
         <a data-testid="totp-link" [href]="totpLink()">Open in authenticator app</a>
         @if (totpQr()) { <img data-testid="totp-qr" class="auth-gate__qr" [src]="totpQr()" alt="Authenticator setup QR code"> }
         <label>Authenticator code<input name="secondFactorCode" inputmode="numeric" autocomplete="one-time-code" [(ngModel)]="secondFactorCode" required></label>

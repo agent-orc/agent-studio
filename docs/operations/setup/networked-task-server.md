@@ -86,6 +86,11 @@ Use the project's repository URL as its origin and ensure the integration branch
 exists on that remote. A Runner checkout on another host does not replace the
 monolith checkout, which owns integration worktrees and refs.
 
+When integration finds no usable checkout, or the integration branch is missing
+from it after a fetch, it records the failure code `server-checkout-missing`.
+The card then shows the checkout setup links instead of Continue (reissue),
+because another coding attempt cannot create the checkout.
+
 ## Fail-closed deployment check
 
 Run these checks from a machine with no Studio cookies. Expected status is in

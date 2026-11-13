@@ -85,7 +85,7 @@ public sealed class WorkbenchCatalogueTests : IDisposable
         var project = registry.FindByIdOrDisplayName("Project")!;
         var git = IntegrationGit();
 
-        var keyed = git.IncludeDocumentKeysInIntegrationMerge(_root, baseSha, mergedSha,
+        var keyed = git.IncludeDocumentKeysInIntegrationMerge(_root, "develop", baseSha, mergedSha,
             project, registry);
 
         Assert.True(keyed.Success, keyed.Error);

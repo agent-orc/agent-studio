@@ -381,18 +381,26 @@
         color: var(--studio-fg-muted);
       }
     }
+    // AGT-3709: the Dossier chip sits on its own line above the title text.
+    // As an inline nowrap box it was taller than the title line and wider than
+    // a 390 px card, so it overlapped the title. Long chips truncate instead.
     .task-card__subtask-chip {
-      display: inline-block;
+      display: block;
+      box-sizing: border-box;
+      width: fit-content;
+      max-width: 100%;
       min-height: var(--studio-card-pill-height);
+      margin: 0 0 var(--studio-spacing-1);
       padding: 0 var(--studio-card-pill-padding-x);
+      overflow: hidden;
       border-radius: 3px;
       font-size: var(--studio-card-meta-size);
       font-weight: 600;
+      line-height: calc(var(--studio-card-pill-height) - 2px);
       color: var(--studio-fg-muted);
       background: transparent;
       border: 1px dashed var(--studio-border);
-      vertical-align: middle;
-      margin-right: 4px;
+      text-overflow: ellipsis;
       user-select: none;
       white-space: nowrap;
     }
@@ -1429,6 +1437,12 @@
       font-weight: 500;
       line-height: var(--studio-card-compact-title-lh);
       min-width: 0;
+    }
+    .task-card--compact .task-card__subtask-chip {
+      flex: 0 1 auto;
+      min-width: 0;
+      max-width: 45%;
+      margin: 0;
     }
     .task-card--compact .task-card__title-text {
       flex: 1 1 auto;

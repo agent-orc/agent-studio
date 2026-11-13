@@ -128,7 +128,7 @@ public sealed partial class BatchGatePilotService
 
     private int ConfiguredGateSlots()
     {
-        var capacity = _services?.GetService<GateCapacitySettings>();
+        var capacity = Service<GateCapacitySettings>();
         return new[]
         {
             _gateSlots?.Snapshot().Total ?? 0,
@@ -315,7 +315,7 @@ public sealed partial class BatchGatePilotService
             "gate-queue-stall project={Project} episode={EpisodeId} raise={Raise} depth={Depth} oldest_wait_ms={OldestWaitMs} slots_busy={SlotsBusy} slots_total={SlotsTotal} drain_ms={DrainMs} budget_ms={BudgetMs} idle_configured_slots={IdleSlots}",
             stall.Project, stall.EpisodeId, stall.Raise, stall.QueueDepth, stall.OldestWaitMs, stall.SlotsBusy,
             stall.SlotsTotal, stall.EstimatedDrainMs, stall.QueueBudgetMs, stall.IdleConfiguredSlots);
-        _services?.GetService<OrchestratorLog>()?.Append(watchPath, new OrchestratorLogEntry
+        Service<OrchestratorLog>()?.Append(watchPath, new OrchestratorLogEntry
         {
             Ts = stall.RaisedAtUtc.UtcDateTime,
             Kind = OrchestratorLogKinds.Alert,
