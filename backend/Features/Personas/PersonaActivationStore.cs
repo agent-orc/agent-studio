@@ -50,6 +50,7 @@ public sealed record PersonaActivateRequest(
     string? Reason = null);
 
 public sealed record PersonaChangeRequest(string? Reason = null);
+public sealed record PersonaAttributeChangeRequest(PersonaAttributesOverrideV1 Attributes, string? Reason = null);
 
 public sealed record PersonaForkRequest(
     string Id,
@@ -251,6 +252,36 @@ public sealed partial class PersonaActivationStore
                 descriptorDigest = digest, attributes, allowance, scope, operations, activation.ShadowUntil, reason,
             });
             return activation;
+        }
+    }
+
+    public PersonaActivationV1 ChangeAttributes(string workspaceId, string personaId,
+        PersonaAttributeChangeRequest request, HumanPrincipal owner)
+    {
+        _security.RequirePersonaOwner(owner);
+        lock (_gate)
+        {
+            var state = StateLocked(Workspace(workspaceId));
+            var current = ActivationOf(state, personaId) ?? throw NotActive();
+            if (current.State == PersonaStates.Inactive) throw NotActive();
+            var settings = current.Settings with { Attributes = request.Attributes };
+            var (attributes, _, _) = Effective(current.Descriptor, settings, "invalid-persona-attributes");
+            _security.ConsumePersonaActivationStepUp(owner);
+            var now = Now;
+            var revision = current.ActivationRevision + 1;
+            var changed = current with
+            {
+                ActivationRevision = revision, Settings = settings, Attributes = attributes,
+                Operations = PersonaAutonomy.Grantable(current.Descriptor, attributes.Autonomy),
+                History = [.. current.History, new PersonaActivationEventV1(now, owner.User.Id,
+                    "attributes", current.State, revision, current.DescriptorRevision,
+                    current.DescriptorDigest, Reason(request.Reason))],
+            };
+            _security.ActivatePersonaPrincipal(state.WorkspaceId, changed, owner.User.Id);
+            SaveLocked(state with { Activations = Replace(state.Activations, changed) });
+            _security.AppendPersonaAudit(owner.User.Id, "persona.attributes.change", state.WorkspaceId,
+                personaId, new { revision, attributes, request.Reason });
+            return changed;
         }
     }
 

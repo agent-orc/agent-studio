@@ -1863,6 +1863,20 @@ scheduling (PT-3) read these records.
 - **Audit.** Every change appends `persona.activate`, `persona.pause`,
   `persona.resume`, `persona.deactivate`, `persona.fork` or `persona.adopt` to
   the IAM audit with target `persona:<workspace>/<personaId>`.
+- **Character sheet (PT-7).** `PUT .../personas/{personaId}/attributes` requires
+  an Owner and fresh step-up, validates focus weights at 100 and A2 only for
+  managers, and creates a new activation revision without changing the
+  allowance. The Sheet tab states each attribute's effect.
+  `GET .../personas/{personaId}/sheet` projects 30-day, lifetime and
+  activation-revision records from persona items, occurrence receipts and
+  reports. Rates include denominators and hide below five decided items;
+  priced cost uses the historical token price catalogue and unknown-price
+  sessions remain separate. Misses count externally raised Critical items
+  with a matching scoped area and incident-tagged cards with an explicit
+  `area:<area>` tag; an earlier item from this persona suppresses a miss.
+  Experience uses
+  accepted importance with a 90-day half-life. Rank is eligibility for Owner
+  review only and never changes grants or allowances.
 
 ## Dossier links and retired parent fields
 

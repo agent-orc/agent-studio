@@ -233,6 +233,28 @@ public sealed class PersonaActivationStoreTests : IDisposable
         Assert.Contains("card.requeue", manager.Operations);
     }
 
+    [Fact]
+    public void Attribute_edit_validates_focus_and_autonomy_and_only_changes_activation_revision()
+    {
+        var store = Store();
+        var original = store.Activate(Workspace, Warden, new PersonaActivateRequest(), SteppedUpOwner());
+        var focus = original.Attributes.Focus!;
+        var invalidFocus = focus.ToDictionary(pair => pair.Key, pair => pair.Value);
+        invalidFocus[focus.Keys.First()]++;
+        Assert.Equal("invalid-persona-attributes", Refused(() => store.ChangeAttributes(Workspace, Warden,
+            new PersonaAttributeChangeRequest(new PersonaAttributesOverrideV1(Focus: invalidFocus)), Owner())).Code);
+        Assert.Equal("invalid-persona-attributes", Refused(() => store.ChangeAttributes(Workspace, Warden,
+            new PersonaAttributeChangeRequest(new PersonaAttributesOverrideV1(Autonomy: "A2")), Owner())).Code);
+        var changed = store.ChangeAttributes(Workspace, Warden,
+            new PersonaAttributeChangeRequest(new PersonaAttributesOverrideV1(Focus: focus,
+                Autonomy: "A0", RiskAppetite: "low", Thoroughness: 4, SignalThreshold: 55)), SteppedUpOwner());
+        Assert.Equal(original.ActivationRevision + 1, changed.ActivationRevision);
+        Assert.Equal(original.Allowance, changed.Allowance);
+        Assert.Equal(original.Scope, changed.Scope);
+        Assert.Equal("A0", changed.Attributes.Autonomy);
+        Assert.Equal("attributes", changed.History[^1].Action);
+    }
+
     private PersonaActivationStore Store(PersonaCatalogue? catalogue = null)
         => new(Path.Combine(_root, ".metadata", "personas"), catalogue ?? new PersonaCatalogue(), _security,
             id => string.Equals(id, Workspace, StringComparison.OrdinalIgnoreCase) ? Workspace : null, _clock);

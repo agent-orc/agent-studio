@@ -87,6 +87,56 @@
           } @else if (item.promotedTaskKey) { <small>Promoted to {{ item.promotedTaskKey }}</small> }</article>
       } @empty { <p class="team-message">No proposals yet.</p> }</div> }
       @case ('budget') { <section class="team-pool"><div><span>Used this week</span><strong>{{ currentCard()?.used ?? 0 | number }}</strong></div><div><span>Allowance</span><strong>{{ currentCard()?.allowance ?? 0 | number }}</strong></div><div><span>Team pool</span><strong>{{ totals().pool | number }}</strong></div></section> }
+      @case ('sheet') {
+        <section class="team-sheet" data-testid="persona-sheet">
+          <div class="team-sheet-heading"><div><h2>Character sheet</h2><p>Role: {{ person.activation?.roleId || person.id }} · Activation revision {{ person.activation?.activationRevision }}</p></div>
+            @if (sheet(); as record) { <div><strong>{{ record.rank }}</strong><p>{{ record.eligibility }} · Experience {{ record.experience | number:'1.1-1' }}</p></div> }</div>
+          @if (editedAttributes(); as attributes) {
+            <div class="team-sheet-editor"><h3>Attributes</h3><p>Saving creates a new activation revision and requires Owner verification.</p>
+              @if (attributes.focus) { <fieldset><legend>Focus weights · {{ focusTotal() }} / 100</legend><p>Controls the share of grounds and report items by area. An area at zero is excluded.</p>
+                <div class="team-sheet-focus">@for (area of attributes.focus | keyvalue; track area.key) {
+                  <label>{{ roleLabel(area.key) }} <input type="number" min="0" max="100" [value]="area.value" (input)="editFocus(area.key, +$any($event.target).value)" /></label>
+                }</div>
+                @if (focusTotal() !== 100) { <small role="alert">Focus weights must sum to 100.</small> }
+              </fieldset> }
+              <div class="team-sheet-controls">
+                <label>Autonomy <small>Controls granted operations: observe, propose, or manager decisions within grants.</small><select [value]="attributes.autonomy" (change)="editAttribute('autonomy', $any($event.target).value)"><option value="A0">A0 · Observe</option><option value="A1">A1 · Propose</option>@if (person.kind === 'manager') { <option value="A2">A2 · Decide</option> }</select></label>
+                <label>Risk appetite <small>Controls whether proposals may be reversible in one area, cross area, or structural.</small><select [value]="attributes.riskAppetite" (change)="editAttribute('riskAppetite', $any($event.target).value)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+                <label>Thoroughness <small>Sets evidence depth and thinking level; 4 or 5 permits a weekly investigation.</small><input type="number" min="1" max="5" [value]="attributes.thoroughness" (input)="editAttribute('thoroughness', +$any($event.target).value)" /></label>
+                <label>Signal threshold <small>Minimum importance for reports; verified fact floors always pass.</small><input type="number" min="0" max="100" [value]="attributes.signalThreshold" (input)="editAttribute('signalThreshold', +$any($event.target).value)" /></label>
+              </div>
+              <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label>
+              <button type="button" class="team-primary" [appPendingButton]="busy() === 'Save attributes'" [disabled]="!canSaveAttributes()" (click)="saveAttributes(person)">Save attributes</button>
+            </div>
+          }
+          @if (sheet(); as record) {
+            <h3>Derived record</h3><div class="team-sheet-windows">@for (window of record.windows; track window.window) {
+              <article class="team-sheet-window"><h4>{{ window.window }}</h4>
+                <dl><dt>Findings</dt><dd>{{ window.raised }} raised · {{ window.accepted }} accepted · {{ window.rejected }} rejected · {{ window.duplicate }} duplicate · {{ window.open }} open</dd>
+                  <dt>Acceptance</dt><dd>@if (window.acceptance.percent === null) { too few decisions } @else { {{ window.acceptance.percent }}% } ({{ window.acceptance.numerator }} / {{ window.acceptance.denominator }})</dd>
+                  <dt>Cards and outcomes</dt><dd>{{ window.cards.promoted }} promoted · {{ window.cards.completed }} completed · {{ window.cards.open }} open · {{ window.cards.rejectedInReview }} rejected in review · {{ window.cards.archivedWithoutDelivery }} archived without delivery</dd>
+                  <dt>Tokens</dt><dd>{{ window.tokens | number }}</dd><dt>Cost</dt><dd>${{ window.pricedCostUsd | number:'1.2-6' }} priced · {{ window.unknownPriceSessions }} price unknown sessions</dd>
+                  <dt>Cost per accepted</dt><dd>@if (window.costPerAcceptedUsd === null) { {{ window.tooFewDecisions ? 'too few decisions' : 'Unavailable' }} ({{ window.accepted }} accepted) } @else { ${{ window.costPerAcceptedUsd | number:'1.2-6' }} ({{ window.accepted }} accepted) }</dd>
+                  <dt>Response</dt><dd>Median {{ window.medianResponseHours ?? 'Unavailable' }} h · p90 {{ window.p90ResponseHours ?? 'Unavailable' }} h</dd>
+                  <dt>Punctuality</dt><dd>@if (window.punctuality.percent === null) { too few decisions } @else { {{ window.punctuality.percent }}% } ({{ window.punctuality.numerator }} / {{ window.punctuality.denominator }} reports due)</dd>
+                  <dt>Calibration</dt><dd>{{ window.calibration ?? 'No adjustments' }}</dd><dt>Misses</dt><dd>{{ window.misses }} recorded</dd></dl>
+              </article>
+            }</div>
+            <h3>By activation revision</h3><div class="team-sheet-windows">@for (revision of record.revisions; track revision.activationRevision) {
+              <article class="team-sheet-window"><h4>Revision {{ revision.activationRevision || 'legacy' }}</h4>
+                <dl><dt>Findings</dt><dd>{{ revision.raised }} raised · {{ revision.accepted }} accepted · {{ revision.rejected }} rejected · {{ revision.duplicate }} duplicate · {{ revision.open }} open</dd>
+                  <dt>Acceptance</dt><dd>@if (revision.acceptance.percent === null) { too few decisions } @else { {{ revision.acceptance.percent }}% } ({{ revision.acceptance.numerator }} / {{ revision.acceptance.denominator }})</dd>
+                  <dt>Cards and outcomes</dt><dd>{{ revision.cards.promoted }} promoted · {{ revision.cards.completed }} completed · {{ revision.cards.open }} open · {{ revision.cards.rejectedInReview }} rejected in review · {{ revision.cards.archivedWithoutDelivery }} archived without delivery</dd>
+                  <dt>Tokens</dt><dd>{{ revision.tokens | number }}</dd><dt>Cost</dt><dd>${{ revision.pricedCostUsd | number:'1.2-6' }} priced · {{ revision.unknownPriceSessions }} price unknown sessions</dd>
+                  <dt>Cost per accepted</dt><dd>@if (revision.costPerAcceptedUsd === null) { {{ revision.tooFewDecisions ? 'too few decisions' : 'Unavailable' }} ({{ revision.accepted }} accepted) } @else { ${{ revision.costPerAcceptedUsd | number:'1.2-6' }} ({{ revision.accepted }} accepted) }</dd>
+                  <dt>Response</dt><dd>Median {{ revision.medianResponseHours ?? 'Unavailable' }} h · p90 {{ revision.p90ResponseHours ?? 'Unavailable' }} h</dd>
+                  <dt>Punctuality</dt><dd>@if (revision.punctuality.percent === null) { too few decisions } @else { {{ revision.punctuality.percent }}% } ({{ revision.punctuality.numerator }} / {{ revision.punctuality.denominator }} reports due)</dd>
+                  <dt>Calibration</dt><dd>{{ revision.calibration ?? 'No adjustments' }}</dd><dt>Misses</dt><dd>{{ revision.misses }} recorded</dd></dl>
+              </article>
+            }</div>
+          }
+        </section>
+      }
       @case ('charter') { <section class="team-charter"><h2>Charter</h2><p>{{ person.descriptor.charter }}</p><p>Role: {{ person.activation?.roleId || person.id }} · Revision: {{ person.activation?.descriptorRevision || person.revision }}</p>
         @if (person.adoptableRevision) { <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label><button type="button" [disabled]="!!busy()" (click)="change(person, 'adopt')">Adopt revision {{ person.adoptableRevision }}</button> }
         <h2>Revision history</h2><ul>@for (event of person.activation?.history ?? []; track $index) { <li>{{ event.at | date:'medium' }} · {{ event.action }} · {{ event.descriptorRevision }}</li> }</ul></section> }
