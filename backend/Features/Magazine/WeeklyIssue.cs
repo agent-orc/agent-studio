@@ -61,7 +61,10 @@ public static class WeeklyIssueComposer
         var localTime = date.ToDateTime(new TimeOnly(7, 0), DateTimeKind.Unspecified);
         var published = TimeZoneInfo.ConvertTimeToUtc(localTime, zone);
         var byId = personas.ToDictionary(p => p.Id, StringComparer.Ordinal);
-        var selected = items.Where(i => i.CreatedAtUtc <= published &&
+        var publishingIds = personas.Where(p => p.Active).Select(p => p.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var selected = items.Where(i => publishingIds.Contains(i.PersonaId) &&
+                i.CreatedAtUtc <= published &&
                 (i.CreatedAtUtc >= TimeZoneInfo.ConvertTimeToUtc(start.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified), zone)
                  || i.UpdatedAtUtc >= TimeZoneInfo.ConvertTimeToUtc(start.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified), zone)
                  || PersonaItemStates.IsDecidable(i.State)))
@@ -93,13 +96,16 @@ public static class WeeklyIssueComposer
         var sections = daily ? [] : stories.GroupBy(s => s.RoleId, StringComparer.Ordinal)
             .Select(g => new IssueSection(g.Key, g.First().Role, g.Count(), g.ToArray()))
             .OrderByDescending(s => s.Stories[0].Importance).ThenBy(s => s.RoleId, StringComparer.Ordinal).ToArray();
-        var reportIds = reports.Where(r => r.PublishedAtUtc >= published.AddDays(daily ? -1 : -7)
+        var reportIds = reports.Where(r => r.State != PersonaStates.Shadow &&
+            publishingIds.Contains(r.PersonaId) &&
+            r.PublishedAtUtc >= published.AddDays(daily ? -1 : -7)
             && r.PublishedAtUtc <= published).Select(r => r.PersonaId).Distinct(StringComparer.Ordinal).Count();
         var count = daily ? (lead is null ? 0 : 1) + sides.Count : sections.Sum(s => s.Count);
         var corrections = daily ? [] : stories.Where(s => s.State is "rejected" or "retracted").ToArray();
         var colophon = daily ? [] : personas.Where(p => p.Active && !reports.Any(r => r.PersonaId == p.Id &&
                 r.PublishedAtUtc >= published.AddDays(-7) && r.PublishedAtUtc <= published))
             .Select(p => "Report missing: " + p.Name).Concat(reports.Where(r => r.State == "stub" &&
+                publishingIds.Contains(r.PersonaId) &&
                 r.PublishedAtUtc >= published.AddDays(-7) && r.PublishedAtUtc <= published)
             .Select(r => "Stub report: " + r.PersonaId + " (" + r.Reason + ")"))
             .Order(StringComparer.Ordinal).ToArray();

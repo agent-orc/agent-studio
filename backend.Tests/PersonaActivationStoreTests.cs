@@ -202,7 +202,7 @@ public sealed class PersonaActivationStoreTests : IDisposable
         Assert.Equal("fork-source-not-catalogue", Refused(() =>
             store.Fork(Workspace, "mine", new PersonaForkRequest("mine-too"), Owner())).Code);
         Assert.Equal("persona.fork", Assert.Single(PersonaAudit(auditStart)).Operation);
-        Assert.Equal(12, store.List(Workspace).Personas.Count);
+        Assert.Equal(new PersonaCatalogue().Entries.Count + 1, store.List(Workspace).Personas.Count);
     }
 
     [Fact]

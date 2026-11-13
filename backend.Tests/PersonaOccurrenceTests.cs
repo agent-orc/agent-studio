@@ -154,6 +154,83 @@ public sealed class PersonaOccurrenceTests : IDisposable
     }
 
     [Fact]
+    public void Every_starter_report_has_two_shadow_periods_with_explicit_coverage()
+    {
+        var catalogue = new PersonaCatalogue();
+        var store = new PersonaReportStore(_root);
+        foreach (var descriptor in catalogue.Entries.Select(e => e.Descriptor)
+                     .Where(d => (d.Kind is PersonaKinds.Persona or PersonaKinds.Presenter) && d.Id != "operations-warden"))
+        {
+            var template = PersonaReportTemplates.Find(descriptor.Report.Template)!;
+            var activation = Warden() with { PersonaId = "prs_" + descriptor.Id,
+                RoleId = descriptor.Id, Descriptor = descriptor, State = PersonaStates.Shadow,
+                ShadowUntil = Now.AddDays(15), Scope = descriptor.Scope,
+                Operations = descriptor.Operations, Attributes = descriptor.Attributes,
+                Allowance = descriptor.Budget, DescriptorRevision = descriptor.Revision,
+                DescriptorDigest = PersonaDescriptorDigest.Compute(descriptor) };
+            for (var week = 0; week < 2; week++)
+            {
+                var at = Now.AddDays(week * 7);
+                var source = new PersonaGroundsSourceV1("source:" + descriptor.Id + ":" + week,
+                    template.SourceKinds[0], null, 100, template.Anchors[0] + " observed", true);
+                var grounds = new PersonaGroundsV1(1, "occ:" + descriptor.Id + ":" + week,
+                    activation.PersonaId, descriptor.Id, "main", descriptor.Revision,
+                    activation.DescriptorDigest, [source], []);
+                var line = new PersonaItemDraftV1(PersonaItemKinds.ReportLine,
+                    "Shadow coverage", template.Anchors[0] + " observed", null,
+                    [new PersonaEvidenceV1(source.Ref, true)], 2, 2, 0.7,
+                    descriptor.Id + ":" + week);
+                Assert.Null(PersonaOutputValidator.Validate(new([line]), grounds, activation,
+                    [], [], [], at));
+                var receipt = new PersonaOccurrenceReceipt(grounds.OccurrenceKey, "main", activation.PersonaId,
+                    descriptor.Id, descriptor.Revision, at, at, PersonaOccurrenceStates.Completed,
+                    null, [], "runner", 120, 30);
+                var report = store.SaveCompleted("main", receipt, activation, grounds, [], at);
+                Assert.Equal((descriptor.Report.Template, "shadow", 150L),
+                    (report.Template, report.State, report.TokensUsed));
+                Assert.Equal(template.Anchors.Count, report.Coverage.Count);
+                Assert.Contains(report.Coverage, row => row.EndsWith(":observed", StringComparison.Ordinal));
+                Assert.Contains(report.Coverage, row => row.EndsWith(":no-evidence", StringComparison.Ordinal));
+                Assert.Equal(report.Id, store.SaveCompleted("main", receipt, activation, grounds, [], at).Id);
+            }
+            Assert.Equal(2, store.List("main").Count(r => r.PersonaId == activation.PersonaId));
+        }
+    }
+
+    [Fact]
+    public void Scope_narrowing_refuses_source_areas_outside_the_persona_role()
+    {
+        var descriptor = new PersonaCatalogue().Find("security-officer")!.Descriptor;
+        var security = Warden() with { PersonaId = "prs_security", RoleId = descriptor.Id,
+            Descriptor = descriptor, Scope = descriptor.Scope with { Areas = ["security.permissions"] } };
+        Assert.Equal("security.permissions", PersonaGroundsPolicy.Area(security, "permission grant changed"));
+        Assert.Null(PersonaGroundsPolicy.Area(security, "dependency package changed"));
+        Assert.Null(PersonaGroundsPolicy.Area(security, "runner latency changed"));
+        var design = new PersonaCatalogue().Find("design-lead")!.Descriptor;
+        Assert.Null(PersonaGroundsPolicy.Area(security, design.Charter));
+        var filtered = PersonaGroundsPolicy.Filter(security,
+            [new("permission:one", "card", "Alpha", 0, "permission", false)
+                { Area = "security.permissions" },
+             new("dependency:one", "card", "Alpha", 0, "package", false)
+                { Area = "security.dependencies" }]);
+        Assert.Equal("permission:one", Assert.Single(filtered).Ref);
+        var excluded = security with { Scope = security.Scope with { ExcludedPaths = ["docs/private"] } };
+        Assert.False(PersonaGroundsPolicy.PathAllowed(excluded, "docs/private/workbench.json"));
+        Assert.True(PersonaGroundsPolicy.PathAllowed(excluded, "docs/public/workbench.json"));
+        Assert.All(new PersonaCatalogue().Entries.Where(e => e.Descriptor.Kind != PersonaKinds.Manager),
+            entry => Assert.False(PersonaGroundsPolicy.CanCloneRepository(Warden() with
+            { Descriptor = entry.Descriptor, RoleId = entry.Descriptor.Id })));
+        var cost = new PersonaCatalogue().Find("cost-controller")!.Descriptor;
+        var narrowedCost = Warden() with { Descriptor = cost, RoleId = cost.Id,
+            Scope = cost.Scope with { Projects = ["Alpha"] } };
+        Assert.Equal("project-a", Assert.Single(PersonaGroundsPolicy.QuotaScopes(narrowedCost,
+            [("project-a", "Alpha"), ("project-b", "Beta")])).Id);
+        var presenter = new PersonaCatalogue().Find("presenter")!.Descriptor;
+        Assert.False(PersonaGroundsPolicy.CanReadWorkspaceIssue(Warden() with
+        { Descriptor = presenter, RoleId = presenter.Id, Scope = presenter.Scope with { Projects = ["Alpha"] } }));
+    }
+
+    [Fact]
     public void Rejected_proposal_stays_suppressed_until_new_evidence_and_deferred_updates_in_place()
     {
         var activation = Warden();

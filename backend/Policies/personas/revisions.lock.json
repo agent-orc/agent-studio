@@ -17,6 +17,9 @@
     "documentation-editor": {
       "2026.11.1": "sha256:761765453deb9b67a8bd535f34db923bb5bcbb8dccb89853432b26791b3cb107"
     },
+    "improvement-scout": {
+      "2026.11.1": "sha256:846b887e29ecfde1a1f3d71e853730b5e9cf2a4dc43316642364b4636c69f64c"
+    },
     "operations-warden": {
       "2026.11.1": "sha256:9ea32cb16a12a54c19e7a6b2501bcd292cde5df4d89b79f96bcde1e5ae9b8d6b"
     },

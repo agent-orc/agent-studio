@@ -52,6 +52,18 @@ public sealed class WeeklyIssueTests
     }
 
     [Fact]
+    public void Shadow_persona_items_stay_out_of_the_magazine_until_activation()
+    {
+        var shadow = Personas.Select(p => p.Id == "prs_design_a" ? p with { Active = false } : p).ToArray();
+        var issue = WeeklyIssueComposer.Compose("ws-demo", Monday, false, Items, [], shadow,
+            null, TimeZoneInfo.Utc);
+        Assert.Equal(3, issue.StrapTotal);
+        Assert.DoesNotContain(issue.Sections.SelectMany(section => section.Stories),
+            story => story.PersonaId == "prs_design_a");
+        Assert.Equal("prs_design_b", issue.Lead!.PersonaId);
+    }
+
+    [Fact]
     public void Editor_rejects_any_sentence_without_a_known_item_citation()
     {
         var issue = Compose();

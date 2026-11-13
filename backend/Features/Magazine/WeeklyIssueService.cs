@@ -147,7 +147,7 @@ public sealed class WeeklyIssueService(
         if (store.Get(workspaceId, id) is { } prior) return prior;
         var entries = activations.List(workspaceId).Personas.Where(p => p.Activation is not null)
             .Select(p => new IssuePersona(p.Id, p.Title, p.Activation!.RoleId ?? p.Id,
-                p.Activation.State is PersonaStates.Active or PersonaStates.Shadow)).ToArray();
+                p.Activation.State == PersonaStates.Active)).ToArray();
         var sourceItems = items.List(workspaceId);
         var active = activations.List(workspaceId).Personas.Select(p => p.Activation)
             .Where(a => a is not null).Cast<PersonaActivationV1>().ToArray();
