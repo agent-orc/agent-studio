@@ -111,7 +111,11 @@ public static class PersonaOutputValidator
             var fingerprint = PersonaFingerprint.Compute(item, grounds);
             if (!seen.Add(fingerprint)) return "duplicate-in-response";
             var prior = previous.Any(i => i.PersonaId == activation.PersonaId
-                && i.Fingerprint == fingerprint && i.State is "open" or "draft");
+                && i.Fingerprint == fingerprint && PersonaItemStates.IsDecidable(i.State));
+            // Scout lifecycle: a rejected proposal stays suppressed until the persona cites new evidence.
+            if (item.Kind == PersonaItemKinds.Proposal && !prior && previous.Any(i => i.Fingerprint == fingerprint
+                    && i.State == "rejected" && item.Evidence.All(e => i.Evidence.Any(r => r.Ref == e.Ref))))
+                return "proposal-rejection-suppressed";
             if (!prior && previous.Any(i => i.PersonaId != activation.PersonaId
                     && i.Fingerprint == fingerprint && i.State is "open" or "draft"))
                 return "duplicate-existing-item";

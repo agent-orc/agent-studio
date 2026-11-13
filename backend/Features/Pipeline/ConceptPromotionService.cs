@@ -67,6 +67,22 @@ public sealed class ConceptPromotionService
         };
     }
 
+    /// <summary>
+    /// Promotes one proposal that is not in the Dossier's implementation list,
+    /// such as an accepted persona proposal, through the same spawn ledger.
+    /// The reason keys the ledger, so a repeated accept returns the same card.
+    /// </summary>
+    public PromotedConceptTask PromoteProposal(
+        TaskInfo source, PromoteConceptResponse plan, ConceptImplementationTask item, string reason)
+    {
+        var request = CodingRequest(plan.Source, item) with
+        {
+            Dossier = TaskDossierProvenance.FromImplementation(plan.Source.RepoRelativePath, item, 0)
+                with { ImplementationIndex = null },
+        };
+        return CreateCards(source, [new ConceptCardSpawn(reason, request)]).Single();
+    }
+
     private void MarkDossierAccepted(TaskInfo source, PromoteConceptResponse plan)
     {
         var entry = _scanner.GetWatchPaths().FirstOrDefault(candidate =>

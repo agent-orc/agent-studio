@@ -9,7 +9,7 @@ import { AuthService } from '../../../services/auth.service';
 import { getPasskey } from '../../../services/webauthn';
 import type { RegistryWorkspaceListItem } from '../../../models/task.model';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
-import { StudioPanelStateService } from '../../studio-shell/services/studio-panel-state.service';
+import { OrchestratorPanelStateService } from '../../orchestrator/state/orchestrator-panel-state.service';
 import { PersonaBudget, PersonaEntry, PersonaItem, PersonaReport, isOpenPersonaItem, personaCards, poolTotals } from './persona-team.model';
 
 @Component({ selector: 'app-persona-team-view', standalone: true,
@@ -21,7 +21,7 @@ export class PersonaTeamViewComponent {
   private readonly http = inject(HttpClient);
   private readonly auth = inject(AuthService);
   private readonly tabs = inject(StudioTabStateService);
-  private readonly panels = inject(StudioPanelStateService);
+  private readonly chat = inject(OrchestratorPanelStateService);
   readonly isOpenPersonaItem = isOpenPersonaItem;
   readonly workspaceId = signal('');
   readonly loading = signal(false);
@@ -120,7 +120,11 @@ export class PersonaTeamViewComponent {
   change(entry: PersonaEntry, verb: string): void {
     void this.action(`${encodeURIComponent(entry.id)}/${verb}`, verb, undefined, verb === 'activate' || verb === 'adopt');
   }
-  ask(): void { this.panels.open('chats'); }
+  /**
+   * Opens the in-app chat on this tab. The composer's location context for a
+   * persona tab carries the reference `persona:<id>` (composer-location-context.ts).
+   */
+  ask(): void { this.chat.setOpen(true); }
   percent(used: number, allowance: number): number { return allowance ? Math.min(100, used / allowance * 100) : 0; }
   roleLabel(role: string): string { return role.replace(/[-_]/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase()); }
 }

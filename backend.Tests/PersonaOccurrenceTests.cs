@@ -153,6 +153,33 @@ public sealed class PersonaOccurrenceTests : IDisposable
             [], [receipt], Now.AddMinutes(1)).Id);
     }
 
+    [Fact]
+    public void Rejected_proposal_stays_suppressed_until_new_evidence_and_deferred_updates_in_place()
+    {
+        var activation = Warden();
+        var grounds = new PersonaGroundsV1(1, "key", activation.PersonaId, activation.RoleId!,
+            "main", activation.DescriptorRevision, activation.DescriptorDigest,
+            [new PersonaGroundsSourceV1("case:one", "watcher-case", "Alpha", 0, "Signal", true),
+             new PersonaGroundsSourceV1("case:two", "watcher-case", "Alpha", 0, "New signal", true),
+             new PersonaGroundsSourceV1("dossier:AGT-1", "dossier", "Alpha", 0, "Home Dossier", false)], []);
+        var proposal = Draft("Alpha", "case:one") with { Kind = PersonaItemKinds.Proposal,
+            DossierKey = "AGT-1", DossierSection = "plan" };
+        var store = new PersonaItemStore(_root);
+        var stored = store.Upsert("main", activation.PersonaId, activation.RoleId!, "occ-1", proposal, 0, Now, grounds);
+        Assert.NotNull(store.RecordDecision("main", stored.Id, "rejected", "not now", Now));
+
+        Assert.Equal("proposal-rejection-suppressed", PersonaOutputValidator.Validate(new([proposal]),
+            grounds, activation, store.List("main"), [], [], Now));
+        var withNewEvidence = proposal with { Evidence = [new PersonaEvidenceV1("case:two", true)] };
+        Assert.Null(PersonaOutputValidator.Validate(new([withNewEvidence]), grounds, activation,
+            store.List("main"), [], [], Now));
+
+        var deferred = store.Upsert("main", activation.PersonaId, activation.RoleId!, "occ-2", withNewEvidence, 0, Now, grounds);
+        store.RecordDecision("main", deferred.Id, "deferred", "review later", Now, Now.AddDays(7));
+        var again = store.Upsert("main", activation.PersonaId, activation.RoleId!, "occ-3", withNewEvidence, 0, Now.AddHours(1), grounds);
+        Assert.Equal((deferred.Id, "deferred"), (again.Id, again.State));
+    }
+
     private static PersonaItemDraftV1 Draft(string project, string reference) => new(
         PersonaItemKinds.Finding, "Example fact", "A measured finding.", project,
         [new PersonaEvidenceV1(reference, true)], 4, 3, 0.8, "stable-fact");

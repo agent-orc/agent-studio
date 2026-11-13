@@ -157,6 +157,22 @@ public sealed class PersonaSchedulingTests : IDisposable
         Assert.Equal(0, budget.Personas[activation.PersonaId].AllowanceTokens);
     }
 
+    [Fact]
+    public void Manual_run_trigger_needs_no_descriptor_opt_in_and_closes_its_window_at_the_request()
+    {
+        var activation = Warden() with { Descriptor = Warden().Descriptor with { Triggers = [] } };
+        var store = new PersonaSchedulingService(_root);
+        Assert.Empty(store.Sweep("main", Now, null, [activation],
+            Events(new PersonaTrigger(Now.AddMinutes(-1), "deploy.completed", "evt-ignored")), _ => Open)
+            .Where(r => r.TriggerRefs.Contains("evt-ignored")));
+
+        var requested = Now.AddMinutes(-2);
+        var receipt = Assert.Single(store.Sweep("main", Now, null, [activation],
+            Events(new PersonaTrigger(requested, PersonaSchedulingService.ManualRunTrigger, "run-now:a")), _ => Open)
+            .Where(r => r.TriggerRefs.Contains("run-now:a")));
+        Assert.Equal((PersonaOccurrenceStates.Admitted, requested), (receipt.State, receipt.WindowEndUtc));
+    }
+
     private static IReadOnlyDictionary<string, IReadOnlyList<PersonaTrigger>> Events(params PersonaTrigger[] events)
         => new Dictionary<string, IReadOnlyList<PersonaTrigger>> { ["operations-warden"] = events };
 

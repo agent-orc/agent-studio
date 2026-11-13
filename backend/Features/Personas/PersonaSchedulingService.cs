@@ -55,6 +55,9 @@ public sealed record PersonaAdmissionFacts(string QuotaStatus, bool MeterComplet
 /// </summary>
 public sealed class PersonaSchedulingService
 {
+    /// <summary>Owner "Run now" trigger; it needs no descriptor opt-in and its window ends at the request.</summary>
+    public const string ManualRunTrigger = "manual.run";
+
     private sealed record State(long? PoolOverride, int MaxOpenPerWorkspace,
         IReadOnlyList<PersonaOccurrenceReceipt> Receipts);
 
@@ -362,10 +365,10 @@ public sealed class PersonaSchedulingService
                 windows[investigationUtc] = new HashSet<string>(["investigation"], StringComparer.Ordinal);
         }
         foreach (var trigger in triggers.Where(t => t.At >= activation.ActivatedAt && t.At <= now
-            && (t.Type == "manual.run" || activation.Descriptor.Triggers.Contains(t.Type, StringComparer.Ordinal))))
+            && (t.Type == ManualRunTrigger || activation.Descriptor.Triggers.Contains(t.Type, StringComparer.Ordinal))))
         {
             var hours = trigger.Floor >= 90 ? 1 : 6;
-            var end = trigger.Type == "manual.run" ? trigger.At :
+            var end = trigger.Type == ManualRunTrigger ? trigger.At :
                 trigger.At.Date.AddHours((Math.Floor(trigger.At.TimeOfDay.TotalHours / hours) + 1) * hours);
             if (!windows.TryGetValue(end, out var refs)) windows[end] = refs = new(StringComparer.Ordinal);
             refs.Add(trigger.Ref);

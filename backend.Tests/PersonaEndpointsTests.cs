@@ -175,6 +175,47 @@ public sealed class PersonaEndpointsTests : IDisposable
         Assert.All(security.ListStandingGrants(session.Principal.Id), grant => Assert.NotNull(grant.RevokedAt));
     }
 
+    [Fact]
+    public async Task Run_now_queues_a_manual_run_trigger_and_decisions_use_the_proposal_lifecycle()
+    {
+        using var factory = BuildFactory();
+        var workspaceId = factory.Services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock).Id;
+        var sweeps = factory.Services.GetRequiredService<AgentStudio.Personas.PersonaSweepCoordinator>();
+        using var owner = await OwnerClientAsync(factory);
+        var basePath = $"/api/workspaces/{workspaceId}/personas";
+
+        using (var inactive = await owner.PostAsJsonAsync($"{basePath}/operations-warden/run-now", new { }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, inactive.StatusCode);
+            Assert.Equal("persona-not-running", (await Body(inactive)).GetProperty("error").GetString());
+        }
+        Assert.Null(sweeps.PendingManualRun(workspaceId, "operations-warden"));
+        await ReadOk(owner.PostAsJsonAsync("/api/auth/step-up", new { code = CurrentCode() }));
+        await ReadOk(owner.PostAsJsonAsync($"{basePath}/operations-warden/activate", new { }));
+        using (var accepted = await owner.PostAsJsonAsync($"{basePath}/operations-warden/run-now", new { }))
+            Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var trigger = sweeps.PendingManualRun(workspaceId, "operations-warden")!;
+        Assert.Equal(AgentStudio.Personas.PersonaSchedulingService.ManualRunTrigger, trigger.Type);
+        Assert.StartsWith("run-now:", trigger.Ref);
+
+        var items = factory.Services.GetRequiredService<AgentStudio.Personas.PersonaItemStore>();
+        var finding = items.Upsert(workspaceId, "operations-warden", "operations-warden", "occ-1",
+            new AgentStudio.Personas.PersonaItemDraftV1(AgentStudio.Personas.PersonaItemKinds.Finding, "Backup gap",
+                "No off-host backup.", null, [new AgentStudio.Personas.PersonaEvidenceV1("case:one")], 5, 5, 0.9, "backup"),
+            95, _clock.GetUtcNow().UtcDateTime);
+        using (var invalid = await owner.PostAsJsonAsync($"{basePath}/items/{finding.Id}/decision", new { outcome = "accepted" }))
+            Assert.Equal("invalid-persona-item-decision", (await Body(invalid)).GetProperty("error").GetString());
+        using (var missing = await owner.PostAsJsonAsync($"{basePath}/items/pit_missing/decision", new { outcome = "resolved" }))
+            Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Equal("resolved", (await ReadOk(owner.PostAsJsonAsync($"{basePath}/items/{finding.Id}/decision",
+            new { outcome = "resolved" }))).GetProperty("state").GetString());
+        using (var again = await owner.PostAsJsonAsync($"{basePath}/items/{finding.Id}/decision", new { outcome = "resolved" }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+            Assert.Equal("persona-item-already-decided", (await Body(again)).GetProperty("error").GetString());
+        }
+    }
+
     private static HttpClient BearerClient(WebApplicationFactory<Program> factory, string token, string occurrenceId)
     {
         var client = factory.CreateClient(new WebApplicationFactoryClientOptions
