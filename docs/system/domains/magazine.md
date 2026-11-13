@@ -5,7 +5,8 @@ Studio, such as the orchestrator's decision notes ("29 cards wait for you:
 24 can be accepted, 4 need your decision, 1 gets rework"). There is one
 magazine for the installation, one per workspace, and one per project
 (MAG-1, AGT-3714). MAG-2 builds the views on this store and API. PT-8
-(AGT-3601) will compose weekly issues that cite article revisions.
+(AGT-3601) composes immutable workspace issues from persona items and cites
+workspace article revisions.
 
 Code: `backend/Features/Magazine/`. CLI: `studio-op magazine publish`
 ([studio-op](../../operations/setup/studio-op.md#magazine)).
@@ -145,7 +146,33 @@ entry to the control plane audit:
 
 ## Issues (PT-8)
 
-Issues are not part of this store. An issue cites articles by
-`{ scope, slug, revision }` and reads them with
-`GET /api/magazine/{scope}/{slug}?revision=n`. Revisions are immutable, so
-a published issue keeps showing the text it quoted.
+Issues live separately at `<TaskRepository>/.metadata/weekly-issues/<workspace>/<issue>.json`.
+The Watcher sweep composes one `weekly-YYYY-MM-DD` issue after Monday 07:00
+in the workspace time zone. The Owner may compose a front-page-only daily
+brief after 07:00. A second composition returns the existing file. The issue
+stores sorted item snapshots, fifteen operations watch rows from the latest
+warden fact snapshot, eight trend weeks, corrections, colophon entries and
+`{ scope, slug, revision }` article references. Each article reference keeps
+its persona and role byline, title and summary. Article revisions remain in
+the MAG-1 store and can be read at `GET /api/magazine/{scope}/{slug}?revision=n`.
+Trend pool-use percentages use the current workspace pool as their denominator;
+the issue records that snapshot and does not change after publication.
+
+The item count in the masthead equals the sum of visible role section counts.
+The highest open item leads. Side stories follow importance order with at
+most two per persona, while every open Critical item reaches the front page.
+The Operations watch follows Decisions needed and includes passing, failing
+and unknown rows. A missing or stale fact is unknown at importance 70 or more.
+
+One editor CLI call may write the lead paragraph and item teasers when the
+presenter allowance and pool have room. Every editor sentence must cite a
+known item id; rejected or unavailable output leaves titles only. The issue
+routes are `GET /api/workspaces/{id}/personas/issues`,
+`GET /api/workspaces/{id}/personas/issues/{issueId}` and
+`GET /api/workspaces/{id}/personas/issues/{issueId}/export`. The Owner-only
+`POST /api/workspaces/{id}/personas/issues/compose?daily=true` creates a due
+brief. The Studio viewer is `#/workspace/team/magazine`, and the Team page
+links the newest three. Export is standalone article HTML with light, dark
+and print styles for browser PDF output. Sending is disabled; the summary
+renderer contains only the masthead, coverage, front-page titles, importance
+numbers and an HTTPS sign-in link.

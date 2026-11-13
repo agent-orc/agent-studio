@@ -100,7 +100,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Card detail deferred loading: interleaved DEMO-9 fixture and live seeded API comparisons (AGT-3536) | [measurement](../operations/performance/card-detail-deferred-loading-2026-11-05.md) |
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |
 | Areas and tags (classification vocabulary, glossaries, tag filters; AGT-2803) | [domains/areas-and-tags.md](../system/domains/areas-and-tags.md) |
-| Magazine (agent-maintained articles per installation, workspace and project, revisions, API and permissions; MAG-1, AGT-3714) | [domains/magazine.md](../system/domains/magazine.md) |
+| Magazine (agent-maintained articles and immutable persona issues, revisions, viewer, export, API and permissions; MAG-1, MAG-2, PT-8) | [domains/magazine.md](../system/domains/magazine.md) |
 | Proposed tagging golden set: 60 cards, 20 Dossiers, item rationales and area glossaries (AGT-2804) | [quality/tagging-golden-set/index.html](../quality/tagging-golden-set/index.html) |
 | Operator decision on the proposed tagging golden set and glossaries (AGT-2804) | [operations/tagging-golden-set-approval/index.html](../operations/tagging-golden-set-approval/index.html) |
 | Remote execution outcome and recovery | [contracts/run-outcome.md](../system/contracts/run-outcome.md#remote-execution-outcome-adapter) |

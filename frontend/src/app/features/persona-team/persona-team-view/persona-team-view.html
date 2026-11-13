@@ -1,9 +1,9 @@
-<main class="team-view" [attr.data-testid]="personaId() ? 'persona-page' : 'team-page'">
+<main class="team-view" [attr.data-testid]="personaId() === 'magazine' ? 'team-magazine-page' : personaId() ? 'persona-page' : 'team-page'">
   <header class="team-header">
     <div>
       @if (personaId()) { <button type="button" class="team-link" (click)="open(null)">← Team</button> }
       <p class="team-kicker">Workspace personas</p>
-      <h1>{{ current()?.title ?? 'Team' }}</h1>
+      <h1>{{ personaId() === 'magazine' ? 'Magazine' : current()?.title ?? 'Team' }}</h1>
       @if (current(); as person) { <p>{{ person.activation?.roleId ? roleLabel(person.activation!.roleId!) : roleLabel(person.aspect) }} · {{ person.id }}</p> }
     </div>
     <div class="team-actions">
@@ -26,7 +26,10 @@
   </header>
   @if (loading()) { <app-loading-surface kind="list" label="Loading team…" /> }
   @if (error()) { <p class="team-error" role="alert">{{ error() }} <button type="button" (click)="load()">Retry</button></p> }
-  @if (!personaId()) {
+  @if (personaId() === 'magazine') {
+    @if (workspaceId()) { <app-weekly-issue-view [workspaceId]="workspaceId()" /> }
+  } @else if (!personaId()) {
+    @if (workspaceId()) { <app-weekly-issue-view [workspaceId]="workspaceId()" [compact]="true" /> }
     <section class="team-pool" aria-label="Weekly persona pool">
       <div><span>Used</span><strong data-testid="team-used">{{ totals().used | number }}</strong></div>
       <div><span>Allocated</span><strong data-testid="team-allocated">{{ totals().allocated | number }}</strong></div>

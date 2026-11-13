@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTheme } from '../helpers/theme';
 
@@ -29,6 +29,26 @@ const initialItems = () => [
     body: 'Schedule a daily check that the latest backup left the host.', importance: 62, state: 'draft',
     dossierKey: 'AGT-3573', dossierSection: 'operations' },
 ];
+const issue = {
+  id: 'weekly-2026-11-09', workspaceId: 'ws-demo', kind: 'weekly', masthead: 'Studio Weekly',
+  coverageLine: '2 personas reported · 2 items', periodStart: '2026-11-09', periodEnd: '2026-11-15',
+  strapTotal: 2, lead: { id: 'pit_1', title: 'Backup gap', persona: 'Mira', role: 'Operations warden', importance: 97,
+    teaser: null, recommendedOption: null, deadlineUtc: null }, leadParagraph: 'The backup is missing [pit_1].',
+  sideStories: [{ id: 'pit_2', title: 'Credential expiry', persona: 'Aster', role: 'Security officer', importance: 95,
+    teaser: 'Rotate the credential [pit_2].', recommendedOption: null, deadlineUtc: null }],
+  decisionsNeeded: [], operationsWatch: Array.from({ length: 15 }, (_, index) => ({ id: `fact-${index}`, group: index < 8 ? 'Backups' : 'Security posture',
+    label: `Fact ${index + 1}`, state: index === 0 ? 'finding' : 'passing', importance: index === 0 ? 97 : 20, itemCount: index === 0 ? 1 : 0 })),
+  sections: [{ roleId: 'operations', role: 'Operations', count: 1, stories: [{ id: 'pit_1', title: 'Backup gap', persona: 'Mira', role: 'Operations warden', importance: 97, teaser: null }] },
+    { roleId: 'security', role: 'Security', count: 1, stories: [{ id: 'pit_2', title: 'Credential expiry', persona: 'Aster', role: 'Security officer', importance: 95, teaser: null }] }],
+  trends: [], corrections: [], colophon: [], editorSkipped: false,
+  articles: [{ scope: 'workspace:ws-demo', slug: 'operations-brief', revision: 2, title: 'Operations brief',
+    summary: 'Backup status.', persona: 'Mira', personaId: 'mira', role: 'Operations warden' }],
+};
+const priorIssue = { ...issue, id: 'weekly-2026-11-02', masthead: 'Studio Weekly 44',
+  periodStart: '2026-11-02', periodEnd: '2026-11-08' };
+const exportFixture = join(resultDir, 'weekly-rendered.html');
+const exportedHtml = existsSync(exportFixture) ? readFileSync(exportFixture, 'utf8') :
+  '<!doctype html><html><head><meta charset="utf-8"><style data-article-template="v2">:root{color-scheme:light;background:white;color:black}@media(prefers-color-scheme:dark){:root{color-scheme:dark;background:#222;color:white}}@media print{@page{size:A4}body{background:white;color:black}}</style></head><body><h1>Studio Weekly</h1><h2>Backup gap</h2><p>97</p></body></html>';
 
 interface Fixture { releaseStop(): void; releaseDecision(): void; decisions: { itemId: string; outcome: string }[] }
 
@@ -69,6 +89,8 @@ async function setup(page: Page, options: { failStop?: boolean; holdDecision?: b
   await page.route('**/api/v1/studio/board*', route => route.fulfill({ json: { backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [], codeNotComplete: [], review: [], autoReview: [], humanReview: [], escalated: [], completed: [], archive: [], gitStateAt: null, stale: false } }));
   await page.route('**/api/workspaces/ws-demo/personas**', (route: Route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/issues/weekly-2026-11-09/export')) return route.fulfill({ contentType: 'text/html', body: exportedHtml });
+    if (path.endsWith('/issues')) return route.fulfill({ json: [issue, priorIssue] });
     if (path.endsWith('/budget')) return route.fulfill({ json: { poolTokens: 400, usedTokens: 80, startUtc: stamp,
       endUtc: stamp, personas: { mira: { allowanceTokens: 100, usedTokens: 30 }, aster: { allowanceTokens: 150, usedTokens: 50 } } } });
     if (path.endsWith('/items')) return route.fulfill({ json: items });
@@ -174,4 +196,41 @@ test('team and persona pages render in light and dark', async ({ page }) => {
     await page.screenshot({ path: join(resultDir, `persona-proposals-${theme}.png`), fullPage: true });
     await page.getByRole('button', { name: '← Team' }).click();
   }
+});
+
+test('weekly issue renders in both themes and its HTML export prints to PDF', async ({ page }) => {
+  mkdirSync(resultDir, { recursive: true });
+  await setup(page);
+  await expect(page.getByRole('heading', { name: 'Latest issues' })).toBeVisible();
+  await page.getByRole('button', { name: /Studio Weekly 44/ }).click();
+  await expect(page.getByTestId('weekly-issue')).toContainText('Studio Weekly 44');
+  await page.getByRole('button', { name: 'weekly-2026-11-09' }).click();
+  await expect(page.getByTestId('weekly-issue')).toContainText('Studio Weekly');
+  await page.getByRole('button', { name: '← Team' }).click();
+  await page.getByRole('button', { name: 'View magazine' }).click();
+  await expect(page.getByTestId('team-magazine-page')).toBeVisible();
+  const viewer = page.getByTestId('weekly-issue');
+  await expect(viewer.getByRole('heading', { name: 'Studio Weekly' })).toBeVisible();
+  await expect(viewer.getByRole('heading', { name: 'Backup gap' }).first()).toBeVisible();
+  await expect(viewer.getByRole('heading', { name: 'Operations brief' })).toBeVisible();
+  await expect(viewer).toContainText('Mira · Operations warden · revision 2');
+  await expect(viewer.getByTestId('weekly-watch-row')).toHaveCount(15);
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(resultDir, `weekly-view-${theme}.png`), fullPage: true });
+  }
+  const download = page.waitForEvent('download');
+  await page.getByTestId('weekly-export').click();
+  const file = join(resultDir, 'weekly-2026-11-09.html');
+  await (await download).saveAs(file);
+  const html = readFileSync(file, 'utf8');
+  expect(html).toContain('data-article-template="v2"');
+  expect(html).toContain('@media print');
+  expect(html).toContain('prefers-color-scheme:dark');
+  await page.setContent(html);
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await page.screenshot({ path: join(resultDir, `weekly-export-${theme}.png`), fullPage: true });
+  }
+  await page.pdf({ path: join(resultDir, 'weekly-export.pdf'), format: 'A4', printBackground: true });
 });

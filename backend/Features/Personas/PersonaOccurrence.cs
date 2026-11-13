@@ -166,6 +166,7 @@ public sealed class PersonaOccurrenceService
     private readonly AccessSecurityStore _security;
     private readonly StudioBackupService _backups;
     private readonly SecurityPostureService _posture;
+    private readonly OpsPostureSnapshotStore _opsSnapshots;
     private readonly HashSet<string> _wardenDays = new(StringComparer.Ordinal);
     private readonly string? _root;
 
@@ -175,6 +176,7 @@ public sealed class PersonaOccurrenceService
         TaskScannerService cards,
         WatcherCaseStore cases, WatcherProposalStore proposals, AgentMessageBusStore bus,
         AccessSecurityStore security, StudioBackupService backups, SecurityPostureService posture,
+        OpsPostureSnapshotStore opsSnapshots,
         IConfiguration configuration)
     {
         _scheduling = scheduling; _activations = activations; _items = items; _reports = reports;
@@ -182,7 +184,7 @@ public sealed class PersonaOccurrenceService
         _workspaces = workspaces;
         _cards = cards; _cases = cases; _proposals = proposals; _bus = bus;
         _security = security;
-        _backups = backups; _posture = posture;
+        _backups = backups; _posture = posture; _opsSnapshots = opsSnapshots;
         _root = configuration["TaskRepository"];
     }
 
@@ -212,6 +214,7 @@ public sealed class PersonaOccurrenceService
         foreach (var (workspace, activation) in pending)
         {
             if (activation is null) continue;
+            _opsSnapshots.Save(workspace.Id, snapshot);
             var runKey = workspace.Id + ":" + activation.PersonaId + ":" + day;
             lock (_gate) if (!_wardenDays.Add(runKey)) continue;
             var roleId = activation.RoleId ?? activation.Descriptor.Id;
