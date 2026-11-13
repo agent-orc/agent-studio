@@ -1,4 +1,4 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { DatePipe, DecimalPipe, KeyValuePipe } from '@angular/common';
 import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../components/async-feedback';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
@@ -10,10 +10,10 @@ import { getPasskey } from '../../../services/webauthn';
 import type { RegistryWorkspaceListItem } from '../../../models/task.model';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import { OrchestratorPanelStateService } from '../../orchestrator/state/orchestrator-panel-state.service';
-import { PersonaBudget, PersonaEntry, PersonaItem, PersonaReport, isOpenPersonaItem, personaCards, poolTotals } from './persona-team.model';
+import { PersonaAttributes, PersonaBudget, PersonaEntry, PersonaItem, PersonaReport, PersonaSheet, isOpenPersonaItem, personaCards, poolTotals } from './persona-team.model';
 
 @Component({ selector: 'app-persona-team-view', standalone: true,
-  imports: [DatePipe, DecimalPipe, LoadingSurfaceComponent, PendingButtonDirective, StatusIndicatorComponent, SegmentedControlComponent], templateUrl: './persona-team-view.html', styleUrl: './persona-team-view.scss',
+  imports: [DatePipe, DecimalPipe, KeyValuePipe, LoadingSurfaceComponent, PendingButtonDirective, StatusIndicatorComponent, SegmentedControlComponent], templateUrl: './persona-team-view.html', styleUrl: './persona-team-view.scss',
   changeDetection: ChangeDetectionStrategy.OnPush })
 export class PersonaTeamViewComponent {
   readonly personaId = input<string | null>(null);
@@ -32,10 +32,12 @@ export class PersonaTeamViewComponent {
   readonly items = signal<PersonaItem[]>([]);
   readonly reports = signal<PersonaReport[]>([]);
   readonly budget = signal<PersonaBudget | null>(null);
+  readonly sheet = signal<PersonaSheet | null>(null);
+  readonly editedAttributes = signal<PersonaAttributes | null>(null);
   readonly tabOptions = [{ value: 'feed', label: 'Feed' }, { value: 'reports', label: 'Reports' },
     { value: 'proposals', label: 'Proposals' }, { value: 'budget', label: 'Budget' },
-    { value: 'charter', label: 'Charter' }, { value: 'history', label: 'History' }] as const;
-  readonly tab = signal<'feed' | 'reports' | 'proposals' | 'budget' | 'charter' | 'history'>('feed');
+    { value: 'sheet', label: 'Sheet' }, { value: 'charter', label: 'Charter' }, { value: 'history', label: 'History' }] as const;
+  readonly tab = signal<'feed' | 'reports' | 'proposals' | 'budget' | 'sheet' | 'charter' | 'history'>('feed');
   readonly sort = signal<'importance' | 'time'>('importance');
   readonly kind = signal('all');
   readonly state = signal('open');
@@ -65,6 +67,10 @@ export class PersonaTeamViewComponent {
       const workspaces = this.workspaces();
       if (!this.workspaceId() && workspaces.length) this.selectWorkspace(workspaces[0].id);
     });
+    effect(() => { const id = this.personaId(); const workspace = this.workspaceId();
+      if (id && workspace) this.loadSheet(workspace, id); });
+    effect(() => { const active = this.current()?.activation;
+      this.editedAttributes.set(active ? structuredClone(active.attributes) : null); });
   }
   selectWorkspace(id: string): void { this.workspaceId.set(id); this.load(); }
   load(): void {
@@ -76,9 +82,46 @@ export class PersonaTeamViewComponent {
       items: this.http.get<PersonaItem[]>(`${root}/items`),
       reports: this.http.get<PersonaReport[]>(`${root}/reports`) }).subscribe({
       next: data => { this.entries.set(data.list.personas); this.budget.set(data.budget);
+        const current = data.list.personas.find(entry => entry.id === this.personaId());
+        this.editedAttributes.set(current?.activation ? structuredClone(current.activation.attributes) : null);
         this.items.set(data.items); this.reports.set(data.reports); this.loading.set(false); },
       error: () => { this.error.set('Team data could not be loaded.'); this.loading.set(false); },
     });
+  }
+  loadSheet(workspace: string, persona: string): void {
+    this.http.get<PersonaSheet>(`/api/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/sheet`)
+      .subscribe({ next: sheet => this.sheet.set(sheet), error: () => this.sheet.set(null) });
+  }
+  editAttribute<K extends keyof PersonaAttributes>(key: K, value: PersonaAttributes[K]): void {
+    const current = this.editedAttributes(); if (current) this.editedAttributes.set({ ...current, [key]: value });
+  }
+  editFocus(key: string, value: number): void {
+    const current = this.editedAttributes(); if (!current?.focus) return;
+    this.editedAttributes.set({ ...current, focus: { ...current.focus, [key]: value } });
+  }
+  focusTotal(): number { return Object.values(this.editedAttributes()?.focus ?? {}).reduce((sum, value) => sum + value, 0); }
+  focusValid(): boolean { return this.editedAttributes()?.focus == null || this.focusTotal() === 100; }
+  canSaveAttributes(): boolean {
+    const attributes = this.editedAttributes();
+    return !!attributes && !this.busy() && this.focusValid() &&
+      attributes.thoroughness >= 1 && attributes.thoroughness <= 5 &&
+      attributes.signalThreshold >= 0 && attributes.signalThreshold <= 100;
+  }
+  async saveAttributes(person: PersonaEntry): Promise<void> {
+    const attributes = this.editedAttributes(); if (!attributes || !this.focusValid()) return;
+    this.busy.set('Save attributes'); this.error.set('');
+    try {
+      const code = this.stepUpCode().trim();
+      if (code) await firstValueFrom(this.auth.stepUp(code));
+      else {
+        const options = await firstValueFrom(this.auth.passkeyStepUpOptions());
+        await firstValueFrom(this.auth.stepUp(undefined, await getPasskey(options)));
+      }
+      this.stepUpCode.set('');
+      await firstValueFrom(this.http.put(`/api/workspaces/${encodeURIComponent(this.workspaceId())}/personas/${encodeURIComponent(person.id)}/attributes`, { attributes }));
+      this.load(); this.loadSheet(this.workspaceId(), person.id);
+    } catch { this.error.set('Attributes could not be saved.'); }
+    finally { this.busy.set(''); }
   }
   open(id: string | null): void { this.tabs.open({ kind: 'team', personaId: id }); this.tab.set('feed'); }
   async action(path: string, key: string, rollback?: () => void, requiresStepUp = false): Promise<void> {

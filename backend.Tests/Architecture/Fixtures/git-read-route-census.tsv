@@ -483,6 +483,7 @@
 /api/workspaces/{id}/personas/budget	free	-	-	-
 /api/workspaces/{id}/personas/items	free	-	-	-
 /api/workspaces/{id}/personas/reports	free	-	-	-
+/api/workspaces/{id}/personas/{personaId}/sheet	free	-	-	-
 /api/workspaces/{id}/settings	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/dry-run	free	-	-	-

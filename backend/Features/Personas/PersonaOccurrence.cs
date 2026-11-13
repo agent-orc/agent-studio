@@ -76,6 +76,10 @@ public static class PersonaOutputValidator
             if (item.Area is not null && !activation.Scope.Areas.Contains(item.Area,
                     StringComparer.OrdinalIgnoreCase))
                 return "area-out-of-scope";
+            if (item.Area is not null && activation.Attributes.Focus?.Any(weight => weight.Value == 0 &&
+                    (item.Area.Equals(weight.Key, StringComparison.OrdinalIgnoreCase) ||
+                     item.Area.EndsWith("." + weight.Key, StringComparison.OrdinalIgnoreCase))) == true)
+                return "area-out-of-focus";
             if (item.Evidence.Any(e => e.Measured && grounds.Sources.Any(s => s.Ref == e.Ref && !s.Measured)))
                 return "measurement-unverified";
             if (item.Evidence.Any(e => grounds.Sources.Any(s => s.Ref == e.Ref && s.Project is not null
@@ -301,6 +305,14 @@ public sealed class PersonaOccurrenceService
                 }
                 var prompt = "You are persona " + activation.PersonaId + " in role " +
                     (activation.RoleId ?? activation.Descriptor.Id) + ". Charter: " + activation.Descriptor.Charter +
+                    "\nCurrent attributes: autonomy " + activation.Attributes.Autonomy +
+                    ", risk appetite " + activation.Attributes.RiskAppetite +
+                    ", thoroughness " + activation.Attributes.Thoroughness +
+                    ", report signal threshold " + activation.Attributes.SignalThreshold +
+                    ", focus weights " + JsonSerializer.Serialize(activation.Attributes.Focus, StrictJson) +
+                    ". Use more evidence references as thoroughness rises. Low risk proposals stay reversible " +
+                    "and within one area; medium may cross areas; high may propose structural changes. " +
+                    "Only report items meeting the signal threshold, except verified fact floors. " +
                     "\nReturn one JSON object: {\"items\":[{\"kind\":\"finding|proposal|decision-request|report-line\",\"title\":\"...\",\"body\":\"...\",\"project\":null,\"area\":null,\"evidence\":[{\"ref\":\"case:id\",\"measured\":false}],\"impact\":1,\"urgency\":1,\"confidence\":0.5,\"fingerprintKey\":\"stable subject\",\"deadlineUtc\":null,\"draftCard\":false,\"options\":null,\"recommendedOption\":null,\"dossierKey\":null,\"dossierSection\":null,\"draftTitle\":null,\"draftPrompt\":null}]}. " +
                     "Title at most 120 characters; body at most 1200. Cite only exact source refs in these grounds. " +
                     "Use only in-scope project names. Decision requests need 2 to 4 options, one recommended option, " +
@@ -371,6 +383,11 @@ public sealed class PersonaOccurrenceService
         {
             var floor = grounds.Sources.Where(s => draft.Evidence.Any(e => e.Ref == s.Ref))
                 .Select(s => s.Floor).DefaultIfEmpty(0).Max();
+            if (draft.Kind == PersonaItemKinds.ReportLine && floor < activation.Attributes.SignalThreshold &&
+                PersonaImportanceService.Score(draft.Impact, draft.Urgency,
+                    PersonaImportanceService.CapConfidence(draft.Confidence, draft.Evidence), floor)
+                    < activation.Attributes.SignalThreshold)
+                continue;
             var item = _items.Upsert(completion.WorkspaceId, activation.PersonaId,
                 activation.RoleId ?? activation.Descriptor.Id, completion.Key, draft, floor, now,
                 grounds);
