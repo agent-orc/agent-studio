@@ -61,6 +61,7 @@ public sealed class PersonaManagerPolicyTests
         Assert.Single(grounds.ManagerItems);
         Assert.DoesNotContain("untrusted body", json, StringComparison.Ordinal);
         Assert.DoesNotContain("repository content", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"State\"", json, StringComparison.Ordinal);
         Assert.Contains("fingerprint", json, StringComparison.OrdinalIgnoreCase);
     }
 

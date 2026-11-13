@@ -16,7 +16,7 @@ public static class PersonaManagerPolicy
             .OrderByDescending(i => i.Importance).ThenBy(i => i.CreatedAtUtc).Take(100)
             .Select(i => new PersonaManagerGroundItemV1(i.Id, i.Kind, i.Impact, i.Urgency,
                 i.Confidence, i.Floor, i.Importance, i.PersonaId, i.Fingerprint,
-                i.State, i.Evidence.Select(e => e.Ref).Take(10).ToArray())).ToArray();
+                i.Evidence.Select(e => e.Ref).Take(10).ToArray())).ToArray();
         return new PersonaGroundsV1(1, receipt.Key, receipt.PersonaId, receipt.RoleId,
             receipt.WorkspaceId, receipt.DescriptorRevision, activation.DescriptorDigest,
             typed.Select(i => new PersonaGroundsSourceV1("item:" + i.Id, "typed-item",

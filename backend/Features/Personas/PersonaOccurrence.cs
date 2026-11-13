@@ -28,7 +28,7 @@ public sealed record PersonaGroundsV1(int SchemaVersion, string OccurrenceKey, s
 }
 public sealed record PersonaManagerGroundItemV1(string Id, string Kind, int Impact, int Urgency,
     double Confidence, int Floor, int Score, string PersonaId, string Fingerprint,
-    string State, IReadOnlyList<string> Links);
+    IReadOnlyList<string> Links);
 public sealed record PersonaOccurrenceResponseV1(IReadOnlyList<PersonaItemDraftV1> Items);
 public sealed record PersonaLeaseV1(string Key, string ClaimToken, string WorkspaceId,
     string PersonaId, string RoleId, string Prompt, string Model, string Thinking,
