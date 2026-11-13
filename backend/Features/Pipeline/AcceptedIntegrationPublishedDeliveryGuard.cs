@@ -72,6 +72,51 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
             : job.CompletionClaim?.ResultSha;
     }
 
+    /// <summary>
+    /// AGT-3758: the card's verified record names a tree the published branch
+    /// still carries and that tree is the delivery's net-change publication
+    /// (recorded delivery SHA or <c>Agent-Studio-Net-Change-Of</c> trailer).
+    /// The result commit itself is not an ancestor, yet the delivery is integrated.
+    /// </summary>
+    public static bool CarriesNetChangePublication(TaskInfo job, string branch, GitService? git)
+    {
+        if (job.State != TaskStates.Completed || git is null) return false;
+        var delivery = CurrentDeliverySha(job);
+        if (!ReviewSubjectStore.IsValidResultSha(delivery)) return false;
+        var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (repo is null) return false;
+        var published = git.GetBranchTip(repo, $"refs/remotes/origin/{branch}");
+        if (published is null) return false;
+        var record = IntegrationVerificationStore.Read(job.FolderPath);
+        return record is not null && IntegrationVerificationProjection.CarriesVerifiedDelivery(
+            record, branch, delivery, sha => git.IsAncestor(repo, sha, published),
+            sha => git.GetNetChangeSource(repo, sha));
+    }
+
+    /// <summary>
+    /// AGT-3758: a failed recovery merge never reopens a completed card whose
+    /// delivery the published branch carries, by ancestry or as a net-change
+    /// publication. The case is logged; the card stays Completed.
+    /// </summary>
+    public static bool KeepCompletedAfterRecoveryMerge(TaskInfo job, string branch, string? failureCode,
+        GitService? git, ILogger logger)
+    {
+        if (job.State != TaskStates.Completed || git is null) return false;
+        var delivery = CurrentDeliverySha(job);
+        if (!ReviewSubjectStore.IsValidResultSha(delivery)) return false;
+        var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (repo is null) return false;
+        var published = git.GetBranchTip(repo, $"refs/remotes/origin/{branch}");
+        if (published is null) return false;
+        var carriedBy = git.IsAncestor(repo, delivery!, published) ? "ancestry"
+            : CarriesNetChangePublication(job, branch, git) ? "net-change publication" : null;
+        if (carriedBy is null) return false;
+        logger.LogWarning(
+            "Recovery merge for completed {JobId} failed ({FailureCode}), but {Branch} carries delivery {DeliverySha} by {CarriedBy}; the card stays Completed",
+            job.Id, failureCode, branch, delivery, carriedBy);
+        return true;
+    }
+
     public static bool KeepCompleted(TaskInfo job, string branch, string? failureCode, GitService? git,
         AgentMessageBusBridge? bus, ILogger logger)
     {

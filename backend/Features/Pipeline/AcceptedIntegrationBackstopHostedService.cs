@@ -95,6 +95,13 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                 var branch = _settings.Get(job.ProjectName).IntegrationBranch;
                 if (AcceptedIntegrationPublishedDeliveryGuard.HasPublishedCurrentAcceptance(job, branch, _git))
                     continue;
+                if (AcceptedIntegrationPublishedDeliveryGuard.CarriesNetChangePublication(job, branch, _git))
+                {
+                    _logger.LogDebug(
+                        "accepted-integration-backstop skips {JobId}: {Branch} carries its delivery as a net-change publication",
+                        job.Id, branch);
+                    continue;
+                }
                 var lost = AcceptedIntegrationPublishedDeliveryGuard.LostOperatorAcceptance(job, branch, _git);
                 if (lost is not null)
                 {
@@ -146,7 +153,9 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                     FinalizeTransactionalAccept(job);
                     ClearPendingTag(job);
                 }
-                else
+                else if (result.VerificationPending
+                         || !AcceptedIntegrationPublishedDeliveryGuard.KeepCompletedAfterRecoveryMerge(
+                             job, branch, AcceptedIntegrationFailureCodes.For(result), _git, _logger))
                 {
                     ReturnTransactionalAcceptToReview(
                         job,
