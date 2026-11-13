@@ -136,6 +136,80 @@ public sealed class BatchGatePilotIsolationRetryTests : BatchGatePilotServiceTes
         AssertLane(member.Key, TaskStates.HumanReview);
     }
 
+    [Fact]
+    public async Task Solo_flight_with_a_parsed_failed_test_report_is_a_code_red_not_gate_infra()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-REPORT-RED", "docs/report-red.md");
+        SeedMember(factory, "DOC-REPORT-PARTNER", "docs/report-partner.md");
+        // AGT-3759: a completed run whose exit code a later step nulled still
+        // carries the parsed report that names its failed tests.
+        _gate.Batch = request => TreeHas(request.ExpectedSha!, "docs/report-red.md")
+            ? ReportRed(request.ExpectedSha, exitCode: null) : Green(request.ExpectedSha);
+        _gate.Base = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Contains(store.ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == member.Key && finding.Status == "proven-red");
+        AssertLane(member.Key, TaskStates.Escalated);
+        var parked = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!.ParkedBlocker;
+        Assert.NotEqual(HumanReviewEscalationCategories.GateInfrastructure, parked?.BlockerType);
+        Assert.Contains("OperatorPolicyStepTests.Refuses_outside_the_catalogue", parked?.Reason);
+        Assert.DoesNotContain("GateInfra", parked?.Reason);
+        Assert.DoesNotContain(store.ListManifests(), manifest =>
+            store.LatestState(manifest.BatchId).Reason?.Contains("member re-queued", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
+    public async Task Solo_flight_without_a_parsed_report_stays_infrastructure_red()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-NO-REPORT", "docs/no-report.md");
+        SeedMember(factory, "DOC-NO-REPORT-PARTNER", "docs/no-report-partner.md");
+        _gate.Batch = request => TreeHas(request.ExpectedSha!, "docs/no-report-partner.md")
+            && TreeHas(request.ExpectedSha!, "docs/no-report.md")
+                ? Red(request.ExpectedSha)
+                : Red(request.ExpectedSha) with { ExitCode = null };
+        _gate.Base = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(store.ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == member.Key && finding.Status == "proven-red");
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.EndsWith("(InfrastructureRed); member re-queued",
+            store.LatestState(store.ListManifests()
+                .Single(manifest => manifest.ParentBatchId is null).BatchId).Reason);
+    }
+
+    private static BuildTestGateResult ReportRed(string? sha, int? exitCode)
+        => new(BuildTestGateVerdict.Fail, exitCode, 1, "Failed: 1",
+            "dotnet test backend.Tests exit 1; output: Total tests: 2 Passed: 1 Failed: 1", false, false)
+        {
+            TestedSha = sha,
+            FailureKind = BuildTestGateFailureKind.Code,
+            Processes =
+            [
+                new BuildTestGateProcessEvidence
+                {
+                    Command = "dotnet test backend.Tests",
+                    ExitCode = 1,
+                    TestReport = new GateTestReport(GateTestCounts.None,
+                        ["OperatorPolicyStepTests.Refuses_outside_the_catalogue"]),
+                },
+            ],
+        };
+
     private static BuildTestGateResult Cancelled()
         => new(BuildTestGateVerdict.Fail, null, 1, "", "Remote verification was cancelled.", false, false)
         {

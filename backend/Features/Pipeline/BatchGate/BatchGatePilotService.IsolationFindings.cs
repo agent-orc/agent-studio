@@ -171,7 +171,10 @@ public sealed partial class BatchGatePilotService
                 value.Contains("Failed", StringComparison.OrdinalIgnoreCase)
                 || value.Contains("Error", StringComparison.OrdinalIgnoreCase)).Take(12);
             var excerpt = failed is null ? string.Empty : string.Join("\n", failed);
-            return "Batch isolation proved this delivery red. " + gate?.Reason
+            var tests = gate is null ? [] : BatchGateProbeClassifier.FailedTests(gate);
+            return "Batch isolation proved this delivery red. "
+                + (tests.Count == 0 ? string.Empty : "Failing tests: " + string.Join(", ", tests) + ". ")
+                + gate?.Reason
                 + (excerpt.Length == 0 ? string.Empty : "\n" + excerpt[..Math.Min(excerpt.Length, 2000)])
                 + "\nEvidence: " + evidencePath;
         }

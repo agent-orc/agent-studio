@@ -2464,14 +2464,7 @@ public sealed partial class BatchGatePilotService
                     return new BatchGateProbeResult(BatchGateFailureClass.Superseded,
                         candidate.CandidateSha, probeRun.EvidencePath);
                 }
-                var testedCandidate = string.Equals(gate.TestedSha, candidate.CandidateSha,
-                    StringComparison.OrdinalIgnoreCase);
-                var classification = gate.Verdict == BuildTestGateVerdict.Ok && testedCandidate
-                    ? BatchGateFailureClass.Pass
-                    : gate.Verdict == BuildTestGateVerdict.Fail && testedCandidate
-                      && gate.ExitCode is not null && !gate.IsInfrastructureFailure
-                        ? BatchGateFailureClass.DeterministicSuiteRed
-                        : BatchGateFailureClass.InfrastructureRed;
+                var classification = BatchGateProbeClassifier.Classify(gate, candidate.CandidateSha);
                 var verdict = RecordVerdict(probeRun, gate,
                     classification == BatchGateFailureClass.Pass
                         ? "pass" : classification.ToString());

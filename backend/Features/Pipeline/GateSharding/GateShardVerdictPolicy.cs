@@ -123,7 +123,7 @@ public static class GateShardVerdictPolicy
             Output = string.Join('\n', ordered.Select(host =>
                 $"# ===== gate host {host.Host} (host part {host.Part}): {host.Result.Verdict} =====\n{host.Result.Output}")),
             Executor = "sharded:" + string.Join(",", ordered.Select(host => host.Result.Executor ?? host.Host)),
-            TestedSha = primary.Result.TestedSha,
+            TestedSha = AgreedTestedSha(ordered),
             TestSelection = primary.Result.TestSelection,
             TestSelectionAuditDigest = primary.Result.TestSelectionAuditDigest,
             Diagnosis = lead.Result.Diagnosis ?? primary.Result.Diagnosis,
@@ -142,6 +142,20 @@ public static class GateShardVerdictPolicy
     private static bool IsGreenVerdict(BuildTestGateVerdict verdict)
         => verdict is BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn
             or BuildTestGateVerdict.NotApplicable or BuildTestGateVerdict.Skipped;
+
+    /// <summary>
+    /// AGT-3759: the SHA every host that checked out the subject tested. A share
+    /// stopped before its checkout (e.g. cancelled because a sibling went red)
+    /// reports none and does not void the run's proof; hosts that disagree do.
+    /// </summary>
+    private static string? AgreedTestedSha(IEnumerable<GateShardHostResult> hosts)
+    {
+        var tested = hosts.Select(host => host.Result.TestedSha)
+            .Where(sha => !string.IsNullOrWhiteSpace(sha))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return tested.Length == 1 ? tested[0] : null;
+    }
 
     private static bool IsCodeRed(BuildTestGateResult result)
         => result.FailureKind == BuildTestGateFailureKind.Code

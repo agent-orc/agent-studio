@@ -125,6 +125,45 @@ public sealed class GateShardVerdictPolicyTests
     }
 
     [Fact]
+    public void A_red_share_keeps_its_tested_sha_when_the_primary_was_stopped_before_checkout()
+    {
+        // AGT-3759: the primary is cancelled because its sibling went red and
+        // reports no tested SHA; the red share's proof must survive the merge.
+        var stopped = new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 1, "",
+            "Remote verification was cancelled.", false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Cancellation,
+            ExpectedSha = Sha,
+        };
+        var merged = GateShardVerdictPolicy.MergeHosts(
+        [
+            new("kori-gate", new GateShardPart(0, 2), stopped),
+            new("agent-runner-01", new GateShardPart(1, 2), Red("agent-runner-01",
+                Suite("agent-runner-01", 2, Shard(1, GateShardOutcomes.Failed, BuildTestGateFailureKind.Code, "agent-runner-01")))),
+        ]);
+
+        Assert.Equal(BuildTestGateFailureKind.Code, merged.FailureKind);
+        Assert.Equal(Sha, merged.TestedSha);
+        Assert.Equal(BatchGateFailureClass.DeterministicSuiteRed, BatchGateProbeClassifier.Classify(merged, Sha));
+    }
+
+    [Fact]
+    public void Hosts_that_tested_different_shas_prove_no_tested_sha()
+    {
+        var other = "fedcba9876543210fedcba9876543210fedcba98";
+        var merged = GateShardVerdictPolicy.MergeHosts(
+        [
+            new("kori-gate", new GateShardPart(0, 2), Green("kori-gate",
+                Suite("kori-gate", 2, Shard(0, GateShardOutcomes.Passed))) with { TestedSha = other }),
+            new("agent-runner-01", new GateShardPart(1, 2), Red("agent-runner-01",
+                Suite("agent-runner-01", 2, Shard(1, GateShardOutcomes.Failed, BuildTestGateFailureKind.Code, "agent-runner-01")))),
+        ]);
+
+        Assert.Null(merged.TestedSha);
+        Assert.Equal(BatchGateFailureClass.InfrastructureRed, BatchGateProbeClassifier.Classify(merged, Sha));
+    }
+
+    [Fact]
     public void A_red_test_on_one_host_fails_the_run_as_code_and_names_the_host()
     {
         var merged = GateShardVerdictPolicy.MergeHosts(
