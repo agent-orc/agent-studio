@@ -481,6 +481,9 @@
 /api/workspaces	free	-	-	-
 /api/workspaces/{id}/personas/	free	-	-	-
 /api/workspaces/{id}/personas/budget	free	-	-	-
+/api/workspaces/{id}/personas/decks	free	-	-	-
+/api/workspaces/{id}/personas/decks/{deckId}	free	-	-	-
+/api/workspaces/{id}/personas/decks/{deckId}/export	free	-	-	-
 /api/workspaces/{id}/personas/items	free	-	-	-
 /api/workspaces/{id}/personas/manager-actions	free	-	-	-
 /api/workspaces/{id}/personas/reports	free	-	-	-
