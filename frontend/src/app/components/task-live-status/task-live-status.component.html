@@ -13,7 +13,7 @@
            aria-live="polite">
     <div class="task-live__current" data-testid="task-live-current">
       <span class="task-live__label">Current</span>
-      <span class="task-live__signal" aria-hidden="true"></span>
+      @if (live.loss || live.hold) { <span class="task-live__signal" aria-hidden="true"></span> }
       <span class="task-live__summary">
         @if (live.loss; as loss) {
           <span class="task-live__headline task-live__headline--wrap" data-testid="task-live-review-loss">
