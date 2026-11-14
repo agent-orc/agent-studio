@@ -804,6 +804,12 @@ only a tested fast-forward candidate; it does not synthesize a merge commit
 after the gate. A dirty or stale local checkout cannot hold the verified remote
 publication in `Publishing`; local sync is best effort. Ejected and unresolved
 members start per-card fallbacks after the project batch reservation is released.
+The periodic recovery pass also checks every unresolved pending generation.
+It restores a missing ownership marker or one that names a missing batch,
+reports an unowned generation past its maximum wait with reason and age, and
+resumes a paused batch's durable per-task fallback handoff after a restart.
+Red parents with unresolved members pause when isolation stops; a Green
+isolation child that lost a review generation retires before parent handoff.
 Publication recovery isolates errors by manifest so damaged evidence in one
 batch cannot stop formation or release for other batches. A deferred review
 whose outcome is `IntegrationBranchDefect` can release on the same verified

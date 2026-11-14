@@ -163,6 +163,8 @@ public sealed class BatchPhaseTransitionPolicyTests
         Assert.Equal(["a", "b"], gone.Select(item => item.TaskKey!).Order());
         Assert.All(gone, item => Assert.Equal(BatchInvariantRepair.AbandonBatch, item.Repair));
         Assert.Equal(BatchInvariantRepair.AbandonBatch, Assert.Single(taken).Repair);
+        Assert.Equal(BatchInvariantRepair.AbandonBatch, Assert.Single(BatchGateInvariantPolicy.Assess(Formed(
+            Member("only", BatchMemberOwnership.ThisBatch, pending: false)))).Repair);
         Assert.Empty(BatchGateInvariantPolicy.Assess(Formed(
             Member("a", BatchMemberOwnership.ThisBatch), Member("b", BatchMemberOwnership.ThisBatch))));
     }
@@ -186,15 +188,67 @@ public sealed class BatchPhaseTransitionPolicyTests
 
         var abandoned = Assert.Single(BatchGateInvariantPolicy.Assess(
             new BatchInvariantFacts("batch", BatchPhase.Abandoned, false, false, members)));
-        var red = Assert.Single(BatchGateInvariantPolicy.Assess(
-            new BatchInvariantFacts("batch", BatchPhase.Red, false, false, members)));
+        var red = BatchGateInvariantPolicy.Assess(
+            new BatchInvariantFacts("batch", BatchPhase.Red, false, false, members));
 
         Assert.Equal((BatchInvariantKind.TerminalBatchOwnsMember, "owned", BatchInvariantRepair.ReleaseMember),
             (abandoned.Kind, abandoned.TaskKey, abandoned.Repair));
-        Assert.Equal((BatchInvariantKind.TerminalBatchOwnsMember, "owned", BatchInvariantRepair.PauseBatch),
-            (red.Kind, red.TaskKey, red.Repair));
+        Assert.Equal(["owned", "requeued"], red.Select(item => item.TaskKey!).Order());
+        Assert.All(red, item => Assert.Equal((BatchInvariantKind.TerminalBatchOwnsMember,
+            BatchInvariantRepair.PauseBatch), (item.Kind, item.Repair)));
         Assert.Empty(BatchGateInvariantPolicy.Assess(
             new BatchInvariantFacts("child", BatchPhase.Red, true, false, members)));
+    }
+
+    [Fact]
+    public void Red_parent_with_a_queued_member_hands_it_to_the_paused_route()
+    {
+        var finding = Assert.Single(BatchGateInvariantPolicy.Assess(new BatchInvariantFacts(
+            "parent", BatchPhase.Red, false, false,
+            [Member("unresolved", BatchMemberOwnership.Queued)])));
+        Assert.Equal(BatchInvariantRepair.PauseBatch, finding.Repair);
+        Assert.Empty(BatchGateInvariantPolicy.Assess(new BatchInvariantFacts(
+            "parent", BatchPhase.Red, false, true,
+            [Member("unresolved", BatchMemberOwnership.Queued)])));
+        Assert.Equal(BatchInvariantRepair.PauseBatch, Assert.Single(BatchGateInvariantPolicy.Assess(
+            new BatchInvariantFacts("parent", BatchPhase.Red, false, false,
+                [Member("settled", BatchMemberOwnership.Queued, pending: false)]))).Repair);
+    }
+
+    [Fact]
+    public void Publishing_without_pending_members_exposes_the_missing_proof_source()
+    {
+        var finding = Assert.Single(BatchGateInvariantPolicy.Assess(new BatchInvariantFacts(
+            "batch", BatchPhase.Publishing, false, false,
+            [Member("settled", BatchMemberOwnership.ThisBatch, pending: false)])));
+        Assert.Equal(BatchInvariantKind.PublishingBatchWithoutPending, finding.Kind);
+        Assert.Equal(BatchInvariantRepair.None, finding.Repair);
+    }
+
+    [Fact]
+    public void Pending_recovery_selects_one_action_from_generation_and_journal_facts()
+    {
+        var waiting = new BatchPendingRecoveryFacts(true, true, false, true,
+            false, false, false, false, 0, 45_000);
+        Assert.Equal(BatchPendingRecoveryAction.WaitForPlanner,
+            BatchPendingRecoveryPolicy.Decide(waiting));
+        Assert.Equal(BatchPendingRecoveryAction.RetryPlanner,
+            BatchPendingRecoveryPolicy.Decide(waiting with { AgeMs = 45_000 }));
+        Assert.Equal(BatchPendingRecoveryAction.RestoreQueuedMarker,
+            BatchPendingRecoveryPolicy.Decide(waiting with { MarkerMissing = true }));
+        Assert.Equal(BatchPendingRecoveryAction.ReleaseMissingOwner,
+            BatchPendingRecoveryPolicy.Decide(waiting with { HasOwner = true }));
+        Assert.Equal(BatchPendingRecoveryAction.WaitForBatch,
+            BatchPendingRecoveryPolicy.Decide(waiting with { HasOwner = true, OwnerManifestExists = true }));
+        Assert.Equal(BatchPendingRecoveryAction.ResumeFallback,
+            BatchPendingRecoveryPolicy.Decide(waiting with { HasFallbackCause = true }));
+        Assert.Equal(BatchPendingRecoveryAction.None,
+            BatchPendingRecoveryPolicy.Decide(waiting with { HasFallbackCause = true,
+                FallbackActive = true }));
+        Assert.Equal(BatchPendingRecoveryAction.None,
+            BatchPendingRecoveryPolicy.Decide(waiting with { MarkerMatchesAttempt = false }));
+        Assert.Equal(BatchPendingRecoveryAction.None,
+            BatchPendingRecoveryPolicy.Decide(waiting with { CurrentGeneration = false }));
     }
 
     [Fact]

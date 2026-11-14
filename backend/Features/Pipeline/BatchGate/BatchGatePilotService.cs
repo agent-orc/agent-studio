@@ -556,6 +556,7 @@ public sealed partial class BatchGatePilotService
             }
             RecoverInterrupted();
             RepairBatchInvariants();
+            RepairOrphanedPending();
             foreach (var project in _store.ListPending().Select(item => item.Subject.Project)
                          .Distinct(StringComparer.Ordinal))
                 await HandOffProvenRedsAsync(project, ct).ConfigureAwait(false);
@@ -606,6 +607,7 @@ public sealed partial class BatchGatePilotService
                 }
             }
             RestoreQueueWaiters();
+            RecoverFallbackHandoffs(ct, fetchedBases);
             // A persisted active per-task marker with no flight in this process
             // is a gate the process lost: it stopped or the gate threw. Resume
             // it on the same immutable subject; exclusion alone would keep the
@@ -1266,6 +1268,7 @@ public sealed partial class BatchGatePilotService
                              member.TaskKey == item.Subject.TaskKey && member.RunAttempt == item.Subject.RunAttempt)
                              && BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId is null).ToArray())
                 {
+                    PersistFallbackHandoff(item, cause);
                     var containedInSha = PublishedIn(Refresh(item), fetchedBases, ct,
                         gateInterrupted: !FallbackInFlight(item.ReviewAttemptId));
                     var handoff = ScheduleFallback(item, ct, cause, containedInSha: containedInSha);
@@ -1369,11 +1372,28 @@ public sealed partial class BatchGatePilotService
                 {
                     _logger.LogWarning("batch-gate-paused batch={BatchId} reason={Reason}",
                         manifest.BatchId, paused.Reason);
-                    released = ReturnToPending(manifest);
-                    State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
-                        "paused-to-per-task-gate: " + paused.Reason);
+                    var returned = ReturnToPending(manifest);
+                    // A crash during isolation can leave a member on its
+                    // queued marker already. It still needs the same durable
+                    // fallback handoff as a member just released here.
+                    var protectedChildren = _store.ListManifests()
+                        .Where(child => child.ParentBatchId == manifest.BatchId
+                            && _store.LatestState(child.BatchId).Phase is
+                                (BatchPhase.Green or BatchPhase.Publishing or BatchPhase.Published))
+                        .SelectMany(child => child.Members.Select(member =>
+                            (member.TaskKey, member.RunAttempt))).ToHashSet();
+                    released = returned.Concat(_store.ListPending().Where(item =>
+                            manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey
+                                && member.RunAttempt == item.Subject.RunAttempt)
+                            && !protectedChildren.Contains((item.Subject.TaskKey, item.Subject.RunAttempt))
+                            && BatchGateOwnershipStore.Read(MemberFolder(item)) is
+                                { BatchId: null, FallbackGateActive: false }))
+                        .DistinctBy(item => item.ReviewAttemptId).ToArray();
                     pauseCause = new PerTaskFallbackCause(PerTaskFallbackRules.BatchPaused,
                         $"batch {manifest.BatchId} paused: {paused.Reason}", manifest.BatchId);
+                    foreach (var item in released) PersistFallbackHandoff(item, pauseCause);
+                    State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
+                        "paused-to-per-task-gate: " + paused.Reason);
                 }
             }
             finally { _leases.Release(lease); }
@@ -3480,18 +3500,7 @@ public sealed partial class BatchGatePilotService
         var task = _scanner.FindJob(subject.TaskKey, pending.WatchPath);
         var settings = _settings.Get(subject.Project);
         var ownership = task is null ? null : BatchGateOwnershipStore.Read(task.FolderPath);
-        var current = task is { State: TaskStates.AutoReview, PendingIntent: null }
-            && projection.CurrentRunAttempt?.AttemptId == subject.RunAttempt
-            && projection.CurrentReviewAttempt?.AttemptId == pending.ReviewAttemptId
-            && (projection.CurrentReviewAttempt.Outcome is ReviewTerminalOutcome.Pass
-                or ReviewTerminalOutcome.IntegrationBranchDefect)
-            && string.Equals(projection.CurrentReviewAttempt.TestedResultSha,
-                subject.ResultSha, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(projection.CurrentRunAttempt.ResultEnvelope?.ResultSha,
-                subject.ResultSha, StringComparison.OrdinalIgnoreCase)
-            && projection.CurrentRunAttempt.ResultEnvelope?.ImmutableRemoteRef == subject.ResultRef
-            && projection.CurrentRunAttempt.LastFence == subject.FencingToken
-            && projection.CurrentRunAttempt.AuthorityEpoch == subject.DeliveryEpoch;
+        var current = CurrentGeneration(pending, task, projection);
         return pending with
         {
             Subject = subject with
@@ -3512,6 +3521,24 @@ public sealed partial class BatchGatePilotService
                     ?? subject.ResultSha,
             },
         };
+    }
+
+    private static bool CurrentGeneration(BatchGatePendingRecord pending, TaskInfo? task,
+        AttemptAuthorityProjection projection)
+    {
+        var subject = pending.Subject;
+        return task is { State: TaskStates.AutoReview, PendingIntent: null }
+            && projection.CurrentRunAttempt?.AttemptId == subject.RunAttempt
+            && projection.CurrentReviewAttempt?.AttemptId == pending.ReviewAttemptId
+            && (projection.CurrentReviewAttempt.Outcome is ReviewTerminalOutcome.Pass
+                or ReviewTerminalOutcome.IntegrationBranchDefect)
+            && string.Equals(projection.CurrentReviewAttempt.TestedResultSha,
+                subject.ResultSha, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(projection.CurrentRunAttempt.ResultEnvelope?.ResultSha,
+                subject.ResultSha, StringComparison.OrdinalIgnoreCase)
+            && projection.CurrentRunAttempt.ResultEnvelope?.ImmutableRemoteRef == subject.ResultRef
+            && projection.CurrentRunAttempt.LastFence == subject.FencingToken
+            && projection.CurrentRunAttempt.AuthorityEpoch == subject.DeliveryEpoch;
     }
 
     private void ResolveSuperseded(BatchGatePendingRecord pending, string reason)
