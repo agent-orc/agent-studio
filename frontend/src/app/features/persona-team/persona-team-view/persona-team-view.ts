@@ -10,7 +10,7 @@ import { getPasskey } from '../../../services/webauthn';
 import type { RegistryWorkspaceListItem } from '../../../models/task.model';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import { OrchestratorPanelStateService } from '../../orchestrator/state/orchestrator-panel-state.service';
-import { PersonaAttributes, PersonaBudget, PersonaEntry, PersonaItem, PersonaReport, PersonaSheet, isOpenPersonaItem, personaCards, poolTotals } from './persona-team.model';
+import { PersonaAttributes, PersonaBudget, PersonaEntry, PersonaItem, PersonaReport, PersonaReportRating, PersonaSheet, isOpenPersonaItem, personaCards, poolTotals } from './persona-team.model';
 import { WeeklyIssueViewComponent } from '../weekly-issue-view/weekly-issue-view';
 
 @Component({ selector: 'app-persona-team-view', standalone: true,
@@ -32,6 +32,7 @@ export class PersonaTeamViewComponent {
   readonly entries = signal<PersonaEntry[]>([]);
   readonly items = signal<PersonaItem[]>([]);
   readonly reports = signal<PersonaReport[]>([]);
+  readonly reportRatings = signal<PersonaReportRating[]>([]);
   readonly budget = signal<PersonaBudget | null>(null);
   readonly sheet = signal<PersonaSheet | null>(null);
   readonly editedAttributes = signal<PersonaAttributes | null>(null);
@@ -85,13 +86,29 @@ export class PersonaTeamViewComponent {
       next: data => { this.entries.set(data.list.personas); this.budget.set(data.budget);
         const current = data.list.personas.find(entry => entry.id === this.personaId());
         this.editedAttributes.set(current?.activation ? structuredClone(current.activation.attributes) : null);
-        this.items.set(data.items); this.reports.set(data.reports); this.loading.set(false); },
+        this.items.set(data.items); this.reports.set(data.reports); this.loading.set(false);
+        this.http.get<PersonaReportRating[]>(`${root}/reports/ratings`).subscribe({
+          next: rows => this.reportRatings.set(rows), error: () => this.reportRatings.set([]),
+        }); },
       error: () => { this.error.set('Team data could not be loaded.'); this.loading.set(false); },
     });
   }
   loadSheet(workspace: string, persona: string): void {
     this.http.get<PersonaSheet>(`/api/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/sheet`)
       .subscribe({ next: sheet => this.sheet.set(sheet), error: () => this.sheet.set(null) });
+  }
+  ratingFor(reportId: string): string | null {
+    return this.reportRatings().find(row => row.reportId === reportId)?.rating ?? null;
+  }
+  async rateReport(report: PersonaReport, rating: 'useful' | 'not-useful'): Promise<void> {
+    this.busy.set(report.id); this.error.set('');
+    try {
+      const row = await firstValueFrom(this.http.post<PersonaReportRating>(
+        `/api/workspaces/${encodeURIComponent(this.workspaceId())}/personas/reports/${encodeURIComponent(report.id)}/rating`, { rating }));
+      this.reportRatings.update(rows => rows.some(existing => existing.reportId === row.reportId) ? rows : [...rows, row]);
+      if (this.personaId()) this.loadSheet(this.workspaceId(), this.personaId()!);
+    } catch { this.error.set('Report rating could not be saved.'); }
+    finally { this.busy.set(''); }
   }
   editAttribute<K extends keyof PersonaAttributes>(key: K, value: PersonaAttributes[K]): void {
     const current = this.editedAttributes(); if (current) this.editedAttributes.set({ ...current, [key]: value });
@@ -158,6 +175,7 @@ export class PersonaTeamViewComponent {
   stopAll(): void {
     const before = this.entries();
     this.entries.set(before.map(entry => entry.activation && entry.activation.state !== 'inactive'
+      && entry.activation.state !== 'retired'
       ? { ...entry, activation: { ...entry.activation, state: 'inactive' } } : entry));
     void this.action('stop-all', 'Stop all personas', () => this.entries.set(before));
   }

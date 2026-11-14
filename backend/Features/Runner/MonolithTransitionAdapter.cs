@@ -249,6 +249,33 @@ public static class MonolithTransitionAdapter
     public static string BatchFlightLeaseDeadlineReason(int deadlineMinutes)
         => BatchGateStartPolicy.LeaseDeadlineReason(deadlineMinutes);
 
+    // AGT-3569: the durable flight claim of a batch scope.
+    public static BatchFlightClaimDecision BatchFlightClaim(BatchFlightClaimFacts? current)
+        => BatchFlightClaimPolicy.Decide(current);
+
+    public static BatchFlightClaimExpiry? BatchFlightClaimExpiryOf(BatchFlightClaimFacts claim)
+        => BatchFlightClaimPolicy.Expiry(claim);
+
+    public static bool BatchFlightClaimLive(BatchFlightClaimFacts claim) => BatchFlightClaimPolicy.IsLive(claim);
+
+    public static bool BatchFlightClaimRenews(BatchFlightClaimFacts claim) => BatchFlightClaimPolicy.Renews(claim);
+
+    public static BatchFlightExpiryOutcome BatchFlightOutcomeOnExpiry(BatchFlightStage stage,
+        BatchFlightClaimExpiry expiry, int priorExpiries)
+        => BatchFlightClaimPolicy.Outcome(stage, expiry, priorExpiries);
+
+    public static DateTimeOffset BatchFlightStageDeadline(BatchFlightStage stage, DateTimeOffset nowUtc,
+        int reservationDeadlineMinutes, int gateTimeoutMinutes)
+        => BatchFlightClaimPolicy.StageDeadline(stage, nowUtc, reservationDeadlineMinutes, gateTimeoutMinutes);
+
+    public static int BatchFlightStageDeadlineMinutes(BatchFlightStage stage, int reservationDeadlineMinutes,
+        int gateTimeoutMinutes)
+        => BatchFlightClaimPolicy.DeadlineMinutes(stage, reservationDeadlineMinutes, gateTimeoutMinutes);
+
+    public static string BatchFlightExpiryReason(BatchFlightStage stage, BatchFlightClaimExpiry expiry,
+        BatchFlightExpiryOutcome outcome, int deadlineMinutes)
+        => BatchFlightClaimPolicy.ExpiryReason(stage, expiry, outcome, deadlineMinutes);
+
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
 
     /// <summary>AGT-3400 S4: shadow review package formation; no lane, verdict or settlement effect.</summary>

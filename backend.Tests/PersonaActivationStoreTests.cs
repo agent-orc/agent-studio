@@ -138,6 +138,24 @@ public sealed class PersonaActivationStoreTests : IDisposable
     }
 
     [Fact]
+    public void Retire_revokes_principal_and_keeps_the_archive_readable()
+    {
+        var store = Store();
+        store.Activate(Workspace, Warden, new PersonaActivateRequest(), SteppedUpOwner());
+        Assert.True(_security.HasLivePersonaGrant(Workspace, Warden));
+
+        var retired = store.Retire(Workspace, Warden, new PersonaChangeRequest("Charter closed"), Owner());
+
+        Assert.Equal(PersonaStates.Retired, retired.State);
+        Assert.Equal(PersonaStates.Retired, Entry(store, Warden).Activation!.State);
+        Assert.False(_security.HasLivePersonaGrant(Workspace, Warden));
+        Assert.Equal("persona-not-active", Refused(() =>
+            store.Activate(Workspace, Warden, new PersonaActivateRequest(), SteppedUpOwner())).Code);
+        Assert.Equal("persona-not-active", Refused(() =>
+            store.Resume(Workspace, Warden, new PersonaChangeRequest(), Owner())).Code);
+    }
+
+    [Fact]
     public void A_fork_is_independent_of_later_catalogue_revisions_until_the_owner_adopts_one()
     {
         var store = Store();

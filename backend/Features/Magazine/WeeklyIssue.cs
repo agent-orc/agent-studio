@@ -15,6 +15,8 @@ public sealed record IssueTrendWeek(DateOnly Week, int Raised, int Accepted, lon
     int CardsDelivered, double? CostPerAcceptedFinding, double? BudgetUsePercent);
 public sealed record IssueArticle(string Scope, string Slug, int Revision, string Title,
     string Summary, string Persona, string? PersonaId, string Role);
+public sealed record IssueMonthlyReview(string PersonaId, string Persona, string RoleId,
+    PersonaValueV1 Value);
 public sealed record WeeklyIssue(
     string Id, string WorkspaceId, string Kind, DateTime PublishedAtUtc, DateOnly PeriodStart,
     DateOnly PeriodEnd, string Masthead, string CoverageLine, int StrapTotal,
@@ -26,6 +28,8 @@ public sealed record WeeklyIssue(
     public IReadOnlyList<IssueArticle> Articles { get; init; } = [];
     public long EditorTokens { get; init; }
     public long? PoolTokensSnapshot { get; init; }
+    public string? ReviewMonth { get; init; }
+    public IReadOnlyList<IssueMonthlyReview> MonthlyReview { get; init; } = [];
 }
 
 /// <summary>Pure, stable layout from a snapshot of items, reports and warden facts.</summary>

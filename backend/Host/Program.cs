@@ -147,6 +147,7 @@ builder.Services.AddSingleton<AgentStudio.Personas.PersonaItemStore>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaManagerService>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaProposalLifecycle>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaReportStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaReportRatingStore>();
 builder.Services.AddSingleton<AgentStudio.Personas.OpsPostureSnapshotStore>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaOccurrenceService>();
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaSweepCoordinator>();

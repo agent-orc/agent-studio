@@ -68,7 +68,29 @@ public static class WeeklyIssueHtml
                     .Append("</td><td>").Append(week.CardsDelivered).Append("</td><td>")
                     .Append(week.CostPerAcceptedFinding?.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) ?? "n/a")
                     .Append("</td></tr>");
-            html.Append("</tbody></table></section><section><h2>Corrections</h2>");
+            html.Append("</tbody></table></section>");
+            if (issue.ReviewMonth is not null)
+            {
+                html.Append("<section><h2>Monthly team review · ").Append(H(issue.ReviewMonth)).Append("</h2><table><thead><tr><th>Persona and role</th><th>Weighted value per 100k tokens</th><th>Cost per accepted finding</th><th>Noise</th><th>Misses</th><th>Owner ratings</th><th>Suggestions</th></tr></thead><tbody>");
+                foreach (var row in issue.MonthlyReview)
+                {
+                    var value = row.Value;
+                    html.Append("<tr><td>").Append(H(row.Persona)).Append(" · ").Append(H(row.RoleId))
+                        .Append("</td><td>").Append(value.WeightedAcceptedPer100kTokens?.ToString("0.##") ?? "n/a")
+                        .Append("</td><td>").Append(value.CostPerAcceptedUsd?.ToString("0.######") ?? "n/a")
+                        .Append("</td><td>").Append(value.NoisePercent?.ToString("0.#") ?? "n/a")
+                        .Append("%</td><td>").Append(value.Misses.Count);
+                    foreach (var miss in value.Misses)
+                        html.Append("<br><a href=\"").Append(H(miss.Url)).Append("\">")
+                            .Append(H(miss.Name)).Append("</a>");
+                    html.Append("</td><td>")
+                        .Append(value.Useful).Append(" useful · ").Append(value.NotUseful).Append(" not useful</td><td>")
+                        .Append(H(string.Join("; ", value.Suggestions.Select(s => s.Reason))))
+                        .Append("</td></tr>");
+                }
+                html.Append("</tbody></table><p>Suggestions require an Owner decision.</p></section>");
+            }
+            html.Append("<section><h2>Corrections</h2>");
             foreach (var correction in issue.Corrections) { html.Append("<article>"); Story(html, correction, false); html.Append("</article>"); }
             html.Append("</section><section><h2>Colophon</h2><ul>");
             foreach (var entry in issue.Colophon) html.Append("<li>").Append(H(entry)).Append("</li>");

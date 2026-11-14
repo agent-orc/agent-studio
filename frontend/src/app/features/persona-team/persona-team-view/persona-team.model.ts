@@ -16,7 +16,14 @@ export interface PersonaStatsWindow { window: string; activationRevision: number
   medianResponseHours: number | null; p90ResponseHours: number | null; punctuality: PersonaRate;
   calibration: number | null; misses: number; tooFewDecisions: boolean }
 export interface PersonaSheet { experience: number; rank: string; eligibility: string;
-  windows: PersonaStatsWindow[]; revisions: PersonaStatsWindow[] }
+  windows: PersonaStatsWindow[]; revisions: PersonaStatsWindow[]; value: PersonaValue | null }
+export interface PersonaValue { weightedAcceptedPer100kTokens: number | null; costPerAcceptedUsd: number | null;
+  teamMedianWeightedPer100kTokens: number | null; teamMedianCostPerAcceptedUsd: number | null;
+  noisePercent: number | null; noiseNumerator: number; raised: number; useful: number; notUseful: number;
+  misses: { name: string; source: string; sourceId: string; url: string; importance: number }[];
+  outcomes: { itemId: string; taskKey: string; title: string; outcome: string; url: string }[];
+  suggestions: { kind: string; reason: string }[]; showRevisionComparison: boolean }
+export interface PersonaReportRating { reportId: string; rating: 'useful' | 'not-useful' }
 export interface PersonaItem { id: string; personaId: string; roleId: string; kind: string; title: string;
   body: string; importance: number; state: string; createdAtUtc: string; deadlineUtc?: string | null;
   impact: number; urgency: number; confidence: number; floor: number; draftCard?: boolean;
@@ -43,7 +50,7 @@ export function personaCards(entries: PersonaEntry[], budget: PersonaBudget | nu
     const allowance = budget?.personas[entry.id]?.allowanceTokens ?? active.allowance.tokensPerWeek;
     const used = budget?.personas[entry.id]?.usedTokens ?? 0;
     const period = Number(entry.descriptor.cadence.report.match(/^P(\d+)D$/)?.[1] ?? 7);
-    const overdue = active.state !== 'inactive' && active.state !== 'paused'
+    const overdue = active.state !== 'inactive' && active.state !== 'paused' && active.state !== 'retired'
       && (!report || now.getTime() - Date.parse(report.publishedAtUtc) > period * 86_400_000);
     return { entry, report, highest, allowance, used, overdue };
   });

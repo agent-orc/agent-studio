@@ -280,13 +280,19 @@ public sealed partial class BatchGatePilotService
     private bool BatchLive(BatchGateManifest manifest, bool leaseIsLiveness)
     {
         lock (_runningStacks)
-        lock (_runningBatches)
+        lock (_flights)
         {
             if (_startedBatchIds.Contains(manifest.BatchId)
                 || manifest.ParentBatchId is { } parent && _startedBatchIds.Contains(parent)
                 || _assemblingBatchIds.Contains(manifest.BatchId))
                 return true;
         }
+        // AGT-3569: a flight claim waiting for the reservation holds no lease
+        // yet; past that step its coordinator lease shows the flight is live.
+        if (_store.LiveFlightClaim(manifest.Scope.Project, _time.GetUtcNow()) is
+                { Stage: AgentStudio.OrchestrationDecisions.BatchFlightStage.Reserving } claim
+            && claim.BatchId == manifest.BatchId)
+            return true;
         return leaseIsLiveness && _leases.IsBusy(LeaseScope(manifest));
     }
 }

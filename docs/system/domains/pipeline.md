@@ -60,7 +60,9 @@ The batch panel lists pending cards that have not joined a formed or running
 batch. A run without a finish event counts as running only while its batch is
 in the running phase; after interruption, the panel uses `phaseAtUtc` to show
 the elapsed run time. Detached flights include their batch, detach time, and
-lease deadline in the state response and panel.
+lease deadline in the state response and panel. The project's durable flight
+claim (AGT-3569: owner, fence, step, step deadline, heartbeat and how it ended)
+is the state's `flightClaim`; the pilot holds no authoritative task map.
 
 The batch panel eject request stores its operator and reason. State reads expose
 `ejectRequests` with `pending` until the member leaves batch ownership and

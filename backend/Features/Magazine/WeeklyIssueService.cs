@@ -3,6 +3,9 @@ using AgentStudio.Cli;
 using AgentStudio.Personas;
 using AgentStudio.Quota;
 using AgentStudio.Registry;
+using AgentStudio.Tasks;
+using AgentStudio.Shared;
+using AgentStudio.Tokens;
 
 namespace AgentStudio.Magazine;
 
@@ -124,8 +127,12 @@ public sealed class WeeklyIssueService(
     PersonaActivationStore activations, PersonaSchedulingService scheduling,
     WorkspaceQuotaService quota, OpsPostureSnapshotStore watch,
     WorkspaceSettingsService settings, WorkspaceRegistry workspaces,
-    MagazineStore magazine, WeeklyIssueEditor editor, ILogger<WeeklyIssueService> logger)
+    MagazineStore magazine, WeeklyIssueEditor editor, PersonaReportRatingStore ratings,
+    TaskScannerService scanner, ITokenPricing pricing, ILogger<WeeklyIssueService> logger)
 {
+    public static DateOnly PreviousCalendarMonth(DateOnly issueDate)
+        => new DateOnly(issueDate.Year, issueDate.Month, 1).AddMonths(-1);
+
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _composeLocks = new();
     public WeeklyIssue? Latest(string workspaceId) => store.List(workspaceId).FirstOrDefault();
     public IReadOnlyList<WeeklyIssue> List(string workspaceId) => store.List(workspaceId);
@@ -156,6 +163,24 @@ public sealed class WeeklyIssueService(
         var issue = WeeklyIssueComposer.Compose(workspaceId, date, daily, sourceItems, reports.List(workspaceId),
             entries, watch.Get(workspaceId), zone, scheduling.Receipts(workspaceId), budget.PoolTokens)
             with { PoolTokensSnapshot = budget.PoolTokens };
+        if (!daily && date.Day <= 7)
+        {
+            var reviewMonth = PreviousCalendarMonth(date);
+            var receipts = scheduling.Receipts(workspaceId);
+            var cards = scanner.GetResidentIdentityFacts();
+            var recorded = ratings.List(workspaceId);
+            var monthStart = TimeZoneInfo.ConvertTimeToUtc(
+                reviewMonth.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified), zone);
+            var monthEnd = TimeZoneInfo.ConvertTimeToUtc(
+                reviewMonth.AddMonths(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified), zone);
+            issue = issue with { ReviewMonth = reviewMonth.ToString("yyyy-MM"),
+                MonthlyReview = active.OrderBy(a => a.RoleId ?? a.Descriptor.Id, StringComparer.Ordinal)
+                    .ThenBy(a => a.PersonaId, StringComparer.Ordinal)
+                    .Select(a => new IssueMonthlyReview(a.PersonaId,
+                        entries.First(e => e.Id == a.PersonaId).Name, a.RoleId ?? a.Descriptor.Id,
+                        PersonaValueProjection.Build(workspaceId, a, active, sourceItems, receipts,
+                            recorded, cards, issue.PublishedAtUtc, monthStart, monthEnd, pricing))).ToArray() };
+        }
         if (!daily)
             issue = issue with { Articles = magazine.List(new MagazineScope(MagazineScopeKind.Workspace, workspaceId))
                 .Where(article => article.UpdatedAt <= issue.PublishedAtUtc)
