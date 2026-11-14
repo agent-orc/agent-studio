@@ -10,6 +10,9 @@ export FAKE_BAD_PLAN=0
 export FAKE_BUSY_REVIEW=0
 export FAKE_RUNNING_GATE=0
 export FAKE_LEGACY_SNAPSHOT=0
+# AGT-3647: how many host_status reads still report a running review.
+export FAKE_REVIEW_RUNNING_READS=0
+export FAKE_STATUS_COUNT="$scratch/status-count"
 commit="$(printf 'a%.0s' {1..40})"
 
 cat >"$scratch/fake-host.sh" <<'FAKE'
@@ -59,6 +62,16 @@ case "$action" in
   gate_verify|review_copy) printf '{"sha256":"%s"}\n' "$digest" ;;
   server_switch) [[ "$3" == "/gate/releases/$1/OrchestratorApi.dll" ]]; printf '{"switched":true}\n' ;;
   drain) printf '{"drained":true}\n' ;;
+  host_drain) printf '{"ok":true,"clientId":"%s","draining":true}\n' "$3" ;;
+  host_resume) printf '{"ok":true,"clientId":"%s","admitting":true}\n' "$3" ;;
+  host_status)
+    reads="$(cat "$FAKE_STATUS_COUNT" 2>/dev/null || printf 0)"
+    printf '%s' "$((reads + 1))" >"$FAKE_STATUS_COUNT"
+    if [[ "$3" == *review* && ( "$FAKE_REVIEW_RUNNING_READS" == always || "$reads" -lt "$FAKE_REVIEW_RUNNING_READS" ) ]]; then
+      printf '{"ok":true,"clientId":"%s","draining":true,"drained":false,"running":[{"kind":"review","attemptId":"review-1","taskKey":"DEMO-1"}]}\n' "$3"
+    else
+      printf '{"ok":true,"clientId":"%s","draining":true,"drained":true,"running":[]}\n' "$3"
+    fi ;;
   resume) printf '{"admitting":true}\n' ;;
   server_health|engine_health|coding_health) printf '{"healthy":true,"commit":"%s"}\n' "$1" ;;
   model_probe) printf '{"accepted":true}\n' ;;
@@ -95,9 +108,13 @@ for action in ('preflight', 'work_state', 'plan', 'drain', 'gate_publish', 'gate
     commands[action] = cmd(action, '{commit}', '{host}' if action not in ('preflight', 'work_state', 'plan') else '{commit}')
 commands['server_switch'].append('{gate_worker_path}')
 commands['review_build'].append('{built_at}')
-manifest = {'schema': 1, 'hosts': [
-    {'id': role, 'role': role, 'target': role} for role in ('server', 'gate', 'engine', 'coding', 'review')],
-    'commands': commands}
+for action in ('host_drain', 'host_status', 'host_resume'):
+    commands[action] = cmd(action, '{commit}', '{host}', '{client_id}')
+hosts = [{'id': role, 'role': role, 'target': role} for role in ('server', 'gate', 'engine', 'coding', 'review')]
+hosts[3]['drainClients'] = ['agent-runner-01']
+hosts[4]['drainClients'] = ['agent-runner-01-review', 'kori-review-2']
+manifest = {'schema': 1, 'hosts': hosts, 'commands': commands,
+            'quietPoint': {'deadlineSeconds': 2, 'pollSeconds': 0.1}}
 with open(os.environ['MANIFEST'], 'w') as file: json.dump(manifest, file)
 PY
 
@@ -113,7 +130,10 @@ if bash "$root/deploy.sh" deploy "$commit" --manifest "$MANIFEST" --journal "$sc
   exit 1
 fi
 grep -q 'pending-push' "$scratch/blocked.err"
+grep -q 'no quiet point before the deadline' "$scratch/blocked.err"
 ! grep -q '^server_switch$' "$FAKE_LOG"
+# An aborted deploy gives every drained host back.
+[[ "$(grep -c '^host_resume$' "$FAKE_LOG")" == 3 ]]
 
 export FAKE_BLOCKED=0
 : >"$FAKE_LOG"
@@ -147,7 +167,21 @@ grep -q 'expected idle=True' "$scratch/busy-review.err"
 
 export FAKE_BUSY_REVIEW=0
 : >"$FAKE_LOG"
+export FAKE_REVIEW_RUNNING_READS=always
+if bash "$root/deploy.sh" deploy "$commit" --manifest "$MANIFEST" --journal "$scratch/running-review.json" >"$scratch/running-review.out" 2>"$scratch/running-review.err"; then
+  echo 'running review unexpectedly passed' >&2
+  exit 1
+fi
+grep -q 'review-running review/DEMO-1' "$scratch/running-review.err"
+! grep -q '^plan$' "$FAKE_LOG"
+[[ "$(grep -c '^host_resume$' "$FAKE_LOG")" == 3 ]]
+
+: >"$FAKE_LOG"
+rm -f "$FAKE_STATUS_COUNT"
+# The running review ends while the deploy waits; the deploy then proceeds.
+export FAKE_REVIEW_RUNNING_READS=4
 bash "$root/deploy.sh" deploy "$commit" --manifest "$MANIFEST" --journal "$scratch/deploy.json" >"$scratch/deploy.out"
+export FAKE_REVIEW_RUNNING_READS=0
 python3 - "$scratch/deploy.json" <<'PY'
 import json, sys
 record = json.load(open(sys.argv[1]))
@@ -158,6 +192,15 @@ names = [step['step'] for step in record['steps']]
 assert names.index('server_switch') < names.index('coding_install:coding') < names.index('review_recreate:review')
 assert names.index('server_health') < names.index('engine_switch') < names.index('coding_install:coding')
 assert names.index('review_idle:review') < names.index('review_recreate:review')
+# AGT-3647: drain first, wait for the quiet point, switch the server, then
+# update and resume each host on its own.
+assert names.index('host_drain:coding:agent-runner-01') < names.index('host_drain:review:kori-review-2') \
+    < names.index('quiet_point') < names.index('plan') < names.index('server_switch')
+assert names.index('model_probe:coding') < names.index('host_resume:coding:agent-runner-01') \
+    < names.index('review_copy:review')
+assert names.index('review_verify:review') < names.index('host_resume:review:agent-runner-01-review') \
+    < names.index('host_resume:review:kori-review-2') < names.index('resume')
+assert record['quietPoint']['polls'] >= 2 and record['quietPoint']['blockers'] == []
 PY
 
 bash "$root/deploy.sh" rollback "$commit" --manifest "$MANIFEST" --journal "$scratch/deploy.json" --dry-run >"$scratch/rollback-plan.txt"
@@ -182,6 +225,9 @@ record = json.load(open(sys.argv[1]))
 assert record['status'] == 'rolled-back'
 assert [step['step'] for step in record['steps'] if step['step'].startswith('rollback:')] == [
     'rollback:review', 'rollback:coding', 'rollback:engine', 'rollback:server', 'rollback:gate']
+assert [step['step'] for step in record['steps'] if step['step'].startswith('rollback_host_resume:')] == [
+    'rollback_host_resume:coding:agent-runner-01', 'rollback_host_resume:review:agent-runner-01-review',
+    'rollback_host_resume:review:kori-review-2']
 PY
 export FAKE_LEGACY_SNAPSHOT=1
 [[ ! -e "$scratch/legacy.json" ]]

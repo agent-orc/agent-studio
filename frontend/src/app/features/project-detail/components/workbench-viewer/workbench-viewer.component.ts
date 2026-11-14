@@ -42,6 +42,7 @@ import { PublicDemoModeService } from '../../../../services/public-demo-mode.ser
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
 import { DossierCardListComponent } from '../dossier-card-list/dossier-card-list.component';
+import { ThemeService } from '../../../studio-shell/services/theme.service';
 
 /**
  * Trusted host chrome around repository-authored HTML. The artifact receives an
@@ -82,6 +83,7 @@ export class WorkbenchViewerComponent {
   private readonly hub = inject(JobsHubClient);
   private readonly decisionDrafts = inject(WorkbenchDecisionDraftStore);
   private readonly publicDemo = inject(PublicDemoModeService);
+  readonly theme = inject(ThemeService).theme;
   private readonly confirmDialog = inject(ConfirmDialogService);
   private readonly frame = viewChild<ElementRef<HTMLIFrameElement>>('workbenchFrame');
   private readonly inlineActionHost = viewChild<ElementRef<HTMLElement>>('inlineActionHost');
@@ -107,6 +109,7 @@ export class WorkbenchViewerComponent {
     return buildIsolatedHtmlSrcdoc(document?.html ?? '', {
       workbenchDecisions: true,
       documentPattern: document?.workbench.pattern === 'ui' ? 'ui' : 'concept',
+      colorScheme: this.theme(),
       resolveAssetSrc: docRelPath
         ? (src) => resolveWikiImageSrc(src, docRelPath, (rel) => this.docs.wikiAssetUrl(project, rel))
         : undefined,
@@ -119,9 +122,13 @@ export class WorkbenchViewerComponent {
   constructor() {
     effect(() => {
       const frame = this.frame();
+      const theme = this.theme();
       // This is the single audited HTML sink. The fixed wrapper is assigned as
       // a native string so Angular cannot remove the artifact's inline scripts.
-      if (frame) frame.nativeElement.srcdoc = this.srcdoc();
+      if (frame) {
+        frame.nativeElement.style.colorScheme = theme;
+        frame.nativeElement.srcdoc = this.srcdoc();
+      }
     });
     effect(() => {
       const project = this.projectName();
@@ -163,7 +170,8 @@ export class WorkbenchViewerComponent {
       return;
     }
     if (message?.type === WORKBENCH_DECISION_CHANGE_MESSAGE) {
-      if (this.document()?.workbench.decision?.state === 'succeeded') return;
+      if (this.document()?.workbench.decision?.state === 'succeeded'
+        || this.document()?.workbench.status === 'decided') return;
       const normalized = normalizeWorkbenchDecisionResponses(
         message.responses,
         this.decisionMarkup().points,
@@ -231,7 +239,8 @@ export class WorkbenchViewerComponent {
     if (!document) return;
     this.decisionDrafts.discard(this.projectName(), this.workbenchId());
     const discovered = discoverWorkbenchDecisionMarkup(document.html);
-    this.decisionResponses.set(document.workbench.decision?.responses ?? discovered.responses);
+    this.decisionResponses.set(document.workbench.decision?.responses
+      ?? document.workbench.recordedResponses ?? discovered.responses);
     this.hydrateFrame();
   }
 
@@ -274,7 +283,8 @@ export class WorkbenchViewerComponent {
       {
         type: WORKBENCH_DECISION_HYDRATE_MESSAGE,
         responses: this.decisionResponses(),
-        readonly: this.readOnly() || decision?.state === 'succeeded',
+        readonly: this.readOnly() || decision?.state === 'succeeded'
+          || this.document()?.workbench.status === 'decided',
       },
       '*',
     );
@@ -306,7 +316,8 @@ export class WorkbenchViewerComponent {
         this.decisionResponses.set(
           reworkRevisionLanded(document)
             ? discovered.responses
-            : document.workbench.decision?.responses ?? restored ?? discovered.responses,
+            : document.workbench.decision?.responses
+              ?? document.workbench.recordedResponses ?? restored ?? discovered.responses,
         );
         this.loading.set(false);
       },

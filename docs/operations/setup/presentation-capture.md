@@ -29,6 +29,16 @@ backend configured for `C:\Projects\agent-taskboard-workspace-demo`, select
 `Demo App`, and verify the visible keys again. Do not point ScreenToGif or OBS
 at the stable or production browser window.
 
+For an interactive owner-day walkthrough, seed a separate demo root with
+`node scripts/seed-demo-workspace.mjs --root <demo-root> --owner-day`. This
+variant fits task timestamps into the current local day and places active
+Progress and Auto Review cards minutes before boot. It adds twelve cards for
+34 total, including five Auto Review cards, a refused completion claim, a red batch diagnostic, and a
+concept card linked to the two open decisions in `DEMO-W2`. The refusal and
+red batch are labelled simulated card evidence in the card results; they do
+not start a live batch gate. Re-seeding replaces this variant with the chosen
+variant. Use the default pinned variant for repeatable presentation captures.
+
 Each demo `WatchPaths` entry needs a `RootPath` (or `RepositoryPath`) pointing
 at its project folder, not only a `Path`. The seeded Wiki tree and the Dossier
 gallery live in `<RootPath>/docs`, and without that entry no repository root
@@ -44,7 +54,10 @@ The seed reads two committed files and invents nothing at generation time:
 | [pinned-demo-content.json](../../../scripts/presentation-capture/pinned-demo-content.json) | Both Wiki trees, the six-state Dossier gallery, and the card-to-document edges. | Authored. Knowledge content of a publicly browsable instance is never exported from a workspace. |
 
 Both are rendered by one generator, so a page and a Dossier stay in the same
-voice and a re-seed stays byte-identical. Acceptance coverage for the seed
+voice and a pinned re-seed has byte-identical visitor content and Git commit
+ids. The generator commits each project's Wiki and Dossiers, writes a project
+registry with `DEMO` and `PLAT` key prefixes and reserved next counters, and
+writes the backend's array-shaped tag registry. Acceptance coverage for the seed
 (byte-identical generation, all lanes, all Dossier lifecycle states, and the
 data boundary of the visitor surface) runs with:
 

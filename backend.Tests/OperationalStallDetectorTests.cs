@@ -31,6 +31,22 @@ public sealed class OperationalStallDetectorTests
     private DateTime Now => _clock.GetUtcNow().UtcDateTime;
 
     [Fact]
+    public void Running_batch_waits_for_its_gate_timeout_and_names_the_batch()
+    {
+        var gate = new GateStallFact("alpha", "batch-42", false, 4, Now.AddHours(-3),
+            ["AGT-1", "AGT-2"], [], "running", Now.AddMinutes(-149), 150);
+        var snapshot = new OperationalStallSnapshot([], [], [], [], [gate], [], []);
+        Assert.Empty(OperationalStallDetector.Detect(snapshot, new(), Now));
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        var signal = Assert.Single(OperationalStallDetector.Detect(snapshot, new(), Now));
+        Assert.Contains("Batch batch-42 is running for 150 min", signal.Summary);
+        Assert.Contains("No automatic next step is recorded", signal.Summary);
+        Assert.Equal("Open the batch panel to inspect the queue and available actions.", signal.SuggestedAction);
+        Assert.Equal("150", signal.Details["gateTimeoutMinutes"]);
+    }
+
+    [Fact]
     public void Fleet_alarm_names_dominant_refusal_after_claim_gap_and_host_poll()
     {
         var baseSnapshot = new OperationalStallSnapshot([], [], [], [], [], [], [],
@@ -90,6 +106,8 @@ public sealed class OperationalStallDetectorTests
             && x.BlockedCount == 19 && x.Details["completedCount"] == "1");
         Assert.Contains(findings, x => x.FingerprintKey.Contains("deploy-drift")
             && x.Details["logExcerpt"] == "ENGINE_SERVER_URL missing");
+        Assert.Contains(findings, x => x.FingerprintKey.Contains("lane-stall")
+            && x.SuggestedAction == "Open the card and resolve the blocked lane action.");
     }
 
     [Fact]

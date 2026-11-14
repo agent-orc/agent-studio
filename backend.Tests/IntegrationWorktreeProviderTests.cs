@@ -33,6 +33,19 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
     }
 
     [Fact]
+    public void Resolve_TaskStorageWithoutCheckoutNamesSetup()
+    {
+        var taskStorage = Path.Combine(_tempDir, "project-tasks");
+        Directory.CreateDirectory(taskStorage);
+
+        var resolution = Provider(taskStorage).Resolve(taskStorage, "main");
+
+        Assert.False(resolution.Success);
+        Assert.Contains("needs a server checkout", resolution.Error);
+        Assert.True(resolution.CheckoutMissing);
+    }
+
+    [Fact]
     public void Resolve_CreatesTheSlotForAProjectThatNeverHadOne()
     {
         var repo = SeedRepo("never-integrated");

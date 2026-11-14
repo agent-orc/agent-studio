@@ -489,8 +489,11 @@ public sealed class AccessSecurityMiddleware
             await RejectPermission(context, decision, required.Permission);
             return;
         }
+        // Approver and Reviewer project as viewer; each keeps its one decision
+        // route, which declares the permission only that role adds.
         if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer
-            && required.Permission != IamPermissions.EnvironmentProductionDeployApprove)
+            && required.Permission is not (IamPermissions.EnvironmentProductionDeployApprove
+                or IamPermissions.ProjectCardsReview))
         {
             await Reject(context, 403, "role-denied", "Viewer role is read-only.");
             return;
@@ -637,6 +640,47 @@ public sealed class AccessSecurityMiddleware
             operation = await OperatorRequestClassifier.ClassifyAsync(context, IsSafe(context.Request.Method, path),
                 context.RequestServices?.GetService<IOperatorGateEvidence>(), OperatorEnvironmentKind,
                 key => RouteValue(context, path, context.GetEndpoint(), key));
+            if (operation is not null && OperatorOperationIds.PersonaAll.Contains(operation.Id)
+                && account.Origin != ServiceAccountOrigins.Persona)
+            {
+                await Reject(context, 403, "persona-principal-required", "This operation requires a persona principal.");
+                return;
+            }
+            if (account.Origin == ServiceAccountOrigins.Persona)
+            {
+                var occurrence = context.Request.Headers["X-Persona-Occurrence-Id"].ToString();
+                if (string.IsNullOrWhiteSpace(account.OccurrenceId) || occurrence != account.OccurrenceId)
+                {
+                    await Reject(context, 403, "occurrence-required", "This persona session is bound to one occurrence.");
+                    return;
+                }
+                var workspaceId = RouteValue(context, path, context.GetEndpoint(), "id");
+                var personaId = RouteValue(context, path, context.GetEndpoint(), "personaId");
+                if ((path.StartsWith("/api/workspaces/", StringComparison.OrdinalIgnoreCase)
+                        && workspaceId != account.PersonaWorkspaceId)
+                    || (personaId is not null && personaId != account.PersonaId))
+                {
+                    await Reject(context, 403, "persona-scope-denied", "This persona session does not cover this workspace or persona.");
+                    return;
+                }
+                var statedSource = context.Request.Headers[OperatorApprovalHeaders.InstructionSource].ToString();
+                var source = OperatorInstructionSources.Normalize(statedSource);
+                if ((source is OperatorInstructionSources.Card or OperatorInstructionSources.RepositoryFile or OperatorInstructionSources.Log
+                        && (operation is null || !OperatorOperationIds.PersonaPublish.Contains(operation.Id)))
+                    || source == OperatorInstructionSources.WebPage
+                    || (!string.IsNullOrWhiteSpace(statedSource) && source == OperatorInstructionSources.Unstated))
+                {
+                    await Reject(context, 403, "instruction-source-denied",
+                        "Untrusted instruction sources may only publish persona items, reports, drafts, or decision requests.");
+                    return;
+                }
+                if (operation is { Tier: OperatorTier.T2 })
+                {
+                    await Reject(context, 403, OperatorPolicyReasons.GrantRequired,
+                        "A persona principal cannot request a high-risk operation.");
+                    return;
+                }
+            }
             var gate = breakGlass is null || operation is null ? OperatorPolicy.TierGate(operation) : null;
             var awaitsApproval = breakGlass is null && operation is { Tier: OperatorTier.T2 } && !IsTokenDeniedRoute(path);
             if (gate is not null && !awaitsApproval) context.Items[OperatorPolicyItem] = gate;
@@ -698,6 +742,12 @@ public sealed class AccessSecurityMiddleware
             && WorkspaceBindingsDecide(subject, bindings);
         var target = await TargetAsync(context, path, required, safeMethod);
         context.Items[AuditTargetItem] = target;
+        if (account.Origin == ServiceAccountOrigins.Persona && target.Projects.Count > 0
+            && !_store.PersonaProjectsCover(account.AccountId, target.Projects, SameProject))
+        {
+            await Reject(context, 403, "persona-scope-denied", "This persona's scope does not cover the project.");
+            return;
+        }
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
@@ -713,7 +763,7 @@ public sealed class AccessSecurityMiddleware
         }
         // The operator agent role keeps installation operation read-only: its
         // writes address projects, whatever principal holds it (OP-1).
-        if (!safeMethod && projected.Role == IamRoles.OperatorAgent
+        if (!safeMethod && projected.Role == IamRoles.OperatorAgent && account.Origin != ServiceAccountOrigins.Persona
             && target.Scope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler))
         {
             await Reject(context, 403, "project-scope-denied", "The operator agent role cannot make installation-wide changes.");
@@ -1136,6 +1186,8 @@ public sealed class AccessSecurityMiddleware
         if (path.StartsWith("/api/runner/lease", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/orchestrator-decisions/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/orchestrator-decisions/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/personas/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/personas/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/logs", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Logs;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
         if (HttpMethods.IsPost(method) && path.Equals("/api/model-selection/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
@@ -1207,6 +1259,9 @@ public sealed class AccessSecurityMiddleware
            || path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/passkeys/assertion-options", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/auth/invite/preview", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/v1/studio/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/v1/studio/auth/invite/preview", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/runner-enroll", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRunnerTaskFileRead(string method, string path)
@@ -1226,6 +1281,8 @@ public sealed class AccessSecurityMiddleware
     private static bool IsReadOnlyPost(string method, string path)
         => HttpMethods.IsPost(method)
            && (path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase)
+               // AGT-3753: a dry run of the completion checks; it changes nothing.
+               || path.Equals("/api/tasks/acceptance-readiness", StringComparison.OrdinalIgnoreCase)
                || path.Equals("/api/operator/deploy/plan", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
@@ -1409,11 +1466,11 @@ public sealed class AccessSecurityMiddleware
             var taskId = path["/api/tasks/".Length..].Split('/', 2)[0];
             // Body-addressed and workspace-collection task routes carry their task
             // set in the request body (reorder, batch-move) or filter their payload
-            // per task (reference-status, archive). Those handlers enforce membership
+            // per task (reference-status, acceptance-readiness, archive). Those handlers enforce membership
             // on every affected task via ProjectAccessAuthorization.AllowsTasks /
             // FilterTasks, so the middleware defers instead of inferring a single
             // project from the literal path segment.
-            if (taskId is "reorder" or "batch-move" or "reference-status" or "archive")
+            if (taskId is "reorder" or "batch-move" or "reference-status" or "acceptance-readiness" or "archive")
                 return ProjectRouteAddress.DeferredToHandler;
             // A literal route under /api/tasks/ names no task: the board and
             // other collection reads (grouped, code-review/defaults,

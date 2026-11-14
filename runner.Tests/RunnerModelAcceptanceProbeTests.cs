@@ -8,6 +8,23 @@ namespace AgentRunner.Tests;
 public sealed class RunnerModelAcceptanceProbeTests
 {
     [Fact]
+    public async Task Host_flight_contention_is_retried_on_the_next_refresh()
+    {
+        var busy = true;
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((_, _, _) => Task.FromResult(busy
+                ? new ProcessResult(1, "", ProviderRealRequestHostFlight.InProgress)
+                : new ProcessResult(0, "OK", "")),
+            _ => "host-a-login");
+        await probe.RefreshAsync([("claude", "claude-haiku-4-5")], CancellationToken.None);
+        Assert.Equal("unknown", Assert.Single(probe.Snapshot("claude", ["claude-haiku-4-5"])).Status);
+
+        busy = false;
+        await probe.RefreshAsync([("claude", "claude-haiku-4-5")], CancellationToken.None);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("claude", ["claude-haiku-4-5"])).Status);
+    }
+
+    [Fact]
     public async Task Capacity_marks_only_the_selected_model_until_its_retry_window()
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 15, 37, 0, TimeSpan.Zero));

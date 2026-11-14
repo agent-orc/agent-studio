@@ -19,6 +19,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 1 | Tab strip | Open tabs and active task identity | Editor open | One row; `d6b11df5d`, AGT-2963 responsive fix. |
 | Task 2 | Task toolbar | Run activity, execution host, pane toggles, lane pager, paging lane, primary action, menu | Task tab active; individual controls follow their capability | One action row; `ccc0039eb` (AGT-2819 extraction). Host belongs here and nowhere in the Overview title. |
 | Task 3 | Global alert banner | Cross-task integration alert | Alert threshold reached | Single alert banner in `app-workspace-banner`; `5d496e73e`. |
+| Task 3a | Phone primary lane action | Current lane decision | Primary action available below 600 px | Full-width shared primary button above task notices. |
 | Task 4 | `app-task-resource-status` | Resource limitation affecting this task | Resource finding exists | Notice; `2b1436acc`. |
 | Task 5 | `app-detail-header` | Legacy task identity and actions | Legacy focused view; hidden in Studio | Header row; original detail extraction `839f3c9801`. |
 | Task 6 | `app-archived-task-notice` | Archive state and restore | Archived task | Notice; `1bc7b5703`. |
@@ -28,12 +29,13 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 10 | `app-batch-detail` | Batch verification and panel action | Current task is a batch member in a relevant phase | Notice plus ghost button; `27424297a7`, restricted by AGT-3463. |
 | Task 11 | `app-older-brief-offer` | Older brief action | Older brief can be used | Action row; `1e21a6843`. |
 | Task 12 | Review round budget | Delivered review round count | Delivered rounds greater than zero | Compact notice; `ccd526925f`. |
-| Task 13 | `app-parked-blocker` | Authoritative reason work is parked | Parked blocker exists | Status narrative; `3e0d1f838`, AGT-2816 placement. |
+| Task 13 | `app-parked-blocker` | Authoritative reason work is parked | Current-lane blocker has a recorded cause or decision | Status narrative; `3e0d1f838`, AGT-2816 placement. |
 | Task 14 | `app-decision-card-panel` | Decision question and options | This is a decision card | Action panel; AGT-2795 (`f6ba50863`). |
 | Task 15 | `app-decision-blocked-notice` | Pending decision blocking this task | Pending decision exists | Notice; AGT-2795 (`f6ba50863`). |
 | Task 16 | `app-escalation-summary` | Escalation and recovery actions | Escalated or needs input | Status narrative and action row; `3abe490ad`. |
 | Task 17 | `app-command-deck` | Run and stop controls, execution configuration | Task permits an action or has an active run | Action row; `4c73e5ec7`. |
 | Task 18 | `app-pane-toggle-bar` | Pane visibility | Task detail open; hidden in Studio where toolbar owns toggles | Toolbar; `170164f07`. |
+| Task 19 | Phone pane switcher | Active card detail pane | Task detail open below 600 px | One Overview, Result, or Git pane at a time; full page scroll. |
 
 The global top row's child order is navigation, breadcrumb, project picker,
 search, defaults, Environment, Project Chat, theme, Needs you, Settings, and
@@ -61,6 +63,10 @@ select is a navigation control. The menu owns secondary task actions.
 In Human Review, the primary action uses the fresh task-detail integration
 verdict. An integrated or not-applicable delivery offers Accept without waiting
 for optional Git provenance; a held action names its delivery reason on hover.
+Below 600 px, the same primary action renders full width above the task detail;
+the toolbar keeps its secondary menu. The phone pane switcher follows the task
+notices and command deck and chooses one pane; selecting a previously hidden
+pane reveals it in the shared pane visibility state.
 
 The task lane itself has one canonical name and tone from
 `lane-presentation.ts`. The toolbar lane select names the **paging lane**;

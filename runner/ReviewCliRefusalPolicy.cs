@@ -8,11 +8,12 @@ internal static class ReviewCliRefusalPolicy
     internal const string TurnRefused = "ReviewCliTurnRefused";
 
     internal static string? Classify(AgentStudio.TaskServer.Contracts.ReviewCommandDto command,
-        ProcessResult process)
+        ProcessResult process, bool hasUsage = false)
     {
         if (!AgentStudio.TaskServer.Contracts.ReviewCommandKinds.IsAgent(command.ExecutionKind)
-            || process.Success) return null;
-        var output = process.StdOut + "\n" + process.StdErr;
+            || process.Success || hasUsage
+            || process.StdOut.Contains("[[ASPECT_VERDICT", StringComparison.Ordinal)) return null;
+        var output = process.StdErr;
         if (output.Contains("input_too_large", StringComparison.OrdinalIgnoreCase)
             || output.Contains("Input exceeds the maximum length", StringComparison.OrdinalIgnoreCase))
             return InputTooLarge;

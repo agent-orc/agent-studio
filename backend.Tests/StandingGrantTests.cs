@@ -35,6 +35,7 @@ public sealed class StandingGrantTests : IDisposable
         _config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _root,
+            ["Secrets:KeyFile"] = _root + ".kek",
             ["Security:Profile"] = "networked",
         }).Build();
         _store = new AccessSecurityStore(_config, NullLogger<AccessSecurityStore>.Instance, _clock);
@@ -230,6 +231,7 @@ public sealed class StandingGrantTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(30));
         var session = _store.Login("first.owner", Password, "standing-grant-tests", SecondFactorCodes.CurrentTotp(_totpSecret, Now)).SessionToken;
         var owner = _store.AuthenticateSession(session)!;
+        _clock.Advance(TimeSpan.FromSeconds(30));
         _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_totpSecret, Now));
         return owner;
     }
@@ -241,5 +243,6 @@ public sealed class StandingGrantTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
+        File.Delete(_root + ".kek");
     }
 }

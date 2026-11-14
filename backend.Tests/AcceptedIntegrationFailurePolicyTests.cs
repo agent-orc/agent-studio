@@ -214,9 +214,9 @@ public sealed class AcceptedIntegrationFailurePolicyTests
             AcceptedIntegrationFailureCodes.SourceNeedsRebase,
             "Release source must be rebased onto 'main'.");
 
-        Assert.Equal("integration: source-needs-rebase", RemoteDeliveryParkReason.For(failed));
-        Assert.Equal(
-            "automatic recovery budget used: 2/2",
+        Assert.Contains("source branch needs a rebase", RemoteDeliveryParkReason.For(failed));
+        Assert.Contains("Review the integration evidence and retry", RemoteDeliveryParkReason.For(failed));
+        Assert.Contains("automatic recovery budget used: 2/2",
             RemoteDeliveryParkReason.For(failed with { AutomaticRecoveryDetail = "automatic recovery budget used: 2/2" }));
         Assert.Null(RemoteDeliveryParkReason.For(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged)));
     }
@@ -298,5 +298,40 @@ public sealed class AcceptedIntegrationFailurePolicyTests
         Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, failure.Code);
         Assert.Equal(RunFailureClass.Infrastructure, failure.FailureClass);
         Assert.Equal(RunFailureSignatures.GatePreparationCacheTorn, failure.FailureSignature);
+    }
+
+    /// <summary>
+    /// AGT-3695: a refused publication of an approved merge the lane does not
+    /// carry reads in plain words and offers the integration replay; any other
+    /// push refusal keeps its own text and no replay.
+    /// </summary>
+    [Fact]
+    public void Classify_ApprovedMergeOffTheLane_ReadsPlainlyAndOffersTheReplay()
+    {
+        var sha = new string('c', 40);
+        var offLane = AcceptedIntegrationFailurePolicy.Classify(
+            PipelineStepStatus.Failed,
+            "error",
+            $"Publication failed (sha-not-on-branch); The approved merge result {sha} is not contained in local develop; refusing to push it.",
+            verdictSummary: null,
+            AcceptedIntegrationFailureCodes.IntegrationPushBlocked);
+        var rejected = AcceptedIntegrationFailurePolicy.Classify(
+            PipelineStepStatus.Failed,
+            "error",
+            "Publication failed (remote-rejected); origin moved.",
+            verdictSummary: null,
+            AcceptedIntegrationFailureCodes.IntegrationPushBlocked);
+
+        Assert.NotNull(offLane);
+        Assert.True(offLane.ReplayAvailable);
+        Assert.StartsWith(AcceptedIntegrationFailurePolicy.ApprovedMergeOffLanePrefix + " ccccccccc ", offLane.Reason);
+        Assert.Contains("nothing was pushed to origin/develop", offLane.Reason);
+        Assert.DoesNotContain("sha-not-on-branch", offLane.Reason);
+        Assert.Equal(offLane.Reason, AcceptedIntegrationFailurePolicy.Classify(
+            PipelineStepStatus.Failed, "error", offLane.Reason, null,
+            AcceptedIntegrationFailureCodes.IntegrationPushBlocked)!.Reason);
+        Assert.NotNull(rejected);
+        Assert.False(rejected.ReplayAvailable);
+        Assert.Equal("Publication failed (remote-rejected); origin moved.", rejected.Reason);
     }
 }

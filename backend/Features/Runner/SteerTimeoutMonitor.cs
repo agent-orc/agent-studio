@@ -274,6 +274,7 @@ public sealed class SteerTimeoutMonitor : IAiOperatorEffect
             CliType = task.CliType,
         };
         SteerPendingMarker.Write(folder, recovered, _logger);
+        _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(folder));
         _logger.LogWarning(
             "SteerTimeoutMonitor: recovered missing steer marker for {Project}/{Slug} from phase entered at {WaitStartedAt:o}",
             task.ProjectName, slug, recovered.WaitStartedAt);
@@ -358,6 +359,7 @@ public sealed class SteerTimeoutMonitor : IAiOperatorEffect
             // disturbing the post-processing phase established by the move.
             _mutations.DiscardPendingIntent(movedFolder);
             SteerPendingMarker.Clear(movedFolder, _logger);
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(movedFolder));
             _logger.LogWarning(
                 "SteerTimeoutMonitor: recovered settled run {JobId} -> 4-auto-review; discarded the staged auto-answer and queued no replacement run.",
                 jobId);
@@ -376,6 +378,7 @@ public sealed class SteerTimeoutMonitor : IAiOperatorEffect
         }
 
         SteerPendingMarker.Clear(movedFolder, _logger);
+        _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(movedFolder));
         _mutations.SetJobPhase(movedFolder, null); // steer-pending phase is illegal in 2-ready
 
         _chatLog.Append(_scanner.FindJob(jobId, entry.Path) ?? FallbackInfo(jobId, movedFolder, entry.Name),
@@ -415,6 +418,7 @@ public sealed class SteerTimeoutMonitor : IAiOperatorEffect
 
             var movedFolder = move.NewFolderPath ?? c.JobFolder;
             SteerPendingMarker.Clear(movedFolder, _logger);
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(movedFolder));
             _mutations.SetJobPhase(movedFolder, null);
 
             _chatLog.Append(_scanner.FindJob(jobId, entry.Path) ?? FallbackInfo(jobId, movedFolder, entry.Name),

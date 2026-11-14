@@ -1,3 +1,4 @@
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
 
 namespace AgentStudio.Pipeline;
@@ -133,13 +134,30 @@ public sealed partial class BatchGatePilotService
             EligibleKeys = kept.Select(member => member.TaskKey).ToArray(),
             ReformedFromBatchId = manifest.BatchId,
         };
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        var retired = new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Abandoned, null, fence, _time.GetUtcNow(),
             successor is null ? "base moved before replay; compatible members below minimum size"
                 : $"base moved before replay; re-formed as {successor.BatchId} on {Short(newBase)}",
             BaseMoveToSha: newBase, BaseMoveOutcome: successor is null ? "abandoned" : "kept",
-            SuccessorBatchId: successor?.BatchId, BaseMoveMemberReasons: rejected));
-        ReturnToPending(manifest);
+            SuccessorBatchId: successor?.BatchId, BaseMoveMemberReasons: rejected);
+        // AGT-3568: the successor is durable and owns the kept members before
+        // the formed batch retires; a refused intent retires it without one.
+        var refusal = successor is null ? "no successor" : CommitIntent(FormationIntent(
+            BatchIntentKind.Replacement, "base-move", successor, pending.Values,
+            new BatchGateIntentRetirement(retired, 0, RetiredByOwnFlight: true)));
+        if (refusal is not null)
+        {
+            if (successor is not null)
+                retired = retired with
+                {
+                    Reason = $"base moved before replay; re-formation refused: {refusal}",
+                    BaseMoveOutcome = "abandoned", SuccessorBatchId = null,
+                };
+            if (_store.LatestState(manifest.BatchId).Phase != BatchPhase.Abandoned)
+                _store.AppendState(retired);
+            ReturnToPending(manifest);
+            successor = null;
+        }
         foreach (var (item, replay) in conflicts)
         {
             _store.RecordReplay(new BatchGateReplayRecord(
@@ -147,15 +165,6 @@ public sealed partial class BatchGatePilotService
                 item.Subject.ResultSha, newBase, null, replay.Replacements,
                 replay.ConflictedFiles, "conflict", _time.GetUtcNow(), Reason: replay.Error));
             conflictKeys.Add(item.Subject.TaskKey);
-        }
-        if (successor is not null) _store.CloseManifest(successor);
-        foreach (var member in successor?.Members ?? [])
-        {
-            var item = pending[member.TaskKey];
-            var task = _scanner.FindJob(member.TaskKey, item.WatchPath);
-            if (task is not null)
-                BatchGateOwnershipStore.Write(task.FolderPath,
-                    new BatchGateOwnership(item.ReviewAttemptId, member, successor!.BatchId));
         }
         foreach (var (key, reason) in rejected)
             if (reason == "superseded-review" && pending.TryGetValue(key, out var item))

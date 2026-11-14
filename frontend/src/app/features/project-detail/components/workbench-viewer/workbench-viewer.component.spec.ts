@@ -244,7 +244,7 @@ describe('WorkbenchViewerComponent', () => {
     expect(
       fixture.nativeElement.querySelector('[data-testid="workbench-viewer-open-decisions"]')
         ?.textContent,
-    ).toContain('0 open');
+    ).toContain('1 open');
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-draft-notice"]'))
       .not.toBeNull();
 

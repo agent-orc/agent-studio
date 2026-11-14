@@ -52,7 +52,9 @@
         <p class="workbench-viewer__documentation-error" role="alert">{{ message }}</p>
       }
     </div>
-    <app-dossier-card-list [list]="doc.cards ?? null" />
+    @if (doc.cards) {
+      <app-dossier-card-list [list]="doc.cards" />
+    }
     <div
       class="workbench-viewer__frame-shell"
       [class.workbench-viewer__frame-shell--maximized]="maximized()"

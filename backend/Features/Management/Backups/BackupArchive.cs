@@ -21,7 +21,8 @@ public sealed record BackupManifest(
 public sealed record BackupManifestSource(string Name, string Path, bool Projects, bool Present);
 
 /// <summary>Last archive member: every file with its hash, and how consistent the capture was.</summary>
-public sealed record BackupContents(IReadOnlyList<BackupContentEntry> Files, BackupConsistency Consistency);
+public sealed record BackupContents(IReadOnlyList<BackupContentEntry> Files, BackupConsistency Consistency,
+    IReadOnlyDictionary<string, int>? CredentialFiles = null);
 
 public sealed record BackupContentEntry(string Path, long Size, string Sha256, string Capture);
 
@@ -36,7 +37,14 @@ public sealed record BackupConsistency(
     int Vanished,
     int KeyFilesExcluded,
     int SymlinksSkipped,
-    IReadOnlyList<string> Unsettled);
+    IReadOnlyList<string> Unsettled,
+    IReadOnlyList<BackupUnreadableEntry>? Unreadable = null);
+
+/// <summary>
+/// A file or directory the backup could not read and left out (AGT-3729), with the reason.
+/// Archives written before AGT-3729 carry no list.
+/// </summary>
+public sealed record BackupUnreadableEntry(string Path, string Reason);
 
 /// <summary>
 /// Archive layout inside the encryption envelope: a gzip-compressed PAX tar.

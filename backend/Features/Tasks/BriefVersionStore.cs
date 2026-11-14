@@ -8,6 +8,18 @@ namespace AgentStudio.Tasks;
 public static class BriefVersionStore
 {
     private const string RelativePath = ".metadata/brief-version";
+    private const string DifferencePath = ".metadata/brief-difference.json";
+
+    public sealed record BriefDifference(string FromVersion, string ToVersion,
+        string Before, string After);
+
+    public static BriefDifference? ReadDifference(string folder)
+    {
+        var path = Path.Combine(folder, DifferencePath);
+        return File.Exists(path)
+            ? System.Text.Json.JsonSerializer.Deserialize<BriefDifference>(File.ReadAllText(path))
+            : null;
+    }
 
     /// <summary>Read the current version without creating metadata during a GET or audit.</summary>
     public static string ReadCurrent(string folder)
@@ -27,9 +39,11 @@ public static class BriefVersionStore
             ? File.ReadAllText(Path.Combine(folder, "prompt.md")) : string.Empty);
     }
 
-    public static string Record(string folder, string authoredBrief)
+    public static string Record(string folder, string authoredBrief, string? previousBrief = null)
     {
         var version = AgentStudio.Runner.RunDispositionPolicy.BriefVersion(authoredBrief);
+        var previousVersion = previousBrief is null ? ReadCurrent(folder)
+            : AgentStudio.Runner.RunDispositionPolicy.BriefVersion(previousBrief);
         var path = Path.Combine(folder, RelativePath);
         // Create only the metadata folder: re-creating a task folder that moved
         // away would leave a duplicate shell in the old lane (AGT-2867).
@@ -45,6 +59,12 @@ public static class BriefVersionStore
         finally
         {
             if (File.Exists(temp)) File.Delete(temp);
+        }
+        if (previousBrief is not null && !string.Equals(previousVersion, version, StringComparison.OrdinalIgnoreCase))
+        {
+            var difference = new BriefDifference(previousVersion, version, previousBrief, authoredBrief);
+            File.WriteAllText(Path.Combine(folder, DifferencePath),
+                System.Text.Json.JsonSerializer.Serialize(difference));
         }
         return version;
     }

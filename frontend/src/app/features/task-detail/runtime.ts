@@ -10,8 +10,10 @@ export { LanePagerService } from './state/lane-pager.service';
 export {
   overflowActionsFor,
   primaryActionFor,
+  primaryActionForTask,
   laneLabelFor,
   mergeAcceptViewFor,
+  acceptanceRequiresIntegration,
   acceptanceHoldReason,
   LANE_LABELS,
   triageDecisionRefusal,

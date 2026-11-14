@@ -103,7 +103,7 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
     public async Task Member_of_an_isolating_batch_refuses_continue_steer_extend_failure_continue_and_requeue_while_eject_succeeds()
     {
         SeedReviewedCard("AGT-ISO", TaskStates.AutoReview);
-        await using var factory = BuildFactory();
+        await using var factory = BuildFactory(isolationFlightActive: true);
         using var client = Client(factory);
         var flight = SeedIsolatingFlight(factory, "AGT-ISO");
 
@@ -145,11 +145,25 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
 
         // When isolation ends without a verdict the batch pauses; the member takes rounds again.
         var store = factory.Services.GetRequiredService<BatchGateStore>();
-        store.AppendState(new BatchGateState(flight.BatchId, flight.MembershipDigest, BatchPhase.Paused,
+        BatchGateStates.Reach(store, new BatchGateState(flight.BatchId, flight.MembershipDigest, BatchPhase.Paused,
             new string('b', 40), 1, Reviewed.AddMinutes(30), "unresolved-cohort:AGT-ISO"));
         var after = await client.PostAsJsonAsync(Route("AGT-ISO", "continue"),
             new { prompt = "Fix the failing test." });
         Assert.Equal(HttpStatusCode.Accepted, after.StatusCode);
+    }
+
+    [Fact]
+    public async Task Red_parent_without_a_live_flight_allows_a_continue_round()
+    {
+        SeedReviewedCard("AGT-RED-IDLE", TaskStates.AutoReview);
+        await using var factory = BuildFactory();
+        using var client = Client(factory);
+        SeedIsolatingFlight(factory, "AGT-RED-IDLE");
+
+        var response = await client.PostAsJsonAsync(Route("AGT-RED-IDLE", "continue"),
+            new { prompt = "Fix the failing test." });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
     }
 
     /// <summary>
@@ -274,7 +288,7 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
         store.Enqueue(new BatchGatePendingRecord("rev-" + id, subject, "repo", WatchPath, folder,
             "merge", "default", Reviewed));
         BatchGateOwnershipStore.Write(folder, new BatchGateOwnership("rev-" + id, subject, BatchId: manifest.BatchId));
-        store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest, BatchPhase.Red,
+        BatchGateStates.Reach(store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest, BatchPhase.Red,
             resultSha, 1, Reviewed.AddMinutes(10), "deterministic suite red"));
         return manifest;
     }
@@ -282,7 +296,7 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
     private string Route(string id, string action)
         => $"/api/tasks/{id}/{action}?watchPath={Uri.EscapeDataString(WatchPath)}";
 
-    private WebApplicationFactory<Program> BuildFactory()
+    private WebApplicationFactory<Program> BuildFactory(bool isolationFlightActive = false)
     {
         foreach (var state in TaskStates.All)
             Directory.CreateDirectory(Path.Combine(WatchPath, state));
@@ -305,6 +319,14 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
                 services.RemoveAll<IHostedService>();
                 services.RemoveAll<BatchGateStore>();
                 services.AddSingleton(new BatchGateStore(Path.Combine(_root, "batch-gates")));
+                if (isolationFlightActive)
+                {
+                    // The hosted pilot is disabled in this HTTP fixture; model
+                    // its live flight while exercising the endpoint guard.
+                    services.RemoveAll<BatchIsolationGuard>();
+                    services.AddSingleton(sp => new BatchIsolationGuard(
+                        sp.GetRequiredService<BatchGateStore>(), activeFlight: _ => true));
+                }
             });
         });
         // Hosted services are removed, so activate the project's runner as the

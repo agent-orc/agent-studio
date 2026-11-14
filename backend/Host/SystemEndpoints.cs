@@ -22,6 +22,10 @@ public static class SystemEndpoints
             if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
                 entries = entries.Where(entry => ProjectAccessAuthorization.Allows(human.User, entry.Name, projects)
                                                  || ProjectAccessAuthorization.Allows(human.User, entry.Path, projects));
+            // A Product session files cards by project name and storage path;
+            // the host's checkout and repository folders stay private.
+            if (ContributorAccessPolicy.IsProductSession(context))
+                entries = entries.Select(entry => entry with { RootPath = "", RepositoryPath = "" });
             return Results.Ok(entries);
         });
 

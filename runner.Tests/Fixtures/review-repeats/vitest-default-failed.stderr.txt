@@ -1,0 +1,19 @@
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |frontend| src/app/agt3650-flaky-fixture.spec.ts > ReviewFlakyFixture > nested group > fails only on the first run (AGT-3650)
+AssertionError: expected 'second' to be 'first' // Object.is equality
+
+Expected: "first"
+Received: "second"
+
+ ❯ src/app/agt3650-flaky-fixture.spec.ts:8:24
+      6|   describe('nested group', () => {
+      7|     it('fails only on the first run (AGT-3650)', () => {
+      8|       expect('second').toBe('first');
+       |                        ^
+      9|     });
+     10|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

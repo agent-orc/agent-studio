@@ -45,6 +45,10 @@ export const BOARD_LANE_COUNT_TOOLTIPS: Record<keyof ExplorerLaneCounts, Structu
   },
 };
 
+export const BOARD_ACTIVE_WORK_TOOLTIP = `Counts ${[TaskState.Ready, TaskState.Progress, TaskState.HumanReview, TaskState.Escalated]
+  .map(laneName).join(', ')} and open decisions. Excludes ${[TaskState.Backlog, TaskState.Preparation,
+  TaskState.AutoReview, TaskState.Completed, TaskState.Archive].map(laneName).join(', ')}.`;
+
 export interface ProjectSidebarRow {
   name: string;
   initial: string;
@@ -70,7 +74,7 @@ export function laneCountsFor(project: { laneCounts?: ExplorerLaneCounts }): Exp
 
 export function boardLaneCountsLabel(project: { laneCounts?: ExplorerLaneCounts }): string {
   const counts = laneCountsFor(project);
-  const lanes = `${counts.ready} ready, ${counts.progress} in progress, ${counts.humanReview} human review`;
+  const lanes = `Active work: ${counts.ready} ready, ${counts.progress} in progress, ${counts.humanReview} human review`;
   const decisions = counts.decisions ?? 0;
   return decisions > 0 ? `${lanes}, ${decisions} open decision${decisions === 1 ? '' : 's'}` : lanes;
 }

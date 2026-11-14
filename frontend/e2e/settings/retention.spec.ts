@@ -18,33 +18,38 @@ const platformRules = [
 
 test('operator edits, previews, runs, inspects, and restores retention data', async ({ page, devBackend }) => {
   mkdirSync(RESULT_DIR, { recursive: true });
-  const paths = await api<Array<{ path: string }>>('/api/watch-paths?includeFixtures=true');
+  const paths = await api<{ path: string }[]>('/api/watch-paths?includeFixtures=true');
   const watchPath = paths[0]?.path ?? devBackend.workspace;
   const task = await createJob({
     id: `retention-e2e-${Date.now()}`,
     title: 'Retention archived task',
     watchPath,
     targetState: '7-archive',
+    requiresIntegration: false,
     fixture: false,
     promptMarkdown: '# Archived task\n\nHot task summary.',
   });
   let version = 0;
   let restored = false;
+  let fullBackupRequests = 0;
   const policy = () => ({ scope: 'workspace', version, updatedAt: '2026-09-06T12:00:00Z', updatedBy: version ? 'operator' : 'platform', rules: platformRules, fullBackups: { daily: 7, weekly: 4, monthly: 12 } });
   const action = { kind: 'ArchiveHeavy', ruleId: 'heavy-stage-1', project: 'Agent Studio Worktree', taskKey: task.id, taskId: task.id, stage: 1, bytes: 4096, fileCount: 1, reason: '30 days terminal', lane: '7-archive', terminalAt: '2026-07-01T00:00:00Z' };
   const plan = { plannedAt: '2026-09-06T12:00:00Z', policyVersion: 1, actionCount: 1, totalBytes: 4096, affectedTasks: 1, actions: [action] };
   const manifest = { taskId: task.id, taskKey: task.id, project: 'Agent Studio Worktree', archivedAt: '2026-09-06T12:00:00Z', state: 'cold', totalBytes: 4096, restoredAt: null, tombstonedAt: null, stages: [{ stage: 1, archivedAt: '2026-09-06T12:00:00Z', payloadPath: 'cold.zip', payloadSha256: 'feed', totalBytes: 4096, files: [{ name: 'cli-output.log', size: 4096, sha256: 'abc123' }], policyVersion: 1, archivedBy: 'operator' }] };
 
-  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }) }));
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true, user: { id: 'owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false } }) }));
   await page.route('**/api/crash-recovery/pending', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ pending: [] }) }));
-  await page.route('**/api/v1/management/status', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ maintenance: { mode: 'normal' } }) }));
+  await page.route('**/api/v1/management/status', route => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
   await page.route('**/api/tasks/archive**', async route => {
     const response = await route.fetch();
-    const body = await response.json() as { items?: Array<{ id: string; archiveState?: string }> };
+    const body = await response.json() as { items?: { id: string; archiveState?: string }[] };
     for (const item of body.items ?? []) if (item.id === task.id) item.archiveState = 'cold';
     await route.fulfill({ response, json: body });
   });
-  await page.route('**/api/v1/management/backups/full', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ backups: [] }) }));
+  await page.route('**/api/v1/management/backups/full', route => {
+    fullBackupRequests += 1;
+    return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+  });
   await page.route('**/api/v1/management/retention/runs', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/v1/management/retention/schedule', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, serverLocalHour: 3, nextRunAt: '2026-09-09T03:00:00Z' }) }));
   await page.route(`**/api/v1/management/retention/archive/${task.id}/restore`, async route => {
@@ -63,6 +68,9 @@ test('operator edits, previews, runs, inspects, and restores retention data', as
     await page.goto('/#/workspace/settings/retention');
     await dismissDevErrorDialog(page);
     await expect(page.getByTestId('retention-admin')).toBeVisible();
+    await expect(page.getByTestId('retention-backup-guidance')).toContainText('Settings > Task Server');
+    await expect(page.getByTestId('retention-backups')).toHaveCount(0);
+    await expect(page.getByTestId('backup-create')).toHaveCount(0);
     await page.getByTestId('retention-rule-edit-runtime').click();
     await page.getByTestId('retention-rule-runtime').locator('input[type="number"]').fill('31');
     await page.getByTestId('retention-rule-save').click();
@@ -76,9 +84,13 @@ test('operator edits, previews, runs, inspects, and restores retention data', as
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await page.getByTestId('workspace-retention-overlay').screenshot({ path: join(RESULT_DIR, `retention-${theme}.png`) });
+      await page.getByTestId('retention-backup-guidance').scrollIntoViewIfNeeded();
+      await page.getByTestId('workspace-retention-overlay').screenshot({ path: join(RESULT_DIR, `retention-backup-guidance-${theme}.png`) });
     }
-    await page.setViewportSize({ width: 720, height: 900 });
-    await page.getByTestId('workspace-retention-overlay').screenshot({ path: join(RESULT_DIR, 'retention-narrow.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId('retention-backup-guidance').scrollIntoViewIfNeeded();
+    await page.getByTestId('workspace-retention-overlay').screenshot({ path: join(RESULT_DIR, 'retention-backup-guidance-390px.png') });
+    expect(fullBackupRequests).toBe(0);
     await page.getByTestId('workspace-settings-close').click();
     await page.setViewportSize({ width: 1600, height: 950 });
 

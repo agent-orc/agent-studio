@@ -76,6 +76,44 @@
         <span>Ran: {{ review.ranAspects.join(', ') || 'none' }} · Skipped: {{ review.skippedAspects.join(', ') || 'none' }}</span>
       </div>
     }
+    @if (staleBrief() && contentReview(); as review) {
+      <section class="claim__brief-gap" data-testid="stale-brief-acceptance" role="status">
+        <strong>Acceptance is blocked by a changed brief</strong>
+        <p>This delivery used brief {{ briefLabel(review.deliveryBriefVersion) }} and its content verdict checked brief {{ briefLabel(review.reviewBriefVersion) }}. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the change before deciding whether to accept this delivery.</p>
+        <div class="claim__brief-actions">
+          <button type="button" data-testid="brief-difference-link" (click)="showDifference()">See the brief difference</button>
+          <button type="button" data-testid="review-current-brief" [disabled]="acceptanceBusy()" (click)="reviewAgain()">Review again against the current brief</button>
+          <button type="button" data-testid="accept-with-reason-open" [disabled]="acceptanceBusy()" (click)="overrideOpen.set(true)">Accept with a reason</button>
+        </div>
+        @if (differenceOpen()) {
+          <div class="claim__difference" data-testid="brief-difference">
+            <button type="button" (click)="differenceOpen.set(false)">Close difference</button>
+            @if (difference(); as diff) {
+              <div class="claim__difference-columns">
+                <div><strong>Earlier brief {{ briefLabel(diff.fromVersion) }}</strong><pre>{{ diff.before }}</pre></div>
+                <div><strong>Current brief {{ briefLabel(diff.toVersion) }}</strong><pre>{{ diff.after }}</pre></div>
+              </div>
+            } @else if (differenceError(); as message) { <p role="alert">{{ message }}</p> }
+          </div>
+        }
+        @if (overrideOpen()) {
+          <div class="claim__override-form" data-testid="accept-with-reason-form">
+            <label for="brief-accept-reason">Reason for accepting this delivery</label>
+            <textarea id="brief-accept-reason" data-testid="accept-with-reason-input" rows="3"
+              [value]="writtenReason()" [disabled]="acceptanceBusy()"
+              (input)="writtenReason.set($any($event.target).value)"></textarea>
+            <div class="claim__brief-actions">
+              <button type="button" class="claim__brief-primary" data-testid="accept-with-reason-submit"
+                [disabled]="acceptanceBusy() || writtenReason().trim().length < 8"
+                (click)="acceptWithReason()">Accept with a reason</button>
+              <button type="button" [disabled]="acceptanceBusy()" (click)="overrideOpen.set(false)">Cancel</button>
+            </div>
+            <span>At least 8 characters are required.</span>
+          </div>
+        }
+        @if (acceptanceError(); as message) { <p class="claim__brief-error" data-testid="brief-acceptance-error" role="alert">{{ message }}</p> }
+      </section>
+    }
   </section>
   <app-integration-dead-end
     [status]="job().integration"

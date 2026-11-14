@@ -33,7 +33,7 @@ public sealed partial class AccessSecurityStore
             var next = Copy(StateLocked());
             if (actor.OwnerId is not null) RequireActiveOwnerLocked(next, actor.OwnerId);
             var now = Now;
-            var targets = next.ServiceAccounts.Where(account => IsOperatorAgent(account)
+            var targets = next.ServiceAccounts.Where(account => IsOperatorPrincipal(account)
                 && (agentIds is null || agentIds.Contains(account.Id, StringComparer.Ordinal))).ToList();
             if (agentIds is not null && targets.Count != agentIds.Distinct(StringComparer.Ordinal).Count())
                 throw new SecurityOperationException(404, "operator-agent-not-found", "Operator agent not found.");
@@ -99,7 +99,7 @@ public sealed partial class AccessSecurityStore
         {
             var next = Copy(StateLocked());
             var now = Now;
-            var targets = next.ServiceAccounts.Where(account => IsOperatorAgent(account) && account.CreatedAt <= requestedAt
+            var targets = next.ServiceAccounts.Where(account => IsOperatorPrincipal(account) && account.CreatedAt <= requestedAt
                 && (account.DisabledAt is null || account.Sessions?.Any(session => session.RevokedAt is null) == true
                     || next.StandingGrants.Any(grant => grant.PrincipalId == account.Id && grant.RevokedAt is null)
                     || next.OperatorApprovals.Any(approval => approval.PrincipalId == account.Id

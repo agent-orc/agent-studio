@@ -35,7 +35,7 @@
               [style.color]="oc.foreground"
               [cacTooltip]="oc.tooltip">
           <span class="task-card__owner-icon" aria-hidden="true">👤</span>
-          <span class="task-card__owner-name">{{ oc.initials }}</span>
+          <span class="task-card__owner-name">{{ oc.label }}</span>
         </span>
       }
       @if (isPickupNext()) {
@@ -45,8 +45,9 @@
         <button type="button"
                 class="task-card__pick-next"
                 data-testid="task-card-pick-next"
-                [attr.aria-disabled]="decisionBlockTooltip() ? 'true' : null"
-                [cacTooltip]="decisionBlockTooltip() || 'Move to the top of the Ready queue for this project'"
+                [disabled]="!canReorderReady()"
+                [attr.aria-disabled]="decisionBlockTooltip() || !canReorderReady() ? 'true' : null"
+                [cacTooltip]="!canReorderReady() ? 'Switch this lane to Manual to change queue position.' : decisionBlockTooltip() || 'Move to the top of the Ready queue for this project'"
                 aria-label="Move to top"
                 (click)="onPickNextClick($event)">
           <span class="task-card__pick-next-glyph" aria-hidden="true">⤴</span>
@@ -428,6 +429,9 @@
         </div>
       }
     </div>
+  }
+  @if (job().state === '5-human-review') {
+    @defer (on immediate) { <app-acceptance-readiness-note [job]="job()" /> }
   }
   <app-test-evidence-status [task]="job()" />
   <div class="task-card__activity">

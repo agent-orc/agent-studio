@@ -478,7 +478,7 @@ public sealed class NoOpIntegrationTests : IDisposable
         store.CloseManifest(manifest);
         var evidence = Path.Combine(_tempDir, taskKey + "-batch-evidence.json");
         File.WriteAllText(evidence, "{\"tested\":true}");
-        store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Assembled, candidate, 1, RecordedAt));
         var run = new BatchGateRunRecord("run-1", manifest.BatchId, manifest.MembershipDigest,
             baseSha, candidate, "full", "digest", "gate-host", 1, ["dotnet test"], RecordedAt, evidence);
@@ -488,9 +488,9 @@ public sealed class NoOpIntegrationTests : IDisposable
         store.RecordReplay(new BatchGateReplayRecord(manifest.BatchId, manifest.MembershipDigest,
             taskKey, resultSha, baseSha, candidate,
             [new AgentStudio.Git.RebasedCommitReplacement(resultSha, candidate)], [], "admitted", RecordedAt));
-        store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Green, candidate, 1, RecordedAt, BatchRunId: run.BatchRunId));
-        store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Abandoned, candidate, 1, RecordedAt, "StaleBase", run.BatchRunId));
         Assert.Null(store.ReadPublication(manifest.BatchId));
         Assert.Null(store.TryReadMember(manifest.BatchId, taskKey, run.BatchRunId));

@@ -11,6 +11,7 @@
   "enforced": [
     "src/app/features/orchestrator/components/orchestrator-feed-burst/orchestrator-feed-burst.html",
     "src/app/features/github-app/github-app-panel/github-app-panel.component.html", "src/app/components/section-header/section-header.component.html",
+    "src/app/components/error-dialog/error-dialog.component.html",
     "src/app/features/board/components/delivery-section/delivery-section.html",
     "src/app/features/cli/components/cli-models-panel/cli-models-panel.html",
     "src/app/features/cli/components/model-selection-view/model-selection-view.component.html",

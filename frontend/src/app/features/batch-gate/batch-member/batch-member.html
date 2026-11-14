@@ -1,6 +1,7 @@
 @if (member(); as item) {
   <span class="batch-member" data-testid="batch-member-badge" [attr.data-status]="item.status"
-    [attr.data-reason]="item.reason ?? null" [attr.title]="item.preCheck?.reason ?? item.waitingFor ?? item.reasonDetail ?? ejection()">
+    [attr.data-reason]="item.reason ?? null" [attr.data-red]="redReason() ? 'true' : null"
+    [attr.title]="redReason() ?? item.preCheck?.reason ?? item.waitingFor ?? item.reasonDetail ?? ejection()">
     @switch (item.status) {
       @case ('pending') { Batch pending }
       @case ('in-batch') { Batch {{ item.batchId }} · {{ item.position ?? '?' }} of {{ item.size ?? '?' }} }
@@ -9,8 +10,15 @@
       @case ('pre-check-red') { Pre-check red }
       @case ('review-fix') { Review fix before batch@if (item.reason) { · {{ item.reason }} } }
     }
+    @if (redReason(); as reason) { · in a red batch: {{ reason }} }
     @if (item.preCheck; as check) { @if (item.status !== 'pre-check-red') { · pre-check {{ check.outcome }} } }
   </span>
+  @if (item.status === 'fallback' && (item.fallbackEvent || item.reasonDetail)) {
+    <span class="batch-member__event" data-testid="batch-member-event">
+      {{ item.fallbackEvent || item.reasonDetail }}
+      <span class="batch-member__outcome">Red escalates; green integrates.</span>
+    </span>
+  }
 }
 @if (pushWait(); as wait) {
   <span class="batch-member" data-testid="task-card-integration-push-wait" role="status"

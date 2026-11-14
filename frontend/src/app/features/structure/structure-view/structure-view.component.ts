@@ -53,6 +53,7 @@ export class StructureViewComponent implements OnDestroy {
     { value: 'drift', label: 'Drift' }, { value: 'load', label: 'Load' },
   ] as const;
   readonly error = signal<string | null>(null);
+  readonly loaded = signal(false);
   readonly library = signal<StructureLibrary>({ registries: [], consumers: [] });
   readonly libraryError = signal<string | null>(null);
   readonly refreshing = signal(false);
@@ -210,6 +211,7 @@ export class StructureViewComponent implements OnDestroy {
       if (generation !== this.readGeneration) return;
       this.data.set(data);
       this.error.set(null);
+      this.loaded.set(true);
     } catch { if (generation === this.readGeneration) this.error.set('Structure observations could not be loaded.'); }
   }
 

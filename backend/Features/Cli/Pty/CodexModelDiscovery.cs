@@ -21,6 +21,8 @@ public sealed class CodexModelDiscovery
 
     private CliModelCatalog? _memCache;
     private DateTime _memCacheAt = DateTime.MinValue;
+    /// <summary>AGT-3709: see <see cref="ClaudeModelDiscovery.PtyFailureBackoff"/>.</summary>
+    private DateTime _ptyFailedAt = DateTime.MinValue;
     private int _networkedRegistryLogged;
 
     public CodexModelDiscovery(
@@ -77,15 +79,19 @@ public sealed class CodexModelDiscovery
             }
         }
 
+        if (!forceRefresh && InFailureBackoff()) return Publish(BackoffCatalog());
+
         await _gate.WaitAsync(ct);
         try
         {
             if (!forceRefresh && _memCache != null && DateTime.UtcNow - _memCacheAt < Ttl)
                 return Publish(WithActiveModelApplied(_memCache));
+            if (!forceRefresh && InFailureBackoff()) return Publish(BackoffCatalog());
 
             try
             {
                 var fresh = await DiscoverViaPtyAsync(cliPath, ct);
+                _ptyFailedAt = DateTime.MinValue;
                 _memCache = fresh;
                 _memCacheAt = fresh.FetchedAt;
                 TrySaveDisk(fresh);
@@ -94,6 +100,7 @@ public sealed class CodexModelDiscovery
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Codex PTY model discovery failed; falling back to cached catalog");
+                _ptyFailedAt = DateTime.UtcNow;
                 if (_memCache != null) return Publish(WithSource(WithActiveModelApplied(_memCache), "pty-failed-mem-cache"));
                 var fromDisk = TryLoadDisk();
                 if (fromDisk != null)
@@ -518,6 +525,11 @@ public sealed class CodexModelDiscovery
 
     private static string QuoteForSh(string value)
         => "'" + value.Replace("'", "'\"'\"'") + "'";
+
+    private bool InFailureBackoff() => DateTime.UtcNow - _ptyFailedAt < ClaudeModelDiscovery.PtyFailureBackoff;
+
+    private CliModelCatalog BackoffCatalog() => WithSource(
+        WithActiveModelApplied(_memCache ?? TryLoadDisk() ?? FallbackCatalog()), "pty-failure-backoff");
 
     private static CliModelCatalog WithSource(CliModelCatalog cat, string source)
         => cat with { Source = source };

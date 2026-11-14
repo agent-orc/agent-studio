@@ -3,22 +3,46 @@
 agent-orchestrator is a local Kanban board that drives your Claude Code, Codex, Copilot, or Gemini CLIs through a sequential task queue per watched project. The product pitch lives in [../../README.md](../../../README.md); the near-term direction lives in [../../ROADMAP.md](../../../ROADMAP.md). The hard rules every CLI driving the repo must follow are in [../../AGENTS.md](../../../AGENTS.md).
 
 This folder is the **operator-facing setup guide**.
-[install.md](./install.md) is the single new-user installation
-path. The other pages cover contributor builds, attaching a project, onboarding
-an agent CLI, first tasks, and troubleshooting.
+
+## Choose your path
+
+Agent Studio has not published a GitHub Release yet. The release downloads in
+[install.md](./install.md) (`releases/latest/download/...`) return 404 until
+the first release exists, and the `ghcr.io/agent-orc` images are not publicly
+pullable. Until then, every recommended path below starts from a source
+checkout of `develop`. Each situation has exactly one recommended path.
+
+| Situation | Recommended path | Prerequisites | Status on `develop` |
+|---|---|---|---|
+| Run Studio on one machine: evaluate it, or drive your own projects | [Source-built Docker one-box](./docker.md#install-from-this-checkout) | Docker Engine with Compose v2 on Linux, or Docker Desktop on Windows (run the scripts in Git Bash or WSL) or macOS. Your user must reach the Docker daemon without `sudo` (`docker info` works, for example through the `docker` group). Git, at least 8 GB of free disk. No root. | Works. The Compose smoke test builds and starts this stack in CI. |
+| Linux host without Docker (native systemd services) | No verified path yet. Until it passes, run the Docker one-box on a machine that has Docker. | Native setup needs root (`sudo`), systemd and x64 Linux. Building its assets from the checkout needs .NET SDK 10 and Node.js 22. | Not verified. `installation-nightly.yml` builds the assets but fails its native install step on Debian, Ubuntu and Fedora in every run since 2026-10-16. |
+| Add a Linux execution host to a running Studio | **Workspace Settings > Execution Hosts > Set up agent host**, see [linux-runner-host.md](./linux-runner-host.md#product-onboarding-from-execution-hosts) | SSH key access to the host, passwordless `sudo` (root) there, .NET 10, and a Task Server URL the host can reach | Follows the runbook. Not re-verified for this guide. |
+| Edit, test, or debug Agent Studio itself | [Contributor setup](./contributor-setup.md) (`api.sh` and `npm start`) | .NET SDK 10, Node.js 22, Git, bash (Linux, or Git Bash on Windows). No Docker, no root. | Works on Linux runner hosts and Windows. It is a development seat, not a product installation. |
+
+After the one-box stack is up, continue with
+[your-first-task.md](./your-first-task.md): owner sign-in, the first-run
+checklist, project creation, execution location, pickup mode,
+`.agent-studio/project.yml`, review, and Accept.
+
+When the first release is published, [install.md](./install.md) becomes the
+recommended path for the first two rows. Its executable then installs the same
+one-box stack from pinned images, or the native systemd profile with root.
+The release and the source path describe the same one-box stack: Task Server,
+Engine, Studio BFF and API, web UI on `http://127.0.0.1:4011`, and one coding
+and one review runner.
 
 ## Pages
 
 | File | Use it when |
 |---|---|
-| [install.md](./install.md) | Install the published Studio with Docker, verify checksums, update, rollback, uninstall, or choose a remote topology. |
-| [getting-started.md](./getting-started.md) | Short pointer to the product installer and contributor setup. |
-| [docker.md](./docker.md) | One-box Docker Compose installation and operations: source build, published images, credentials, backup, update, and network binding. |
-| [contributor-setup.md](./contributor-setup.md) | Source-build workflow for contributors who need to edit, test, or debug Agent Studio itself. Not a product installation path. |
+| [install.md](./install.md) | Install a published release (none exists yet): setup executable, checksums, update, rollback, uninstall, native and remote topologies. |
+| [getting-started.md](./getting-started.md) | Short pointer to the recommended path above. |
+| [docker.md](./docker.md) | The recommended one-box installation from this checkout, plus its operations: credentials, backup, update, and network binding. |
+| [contributor-setup.md](./contributor-setup.md) | Development seat for contributors who edit, test, or debug Agent Studio itself on Linux or Windows. Not a product installation path. |
 | [onboard-a-project.md](./onboard-a-project.md) | Product workflow for project creation through the UI or API, central task-store rules, runtime activation, and troubleshooting. |
 | [onboard-an-agent-cli.md](./onboard-an-agent-cli.md) | A new CLI (Claude, Codex, Copilot, Gemini) needs to be installed and made auto-runnable on this machine. Includes the load-bearing **Codex on Windows sandbox quirk**. |
-| [your-first-task.md](./your-first-task.md) | First time using the board on a new project: what to queue, how to watch it run, what counts as a good first task vs. an anti-pattern. |
-| [troubleshooting.md](./troubleshooting.md) | FAQ-style: "agent only shows sandbox errors", "auto-mode flipped to manual", "two jobs in 3-progress", "header counters look wrong". |
+| [your-first-task.md](./your-first-task.md) | First use after installation: first-run checklist, project creation, execution location, pickup mode, `project.yml`, review, and Accept. |
+| [troubleshooting.md](./troubleshooting.md) | FAQ-style: sandbox errors, pickup mode changed after failures, a pickup mode change refused, crash recovery, quota probe stuck on onboarding. |
 | [linux-runner-host.md](./linux-runner-host.md) | Running a task on a remote Linux host with the standalone `agent-runner` (RM-5): provision, configure, and drive one task end-to-end via the Task Server API. |
 | [workstation-runner-host.md](./workstation-runner-host.md) | Publish the same runner host for a Windows workstation, configure bounded local roots, tools and preview evidence, and verify the claim contract. |
 | [preparation-isolation-orchestrator.md](./preparation-isolation-orchestrator.md) | Repository-owned project preparation, content-addressed executor caches, stable checkouts, leased worktrees, and the M1 boundary with later isolation and healing stages. |

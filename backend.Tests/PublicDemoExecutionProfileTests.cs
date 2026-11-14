@@ -58,16 +58,25 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
     }
 
     [Fact]
-    public void Unknown_security_profile_refuses_server_startup()
+    public async Task Unknown_security_profile_refuses_server_startup()
     {
-        using var factory = BuildFactory(new Dictionary<string, string?>
+        using var probe = new UnobservedTaskExceptionProbe();
+        var factory = BuildFactory(new Dictionary<string, string?>
         {
             ["Security:Profile"] = "public-demo-typo",
         });
 
         var error = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+        await factory.DisposeAsync();
 
         Assert.Contains("Unsupported Security:Profile", error.ToString(), StringComparison.Ordinal);
+        // AGT-3755: WebApplicationFactory keeps the entry point's exception in
+        // a task it never reads. Finalize that task here, while this test owns
+        // it, so it does not surface on a later test's finalizer pass; any
+        // other leaked failure of this boot still fails the test.
+        probe.AssertNoLeak("public-demo-typo", leaked =>
+            leaked.InnerException is InvalidOperationException startup
+            && startup.Message.Contains("Unsupported Security:Profile", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -217,7 +226,20 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3394 adds the structure library refresh on Preview.
         // AGT-3565 adds Review results on PostStep: it runs the missing
         // requirement-fit review of a report card, a model call public demo denies.
-        Assert.Equal(152, routes.Count);
+        // AGT-3670 adds accept (Start) and send back (Continue) decisions.
+        // AGT-3652 adds the content-only re-review against the current brief
+        // (Review): it runs a model call public demo denies.
+        // PT-4 adds persona lease claim and completion. Both execute a persona
+        // occurrence and must receive the same typed public-demo denial.
+        Assert.Equal(158, routes.Count);
+        foreach (var (routePath, path) in new[]
+        {
+            ("/api/tasks/{jobId}/content-review", ExecutionAdmissionPath.Review),
+            ("/api/tasks/{jobId}/human-review/accept", ExecutionAdmissionPath.Start),
+            ("/api/tasks/{jobId}/human-review/send-back", ExecutionAdmissionPath.Continue),
+        })
+            Assert.Contains(routes, route => route.RoutePattern.RawText == routePath
+                && route.Metadata.GetMetadata<ExecutionRouteMetadata>()?.Path == path);
         Assert.DoesNotContain(allRoutes, route => route.RoutePattern.RawText == "/api/cli/_probe/{cliType}");
         foreach (var (method, suffix) in new[]
         {
@@ -261,13 +283,16 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/tasks/{jobId}/review-results", ExecutionAdmissionPath.PostStep),
+            ("/api/tasks/{jobId}/review/retry", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
             ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue),
             ("/api/workspaces/{workspaceId}/decision-rules/versions", ExecutionAdmissionPath.Continue),
             ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/activate", ExecutionAdmissionPath.Continue),
             ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/rollback", ExecutionAdmissionPath.Continue),
             ("/api/v1/orchestration/host-decisions", ExecutionAdmissionPath.Start),
-            ("/api/v1/orchestration/decision-jobs", ExecutionAdmissionPath.Start)
+            ("/api/v1/orchestration/decision-jobs", ExecutionAdmissionPath.Start),
+            ("/api/runner/personas/claim", ExecutionAdmissionPath.Claim),
+            ("/api/runner/personas/complete", ExecutionAdmissionPath.Continue)
         })
         {
             var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
@@ -312,10 +337,10 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 12,
-                [ExecutionAdmissionPath.Start] = 34,
-                [ExecutionAdmissionPath.Continue] = 33,
-                [ExecutionAdmissionPath.Review] = 9,
+                [ExecutionAdmissionPath.Claim] = 13,
+                [ExecutionAdmissionPath.Start] = 35,
+                [ExecutionAdmissionPath.Continue] = 36,
+                [ExecutionAdmissionPath.Review] = 10,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 32,
                 [ExecutionAdmissionPath.PostStep] = 23,

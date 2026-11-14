@@ -5,7 +5,11 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskColumnComponent } from './task-column';
+import { AuthService } from '../../../../services/auth.service';
 import type { ArchivedTaskInfo, CliExecution, TaskInfo, ProjectRunnerStatus } from '../../../../models/task.model';
+import { laneName } from '../../../../models/lane-presentation';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
+import { readinessItem } from '../../../acceptance-readiness/testing/acceptance-readiness.fixtures';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -563,6 +567,23 @@ describe('TaskColumnComponent archive lane (ASS-1727)', () => {
 
   const isArchiveReq = (url: string) => url === '/api/tasks/archive';
 
+  it('refreshes access after a refused archive read and leaves no generic archive error when bindings are gone', async () => {
+    const { fixture, httpMock } = await buildArchiveColumn();
+    const auth = TestBed.inject(AuthService);
+    auth.status.set({ profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_rui', username: 'rui', displayName: 'Rui', role: 'viewer', projects: ['Token Economy'],
+        disabled: false, mustChangePassword: false } });
+    httpMock.expectOne((request) => isArchiveReq(request.url)).flush({ error: 'access-denied' },
+      { status: 403, statusText: 'Forbidden' });
+    httpMock.expectOne('/api/auth/status').flush({ profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_rui', username: 'rui', displayName: 'Rui', role: 'viewer', projects: [],
+        disabled: false, mustChangePassword: false } });
+    fixture.detectChanges();
+    expect(auth.status()?.user?.projects).toEqual([]);
+    expect(fixture.componentInstance.archiveError()).toBeNull();
+    httpMock.verify();
+  });
+
   it('fetches the paged archive endpoint on init and renders rows', async () => {
     const { fixture, httpMock } = await buildArchiveColumn();
 
@@ -760,6 +781,48 @@ function makeStatus(overrides: Partial<ProjectRunnerStatus> = {}): ProjectRunner
     ...overrides,
   };
 }
+
+describe('TaskColumnComponent acceptance readiness (AGT-3564)', () => {
+  it('groups Human Review by readiness once checked and counts what the filter shows', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskColumnComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const jobs = ['a', 'b', 'c'].map(id => makeJob({
+      id, taskKey: `test::${id}`, title: `Card ${id}`, state: '5-human-review', folderPath: `/tmp/watch/5-human-review/${id}`,
+    }));
+    const fixture = TestBed.createComponent(TaskColumnComponent);
+    fixture.componentRef.setInput('title', laneName('5-human-review'));
+    fixture.componentRef.setInput('state', '5-human-review');
+    fixture.componentRef.setInput('jobs', jobs);
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="review-subsection-ready"]')).toBeNull();
+    // The readiness bar is a deferred chunk; it starts the check once it renders.
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    TestBed.inject(HttpTestingController).expectOne('/api/tasks/acceptance-readiness').flush({
+      checkedAtUtc: '2026-11-09T10:00:00Z', counts: {},
+      items: [
+        readinessItem('a', 'review-concerns'), readinessItem('b', 'ready'), readinessItem('c', 'ready'),
+      ],
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const subsections = () => Array.from(host.querySelectorAll('[data-testid^="review-subsection-"]'))
+      .map(section => section.getAttribute('data-testid'));
+    expect(subsections()).toEqual(['review-subsection-ready', 'review-subsection-review-concerns']);
+    expect(host.querySelector('[data-testid="lane-count-5-human-review"]')!.textContent).toContain('3');
+    expect(host.querySelectorAll('[data-testid="acceptance-readiness-note"]').length).toBe(3);
+
+    TestBed.inject(AcceptanceReadinessStore).filter.set('ready');
+    fixture.detectChanges();
+    expect(subsections()).toEqual(['review-subsection-ready']);
+    expect(host.querySelector('[data-testid="lane-count-5-human-review"]')!.textContent!.trim()).toBe('2');
+  });
+});
 
 describe('TaskColumnComponent · escalation bursts (AGT-3585)', () => {
   it('groups an Escalated burst by cause with counts that add up to the lane and bulk actions per group', async () => {

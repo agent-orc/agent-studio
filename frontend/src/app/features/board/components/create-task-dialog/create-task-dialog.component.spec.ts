@@ -5,6 +5,8 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { CreateTaskDialogComponent } from './create-task-dialog.component';
+import { AuthSessionState } from '../../../../services/auth.service';
+import { TaskState } from '../../../../models/task.model';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -85,5 +87,25 @@ describe('CreateTaskDialogComponent (smoke)', () => {
     ) as HTMLButtonElement;
     button.click();
     expect(reset).toHaveBeenCalledOnce();
+  });
+
+  it('offers a Product session only the lanes it may file into (AGT-3668)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [CreateTaskDialogComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr-1', username: 'carla', displayName: 'Carla', role: 'contributor', projects: ['PROJ-1'],
+        disabled: false, mustChangePassword: false },
+    });
+    const fixture = TestBed.createComponent(CreateTaskDialogComponent);
+    fixture.componentRef.setInput('cliTypeDraft', 'claude');
+    fixture.componentInstance.newTargetState.set(TaskState.Preparation);
+    TestBed.tick();
+
+    expect(fixture.componentInstance.segmentedLaneOptions().map(lane => lane.value))
+      .toEqual([TaskState.Backlog, TaskState.Ready]);
+    expect(fixture.componentInstance.newTargetState()).toBe(TaskState.Backlog);
   });
 });

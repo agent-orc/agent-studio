@@ -57,6 +57,19 @@ describe('sandboxed HTML navigation', () => {
     expect(fallback.documentElement.dataset['documentPattern']).toBe('concept');
   });
 
+  it('selects authored color-scheme rules for the Studio theme', () => {
+    const html = '<style>@media (prefers-color-scheme: dark) { body { color: white; } }'
+      + '@media (prefers-color-scheme: light) { body { color: black; } }</style>';
+    const dark = buildIsolatedHtmlSrcdoc(html, { colorScheme: 'dark' });
+    const light = buildIsolatedHtmlSrcdoc(html, { colorScheme: 'light' });
+
+    expect(dark).toContain('color-scheme: dark');
+    expect(dark).toContain('@media (min-width: 0) { body { color: white; } }');
+    expect(dark).toContain('@media (min-width: 999999px) { body { color: black; } }');
+    expect(light).toContain('color-scheme: light');
+    expect(light).toContain('@media (min-width: 0) { body { color: black; } }');
+  });
+
   it('rewrites relative <img> sources via resolveAssetSrc and widens the CSP to the host origin', () => {
     const html = '<img src="assets/foo.png" alt="Foo"><img src="https://cdn.example/bar.png" alt="Bar">';
     const srcdoc = buildIsolatedHtmlSrcdoc(html, {

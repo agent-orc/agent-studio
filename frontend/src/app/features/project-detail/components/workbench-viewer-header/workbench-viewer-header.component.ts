@@ -87,10 +87,10 @@ export class WorkbenchViewerHeaderComponent {
       workbench.status === 'archived'
     )
       return 0;
-    const answered = new Map(this.responses().map((response) => [response.decisionId, response]));
-    return this.decisionPoints().filter(
-      (point) => (answered.get(point.id)?.selectedOptionIds.length ?? 0) === 0,
-    ).length;
+    if (workbench.status !== 'decision-pending' && workbench.phase !== 'decision-ready'
+      && workbench.lifecycleState !== 'review-requested') return 0;
+    // Browser selections remain drafts until saved.
+    return workbench.openDecisionCount ?? Math.max(1, this.decisionPoints().length);
   });
   readonly implementationStatus = computed(() => {
     return implementationStatusFor(
@@ -100,12 +100,11 @@ export class WorkbenchViewerHeaderComponent {
   });
   readonly statusLabel = computed(() => {
     const workbench = this.document().workbench;
-    return [
-      this.implementationStatus() ?? humanize(workbench.status),
-      workbench.phase ? humanize(workbench.phase) : null,
-    ]
-      .filter(Boolean)
-      .join(' · ');
+    const label = workbench.status === 'decided' ? 'In implementation'
+      : this.implementationStatus() ?? humanize(workbench.status);
+    const phase = workbench.status === 'decided' || workbench.status === 'documented'
+      || workbench.status === 'archived' ? null : workbench.phase;
+    return phase ? `${label} · ${humanize(phase)}` : label;
   });
   readonly connectionLabel = computed(() => {
     const state = this.liveConnected() ? 'Connected' : 'Disconnected';

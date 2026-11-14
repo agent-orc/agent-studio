@@ -1,6 +1,6 @@
 <label class="type-picker">
   <span>Task type</span>
-  <select data-testid="pipeline-type-select" [value]="value()" (change)="onChange($event)">
+  <select data-testid="pipeline-type-select" [value]="value()" [disabled]="disabled()" (change)="onChange($event)">
     @for (type of types; track type.id) {
       <option [value]="type.id">{{ type.label }}</option>
     }

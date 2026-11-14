@@ -190,6 +190,7 @@
       "files": [
         "src/app/features/retention/**/*.scss",
         "src/app/features/batch-gate/batch-phase-metrics/batch-phase-metrics.scss",
+        "src/app/components/error-dialog/error-dialog.component.scss",
         "src/app/features/backups/**/*.scss",
         "src/app/features/access/components/access-operator-agents/access-operator-agents.component.scss",
         "src/app/features/access/components/access-operator-activity/access-operator-activity.component.scss",
@@ -220,7 +221,9 @@
         "src/app/features/board/components/bulk-lane-actions/bulk-lane-actions.component.scss",
         "src/app/features/board/components/lane-group-head/lane-group-head.component.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-burst/orchestrator-feed-burst.scss",
+        "src/app/features/orchestrator/components/orchestrator-feed/_orchestrator-feed-responsive.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-burst-detail/orchestrator-feed-burst-detail.scss",
+        "src/app/features/orchestrator/components/orchestrator-feed/_orchestrator-feed-responsive.scss",
         "src/app/features/board/components/active-board-filters/active-board-filters.component.scss",
         "src/app/features/board/components/failure-intervention-chip/failure-intervention-chip.component.scss",
         "src/app/features/board/components/model-routing-suggestion/model-routing-suggestion.component.scss",
@@ -249,6 +252,7 @@
         "src/app/features/batch-gate/batch-member/batch-member.scss",
         "src/app/features/batch-gate/batch-lane-indicator/batch-lane-indicator.scss",
         "src/app/features/batch-gate/batch-detail/batch-detail.scss",
+        "src/app/features/batch-gate/batch-quarantine/batch-quarantine.scss",
         "src/app/features/board/components/review-queue-pill/review-queue-pill.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-entry/orchestrator-feed-entry.scss",
         "src/app/features/task-detail/components/prompt-pane/overview-pane/steering-receipt-status/steering-receipt-status.component.scss",
@@ -322,6 +326,7 @@
         "src/app/features/task-detail/components/detail-load-error/detail-load-error.component.scss",
         "src/app/features/task-detail/components/decision-surface/decision-surface.component.scss",
         "src/app/features/task-detail/components/parked-blocker/parked-blocker.component.scss",
+        "src/app/features/task-detail/components/watchdog-receipt/watchdog-receipt.component.scss",
         "src/app/features/task-detail/components/concept-dossier-notice/concept-dossier-notice.component.scss",
         "src/app/features/task-detail/components/decision-card-panel/decision-card-panel.component.scss",
         "src/app/features/task-detail/components/decision-blocked-notice/decision-blocked-notice.component.scss",
@@ -404,8 +409,12 @@
       }
     },
     {
-      "comment": "New Studio mobile tab-bar rules use theme and spacing tokens.",
-      "files": ["src/app/features/studio-shell/_studio-shell-mobile-tabbar.scss"],
+      "comment": "Studio phone layout and controls use theme and spacing tokens.",
+      "files": [
+        "src/app/features/studio-shell/_studio-shell-mobile-tabbar.scss",
+        "src/app/features/task-detail/components/mobile-lane-primary/mobile-lane-primary.component.scss",
+        "src/app/features/task-detail/components/mobile-pane-switcher/mobile-pane-switcher.component.scss"
+      ],
       "rules": {
         "color-no-hex": true,
         "scale-unlimited/declaration-strict-value": [

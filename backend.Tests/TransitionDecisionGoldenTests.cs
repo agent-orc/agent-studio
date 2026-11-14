@@ -84,6 +84,28 @@ public sealed class TransitionDecisionGoldenTests
         Assert.Equal(TransitionAction.HumanReview, EngineAdapter.Decide(facts).Action);
     }
 
+    [Fact]
+    public void Plan_skew_sends_a_merge_round_from_the_full_result_ref_without_infrastructure_retry()
+    {
+        var facts = Facts(ReviewOutcomeKinds.DeliveryPredatesReviewPlan) with
+        {
+            Gate = new(InfrastructureRetryAvailable: true),
+        };
+        var decision = MonolithTransitionAdapter.Decide(facts);
+        Assert.Equal(TransitionAction.FindingRound, decision.Action);
+        Assert.Equal("refs/results/delivery", decision.ContinuationBase?.ResultRef);
+        foreach (var adapterDecision in new[] { TaskAdapter.Decide(facts), EngineAdapter.Decide(facts) })
+        {
+            Assert.Equal(decision.Action, adapterDecision.Action);
+            Assert.Equal(decision.Reason, adapterDecision.Reason);
+            Assert.Equal(decision.ContinuationBase, adapterDecision.ContinuationBase);
+        }
+
+        var missingRef = facts with { Attempt = new("attempt", true) };
+        Assert.Equal(TransitionAction.HumanReview,
+            MonolithTransitionAdapter.Decide(missingRef).Action);
+    }
+
     [Theory]
     [InlineData(OperatorSweepKinds.FixRounds, "product", false, 0, OperatorSweepAction.Act)]
     [InlineData(OperatorSweepKinds.GateTriage, "product", false, 0, OperatorSweepAction.Act)]

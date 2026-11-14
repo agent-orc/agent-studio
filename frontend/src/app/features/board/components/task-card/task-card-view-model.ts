@@ -11,6 +11,7 @@ import { phaseStaticLabel } from '../../../../services/lifecycle-phase.util';
 import { isTaskRunActive, resolveRunActivityKind } from '../../../../services/run-activity.util';
 import { buildTokenCostTooltip, formatTokenCostDisplay } from '../../../tokens';
 import { laneName, lanePresentation } from '../../../../models/lane-presentation';
+import { laneMoveRefusal, laneMoveRefusalText } from '../../../../models/lane-move-guard';
 import { MANUAL_MOVE_LANES, manualMoveSkipsExecution } from '../../../task-detail/state/triage-actions.model';
 import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
 
@@ -1852,15 +1853,37 @@ export function cardMoveTarget(id: string): string | null {
   return target && MANUAL_MOVE_LANES.includes(target) ? target : null;
 }
 
+/** Role scopes that narrow the card menu. Every flag only removes rows. */
+export interface CardMenuScope {
+  /** Ready lane is in Manual sort, so queue position can change. Defaults to true. */
+  canReorder?: boolean;
+  /**
+   * AGT-3670: a Reviewer holds no lane move, review order, or delete, and
+   * decides a Human Review card inside its detail.
+   */
+  reviewsOnly?: boolean;
+  /**
+   * AGT-3677: Product moves Backlog and Ready among each other and accepts a
+   * reviewed card. No other lane, no queue order, no delete.
+   */
+  productSession?: boolean;
+  /** AGT-3677: a Viewer or the public demo sees no mutation row at all. */
+  readOnlySession?: boolean;
+}
+
 /**
- * Right-click context-menu rows for a card.
+ * Right-click context-menu rows for a card. `scope` narrows the rows to the
+ * moves the session's role may actually make, so the menu never offers a move
+ * the backend would refuse (AGT-3677).
  */
 export function buildCardCtxMenuItems(
   job: TaskInfo,
   mutationsBlocked = false,
   visibleLanes: readonly string[] = MANUAL_MOVE_LANES,
   queueEdge: ReadyQueueEdge | null = null,
+  scope: CardMenuScope = {},
 ): MenuItem[] {
+  const { canReorder = true, reviewsOnly = false, productSession = false, readOnlySession = false } = scope;
   const items: MenuItem[] = [
     { kind: 'row', id: 'copy-name', label: 'Copy Name' },
     { kind: 'row', id: 'copy-id', label: 'Copy ID' },
@@ -1873,7 +1896,9 @@ export function buildCardCtxMenuItems(
       label: `Filter: tasks depending on ${job.key}`,
     });
   }
-  if (job.state === TaskState.AutoReview) {
+  // A Reviewer and a read-only session both stop at the copy and filter rows.
+  if (reviewsOnly || readOnlySession) return items;
+  if (!productSession && job.state === TaskState.AutoReview) {
     items.push({ kind: 'separator' });
     items.push({ kind: 'row', id: REVIEW_FIRST_ID, label: 'Review first',
       disabled: mutationsBlocked || job.reviewPriority === 'urgent' });
@@ -1887,30 +1912,50 @@ export function buildCardCtxMenuItems(
   const current = job.state === '2-ready-intake' ? TaskState.Ready : job.state;
   const targets = MANUAL_MOVE_LANES.filter((state) => visibleLanes.includes(state)
     && state !== current
-    && !manualMoveSkipsExecution(current, state));
-  if (current === TaskState.Ready) {
+    && !manualMoveSkipsExecution(current, state)
+    && (!productSession || (
+      (job.state === TaskState.Backlog && state === TaskState.Ready)
+      || (job.state === TaskState.Ready && state === TaskState.Backlog)
+      || (job.state === TaskState.HumanReview && state === TaskState.Completed)
+    )));
+  if (!productSession && current === TaskState.Ready) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Queue position' });
     items.push({ kind: 'row', id: MOVE_TOP_ID, label: 'Move to top',
-      disabled: mutationsBlocked || queueEdge?.first === true });
+      disabled: mutationsBlocked || !canReorder || queueEdge?.first === true,
+      hint: !canReorder ? 'Switch this lane to Manual' : undefined,
+      tooltip: !canReorder ? 'Switch this lane to Manual to change queue position.' : undefined });
     items.push({ kind: 'row', id: MOVE_BOTTOM_ID, label: 'Move to bottom',
-      disabled: mutationsBlocked || queueEdge?.last === true });
+      disabled: mutationsBlocked || !canReorder || queueEdge?.last === true,
+      hint: !canReorder ? 'Switch this lane to Manual' : undefined,
+      tooltip: !canReorder ? 'Switch this lane to Manual to change queue position.' : undefined });
   }
   if (targets.length) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Move' });
     for (const state of targets) {
-      items.push({ kind: 'row', id: MOVE_PREFIX + state, label: `Move to ${laneName(state)}`, disabled: mutationsBlocked });
+      // AGT-3624: a move the lane guard will refuse stays visible but
+      // disabled, and its tooltip says why and what to do instead.
+      const refusal = laneMoveRefusal(job, state);
+      items.push({
+        kind: 'row',
+        id: MOVE_PREFIX + state,
+        label: `Move to ${laneName(state)}`,
+        disabled: mutationsBlocked || refusal !== null,
+        ...(refusal ? { tooltip: laneMoveRefusalText(refusal) } : {}),
+      });
     }
   }
 
   // Destructive delete lives at the very end behind a separator so it never
-  // sits next to the everyday copy rows. Present on every card.
-  items.push({ kind: 'separator' });
-  items.push({
-    kind: 'row',
-    id: DELETE_ID,
-    label: 'Delete task',
-    danger: true,
-    disabled: mutationsBlocked,
-  });
+  // sits next to the everyday copy rows. Restricted roles do not see it.
+  if (!productSession) {
+    items.push({ kind: 'separator' });
+    items.push({
+      kind: 'row',
+      id: DELETE_ID,
+      label: 'Delete task',
+      danger: true,
+      disabled: mutationsBlocked,
+    });
+  }
   return items;
 }

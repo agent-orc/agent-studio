@@ -86,7 +86,8 @@ function evidenceDir(testInfo: TestInfo): string {
   return dir;
 }
 
-async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]): Promise<void> {
+async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[], ownerEntries: readonly object[] = []): Promise<void> {
+  await page.route('**/healthz', route => route.fulfill({ json: { status: 'ok' } }));
   await page.route('**/update/status', route => route.fulfill({
     json: { phase: 'idle', isRunning: false, behindBy: 0 },
   }));
@@ -114,7 +115,7 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
     if (url.pathname === '/api/v1/studio/auth/status') {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.pathname === '/api/runner/orchestrator-feed') return json({ entries: currentEntries() });
+    if (url.pathname === '/api/runner/orchestrator-feed') return json({ entries: currentEntries(), ownerEntries });
     if (url.pathname === '/api/usage/cockpit') return json({ workspaceId: 'workspace-1', clis: [], cost: null });
     if (url.pathname === '/api/runner/global/orchestrator-session') {
       return json({
@@ -150,6 +151,12 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
       }]);
     }
     if (url.pathname === '/api/v1/projects') return json(REGISTRY_PROJECTS);
+    if (/^\/api\/workspaces\/[^/]+\/quota\/admission$/.test(url.pathname)) {
+      return json({ workspaceId: 'workspace-1', workspace: {
+        projectId: null, project: null, status: 'ok', message: null, overrideActive: false,
+        codingAllowed: true, hostingAllowed: true, limited: false,
+      }, projects: [] });
+    }
     if (/^\/api\/bus\/[^/]+\/messages$/.test(url.pathname)) return json([]);
     if (
       url.pathname === '/api/tags'
@@ -211,11 +218,49 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
     if (url.pathname === '/api/crash-recovery/pending') return json({ pending: [] });
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);
     if (url.pathname === '/api/v1/management/links') return json([]);
+    if (url.pathname === '/api/v1/management/credential-inventory') return json({ generatedAt: new Date().toISOString(), items: [] });
     return json({});
   });
 }
 
-test('status-bar Feed focuses the workspace tab and clears the Activity badge', async ({ page }, testInfo) => {
+test('Owner actions show accepted, refused and decided records by day in light, dark and narrow layouts', async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const dayValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const ownerEntries = [
+    { ts: today.toISOString(), kind: 'owner_action', topic: 'lane-move', summary: 'DEMO-14: accepted', project: 'Agent Studio', watchPath: WATCH_PATH, jobId: 'DEMO-14' },
+    { ts: new Date(today.getTime() - 60_000).toISOString(), kind: 'owner_action', topic: 'refusal', summary: 'DEMO-6: acceptance refused', reasoning: 'Missing integration evidence', project: 'Agent Studio', watchPath: WATCH_PATH, jobId: 'DEMO-6' },
+    { ts: new Date(today.getTime() - 120_000).toISOString(), kind: 'owner_action', topic: 'dossier-decision', summary: 'Decided DEMO-W2: feature-spawn', project: 'Agent Studio', dossierId: 'demo-w2' },
+    { ts: yesterday.toISOString(), kind: 'owner_action', topic: 'lane-move', summary: 'DEMO-9: reissued', project: 'Agent Studio', watchPath: WATCH_PATH, jobId: 'DEMO-9' },
+  ];
+  await mockStudio(page, () => [], ownerEntries);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/#/feed', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+  await page.getByTestId('feed-kind-owner_action').click();
+  await expect(page.getByTestId('orchestrator-feed-entry')).toHaveCount(4);
+  await page.getByTestId('activity-day-filter').fill(dayValue);
+  await expect(page.getByTestId('orchestrator-feed-entry')).toHaveCount(3);
+  await expect(page.getByTestId('feed-kind-owner_action')).toContainText('3');
+  await page.getByTestId('orchestrator-feed-entry').filter({ hasText: 'acceptance refused' }).click();
+  await expect(page.getByTestId('orchestrator-feed-detail')).toContainText('Missing integration evidence');
+  await expect(page.getByTestId('orchestrator-entry-task')).toHaveCount(2);
+  await expect(page.getByTestId('orchestrator-entry-dossier')).toHaveAttribute('href', '#/projects/project-1/workbenches/demo-w2');
+  for (const theme of ['light', 'dark'] as Theme[]) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(evidenceDir(testInfo), `owner-actions-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByTestId('activity-day-filter')).toBeVisible();
+  await expect(page.getByTestId('orchestrator-feed-entry')).toHaveCount(3);
+  await expect(page.getByTestId('orchestrator-feed-entry').first()).toBeInViewport();
+  await page.screenshot({ path: join(evidenceDir(testInfo), 'owner-actions-390px.png'), fullPage: true });
+});
+
+test('Activity shortcut focuses the workspace tab and clears its badge', async ({ page }, testInfo) => {
   const entries = buildEntries().slice(0, 3);
   await page.addInitScript(() => {
     localStorage.setItem('atp.orchestrator-feed.alerts-seen-at', '2026-01-01T00:00:00Z');
@@ -225,23 +270,65 @@ test('status-bar Feed focuses the workspace tab and clears the Activity badge', 
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await dismissDevErrorDialog(page);
 
-  const statusFeed = page.getByTestId('status-bar-feed');
-  await expect(statusFeed).toHaveAttribute('aria-pressed', 'false');
+  const activityShortcut = page.getByTestId('studio-ab-activity');
+  await expect(activityShortcut).not.toHaveAttribute('aria-current', 'page');
   await expect(page.getByTestId('studio-ab-badge-activity')).toHaveText('3');
-  await statusFeed.click();
+  await activityShortcut.click();
 
   await expect(page).toHaveURL(/#\/feed$/);
   await expect(page.getByTestId('studio-tab-feed')).toContainText('Activity across projects');
   await expect(page.getByTestId('orchestrator-feed')).toHaveAttribute('data-mode', 'embedded');
   await expect(page.locator('app-project-overlays app-orchestrator-feed')).toHaveCount(0);
-  await expect(statusFeed).toHaveAttribute('aria-pressed', 'true');
+  await expect(activityShortcut).toHaveAttribute('aria-current', 'page');
   await expect(page.getByTestId('studio-ab-badge-activity')).toHaveCount(0);
 
-  await statusFeed.click();
+  await activityShortcut.click();
   await expect(page).toHaveURL(/#\/feed$/);
   await expect(page.getByTestId('studio-tab-feed')).toHaveCount(1);
   await expect(page.locator('app-project-overlays app-orchestrator-feed')).toHaveCount(0);
-  await page.screenshot({ path: join(evidenceDir(testInfo), 'status-bar-feed-tab.png'), fullPage: false });
+  await page.screenshot({ path: join(evidenceDir(testInfo), 'activity-shortcut-tab.png'), fullPage: false });
+});
+
+test('Activity alert names lanes, exposes its next step, and keeps the message readable', async ({ page }, testInfo) => {
+  const message = '5-human-review drain rate is 0/h with 7 queued; review acceptance and integration are waiting';
+  const entry: FeedEntry = { ...buildEntries()[0], summary: message, jobId: 'AGT-3645',
+    topic: 'watcher-finding-raised', reasoning: null };
+  await mockStudio(page, () => [{ ...entry, stall: {
+    subject: 'card:AGT-3645:5-human-review', severity: 'warning', sinceUtc: entry.ts,
+    blockedCount: 1, affectedCards: ['AGT-3645'],
+    suggestedAction: 'Open the card and decide acceptance or integration.', evidence: {},
+  } }]);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/#/feed', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+  // The mocked shell can mount an empty global error dialog while unrelated
+  // polling endpoints settle. Keep it out of Activity visual evidence.
+  await page.addStyleTag({ content: 'app-error-dialog { display: none !important; }' });
+  await setTheme(page, 'light');
+  const summary = page.getByTestId('orchestrator-entry-summary');
+  await expect(summary).toContainText('Human review drain rate');
+  const visibleSixty = await summary.evaluate(element => {
+    const text = element.firstChild;
+    if (!text) return false;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, Math.min(60, text.textContent?.length ?? 0));
+    return range.getBoundingClientRect().right <= element.getBoundingClientRect().right + 1;
+  });
+  expect(visibleSixty).toBe(true);
+  const action = page.getByTestId('orchestrator-suggested-action');
+  await expect(action.getByRole('button', { name: 'Open the card and decide acceptance or integration.' })).toBeVisible();
+  const output = evidenceDir(testInfo);
+  await page.screenshot({ path: join(output, 'activity-1280-light--mocked.png') });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: join(output, 'activity-1280-dark--mocked.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(summary).toHaveCSS('white-space', 'normal');
+  await summary.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
+  const wrappedLines = await summary.evaluate(element =>
+    element.getBoundingClientRect().height / parseFloat(getComputedStyle(element).lineHeight));
+  expect(wrappedLines).toBeGreaterThan(1);
+  await page.screenshot({ path: join(output, 'activity-390-dark--mocked.png') });
 });
 
 test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live stability, and responsive themes', async ({ page }, testInfo) => {
@@ -312,7 +399,6 @@ test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live s
     'orchestrator-entry-project',
     'orchestrator-entry-kind',
     'orchestrator-entry-summary',
-    'orchestrator-entry-context',
     'orchestrator-entry-disclosure',
   ]) {
     const boxes = await Promise.all(eventKinds.map(kind =>
@@ -327,6 +413,7 @@ test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live s
       expect(Math.abs(box!.width - boxes[0]!.width), `${testId} width`).toBeLessThanOrEqual(1);
     }
   }
+  await expect(page.getByTestId('orchestrator-entry-context').first()).toBeHidden();
 
   const globalStatus = page.getByTestId('global-orchestrator-status');
   await expect(globalStatus).toContainText('Scope All projects');
@@ -374,7 +461,7 @@ test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live s
     page.getByTestId('orchestrator-feed-detail').boundingBox(),
   ]);
   if (!filters || !stream || !detail) throw new Error('Feed panes did not render');
-  expect(stream.x).toBeGreaterThan(filters.x + filters.width - 4);
+  expect(stream.y).toBeGreaterThanOrEqual(filters.y + filters.height - 4);
   expect(detail.x).toBeGreaterThan(stream.x + stream.width - 4);
 
   await renderedEntries.nth(20).click();

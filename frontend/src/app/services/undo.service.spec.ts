@@ -49,6 +49,15 @@ describe('UndoController', () => {
     expect(stack[0].actions?.[0].label).toBe('Undo');
   });
 
+  it('does not repeat the accepted lane in the acceptance toast', () => {
+    undo.offerLaneRevert({
+      jobId: 't', watchPath: '/wp', jobLabel: 'Review card',
+      actionLabel: 'Accepted', targetLaneLabel: '',
+      prevState: '5-human-review', prevIndex: 0,
+    });
+    expect(notifications.notifications()[0].message).toBe('Accepted "Review card"');
+  });
+
   it('auto-dismisses the undo toast after the 8s window', () => {
     undo.offerLaneRevert({
       jobId: 't',

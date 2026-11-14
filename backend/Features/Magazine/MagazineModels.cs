@@ -85,7 +85,7 @@ public static partial class MagazineLimits
 public sealed record MagazineSource(string Kind, string Ref);
 
 /// <summary>Who wrote a revision: the authenticated principal and an optional persona name.</summary>
-public sealed record MagazineAuthor(string Principal, string? Persona);
+public sealed record MagazineAuthor(string Principal, string? Persona, string? PersonaId = null, string? RoleId = null);
 
 /// <summary>Body of <c>PUT /api/magazine/{scope}/{slug}</c>.</summary>
 public sealed record MagazineUpsertRequest(
@@ -94,7 +94,9 @@ public sealed record MagazineUpsertRequest(
     string? Body,
     string? Kind,
     string? Persona,
-    IReadOnlyList<MagazineSource>? Sources);
+    IReadOnlyList<MagazineSource>? Sources,
+    string? PersonaId = null,
+    string? RoleId = null);
 
 /// <summary>Body of the pin and archive routes; an absent value sets the flag.</summary>
 public sealed record MagazineFlagRequest(bool? Pinned, bool? Archived);
@@ -122,7 +124,7 @@ public sealed record MagazineRevision
 /// </summary>
 public sealed record MagazineArticleHead
 {
-    public int SchemaVersion { get; init; } = 1;
+    public int SchemaVersion { get; init; } = 2;
     public required string Scope { get; init; }
     public required string Slug { get; init; }
     public required int Revision { get; init; }

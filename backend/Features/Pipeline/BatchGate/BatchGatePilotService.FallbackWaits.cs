@@ -162,7 +162,7 @@ public sealed partial class BatchGatePilotService
     private EngineDecisionWait? OpenEngineDecision(BatchGatePendingRecord pending, string? containedInSha,
         bool includeFailed = false, bool stallSuperseded = false)
     {
-        var orchestration = _services?.GetService<MonolithOrchestrationStore>();
+        var orchestration = Service<MonolithOrchestrationStore>();
         if (orchestration is null) return null;
         // A passed gate's release is keyed by the result SHA. A later tick can
         // find the published merge as containment and pass its SHA; the open
@@ -198,7 +198,7 @@ public sealed partial class BatchGatePilotService
     private async Task<bool?> SettleEngineDecisionWaitAsync(TaskInfo task, BatchGatePendingRecord pending,
         EngineDecisionWait wait, BatchGateOwnership? ownership, bool recordInStore, CancellationToken ct)
     {
-        var orchestration = _services!.GetRequiredService<MonolithOrchestrationStore>();
+        var orchestration = Service<MonolithOrchestrationStore>() ?? throw new InvalidOperationException("MonolithOrchestrationStore is not registered.");
         var now = _time.GetUtcNow();
         var decision = MonolithTransitionAdapter.PerTaskFallbackEngineWait(new EngineDecisionWaitFacts(
             wait.Status, wait.SinceUtc,
@@ -290,7 +290,7 @@ public sealed partial class BatchGatePilotService
                 Kind = PerTaskFallbackWaitPolicy.StallEventKind,
                 Actor = TimelineActors.System, Summary = summary, Details = details,
             });
-            _services?.GetService<OrchestratorLog>()?.Append(pending.WatchPath, new OrchestratorLogEntry
+            Service<OrchestratorLog>()?.Append(pending.WatchPath, new OrchestratorLogEntry
             {
                 Ts = stall.RaisedAtUtc.UtcDateTime,
                 Kind = OrchestratorLogKinds.Alert,

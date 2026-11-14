@@ -54,6 +54,7 @@
 
 .workbench-viewer__frame-shell {
   position: relative;
+  grid-row: 3;
   display: flex;
   flex-direction: column;
   min-width: 0;

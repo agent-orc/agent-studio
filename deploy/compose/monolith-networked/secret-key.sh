@@ -11,16 +11,26 @@
 #   secret-key.sh id      <key-file>            print the key fingerprint
 #   secret-key.sh install <data-dir> <key-file> replace the key with a saved copy
 #
-# The key belongs to UID 10001, so file access runs in a one-shot container;
-# the operator account needs only Docker access.
+# The key belongs to UID 10001, so file access runs in a one-shot container of
+# the edge image, pinned by STUDIO_EDGE_DIGEST in .env; every command except
+# `id` needs an operator account with Docker access.
 set -euo pipefail
 
-helper_image="${STUDIO_HELPER_IMAGE:-caddy:2-alpine}"
 stack_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   echo 'Usage: secret-key.sh create <data-dir> | print <data-dir> | id <key-file> | install <data-dir> <key-file>' >&2
   exit 2
+}
+
+env_value() { sed -n "s/^$1=//p" "$stack_dir/.env" | tail -n 1; }
+
+# The edge image by digest, as setup.sh uses it, never a mutable tag.
+helper_image() {
+  local digest
+  digest="$(env_value STUDIO_EDGE_DIGEST)"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo 'STUDIO_EDGE_DIGEST in .env must be a 64-character image digest' >&2; exit 2; }
+  printf 'caddy@sha256:%s' "$digest"
 }
 
 absolute_dir() {
@@ -30,7 +40,7 @@ absolute_dir() {
 key_path() {
   local data_dir="$1" configured
   [ -f "$stack_dir/.env" ] || { echo 'Run setup.sh before managing the secret store key' >&2; exit 2; }
-  configured="$(sed -n 's/^STUDIO_SECRETS_KEY_FILE=//p' "$stack_dir/.env" | tail -n 1)"
+  configured="$(env_value STUDIO_SECRETS_KEY_FILE)"
   [ -n "$configured" ] || { echo 'STUDIO_SECRETS_KEY_FILE is missing from .env' >&2; exit 2; }
   case "$configured" in /*) ;; *) echo 'STUDIO_SECRETS_KEY_FILE must be absolute' >&2; exit 2;; esac
   case "${configured%/}/" in "${data_dir%/}"/*)
@@ -45,10 +55,14 @@ fingerprint() {
 }
 
 # Accepts only base64 of exactly 32 bytes, the format KeyEncryptionKey requires.
-validate_key_file() {
+is_key() {
   local size
-  size="$(tr -d '\r\n' < "$1" | base64 -d 2>/dev/null | wc -c)" || size=0
-  if [ "$size" -ne 32 ]; then
+  size="$(printf '%s' "$1" | tr -d '\r\n' | base64 -d 2>/dev/null | wc -c)" || size=0
+  [ "$size" -eq 32 ]
+}
+
+validate_key_file() {
+  if ! is_key "$(cat "$1")"; then
     echo "$1 is not a secret store key: expected base64 of 32 bytes" >&2
     exit 1
   fi
@@ -62,9 +76,10 @@ case "$command" in
     [ "$#" -eq 1 ] || usage
     absolute_dir "$1"
     file="$(key_path "$1")"
+    image="$(helper_image)"
     key_dir="$(dirname "$file")"
     mkdir -p "$key_dir"
-    docker run --rm --user 0 --network none -v "$key_dir:/keys" --entrypoint /bin/sh "$helper_image" -c '
+    docker run --rm --user 0 --network none -v "$key_dir:/keys" --entrypoint /bin/sh "$image" -c '
       set -e
       umask 077
       if [ ! -s "/keys/$1" ]; then
@@ -79,7 +94,18 @@ case "$command" in
     [ "$#" -eq 1 ] || usage
     absolute_dir "$1"
     file="$(key_path "$1")"
-    docker run --rm --user 10001:10001 --network none -v "$file:/key:ro" --entrypoint cat "$helper_image" /key
+    image="$(helper_image)"
+    # Read into a variable first: with `print > copy` the shell has already
+    # created the copy, so a failure must say so instead of leaving it silent.
+    if ! key="$(docker run --rm --user 10001:10001 --network none -v "$file:/key:ro" --entrypoint cat "$image" /key)"; then
+      echo 'Cannot read the secret store key through Docker: run as an account with Docker access. Any output file is empty; delete it, it is no copy of the key.' >&2
+      exit 1
+    fi
+    if ! is_key "$key"; then
+      echo "$file is not a secret store key: expected base64 of 32 bytes. Any output file is no copy of the key; delete it." >&2
+      exit 1
+    fi
+    printf '%s\n' "$key"
     ;;
   id)
     [ "$#" -eq 1 ] || usage
@@ -91,8 +117,9 @@ case "$command" in
     absolute_dir "$1"
     validate_key_file "$2"
     file="$(key_path "$1")"
+    image="$(helper_image)"
     key_dir="$(dirname "$file")"
-    docker run -i --rm --user 0 --network none -v "$key_dir:/keys" --entrypoint /bin/sh "$helper_image" -c '
+    docker run -i --rm --user 0 --network none -v "$key_dir:/keys" --entrypoint /bin/sh "$image" -c '
       set -e
       umask 077
       tr -d "\r\n" > "/keys/$1.new"

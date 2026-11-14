@@ -1,0 +1,5 @@
+.filesystem-list { display: grid; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }
+.filesystem-list__row { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  justify-content: space-between; color: var(--studio-fg-dim); font-size: var(--studio-font-size-sm); }
+.filesystem-list__value { color: var(--studio-fg-strong); font-variant-numeric: tabular-nums; }
+.filesystem-list__row small { flex-basis: 100%; color: var(--studio-fg-dim); }

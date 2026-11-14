@@ -64,6 +64,22 @@ public sealed class EnvironmentFlowServiceTests
         Assert.Equal(control.WaitingReasons, result.WaitingReasons);
     }
 
+    [Fact]
+    public void Aggregate_CountsReadyCardsUnderTheirPickupHoldMechanism()
+    {
+        var now = new DateTime(2026, 11, 11, 12, 0, 0, DateTimeKind.Utc);
+        var held = Task("held", TaskStates.Ready, now.AddDays(-2)) with
+        {
+            PickupHold = new PickupHoldStatus { Mechanism = PickupHoldMechanisms.ExecutionPlacement },
+        };
+        var ready = Task("ready", TaskStates.Ready, now.AddHours(-1));
+
+        var result = EnvironmentFlowService.Aggregate([held, ready], _ => [], now);
+
+        Assert.Contains(result.WaitingReasons, reason => reason.Reason == "Execution placement" && reason.Count == 1);
+        Assert.Contains(result.WaitingReasons, reason => reason.Reason == "Waiting for coding slot" && reason.Count == 1);
+    }
+
 
     private static TaskInfo Task(string id, string lane, DateTime at) => new()
     {

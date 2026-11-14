@@ -9,6 +9,7 @@ using Xunit;
 
 namespace AgentRunner.Tests;
 
+[Collection(ProcessEnvironmentCollection.Name)]
 public sealed class RemoteReviewExecutorTests : IDisposable
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -17,8 +18,46 @@ public sealed class RemoteReviewExecutorTests : IDisposable
         "remote-review-executor-tests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public async Task Graceful_shutdown_reports_interrupted_work_before_cleanup()
+    public async Task Source_cache_failure_reports_source_unavailable_with_path()
     {
+        if (OperatingSystem.IsWindows()) return;
+        var priorXdg = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
+        try
+        {
+            Environment.SetEnvironmentVariable("XDG_CACHE_HOME", "relative-cache");
+            var handler = new InterruptedArtifactHandler();
+            using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+            var options = Options();
+            using var client = new TaskServerClient(http, options.RunnerId,
+                usesDurableTaskServer: true, options: options);
+            var claim = Claim();
+            claim = claim with { Subject = claim.Subject! with
+            {
+                RepositoryUrl = "https://github.com/example/repository.git",
+                SourceBundleArtifactId = null,
+                SourceBundleSha256 = null,
+            } };
+            var state = new ReviewStateStore(options.StateDir);
+
+            var exitCode = await new RemoteReviewExecutor(options, client, state, _ => { })
+                .RunClaimedAsync(claim, CancellationToken.None);
+
+            Assert.Equal(3, exitCode);
+            var report = Assert.Single(handler.Reports);
+            Assert.Equal("ReviewInfra", report.Outcome);
+            Assert.Equal("SourceUnavailable", report.FailureClassification);
+            Assert.Contains("relative-cache", report.Summary, StringComparison.Ordinal);
+            Assert.Contains("repository", report.Summary, StringComparison.Ordinal);
+            Assert.Empty(state.LoadAll());
+        }
+        finally { Environment.SetEnvironmentVariable("XDG_CACHE_HOME", priorXdg); }
+    }
+
+    [Fact]
+    public async Task Graceful_shutdown_during_preparation_hands_the_attempt_to_the_replacement()
+    {
+        // AGT-3647: a daemon stop is not a lost review. The slot stays for the
+        // replacement daemon, which prepares again under the same lease.
         var handler = new InterruptedArtifactHandler();
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
         var options = Options();
@@ -36,25 +75,34 @@ public sealed class RemoteReviewExecutorTests : IDisposable
         await handler.ArtifactRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await shutdown.CancelAsync();
 
-        Assert.Equal(3, await execution.WaitAsync(TimeSpan.FromSeconds(5)));
-        var report = Assert.Single(handler.Reports);
-        Assert.Equal("ReviewInfra", report.Outcome);
-        Assert.Equal("ExecutorRestarted", report.FailureClassification);
-        Assert.Contains("daemon stopped during workspace preparation", report.Summary, StringComparison.Ordinal);
-        Assert.Contains("Lost work extent: 0 of 0 review commands completed", report.Summary, StringComparison.Ordinal);
-        Assert.Equal(17, report.Fence);
-        Assert.Equal(23, report.AuthorityEpoch);
+        Assert.Equal(0, await execution.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Empty(handler.Reports);
+        Assert.Empty(handler.Cleanups);
+        var slot = Assert.Single(state.LoadAll());
+        Assert.Equal("handed-off", slot.Phase);
+        Assert.Null(slot.ProcessId);
+        Assert.False(DurableReviewProcess.MayHaveLaunched(slot));
+        Assert.True(DurableReviewProcess.CanRelaunch(slot));
+        Assert.Contains(logs, line => line.Contains("review daemon handoff", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line => line.Contains("ExecutorRestarted", StringComparison.Ordinal));
+    }
 
-        var cleanup = Assert.Single(handler.Cleanups);
-        Assert.True(cleanup.WorkspaceRemoved);
-        Assert.Null(cleanup.FailureClassification);
-        Assert.Contains(
-            logs,
-            line => line.Contains(
-                "classification=ExecutorRestarted",
-                StringComparison.Ordinal));
-        Assert.False(Directory.Exists(Path.Combine(_reviewRoot, "review-attempt-1-f17")));
-        Assert.Empty(state.LoadAll());
+    [Fact]
+    public void Relaunch_budget_ends_at_its_maximum_and_never_follows_a_settled_result()
+    {
+        var options = Options();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = state.Create(Claim(), Path.Combine(_reviewRoot, "repository"));
+
+        Assert.True(DurableReviewProcess.CanRelaunch(slot));
+        Assert.True(DurableReviewProcess.CanRelaunch(
+            slot with { WorkerRelaunches = DurableReviewProcess.MaximumWorkerRelaunches - 1 }));
+        Assert.False(DurableReviewProcess.CanRelaunch(
+            slot with { WorkerRelaunches = DurableReviewProcess.MaximumWorkerRelaunches }));
+        Assert.False(DurableReviewProcess.CanRelaunch(slot with { TerminalClassification = "ReviewInfra" }));
+        Assert.False(DurableReviewProcess.CanRelaunch(slot with { ReportPendingSinceUtc = new DateTime(2026, 11, 9, 18, 6, 0, DateTimeKind.Utc) }));
+        File.WriteAllText(Path.Combine(slot.WorkerDirectory, "review-result.json"), "{}");
+        Assert.False(DurableReviewProcess.CanRelaunch(slot));
     }
 
     public void Dispose()

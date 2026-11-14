@@ -96,6 +96,13 @@
         </div>
       }
     </div>
+  } @else if (settled()) {
+    <div class="decision-panel__receipt" data-testid="workbench-decision-receipt">
+      <span><strong>In implementation</strong> · {{ decisionPoints().length }} decision point{{ decisionPoints().length === 1 ? '' : 's' }} recorded</span>
+      @if (selectedSummary()) {
+        <span class="decision-panel__receipt-note" data-testid="workbench-decision-response-receipt">{{ selectedSummary() }}</span>
+      }
+    </div>
   } @else if (stage() === 'prepared' && archiveOpen()) {
     <div class="decision-panel__archive-confirm">
       <span>Archive with reason: <strong>{{ archiveReason() }}</strong></span>

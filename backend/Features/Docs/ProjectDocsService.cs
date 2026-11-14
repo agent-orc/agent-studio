@@ -650,9 +650,9 @@ public class ProjectDocsService
         bool includeHistory = false)
     {
         var catalogue = _wikiContentCache.GetSnapshot(projectName)?.Workbenches;
-        return catalogue == null
-            ? null
-            : WorkbenchCatalogueService.FilterCatalogue(catalogue, includeHistory);
+        if (catalogue == null) return null;
+        var filtered = WorkbenchCatalogueService.FilterCatalogue(catalogue, includeHistory);
+        return _workbenches?.WithLinkedTaskKeys(filtered, projectName) ?? filtered;
     }
 
     public WorkbenchOverview GetWikiWorkbenchOverview(

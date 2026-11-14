@@ -33,6 +33,12 @@ public sealed record ConfirmWorkbenchDecisionRequest
     public List<WorkbenchDecisionResponse> Responses { get; init; } = [];
     /// <summary>Cards the caller already created for this decision, if any.</summary>
     public string[]? SpawnedTaskKeys { get; init; }
+    /// <summary>
+    /// Job ids of the cards in <see cref="SpawnedTaskKeys"/>. When the decision
+    /// cannot be recorded, these cards are removed again so no card stays on
+    /// the board without its Dossier link.
+    /// </summary>
+    public string[]? SpawnedTaskIds { get; init; }
     public string? CliType { get; init; }
     public string? Model { get; init; }
     public string? ThinkingLevel { get; init; }
@@ -53,6 +59,10 @@ public sealed record WorkbenchDecisionResult
     public string[] SpawnedTaskKeys { get; init; } = [];
     public List<WorkbenchDecisionResponse> Responses { get; init; } = [];
     public bool Idempotent { get; init; }
+    /// <summary>Spawned cards removed because the decision was not recorded.</summary>
+    public string[] RemovedTaskIds { get; init; } = [];
+    /// <summary>Spawned cards that stay on the board without a Dossier link.</summary>
+    public string[] RetainedTaskIds { get; init; } = [];
     /// <summary>
     /// The server-validated draft of a feature decision. This service never
     /// creates the card: task creation stays on the existing task API, and the
@@ -93,15 +103,18 @@ public sealed class WorkbenchDecisionService
     private readonly ManagedRepositoryMutationService _repositoryMutations;
     private readonly IAtomicJsonFileWriter _fileWriter;
     private readonly WorkbenchChangeNotifier? _notifier;
+    private readonly IWorkbenchSpawnedCardCleanup? _spawnedCards;
 
     public WorkbenchDecisionService(
         WorkbenchCatalogueService catalogue,
         GitService git,
         IAtomicJsonFileWriter? fileWriter = null,
         WorkbenchChangeNotifier? notifier = null,
-        ManagedRepositoryMutationService? repositoryMutations = null)
+        ManagedRepositoryMutationService? repositoryMutations = null,
+        IWorkbenchSpawnedCardCleanup? spawnedCards = null)
     {
         _catalogue = catalogue;
+        _spawnedCards = spawnedCards;
         _fileWriter = fileWriter ?? new AtomicJsonFileWriter();
         _notifier = notifier;
         _repositoryMutations = repositoryMutations
@@ -155,16 +168,64 @@ public sealed class WorkbenchDecisionService
 
         var gateKey = ConfirmGateKey(projectName, id);
         var writeGate = ConfirmGates.GetOrAdd(gateKey, _ => new SemaphoreSlim(1, 1));
+        WorkbenchDecisionResult result;
         writeGate.Wait();
         try
         {
-            return ConfirmSerialized(projectName, id, body);
+            result = ConfirmSerialized(projectName, id, body);
         }
         finally
         {
             writeGate.Release();
         }
+        return result.Success ? result : RemoveUnlinkedCards(projectName, body, result);
     }
+
+    /// <summary>
+    /// The caller creates the card before it confirms. A confirmation that
+    /// fails leaves that card without its Dossier link, so it is removed here
+    /// and the owner is told what happened to it. A card a run already picked
+    /// up is kept and named instead.
+    /// </summary>
+    private WorkbenchDecisionResult RemoveUnlinkedCards(
+        string projectName, ConfirmWorkbenchDecisionRequest body, WorkbenchDecisionResult failure)
+    {
+        var ids = (body.SpawnedTaskIds ?? [])
+            .Where(taskId => !string.IsNullOrWhiteSpace(taskId))
+            .Select(taskId => taskId.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (ids.Length == 0) return failure;
+        if (_spawnedCards == null)
+            return failure with
+            {
+                RetainedTaskIds = ids,
+                Error = $"{failure.Error} The new task stays on the board without a Dossier link. Remove it before you try again.",
+            };
+
+        var removed = new List<string>();
+        var retained = new List<string>();
+        foreach (var taskId in ids)
+        {
+            var outcome = _spawnedCards.Remove(projectName, taskId);
+            if (outcome is SpawnedCardRemoval.Removed or SpawnedCardRemoval.AlreadyGone) removed.Add(taskId);
+            else retained.Add(taskId);
+        }
+        var keys = (body.SpawnedTaskKeys ?? []).Where(key => !string.IsNullOrWhiteSpace(key)).ToArray();
+        var label = keys.Length == 1 ? $"task {keys[0].Trim()}" : "the new task";
+        var note = retained.Count == 0
+            ? $"Nothing was created: {label} was removed again."
+            : $"{Capitalize(label)} stays on the board without a Dossier link because it could not be removed or a run already started it. Remove it before you try again.";
+        return failure with
+        {
+            RemovedTaskIds = [.. removed],
+            RetainedTaskIds = [.. retained],
+            Error = $"{failure.Error} {note}",
+        };
+    }
+
+    private static string Capitalize(string text) =>
+        text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>
     /// The descriptor path the confirmation will write, normalized into a

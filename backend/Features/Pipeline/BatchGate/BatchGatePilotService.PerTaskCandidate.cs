@@ -68,7 +68,7 @@ public sealed partial class BatchGatePilotService
         var request = new RemoteDeliveryIntegrationRequest(task.ProjectName, task.Id,
             task.FolderPath, task.WatchPath, branch, pending.IntegrationStrategy,
             pending.PipelineType, pending.Subject.ReviewCompletedAtUtc);
-        var rounds = _services?.GetService<IntegrationAgentRoundService>();
+        var rounds = Service<IntegrationAgentRoundService>();
         var round = rounds is null
             ? new IntegrationAgentRoundStartResult(false, "No automatic merge round is configured.")
             : await rounds.TryStartAsync(request, conflict).ConfigureAwait(false);
