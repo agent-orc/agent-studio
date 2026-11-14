@@ -47,6 +47,9 @@ public sealed class CombinedOneShotJobTests : IDisposable
         var waiting = await PostJobAsync(http, request);
         Assert.Equal("waiting", waiting.Status);
         Assert.Equal("waiting for a host with model-acceptance:codex:gpt-6-sol", waiting.Error);
+        using var missing = await http.GetAsync("/api/v1/one-shot-jobs/osj_missing");
+        missing.EnsureSuccessStatusCode();
+        Assert.Empty(await missing.Content.ReadAsStringAsync());
 
         using var registration = await http.PutAsJsonAsync("/api/v1/runners/runner-a",
             new RegisterRunnerRequest("runner", "host-a", "instance-a", "1.0.0",
@@ -67,7 +70,8 @@ public sealed class CombinedOneShotJobTests : IDisposable
         Assert.Equal("pending", queued.Status);
         using var wrongRunner = await http.PostAsJsonAsync("/api/v1/one-shot-jobs/claim",
             new OneShotJobClaimRequest("runner-b", "instance-a"));
-        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, wrongRunner.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, wrongRunner.StatusCode);
+        Assert.Contains("runner-identity-mismatch", await wrongRunner.Content.ReadAsStringAsync());
         var claim = await http.PostAsJsonAsync("/api/v1/one-shot-jobs/claim",
             new OneShotJobClaimRequest("runner-a", "instance-a"));
         claim.EnsureSuccessStatusCode();

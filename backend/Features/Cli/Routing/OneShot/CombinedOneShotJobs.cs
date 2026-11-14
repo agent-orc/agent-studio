@@ -73,22 +73,27 @@ public static class CombinedOneShotJobEndpoints
             catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-request", ex.Message)); }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         api.MapGet("/{jobId}", async (string jobId, CombinedOneShotJobs jobs, CancellationToken ct) =>
-            await jobs.GetAsync(jobId, ct) is { } job ? Results.Ok(job) : Results.NotFound());
+            Results.Json(await jobs.GetAsync(jobId, ct)));
         api.MapPost("/claim", async (HttpContext context, OneShotJobClaimRequest request,
             CombinedOneShotJobs jobs, CancellationToken ct) =>
         {
-            if (!RunnerMatches(context, request.RunnerId)) return Results.Unauthorized();
-            return Results.Ok(await jobs.ClaimAsync(request, ct));
+            if (!RunnerMatches(context, request.RunnerId)) return RunnerIdentityMismatch();
+            return Results.Json(await jobs.ClaimAsync(request, ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
         api.MapPost("/complete", async (HttpContext context, OneShotJobCompletion request,
             CombinedOneShotJobs jobs, CancellationToken ct) =>
         {
-            if (!RunnerMatches(context, request.RunnerId)) return Results.Unauthorized();
-            return Results.Ok(await jobs.CompleteAsync(request, ct));
+            if (!RunnerMatches(context, request.RunnerId)) return RunnerIdentityMismatch();
+            return Results.Json(await jobs.CompleteAsync(request, ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
     }
 
     private static bool RunnerMatches(HttpContext context, string runnerId)
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
            || string.Equals(principal.RunnerId, runnerId, StringComparison.Ordinal);
+
+    private static IResult RunnerIdentityMismatch()
+        => Results.Json(new ApiError("runner-identity-mismatch",
+            "A Runner principal may act only for its bound Runner identity."),
+            statusCode: StatusCodes.Status403Forbidden);
 }

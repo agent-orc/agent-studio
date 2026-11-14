@@ -9,7 +9,8 @@ Owner: Pipeline and CLI domains
 ## Networked one-shot custody
 
 In a networked installation, the API selects and admits each short model call,
-then submits a bounded one-shot job to the standalone Task Server. This covers
+then submits a bounded one-shot job to the configured Task Server or the combined
+API's local queue. This covers
 Result summaries, post-summary assessment, tagging and maintenance, commit
 message review, and other calls through `CliOneShotRegistry`. The job carries a
 prompt of at most 220,000 UTF-8 bytes, a timeout of at most 300 seconds, and an
@@ -26,18 +27,20 @@ text and usage. The API container does not need a provider login.
 The selection ledger records each one-shot route, including an ordinary primary
 selection. When no host advertises the route, Result finalization reports
 `waiting for a host with <capability>` and schedules a retry without consuming
-the summary retry budget. The task server publishes the model as a short-lived
+the summary retry budget. The queue authority publishes the model as a short-lived
 probe demand in capability advertisement responses, so a host can discover and
 advertise a newly requested route. Pending jobs expire after their timeout plus
 30 seconds. A claim starts a fresh timeout plus 30 seconds; the API follows the
-Task Server's queue expiry and starts its own run timer when it observes the
+queue authority's expiry and starts its own run timer when it observes the
 claim.
 
-### Task Server one-shot job API
+### One-shot job API
 
-These routes use the standalone Task Server's `/api/v1` prefix and camel-case
-JSON properties. Studio uses `tasks:write` to submit and read jobs. A runner
-uses its bound identity and the run or review claim/write scopes. Studio owns
+These routes use the same `/api/v1` prefix and camel-case
+JSON properties. On a standalone Task Server, Studio uses `tasks:write` to
+submit and read jobs, and a runner uses its bound identity and the run or
+review claim/write scopes. The combined API applies its own route permissions
+and the same bound runner identity check. Studio owns
 model selection and quota admission. A missing host returns `waiting` without
 creating a job, so Studio can retry after capability evidence changes.
 The public-demo profile denies job creation, claim, and completion with the
@@ -46,8 +49,8 @@ typed `execution-disabled` response; reading an existing job remains read-only.
 | Method and route | Request | Response |
 |---|---|---|
 | `POST /one-shot-jobs` | `cli` (`claude` or `codex`), `model`, `prompt`, optional `thinkingLevel`, `timeoutSeconds`, `maxOutputBytes`, and optional `images` entries with `base64` and `mediaType`. | `jobId`, `status` (`pending` or `waiting`), `capability`, and optional `error`. Waiting has an empty `jobId` and `error: "waiting for a host with <capability>"`. |
-| `GET /one-shot-jobs/{jobId}` | No body. | `jobId`, `status` (`pending`, `claimed`, `completed`, or `failed`), `capability`, optional `text`, `error`, and `usage`. An unknown id returns JSON `null`; an expired job reads as `failed` with a timeout error. |
-| `POST /one-shot-jobs/claim` | `runnerId`, `instanceId`. | `jobId`, `claimToken`, and the original `request`, or JSON `null` when no eligible job exists. Claim requires a fresh ready `model-acceptance:<cli>:<model>` capability for the runner's current instance. |
+| `GET /one-shot-jobs/{jobId}` | No body. | `jobId`, `status` (`pending`, `claimed`, `completed`, or `failed`), `capability`, optional `text`, `error`, and `usage`. An unknown id returns HTTP 200 with an empty body; an expired job reads as `failed` with a timeout error. |
+| `POST /one-shot-jobs/claim` | `runnerId`, `instanceId`. | `jobId`, `claimToken`, and the original `request`, or an empty HTTP 200 response when no eligible job exists. Claim requires a fresh ready `model-acceptance:<cli>:<model>` capability for the runner's current instance. |
 | `POST /one-shot-jobs/complete` | `runnerId`, `instanceId`, `jobId`, `claimToken`, `success`, optional `text`, `error`, and `usage` (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheCreationTokens`, `model`). | JSON `true` when the active fenced claim from the runner's current instance is settled, otherwise `false`. Text over the requested byte cap becomes a failed job with an output-cap error. |
 
 The server rejects an empty or over-220,000-byte UTF-8 prompt, a timeout outside
