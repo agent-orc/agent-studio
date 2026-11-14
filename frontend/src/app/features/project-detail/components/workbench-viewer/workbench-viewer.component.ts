@@ -25,9 +25,7 @@ import { WorkbenchViewerHeaderComponent } from '../workbench-viewer-header/workb
 import {
   ISOLATED_HTML_LINK_MESSAGE,
   WORKBENCH_DECISION_CHANGE_MESSAGE,
-  WORKBENCH_DECISION_ANCHOR_MESSAGE,
   WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE,
-  WORKBENCH_DECISION_HOST_HEIGHT_MESSAGE,
   WORKBENCH_DECISION_HYDRATE_MESSAGE,
   WORKBENCH_DECISION_READY_MESSAGE,
   buildIsolatedHtmlSrcdoc,
@@ -98,12 +96,6 @@ export class WorkbenchViewerComponent {
   readonly decisionResponses = signal<WorkbenchDecisionResponse[]>([]);
   readonly documenting = signal(false);
   readonly documentationError = signal<string | null>(null);
-  readonly decisionAnchor = signal<{
-    top: number;
-    left: number;
-    width: number;
-    visible: boolean;
-  } | null>(null);
   /** Timestamp of the last successful Dossier read, used by the offline as-of line. */
   readonly lastUpdatedAtUtc = signal<string | null>(null);
   readonly liveConnected = this.hub.connected;
@@ -144,18 +136,6 @@ export class WorkbenchViewerComponent {
       this.maximized.set(false);
       this.loadDocument(project, id);
     });
-    effect((onCleanup) => {
-      const host = this.inlineActionHost()?.nativeElement;
-      if (!host || typeof ResizeObserver === 'undefined') return;
-      const publishHeight = () => this.frame()?.nativeElement.contentWindow?.postMessage({
-        type: WORKBENCH_DECISION_HOST_HEIGHT_MESSAGE,
-        height: host.getBoundingClientRect().height + 8,
-      }, '*');
-      const observer = new ResizeObserver(publishHeight);
-      observer.observe(host);
-      publishHeight();
-      onCleanup(() => observer.disconnect());
-    });
     effect(() => {
       const event = this.hub.workbenchEvent();
       if (!event) return;
@@ -178,8 +158,6 @@ export class WorkbenchViewerComponent {
       ctrlKey?: unknown;
       metaKey?: unknown;
       responses?: unknown;
-      rect?: unknown;
-      visible?: unknown;
     } | null;
     if (message?.type === WORKBENCH_DECISION_READY_MESSAGE) {
       this.hydrateFrame();
@@ -189,17 +167,6 @@ export class WorkbenchViewerComponent {
       this.inlineActionHost()?.nativeElement
         .querySelector<HTMLElement>('[data-testid="workbench-decision-start"]')
         ?.focus();
-      return;
-    }
-    if (message?.type === WORKBENCH_DECISION_ANCHOR_MESSAGE) {
-      const rect = message.rect as Partial<DOMRect> | null;
-      if (!rect || !finite(rect.top) || !finite(rect.left) || !finite(rect.width)) return;
-      this.decisionAnchor.set({
-        top: rect.top!,
-        left: rect.left!,
-        width: Math.max(240, rect.width!),
-        visible: message.visible === true,
-      });
       return;
     }
     if (message?.type === WORKBENCH_DECISION_CHANGE_MESSAGE) {
@@ -233,6 +200,24 @@ export class WorkbenchViewerComponent {
 
   toggleMaximize(): void {
     this.maximized.update((value) => !value);
+  }
+
+  containDecisionScrollKeys(event: KeyboardEvent): void {
+    const target = event.target as HTMLElement;
+    if (target.closest('input, textarea, select, [contenteditable="true"], [role="listbox"], [role="combobox"], [role="menu"]')) return;
+    const panel = event.currentTarget as HTMLElement;
+    const moves: Record<string, number> = {
+      ArrowUp: -48,
+      ArrowDown: 48,
+      PageUp: -panel.clientHeight,
+      PageDown: panel.clientHeight,
+      Home: -panel.scrollHeight,
+      End: panel.scrollHeight,
+    };
+    if (!(event.key in moves)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    panel.scrollBy({ top: moves[event.key] });
   }
 
   @HostListener('document:keydown.escape')
@@ -312,7 +297,6 @@ export class WorkbenchViewerComponent {
     this.documentationError.set(null);
     if (clear) {
       this.document.set(null);
-      this.decisionAnchor.set(null);
       this.lastUpdatedAtUtc.set(null);
     }
     this.docs.getWorkbench(project, id).subscribe({
@@ -344,10 +328,6 @@ export class WorkbenchViewerComponent {
       },
     });
   }
-}
-
-function finite(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function reworkRevisionLanded(document: WorkbenchDocument): boolean {

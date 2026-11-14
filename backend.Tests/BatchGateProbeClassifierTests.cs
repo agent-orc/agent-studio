@@ -69,4 +69,25 @@ public sealed class BatchGateProbeClassifierTests
         => Assert.Equal(["OperatorPolicyStepTests.A"], BatchGateProbeClassifier.FailedTests(
             Red(1, BuildTestGateFailureKind.Code, Run("OperatorPolicyStepTests.A"),
                 Run("Other.B") with { TimedOut = true })));
+
+    [Fact]
+    public void A_green_baseline_and_red_clean_repeat_confirm_a_card_test_failure()
+        => Assert.True(BatchGateProbeClassifier.RepeatedCardTestRed(
+            Red(1, BuildTestGateFailureKind.Code, Run("PersonaEndpointsTests.Activation_needs_a_step_up")),
+            new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 1, "", "", false, false),
+            Red(1, BuildTestGateFailureKind.Code, Run("PersonaEndpointsTests.Activation_needs_a_step_up"))));
+
+    [Fact]
+    public void A_red_baseline_does_not_confirm_a_card_test_failure()
+        => Assert.False(BatchGateProbeClassifier.RepeatedCardTestRed(
+            Red(1, BuildTestGateFailureKind.Code, Run("PersonaEndpointsTests.Activation_needs_a_step_up")),
+            Red(1, BuildTestGateFailureKind.Code, Run("PersonaEndpointsTests.Activation_needs_a_step_up")),
+            Red(1, BuildTestGateFailureKind.Code, Run("PersonaEndpointsTests.Activation_needs_a_step_up"))));
+
+    [Fact]
+    public void A_run_without_a_parsed_report_does_not_confirm_a_card_test_failure()
+        => Assert.False(BatchGateProbeClassifier.RepeatedCardTestRed(
+            Red(1, BuildTestGateFailureKind.Code, Run()),
+            new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 1, "", "", false, false),
+            Red(1, BuildTestGateFailureKind.Code, Run("PersonaEndpointsTests.Activation_needs_a_step_up"))));
 }

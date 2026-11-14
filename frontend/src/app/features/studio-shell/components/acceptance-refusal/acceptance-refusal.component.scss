@@ -1,0 +1,88 @@
+@use '../../../../../styles/mixins' as m;
+
+// A direct flex item of the toolbar's triage cluster. The reason truncates
+// first so the Accept button and the action stay reachable at 1024 px.
+:host {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.acceptance-refusal {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+}
+
+.acceptance-refusal__reason {
+  min-width: 0;
+  max-width: 280px;
+  font-size: 11px;
+}
+
+// Narrow toolbars keep the icon (its tooltip carries the reason) and the action.
+@media (max-width: 1100px) {
+  .acceptance-refusal__reason { max-width: 160px; }
+}
+@media (max-width: 720px) {
+  .acceptance-refusal__reason { max-width: 12px; overflow: hidden; }
+}
+
+// Notice treatment for the override form (Deck-Panel, no accent edge).
+.acceptance-refusal__form {
+  @include m.deck-panel;
+  position: fixed;
+  display: grid;
+  gap: var(--studio-spacing-2);
+  width: min(360px, calc(100vw - 16px));
+  box-sizing: border-box;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font-size: 12px;
+}
+
+.acceptance-refusal__label { color: var(--studio-fg-strong); font-weight: 600; }
+.acceptance-refusal__hint { margin: 0; color: var(--studio-fg-muted); overflow-wrap: anywhere; }
+
+.acceptance-refusal__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  font: inherit;
+  resize: vertical;
+
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+}
+
+.acceptance-refusal__error { margin: 0; color: var(--studio-error); overflow-wrap: anywhere; }
+
+.acceptance-refusal__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+}
+
+.acceptance-refusal__button {
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-spacing-1);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-strong);
+  font: inherit;
+  cursor: pointer;
+
+  &:disabled { cursor: not-allowed; opacity: 0.6; }
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+
+  &--primary {
+    background: var(--studio-accent);
+    border-color: var(--studio-accent);
+    color: var(--studio-on-accent);
+  }
+}

@@ -1100,6 +1100,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 ? DiagnosticFingerprint(clean, null, _preparationCacheRoot) : null,
             otherCards,
             prior));
+        // A completed, parsed test failure repeated on a clean candidate while
+        // the integration baseline passes is direct card evidence. History may
+        // be unavailable, leaving the generic fingerprint decision unclassified.
+        diagnosis = ConfirmParsedTestDiagnosis(diagnosis, original, baseline, clean);
         diagnosis = diagnosis with
         {
             Evidence = diagnosis.Evidence.Concat(
@@ -1144,6 +1148,14 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                      $" confidence={diagnosis.Confidence:0.00}; " + string.Join("; ", diagnosis.Evidence),
         };
     }
+
+    internal static DeliveryFailureDiagnosisResult ConfirmParsedTestDiagnosis(
+        DeliveryFailureDiagnosisResult diagnosis, BuildTestGateResult candidate,
+        BuildTestGateResult? baseline, BuildTestGateResult? cleanRepeat)
+        => BatchGateProbeClassifier.RepeatedCardTestRed(candidate, baseline, cleanRepeat)
+            ? new DeliveryFailureDiagnosisResult(DeliveryFailureDiagnosis.Product, 1,
+                diagnosis.Evidence.Concat(["completed parsed test failures repeated on clean candidate"]).ToArray())
+            : diagnosis;
 
     private sealed record GateBaselineCacheEntry(string Key, DateTimeOffset RecordedAtUtc);
 
