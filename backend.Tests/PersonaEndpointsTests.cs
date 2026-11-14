@@ -31,6 +31,24 @@ public sealed class PersonaEndpointsTests : IDisposable
     private string _ownerTotpSecret = string.Empty;
 
     [Fact]
+    public async Task Idle_runner_persona_claim_returns_no_content()
+    {
+        using var factory = BuildFactory();
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var runner = security.EnrollRunner(security.CreateEnrollment(
+            new RunnerEnrollmentRequest("persona-idle-runner", [RunnerScopes.Claim], null, null)).Code);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", runner.Secret);
+
+        using var response = await client.PostAsJsonAsync("/api/runner/personas/claim",
+            new { runnerId = runner.Runner.Id });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Empty(await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task Activation_needs_a_step_up_and_pause_and_deactivation_do_not()
     {
         using var factory = BuildFactory();

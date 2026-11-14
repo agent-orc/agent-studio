@@ -1,10 +1,57 @@
 using AgentRunner;
+using System.Net;
 using Xunit;
 
 namespace AgentRunner.Tests;
 
 public sealed class PersonaLeaseRunnerTests
 {
+    [Theory]
+    [InlineData(HttpStatusCode.NoContent)]
+    [InlineData(HttpStatusCode.OK)]
+    public async Task Empty_persona_claim_returns_no_lease(HttpStatusCode status)
+    {
+        using var http = new HttpClient(new EmptyClaimHandler(status))
+        { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, "runner-idle");
+
+        Assert.Null(await client.ClaimPersonaAsync("runner-idle", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Idle_poll_writes_no_failure_line()
+    {
+        var handler = new EmptyClaimHandler(HttpStatusCode.NoContent);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, "runner-idle");
+        var messages = new List<string>();
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://task-server", RunnerId = "runner-idle", RunnerName = "Idle runner",
+            Hostname = "host-idle", BackendName = "test", WorkDir = Path.GetTempPath(),
+            StateDir = Path.GetTempPath(), BaseBranch = "main", ClaudeCliBin = "claude",
+        };
+        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        await new PersonaLeaseRunner(options, client, messages.Add).PollAsync(stop.Token);
+
+        Assert.True(handler.Claims > 0);
+        Assert.DoesNotContain(messages, message => message.Contains("persona-lease-poll-failed", StringComparison.Ordinal));
+    }
+
+    private sealed class EmptyClaimHandler(HttpStatusCode status) : HttpMessageHandler
+    {
+        public int Claims { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal("/api/runner/personas/claim", request.RequestUri?.AbsolutePath);
+            Claims++;
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent("") });
+        }
+    }
+
     [Fact]
     public void Dense_persona_grounds_are_refused_before_a_model_call()
     {

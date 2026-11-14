@@ -1373,8 +1373,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (url is null) return null;
         try
         {
-            return await PostJsonAsync<object, PersonaLeaseWire>(url,
-                new { runnerId }, ct);
+            return await SendJsonAsync<object, PersonaLeaseWire>(HttpMethod.Post, url,
+                new { runnerId }, ct, allowEmptyResponse: true);
         }
         catch (TaskServerException ex) when (ex.StatusCode == (int)HttpStatusCode.NotFound)
         {
@@ -2419,7 +2419,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             TryReadApiErrorCode(text));
     }
 
-    private async Task<TResp?> SendJsonAsync<TReq, TResp>(HttpMethod method, string url, TReq body, CancellationToken ct)
+    private async Task<TResp?> SendJsonAsync<TReq, TResp>(HttpMethod method, string url, TReq body,
+        CancellationToken ct, bool allowEmptyResponse = false)
     {
         // The standalone Task Server's established HTTP contract uses numeric
         // enum values. Legacy monolith DTOs continue to use string enums.
@@ -2439,6 +2440,13 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                 (int)resp.StatusCode,
                 $"POST {url} -> {(int)resp.StatusCode}: {(resp.StatusCode == HttpStatusCode.RequestEntityTooLarge ? text : Trim(text))}",
                 ProxyErrorCode((int)resp.StatusCode) ?? errorCode);
+        }
+        if (allowEmptyResponse)
+        {
+            if (resp.StatusCode == HttpStatusCode.NoContent) return default;
+            var responseBody = await resp.Content.ReadAsStringAsync(ct);
+            return string.IsNullOrWhiteSpace(responseBody)
+                ? default : JsonSerializer.Deserialize<TResp>(responseBody, Json);
         }
         return await resp.Content.ReadFromJsonAsync<TResp>(Json, ct);
     }
