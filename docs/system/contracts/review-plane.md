@@ -70,6 +70,11 @@ monolith ReviewSubject also carries this value as `taskRequirementsHash`.
 the standalone Task Server still applies concept coverage when that hash is
 missing. Older plans with a brief hash or `concept-fit` aspect are also treated
 as concept plans.
+A concept plan whose changed paths all lie inside one `docs/<topic>/` directory
+has `commands` = [`aspect-concept-fit`], an empty `preparation`, and a
+`build-tests` entry in `skippedAspects` with its reason (AGT-3698). It does
+not defer to the batch gate; `BuildTestDeferralDisabledReason` carries the same
+reason (AGT-3740).
 The review report echoes `briefSha256`. At settlement, the server compares the
 subject hash with the card's current brief and requires a `concept-fit`
 verdict. A changed or missing brief, omitted aspect, or missing verdict is

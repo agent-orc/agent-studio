@@ -178,15 +178,17 @@ public sealed partial class TaskServerStore
             confirmedUserId = session.User.Id;
             string? secret;
             lock (_studioLoginGate) _studioPendingTotp.TryGetValue(session.User.Id, out secret);
-            if (secret is null || !SecondFactorCodes.VerifyTotp(secret, code, UtcNow))
+            if (secret is null || SecondFactorCodes.MatchTotpStep(secret, code, UtcNow) is not { } acceptedStep)
                 throw new StudioAuthenticationException("invalid-second-factor", "The authenticator code is invalid.");
             codes = SecondFactorCodes.NewRecoveryCodes();
             await ExecuteAsync(connection, """
-                INSERT INTO studio_factors(user_id, totp_secret, recovery_hashes_json)
-                VALUES ($user, $secret, $codes)
+                INSERT INTO studio_factors(user_id, totp_secret, last_accepted_totp_step, recovery_hashes_json)
+                VALUES ($user, $secret, $step, $codes)
                 ON CONFLICT(user_id) DO UPDATE SET totp_secret = excluded.totp_secret,
+                    last_accepted_totp_step = excluded.last_accepted_totp_step,
                     recovery_hashes_json = excluded.recovery_hashes_json;
                 """, ct, transaction, ("$user", session.User.Id), ("$secret", secret),
+                ("$step", acceptedStep),
                 ("$codes", JsonSerializer.Serialize(codes.Select(SecondFactorCodes.HashRecoveryCode))));
             await ExecuteAsync(connection, "UPDATE studio_sessions SET enrollment_only = 0 WHERE id = $id;",
                 ct, transaction, ("$id", session.SessionId));
@@ -236,15 +238,23 @@ public sealed partial class TaskServerStore
         string userId, string? code, CancellationToken ct)
     {
         await using var command = Command(connection,
-            "SELECT totp_secret, recovery_hashes_json FROM studio_factors WHERE user_id = $user;",
+            "SELECT totp_secret, recovery_hashes_json, last_accepted_totp_step FROM studio_factors WHERE user_id = $user;",
             transaction, ("$user", userId));
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
             throw new StudioAuthenticationException("second-factor-required", "Register a second factor before signing in.");
         var secret = reader.IsDBNull(0) ? null : reader.GetString(0);
         var hashes = JsonSerializer.Deserialize<List<string>>(reader.GetString(1)) ?? [];
+        var lastAcceptedStep = reader.IsDBNull(2) ? (long?)null : reader.GetInt64(2);
         await reader.DisposeAsync();
-        if (secret is not null && SecondFactorCodes.VerifyTotp(secret, code, UtcNow)) return;
+        if (secret is not null && SecondFactorCodes.MatchTotpStep(secret, code, UtcNow) is { } acceptedStep
+            && (lastAcceptedStep is null || acceptedStep > lastAcceptedStep))
+        {
+            await ExecuteAsync(connection,
+                "UPDATE studio_factors SET last_accepted_totp_step = $step WHERE user_id = $user;",
+                ct, transaction, ("$step", acceptedStep), ("$user", userId));
+            return;
+        }
         var matched = code is null ? null : hashes.FirstOrDefault(hash => SecondFactorCodes.VerifyRecoveryCode(code, hash));
         if (matched is null)
             throw new StudioAuthenticationException(string.IsNullOrWhiteSpace(code) ? "second-factor-required" : "invalid-second-factor",

@@ -5,6 +5,16 @@ export interface ErrorDialogState {
   stackTrace: string | null;
   source: string | null;
   canOpenCliConfig: boolean;
+  /** Set for an expected refusal; the dialog leads with its plain wording. */
+  refusal?: ErrorDialogRefusal | null;
+}
+
+/** AGT-3624: plain wording of an expected refusal. */
+export interface ErrorDialogRefusal {
+  /** One plain sentence: why the action was refused. */
+  sentence: string;
+  /** What the operator can do next. */
+  nextAction: string;
 }
 
 export interface ErrorDialogOptions {
@@ -14,6 +24,7 @@ export interface ErrorDialogOptions {
   canOpenCliConfig?: boolean;
   output?: unknown;
   stackTrace?: string | null;
+  refusal?: ErrorDialogRefusal | null;
   /** Action to refocus after the dialog closes, including when Escape closes it. */
   returnFocusSelector?: string;
 }

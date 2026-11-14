@@ -97,12 +97,16 @@ public sealed class BatchTriageReader(
                 var status = Text(entry.Value, "status")!;
                 var batchId = Text(entry.Value, "batchId");
                 var flight = batchId is null ? null : phases.GetValueOrDefault(batchId);
+                var batchState = batches.FirstOrDefault(batch => Text(batch, "batchId") == batchId);
                 var red = status == "pre-check-red"
                     || ProvenRed(findings[entry.Name], batchId, parents, pendingShas.GetValueOrDefault(entry.Name))
                     || entry.Value.TryGetProperty("preCheck", out var check) && check.ValueKind == JsonValueKind.Object
                     && Text(check, "outcome") == "red";
                 var member = new BatchTriageMemberFacts(status, flight?.Phase ?? Text(entry.Value, "phase"),
-                    flight?.PhaseReason, isolating.Contains(entry.Name), red);
+                    flight?.PhaseReason, isolating.Contains(entry.Name), red,
+                    batchState.ValueKind == JsonValueKind.Object
+                        && batchState.TryGetProperty("liveFlight", out var live)
+                        && live.ValueKind == JsonValueKind.True);
                 return new BatchTriageMember(entry.Name, status, batchId, red, member.Isolating,
                     BatchTriagePolicy.NextOperation(member, projectFacts), entry.Value);
             }).ToArray();

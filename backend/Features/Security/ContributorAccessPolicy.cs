@@ -64,6 +64,9 @@ public static class ContributorAccessPolicy
     {
         if (path is "/api/auth/status" or "/api/auth/session" or "/api/auth/logout" or "/api/auth/change-password")
             return true;
+        if (path.StartsWith("/api/auth/totp/", StringComparison.OrdinalIgnoreCase)
+            || path is "/api/auth/passkeys/register-options" or "/api/auth/passkeys/register")
+            return true;
         if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase)) return false;
 
@@ -88,8 +91,13 @@ public static class ContributorAccessPolicy
             if (path.StartsWith("/api/orchestrator/", StringComparison.OrdinalIgnoreCase))
                 return path.StartsWith("/api/orchestrator/context/", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWith("/api/orchestrator/sessions/", StringComparison.OrdinalIgnoreCase);
+            // The shell's workspace, project and watch-path lists. Each
+            // handler filters its collection by the session's project
+            // bindings; sub-resources of these roots stay closed.
             return path.StartsWith("/api/tasks", StringComparison.OrdinalIgnoreCase)
                 || path.Equals("/api/projects", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/api/workspaces", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/api/watch-paths", StringComparison.OrdinalIgnoreCase)
                 || (segments.Length >= 4 && segments[0] == "api" && segments[1] == "projects"
                     && segments[3] is "chat" or "docs" or "visual-evidence" or "snapshot"
                         or "throughput" or "cycle-time" or "completed-lane")
@@ -108,6 +116,8 @@ public static class ContributorAccessPolicy
         {
             if (path.EndsWith("/release", StringComparison.OrdinalIgnoreCase))
                 return canApproveProduction;
+            if (path.EndsWith("/state", StringComparison.OrdinalIgnoreCase))
+                return cardState is (TaskStates.Backlog or TaskStates.Ready or TaskStates.HumanReview);
             if (cardState is not (TaskStates.Backlog or TaskStates.Ready)) return false;
             return path.EndsWith("/title", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/tags", StringComparison.OrdinalIgnoreCase)

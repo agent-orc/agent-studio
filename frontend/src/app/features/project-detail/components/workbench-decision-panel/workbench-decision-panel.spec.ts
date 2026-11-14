@@ -111,6 +111,19 @@ describe('WorkbenchDecisionPanelComponent', () => {
 
   afterEach(() => http.verify());
 
+  it('shows recorded choices after concept acceptance without offering another decision', () => {
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      workbench: { ...DOCUMENT.workbench, status: 'decided', phase: 'shaping' },
+    });
+    fixture.detectChanges();
+
+    const receipt = fixture.nativeElement.querySelector('[data-testid="workbench-decision-receipt"]');
+    expect(receipt.textContent).toContain('In implementation · 1 decision point recorded');
+    expect(receipt.textContent).toContain('Direct path');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-start"]')).toBeNull();
+  });
+
   it('prefills a compact feature proposal from inline responses and records the created card', () => {
     click('workbench-decision-start');
 
@@ -118,7 +131,7 @@ describe('WorkbenchDecisionPanelComponent', () => {
       '[data-testid="workbench-decision-feature-confirmation"]');
     expect(confirmation.textContent).toContain('Direct path');
     expect((confirmation.querySelector('[data-testid="workbench-decision-goal"]') as HTMLTextAreaElement).value)
-      .toContain('Recorded decisions');
+      .toBe('Implement Routing policy according to the source Dossier and its recorded decisions.');
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-draft-notice"]')
       .textContent).toContain('Draft saved');
 

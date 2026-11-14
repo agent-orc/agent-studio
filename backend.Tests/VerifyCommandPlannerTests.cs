@@ -360,6 +360,24 @@ public sealed class VerifyCommandPlannerTests : IDisposable
     }
 
     [Fact]
+    public void GatePreparation_NodeWithoutLockfile_RecordsSkippedInstallInReviewPlan()
+    {
+        Write("frontend/package.json", """{ "scripts": { "build": "echo ready" } }""");
+        var verify = VerifyCommandPlanner.Plan(_root, profile: null);
+
+        var plan = GatePreparationPlanner.PlanWithSkips(_root, null, verify.Commands);
+        var reviewPlan = V1ReviewPlaneEndpoints.FallbackPlan(
+            _root, (BuildProfile?)null, "refs/heads/main");
+
+        Assert.Empty(plan.Commands);
+        var skip = Assert.Single(plan.Skips);
+        Assert.Equal("frontend", skip.WorkingSubdir);
+        Assert.Equal("no-tracked-lockfile", skip.Reason);
+        Assert.Empty(reviewPlan.Preparation!);
+        Assert.Equal("no-tracked-lockfile", Assert.Single(reviewPlan.PreparationSkips!).Reason);
+    }
+
+    [Fact]
     public void GatePreparation_ExplicitInstallCommand_IsAuthoritativeAndUsesBash()
     {
         Write("QualityStudio.slnx", "<Solution />");
@@ -509,6 +527,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
     {
         Write("QualityStudio.slnx", "<Solution />");
         Write("frontend/package.json", """{ "scripts": { "build": "ng build" } }""");
+        Write("frontend/package-lock.json", """{ "lockfileVersion": 3 }""");
         var profile = new BuildProfile
         {
             BuildCmds =

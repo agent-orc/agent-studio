@@ -112,6 +112,9 @@ test('every working-set command answers with JSON and exit 0', async () => {
     ['preflight', 'restart'],
     ['preflight', 'deploy'],
     ['deploy', 'plan', '--target-version', '1.2.3'],
+    ['host', 'drain', 'agent-runner-01-review'],
+    ['host', 'status', 'agent-runner-01-review'],
+    ['host', 'resume', 'agent-runner-01-review'],
     ['log', 'append', '--project', 'Demo App', '--kind', 'did', '--text', 'Moved DEMO-4.', '--card', 'DEMO-4'],
     ['log', '--project', 'Demo App'],
   ];
@@ -151,6 +154,8 @@ test('backups prints the backup state and its warnings from the operator route (
   assert.match(result.stdout, /backups failing/);
   assert.match(result.stdout, /restore verification verified/);
   assert.match(result.stdout, /off-host sftp: current/);
+  assert.match(result.stdout, /off-host archives: not-listable/);
+  assert.match(result.stdout, /restored studio-backup-20261104T000000Z-def456 \(made 2026-11-04T00:00:00\+00:00\) at 2026-11-04T09:00:00\+00:00 by owner@host-b/);
   assert.match(result.stdout, /warning backup-stale: The newest good backup is 13 hours old\./);
   assert.ok(studio.requests.some(request => request.method === 'GET' && request.path === '/api/operator/backups'));
 });

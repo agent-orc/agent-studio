@@ -5,11 +5,10 @@ import { take } from 'rxjs';
 import { metric, ratio, type OperationsLogResult, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
-import { BackupStatusPanelComponent } from '../../../backups/backup-status-panel/backup-status-panel.component';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 
 @Component({
-  selector: 'app-project-operations', standalone: true, imports: [DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, BackupStatusPanelComponent],
+  selector: 'app-project-operations', standalone: true, imports: [DatePipe, OperationsTrendComponent, LoadingSurfaceComponent],
   templateUrl: './project-operations.html', styleUrl: './project-operations.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

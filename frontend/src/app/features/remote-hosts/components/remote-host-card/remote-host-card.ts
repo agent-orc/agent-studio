@@ -7,9 +7,11 @@ import { CapabilityHealthComponent } from '../capability-health/capability-healt
 import { GitTokenCapabilityComponent } from '../git-token-capability/git-token-capability';
 import { HostWorkloadSummaryComponent } from '../host-workload-summary/host-workload-summary';
 import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-telemetry-history';
+import { HostFilesystemListComponent } from '../host-filesystem-list/host-filesystem-list';
 import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
 import { HostCredentialsComponent } from '../host-credentials/host-credentials';
+import { ReviewRestartHistoryComponent } from '../review-restart-history/review-restart-history';
 import { roleSlotTotal } from '../../models/role-slots';
 import {
   RuntimeCapacityEditorComponent,
@@ -79,12 +81,14 @@ interface Meter {
     GitTokenCapabilityComponent,
     HostWorkloadSummaryComponent,
     HostTelemetryHistoryComponent,
+    HostFilesystemListComponent,
     HostReleaseIdentityComponent,
     RuntimeCapacityEditorComponent,
     RemoteHostDetailSummaryComponent,
     HostCredentialsComponent,
     HostCredentialBadgeComponent,
     StatusIndicatorComponent,
+    ReviewRestartHistoryComponent,
   ],
   templateUrl: './remote-host-card.html',
   styleUrl: './remote-host-card.scss',
@@ -106,6 +110,12 @@ export class RemoteHostCardComponent {
   readonly readiness = computed(() => hostReadiness(this.host(), this.now()));
   readonly repositoryAccess = input('Unknown');
   readonly roles = input<readonly RemoteHost[]>([]);
+  /** AGT-3690: restarts are recorded per role identity, so the machine reads all of them. */
+  readonly restartHosts = computed(() => [this.host(), ...this.roles()]);
+  /** The newest restart of any role; the machine row otherwise shows only its coding role's. */
+  readonly latestRestart = computed(() => this.restartHosts()
+    .filter(role => !!role.restartedAt)
+    .sort((left, right) => Date.parse(right.restartedAt ?? '') - Date.parse(left.restartedAt ?? ''))[0] ?? null);
   readonly rolesShareRelease = computed(() => {
     const roles = this.roles();
     const key = (role: RemoteHost) => role.release?.releaseId ?? role.releaseId ?? role.release?.version ?? null;
@@ -164,7 +174,10 @@ export class RemoteHostCardComponent {
   readonly tone = computed(() => this.liveLoading() ? 'idle' : hostStatusTone(this.host().status));
   readonly indicatorTone = computed<StatusTone>(() => this.liveLoading() ? 'running' : hostStatusIndicatorTone(this.host().status));
   readonly statusLabel = computed(() => this.liveLoading() ? 'Loading live status' : hostStatusLabel(this.host().status));
-  readonly statusReason = computed(() => this.host().status === 'degraded' ? 'A runner role is degraded. Inspect its role row and Capabilities detail.' : null);
+  readonly statusReason = computed(() => this.host().diskPressureReason ?? (this.host().status === 'degraded'
+    ? 'A runner role is degraded. Inspect its role row and Capabilities detail.' : null));
+  readonly filesystems = computed(() => this.host().filesystems
+    ?? this.host().telemetry?.points.at(-1)?.filesystems ?? []);
   readonly roleLabel = computed(() => hostRoleLabel(this.host().role));
   readonly heartbeatLabel = computed(() => this.liveLoading()
     ? 'loading…'

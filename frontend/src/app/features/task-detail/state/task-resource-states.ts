@@ -1,7 +1,11 @@
 import type { TaskDetail, TaskInfo } from '../../../models/task.model';
 import type { ResourceName, TaskCore } from '../../../models/task-core.model';
 
-export type ResourcePhase = 'idle' | 'loading' | 'warming' | 'ready' | 'stale' | 'unavailable' | 'error';
+/**
+ * `restricted`: the session's role may not read this optional section. The
+ * section stays hidden and is not retried; the rest of the card stays open.
+ */
+export type ResourcePhase = 'idle' | 'loading' | 'warming' | 'ready' | 'stale' | 'unavailable' | 'restricted' | 'error';
 export type ResourceStates = Record<ResourceName, { phase: ResourcePhase; reason: string | null }>;
 
 export const idleResources = (): ResourceStates => ({
@@ -27,6 +31,7 @@ export function resourceReasonLabel(reason: string | null): string {
     case 'review-projection-pending': return 'The review projection is still warming.';
     case 'document-read-failed': return 'The document could not be read.';
     case 'document-access-denied': return 'The document is not accessible.';
+    case 'section-not-found': return 'This section is no longer available for the card.';
     case 'task-index-warming': return 'The task index is still warming.';
     case 'core-generation-changed': return 'The task changed while this section loaded.';
     default: return reason ?? 'The request failed.';

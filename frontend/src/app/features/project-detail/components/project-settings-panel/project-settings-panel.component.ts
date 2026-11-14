@@ -8,6 +8,7 @@ import {
   signal,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { AuthSessionState } from '../../../../services/auth.service';
 import { ProjectDetailComponent } from '../project-detail/project-detail';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -108,8 +109,8 @@ interface WorkspaceListItemLite {
   styleUrl: './project-settings-panel.component.scss',
 })
 export class ProjectSettingsPanelComponent implements OnInit {
+  readonly auth = inject(AuthSessionState);
   readonly projectName = input.required<string>();
-
   private readonly clientDefaults = inject(ClientDefaultsService);
   private readonly quotaApi = inject(QuotaApiService);
   private readonly overlays = inject(WorkspaceOverlaysService);

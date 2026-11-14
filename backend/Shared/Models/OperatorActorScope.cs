@@ -7,9 +7,10 @@ namespace AgentStudio.Shared;
 /// entry, and timeline event of the session carries; <see cref="DelegatedBy"/>
 /// names the delegating Owner, who is never the actor.
 /// </summary>
-public sealed record OperatorActor(string OperatorAgentId, string SessionId, string OwnerId)
+public sealed record OperatorActor(string OperatorAgentId, string SessionId, string OwnerId, string? PersonaId = null)
 {
-    public string Actor => TimelineActors.OperatorAgent(OperatorAgentId, SessionId);
+    public string Actor => PersonaId is null ? TimelineActors.OperatorAgent(OperatorAgentId, SessionId)
+        : TimelineActors.Persona(PersonaId, SessionId);
     public string DelegatedBy => TimelineActors.Human(OwnerId);
 }
 
@@ -43,7 +44,7 @@ public static class OperatorActorScope
         if (Current is not { } actor) return evt;
         var details = evt.Details is null ? null : new Dictionary<string, string>(evt.Details);
         if (!string.IsNullOrWhiteSpace(evt.Actor) && evt.Actor != actor.Actor && !TimelineActors.IsHuman(evt.Actor)
-            && !TimelineActors.IsOperatorAgent(evt.Actor))
+            && !TimelineActors.IsOperatorAgent(evt.Actor) && !TimelineActors.IsPersona(evt.Actor))
             (details ??= [])["reportedActor"] = evt.Actor;
         return evt with { Actor = actor.Actor, DelegatedBy = actor.DelegatedBy, Details = details };
     }

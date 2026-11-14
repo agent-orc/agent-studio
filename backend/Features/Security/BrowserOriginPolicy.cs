@@ -25,7 +25,8 @@ public static class BrowserOriginPolicy
         => path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/passkeys/assertion-options", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/bootstrap", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/v1/studio/auth/invite/accept", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsSafeMethod(string method)
         => HttpMethods.IsGet(method) || HttpMethods.IsHead(method)

@@ -26,6 +26,7 @@ export class PaneToggleBarComponent {
   private readonly auth = inject(AuthService);
   readonly localActionsAvailable = computed(() => this.auth.status()?.profile === 'local');
   readonly panesVisible = input.required<PanesVisible>();
+  readonly showGit = input(true);
   /** Commit count attributed to the task; 0 hides the badge. */
   readonly commitCount = input<number>(0);
   /** Optional tooltip override for the Git toggle when commits exist. */

@@ -15,8 +15,10 @@ export {
 export {
   overflowActionsFor,
   primaryActionFor,
+  primaryActionForTask,
   laneLabelFor,
   mergeAcceptViewFor,
+  acceptanceRequiresIntegration,
   acceptanceHoldReason,
   LANE_LABELS,
   triageDecisionRefusal,

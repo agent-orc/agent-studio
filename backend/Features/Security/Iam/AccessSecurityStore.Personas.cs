@@ -4,11 +4,12 @@ namespace AgentStudio.Security;
 /// The identity side of persona activation (persona team PT-1, decision
 /// PT-D1). The persona store owns activations and forks; this store decides
 /// who may change them and keeps the record. Activating a persona issues
-/// standing grants in a later slice, so it needs an active Owner with a fresh,
+/// a PT-2 standing grant, so it needs an active Owner with a fresh,
 /// single-use step-up like <see cref="CreateStandingGrant"/>; pausing,
 /// resuming, deactivating, and forking need the Owner only, because taking
 /// authority away never waits for a second factor. Every change is written to
-/// the IAM audit with target kind <c>persona</c>.
+/// the IAM audit with target kind <c>persona</c>. PT-2 now issues the
+/// principal and grant after activation consumes that step-up.
 /// </summary>
 public sealed partial class AccessSecurityStore
 {

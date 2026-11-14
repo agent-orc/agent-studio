@@ -12,12 +12,17 @@ public static class VisualReviewEvidence
                 || normalized.EndsWith(".css", StringComparison.OrdinalIgnoreCase));
     });
 
+    /// <summary>
+    /// Selects screenshot candidates by extension only. Older uploaders sent
+    /// <c>.webp</c> as <c>application/octet-stream</c>, so the declared media
+    /// type is not trusted; the review bundle proves each candidate with its
+    /// image header before use.
+    /// </summary>
     public static bool IsScreenshot(ArtifactDto artifact) =>
-        artifact.MediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
-        && (artifact.Name.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
-            || artifact.Name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
-            || artifact.Name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
-            || artifact.Name.EndsWith(".webp", StringComparison.OrdinalIgnoreCase));
+        artifact.Name.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+        || artifact.Name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+        || artifact.Name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+        || artifact.Name.EndsWith(".webp", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Unmarked screenshots represent the delivered view; explicit before images do not.</summary>
     public static bool IsAfterScreenshot(string name)

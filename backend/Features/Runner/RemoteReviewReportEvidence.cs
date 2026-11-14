@@ -116,7 +116,7 @@ internal static class RemoteReviewReportEvidence
 
         if (!string.IsNullOrWhiteSpace(request.BriefSha256))
         {
-            text.AppendLine($"**Brief version (`prompt.md` SHA-256):** `{request.BriefSha256}`");
+            text.AppendLine($"**Authored brief version:** `{request.BriefSha256}`");
             text.AppendLine();
         }
 

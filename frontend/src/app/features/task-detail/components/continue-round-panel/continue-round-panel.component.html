@@ -58,6 +58,15 @@
         @if (error(); as message) {
           <p class="round__error" data-testid="continue-round-error" role="alert">{{ message }}</p>
         }
+        @if (modeRefusal(); as refusal) {
+          <app-continue-mode-refusal
+            [job]="job()"
+            [message]="refusal"
+            [busy]="busy()"
+            (keepAndSend)="keepModeAndSend()"
+            (promoteToCoding)="promoteToCoding.emit()"
+            (promoted)="onPromoted()" />
+        }
         <div class="round__actions">
           <button type="button" class="round__button round__button--primary" data-testid="continue-round-submit"
             [disabled]="!canSubmit()" [appPendingButton]="busy()" pendingLabel="Sending…"

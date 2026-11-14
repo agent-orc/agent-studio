@@ -5,7 +5,15 @@ Studio, such as the orchestrator's decision notes ("29 cards wait for you:
 24 can be accepted, 4 need your decision, 1 gets rework"). There is one
 magazine for the installation, one per workspace, and one per project
 (MAG-1, AGT-3714). MAG-2 builds the views on this store and API. PT-8
-(AGT-3601) will compose weekly issues that cite article revisions.
+(AGT-3601) composes immutable workspace issues from persona items and cites
+workspace article revisions.
+
+PT-11 adds a monthly team review to the first weekly issue of each month.
+Its immutable snapshot covers the previous calendar month per persona, with
+importance-weighted accepted value per 100,000 tokens, cost per accepted
+finding, noise, Owner rating counts, linked misses and rule-based suggestions.
+The issue keeps persona and role separate, so several personas can share a
+role. Suggestions require an Owner decision; publication never retires a persona.
 
 Code: `backend/Features/Magazine/`. CLI: `studio-op magazine publish`
 ([studio-op](../../operations/setup/studio-op.md#magazine)).
@@ -24,7 +32,7 @@ instead of creating a new article.
 | `summary` | One short paragraph, at most 600 characters, no blank line. |
 | `body` | Markdown text, at most 256 KiB in UTF-8 (`magazine-body-too-large`, 413). |
 | `kind` | `digest`, `decision-brief`, `report` or `note`. |
-| `author`, `authors` | The principal of a revision, set by Studio from the authenticated caller, and an optional `persona`. `authors` lists every distinct author. |
+| `author`, `authors` | The principal of a revision, set by Studio from the authenticated caller, an optional persona name, persona id and role id. `authors` lists every distinct author. Old articles without ids remain readable. The orchestrator may publish with a persona name and no role id until persona records exist. |
 | `sources` | Up to 100 `{ kind, ref }` entries with kind `card`, `dossier` or `batch`. |
 | `createdAt`, `updatedAt`, `revision` | `updatedAt` and `revision` change with every content update. |
 | `pinned`, `archivedAt` | Flags. Changing them appends no revision and leaves `updatedAt` alone. |
@@ -67,7 +75,7 @@ The store is not proxied to a standalone Task Server.
 | `GET /api/magazine?scope=<scope>[&includeArchived=true]` | `magazine.read` | `{ scope, articles }`, without bodies, pinned first, then newest `updatedAt`. Archived articles only with `includeArchived`. |
 | `GET /api/magazine/{scope}/{slug}[?revision=n]` | `magazine.read` | The article with `body`, `bodyFormat: "markdown"`, `revision` (the one shown) and `currentRevision`. `ETag` is the current revision. |
 | `GET /api/magazine/{scope}/{slug}/history` | `magazine.read` | `{ scope, slug, currentRevision, revisions }`, newest first, without bodies. |
-| `PUT /api/magazine/{scope}/{slug}` | `magazine.write` | Upsert. The body is `{ title, summary, body, kind, persona?, sources? }`. 201 on create, 200 on update. |
+| `PUT /api/magazine/{scope}/{slug}` | `magazine.write` | Upsert. The body is `{ title, summary, body, kind, persona?, personaId?, roleId?, sources? }`. 201 on create, 200 on update. |
 | `POST /api/magazine/{scope}/{slug}/pin` | `magazine.write` | `{ pinned }`, default `true`. |
 | `POST /api/magazine/{scope}/{slug}/archive` | `magazine.write` | `{ archived }`, default `true`. `false` restores the article. |
 
@@ -92,6 +100,18 @@ Errors are `{ error, message }` with stable codes: `magazine-scope-invalid`,
 The body is text in a JSON string. Studio never renders it as HTML or
 executes it. The MAG-2 views must render the Markdown through the
 frontend's sanitizing renderer.
+
+## Views (MAG-2)
+
+The header Magazine action opens the installation scope. Workspace rows in
+the Explorer open their scope, and the project hub Magazine rail opens the
+project scope. Installation and workspace views list the visible scopes below
+them. Lists put pinned articles first, then order by update time. A browser
+remembers the latest revision opened for each article and marks a later
+revision as updated. An article shows its sources and read-only revision
+history. Its Markdown is rendered without raw HTML, and references are
+resolved against the viewer's available cards, Dossiers and projects when
+shown. Unresolved references remain text.
 
 ## Access
 
@@ -133,7 +153,66 @@ entry to the control plane audit:
 
 ## Issues (PT-8)
 
-Issues are not part of this store. An issue cites articles by
-`{ scope, slug, revision }` and reads them with
-`GET /api/magazine/{scope}/{slug}?revision=n`. Revisions are immutable, so
-a published issue keeps showing the text it quoted.
+Issues live separately at `<TaskRepository>/.metadata/weekly-issues/<workspace>/<issue>.json`.
+The Watcher sweep composes one `weekly-YYYY-MM-DD` issue after Monday 07:00
+in the workspace time zone. The Owner may compose a front-page-only daily
+brief after 07:00. A second composition returns the existing file. The issue
+stores sorted item snapshots, fifteen operations watch rows from the latest
+warden fact snapshot, eight trend weeks, corrections, colophon entries and
+`{ scope, slug, revision }` article references. Each article reference keeps
+its persona and role byline, title and summary. Article revisions remain in
+the MAG-1 store and can be read at `GET /api/magazine/{scope}/{slug}?revision=n`.
+Trend pool-use percentages use the current workspace pool as their denominator;
+the issue records that snapshot and does not change after publication.
+
+The item count in the masthead equals the sum of visible role section counts.
+The highest open item leads. Side stories follow importance order with at
+most two per persona, while every open Critical item reaches the front page.
+The Operations watch follows Decisions needed and includes passing, failing
+and unknown rows. A missing or stale fact is unknown at importance 70 or more.
+
+One editor CLI call may write the lead paragraph and item teasers when the
+presenter allowance and pool have room. Every editor sentence must cite a
+known item id; rejected or unavailable output leaves titles only. The issue
+routes are `GET /api/workspaces/{id}/personas/issues`,
+`GET /api/workspaces/{id}/personas/issues/{issueId}` and
+`GET /api/workspaces/{id}/personas/issues/{issueId}/export`. The Owner-only
+`POST /api/workspaces/{id}/personas/issues/compose?daily=true` creates a due
+brief. The Studio viewer is `#/workspace/team/magazine`, and the Team page
+links the newest three. Export is standalone article HTML with light, dark
+and print styles for browser PDF output. Sending is disabled; the summary
+renderer contains only the masthead, coverage, front-page titles, importance
+numbers and an HTTPS sign-in link.
+
+## Presenter decks (PT-9)
+
+After a weekly issue is published, the Watcher sweep writes an immutable
+`<TaskRepository>/.metadata/presenter-decks/<workspace>/<deck-id>/deck.json`.
+Each issue gets a seven-slide weekly deck. Every fourth consecutive issue also
+produces a monthly review covering those four issues, with ten to twelve
+slides. Layout is deterministic: items at importance 40 or above, Critical
+first, no more than three blocks per slide, a decisions slide even when empty,
+and a role slide only when that role has an item at 70 or above. A trend slide
+requires four published weekly issues; the issue's padded trend rows alone do
+not count as observed history.
+
+Each slide block records its issue id and either an item id plus the sourced
+importance field, a watch row stats field, or an exact issue
+trend field and value. Validation rejects an unknown item, a changed claim, a
+number without a source field, or a value that differs from the immutable
+issue. One optional presenter model call supplies slide titles and cited
+speaker notes. Invalid or unavailable output leaves the deterministic titles.
+The role remains a catalogue entry; the deck records the selected active
+presenter persona id separately from the presenter role id. When several
+presenter personas are active, the lowest stable persona id supplies the call.
+The deck records editor tokens; admission includes prior issue and deck editor
+tokens in the current budget week. Historical backfills use deterministic
+titles without a model call.
+
+The Studio magazine view opens the deck at 16:9 in both themes. Read routes are
+`GET /api/workspaces/{id}/personas/decks` and `GET .../decks/{deckId}`.
+`GET .../decks/{deckId}/export?format=html|pdf&audience=owner|stakeholder`
+returns standalone slide HTML with arrow-key navigation and print styling, or
+a 16:9 PDF with one page per slide. The stakeholder export uses generic item
+labels and omits notes, bodies, host names and monetary costs. PPTX is outside
+this slice.

@@ -12,6 +12,23 @@
 .access__section { display: flex; flex-direction: column; gap: var(--studio-spacing-2); min-width: 0; }
 .access__section + .access__section { padding-top: var(--studio-spacing-3); border-top: 1px solid var(--studio-border); }
 .access__grants { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1); }
+.access__table-scroll { max-width: 100%; overflow-x: auto; }
+.access__table-scroll table { min-width: 680px; }
 .access__issued { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-2); border-radius: 4px; background: var(--studio-card-attention-bg); color: var(--studio-fg); font-size: 0.78rem; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (max-width: 760px) { .access__head { align-items: stretch; flex-direction: column; } }
+
+@media (max-width: 600px) {
+  .access__table-scroll .access__users { min-width: 0; }
+  .access__users,
+  .access__users tbody,
+  .access__users tr,
+  .access__users td { display: block; width: 100%; box-sizing: border-box; }
+  .access__users thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .access__users tr { padding: var(--studio-spacing-2) 0; border-bottom: 1px solid var(--studio-border); }
+  .access__users td { padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 0; overflow-wrap: anywhere; }
+  .access__users td::before { display: block; content: attr(data-label); color: var(--studio-fg-dim); font-size: 0.72rem; }
+  .access__users td:first-child { color: var(--studio-fg-strong); font-weight: 600; }
+  .access__users td.access-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-1); text-align: left; white-space: normal; }
+  .access__users td.access-actions::before { flex-basis: 100%; }
+}

@@ -36,6 +36,7 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
     [InlineData("POST", "/api/v1/studio/auth/bootstrap", "/api/auth/bootstrap", null)]
     [InlineData("POST", "/api/v1/studio/auth/login", "/api/auth/login", null)]
     [InlineData("POST", "/api/v1/studio/auth/invite/accept", "/api/auth/invite/accept", null)]
+    [InlineData("GET", "/api/v1/studio/auth/invite/preview", "/api/auth/invite/preview", null)]
     [InlineData("POST", "/api/v1/studio/auth/logout", "/api/auth/logout", null)]
     [InlineData("POST", "/api/v1/studio/auth/change-password", "/api/auth/change-password", null)]
     [InlineData("GET", "/api/v1/studio/board", "/api/tasks/grouped", null)]

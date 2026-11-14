@@ -6,6 +6,8 @@ import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { NotificationService } from '../../../services/notification.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
 import { UndoController } from '../../../services/undo.service';
+import { confirmTaskDelete } from '../../../services/task-delete-confirm.util';
+import { describeMoveRefusal } from '../../../models/lane-move-guard';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
@@ -92,7 +94,7 @@ export class TriageController {
    * declaration, a confirm dialog surfaces the AGT-1915 trap and the operator
    * must explicitly accept anyway. Every other move goes straight through.
    */
-  move(info: TaskInfo, ev: { targetState: string; actionId: string }): void {
+  move(info: TaskInfo, ev: { targetState: string; actionId: string; reissueInstructions?: { findings: string[]; note: string }; operatorOverride?: boolean; reason?: string }): void {
     if (isDeliveredArchiveMove(info, ev.targetState)) {
       void this.archiveDelivered(info, ev);
       return;
@@ -116,7 +118,7 @@ export class TriageController {
    */
   private async archiveDelivered(
     info: TaskInfo,
-    ev: { targetState: string; actionId: string },
+    ev: { targetState: string; actionId: string; reissueInstructions?: { findings: string[]; note: string }; operatorOverride?: boolean; reason?: string },
   ): Promise<void> {
     let verdict = archiveIntegrationVerdict(info);
     let deliveryRef = info.integration?.deliveryRef ?? null;
@@ -187,7 +189,7 @@ export class TriageController {
 
   private performMove(
     info: TaskInfo,
-    ev: { targetState: string; actionId: string },
+    ev: { targetState: string; actionId: string; reissueInstructions?: { findings: string[]; note: string }; operatorOverride?: boolean; reason?: string },
     reason?: string,
   ): void {
     const keepTaskOpen = ev.actionId === 'reissue-escalated';
@@ -239,13 +241,14 @@ export class TriageController {
       watchPath: info.watchPath,
       jobLabel: info.title || info.id,
       actionLabel,
-      targetLaneLabel: laneLabelFor(ev.targetState),
+      targetLaneLabel: ev.targetState === TaskState.Completed ? '' : laneLabelFor(ev.targetState),
       prevState,
       prevIndex,
       persisted,
     });
 
-    this.jobService.moveJob(info.id, ev.targetState, info.watchPath, undefined, reason).subscribe({
+    this.jobService.moveJob(info.id, ev.targetState, info.watchPath, undefined, ev.reason ?? reason,
+      ev.operatorOverride ?? false, 'revoke', false, ev.reissueInstructions).subscribe({
       next: () => {
         this.jobService.endOptimisticPersist();
         persistResolve();
@@ -293,6 +296,14 @@ export class TriageController {
             'Acceptance needs an operator override');
           return;
         }
+        if (ev.targetState === '6-completed' && err?.status === 409
+            && err?.error?.code === 'completion-content-gap') {
+          this.notifications.warning(
+            'Acceptance was refused because the delivery or content review does not match the current brief. See Acceptance grounds for the versions, review again, or accept with a written reason.',
+            'Acceptance needs a decision');
+          this.jobService.refresh(true);
+          return;
+        }
         if (ev.targetState === '6-completed'
             && err?.status === 409
             && (err?.error?.code === 'integration-dead-end'
@@ -308,10 +319,13 @@ export class TriageController {
           return;
         }
         if (err?.status === 409 && err?.error?.code === 'completion-content-gap') return;
+        // AGT-3624: an expected lane guard refusal reads in plain words.
+        const guardRefusal = describeMoveRefusal(err, info, ev.targetState);
         this.errorDialog.show(err, {
-          title: 'Failed to move task',
+          title: guardRefusal ? `Cannot move to ${laneLabelFor(ev.targetState)}` : 'Failed to move task',
           fallbackMessage: 'Failed to move task',
           source: `Task ${info.id}`,
+          refusal: guardRefusal,
           returnFocusSelector: `[data-action-id="${ev.actionId}"]`,
         });
       },
@@ -365,20 +379,12 @@ export class TriageController {
     void ev;
     const lane = this.jobSelection.triageLaneState ?? info.state;
     const peers = this.jobSelection.triageLanePeers();
-    const label = info.title || info.id;
-    const ok = await this.confirmDialog.confirm({
-      title: 'Delete this task?',
-      message: 'This removes the job folder and all its files (prompt, logs, results). Do you really want this?',
-      detail: label,
-      confirmLabel: 'Delete',
-      cancelLabel: 'Keep',
-      kind: 'danger',
-    });
-    if (!ok) {
+    const confirmed = await confirmTaskDelete(this.confirmDialog, info);
+    if (!confirmed) {
       this.clearActing();
       return;
     }
-    this.jobService.deleteJob(info.id, info.watchPath).subscribe({
+    this.jobService.deleteJob(info.id, info.watchPath, confirmed.reason).subscribe({
       next: () => {
         this.jobService.refresh();
         this.clearActing();

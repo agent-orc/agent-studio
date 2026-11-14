@@ -42,5 +42,9 @@ describe('AccessInviteFormComponent', () => {
     const link = element.querySelector('[data-testid="access-invite-link"]')?.textContent ?? '';
     expect(link).toContain(`${location.origin}/?invite=inv.abc`);
     expect(link).toContain('21 Oct 2026, 09:00 UTC');
+    expect(link).toContain('only to new.user');
+    expect(link).toContain('works once');
+    expect(link).toContain('second factor is recommended');
+    expect(element.querySelector('[data-testid="access-invite-copy"]')?.textContent).toContain('Copy link');
   });
 });

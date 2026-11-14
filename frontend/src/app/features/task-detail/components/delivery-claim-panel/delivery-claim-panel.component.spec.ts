@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { DeliveryClaimPanelComponent } from './delivery-claim-panel.component';
 import { TaskService } from '../../../../services/task.service';
+import { NotificationService } from '../../../../services/notification.service';
 import {
   TaskState,
   type TaskDeliveryClaimAnswer,
@@ -81,6 +82,7 @@ async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())
     providers: [
       provideZonelessChangeDetection(),
       { provide: TaskService, useValue: { getDeliveryClaim } },
+      { provide: NotificationService, useValue: { success: vi.fn() } },
     ],
   }).compileComponents();
   const fixture = TestBed.createComponent(DeliveryClaimPanelComponent);
@@ -103,6 +105,8 @@ describe('DeliveryClaimPanelComponent', () => {
     expect(host.querySelector('[data-testid="concept-fit-comparison"]')?.textContent)
       .toContain('Dossier: replace the workflow.');
     expect(grounds?.textContent).toContain('Contradiction or gap');
+    expect(host.querySelector('[data-testid="stale-brief-acceptance"]')?.textContent)
+      .toContain('Acceptance is blocked');
   });
   /**
    * AGT-2706: contained in develop and in main, integrated by an operator

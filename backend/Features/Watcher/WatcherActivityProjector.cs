@@ -45,7 +45,17 @@ public sealed class WatcherActivityProjector
 
     public void ProjectFindingRaised(WatcherCase watcherCase, WatcherEvidencePack pack)
     {
-        Append(watcherCase, OrchestratorLogKinds.Alert, "watcher-finding-raised", watcherCase.LastSummary,
+        var task = _scanner.ScanAllAutomationJobsWithArchive().FirstOrDefault(candidate =>
+            watcherCase.AffectedCards.Any(card => string.Equals(card, candidate.Id, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(card, candidate.Key, StringComparison.OrdinalIgnoreCase)));
+        var matchedCard = task is null ? null : watcherCase.AffectedCards.First(card =>
+            string.Equals(card, task.Id, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(card, task.Key, StringComparison.OrdinalIgnoreCase));
+        var summary = matchedCard is null ? watcherCase.LastSummary
+            : watcherCase.LastSummary.Replace(matchedCard, $"{task!.Key ?? task.Id} · {task.Title}",
+                StringComparison.OrdinalIgnoreCase);
+        Append(watcherCase, OrchestratorLogKinds.Alert, "watcher-finding-raised", summary,
+            jobId: task?.Id,
             reasoning: OperationalReasoning(watcherCase));
         Emit("observation", "watcher-finding-raised", watcherCase, watcherCase.LastSummary,
             FindingBusSeverity(watcherCase.Severity),

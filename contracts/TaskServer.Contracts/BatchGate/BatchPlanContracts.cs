@@ -28,7 +28,7 @@ public sealed record BatchPlanObservation(
     string BatchId, DateTimeOffset AtUtc, int Size, double MaxRisk,
     IReadOnlyList<string> Areas, string OverlapGroup, bool Red,
     int IsolationRuns = 0, double IsolationMinutes = 0,
-    string Classification = "pass");
+    string Classification = "pass", int IsolationDiscardedPasses = 0);
 
 public sealed record BatchPlanUpcomingView(
     string TaskKey, string Stage, DateTimeOffset? EtaUtc,
@@ -44,7 +44,10 @@ public sealed record BatchPlanDecision(
     IReadOnlyList<string> ProposedMembers, int TargetSize,
     IReadOnlyList<BatchPlanUpcomingView> Upcoming,
     BatchAdvisorView? Advisor = null,
-    IReadOnlyList<string>? Considered = null);
+    IReadOnlyList<string>? Considered = null,
+    IReadOnlyList<BatchPlanExcludedMember>? ExcludedMembers = null);
+
+public sealed record BatchPlanExcludedMember(string TaskKey, string Rule);
 
 public sealed record BatchAdvisorView(string Mode, string Verdict,
     IReadOnlyList<string> Reasons, string Model, DateTimeOffset AtUtc);

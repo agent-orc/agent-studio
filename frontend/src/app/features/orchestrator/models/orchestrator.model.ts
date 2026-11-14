@@ -23,7 +23,8 @@ export interface OrchestratorLogEntry {
   project?: string | null;
   watchPath?: string | null;
   ts: string;
-  kind: 'alert' | 'decision' | 'action' | 'observation' | 'intervention';
+  kind: 'alert' | 'decision' | 'action' | 'observation' | 'intervention' | 'owner_action';
+  dossierId?: string | null;
   topic: string;
   summary: string;
   reasoning?: string | null;
@@ -65,6 +66,7 @@ export interface OrchestratorLogResponse {
 
 export interface GlobalOrchestratorFeedResponse {
   entries: OrchestratorLogEntry[];
+  ownerEntries?: OrchestratorLogEntry[];
 }
 
 export interface OperationalStallCase {

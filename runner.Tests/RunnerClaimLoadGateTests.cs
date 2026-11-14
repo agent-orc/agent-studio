@@ -8,6 +8,17 @@ namespace AgentRunner.Tests;
 public sealed class RunnerClaimLoadGateTests
 {
     [Fact]
+    public void Linux_host_core_count_ignores_process_cgroup_quota()
+    {
+        var count = HostTelemetrySampler.ParseLinuxHostCpuCount([
+            "cpu 100 20 30 400", "cpu0 10 2 3 40", "cpu1 10 2 3 40",
+            "cpu2 10 2 3 40", "cpu3 10 2 3 40", "intr 0",
+        ]);
+
+        Assert.Equal(4, count);
+    }
+
+    [Fact]
     public void Telemetry_preserves_claim_gate_snapshot_fields()
     {
         // clock-independent: this fixed instant is only serialized and compared to itself.

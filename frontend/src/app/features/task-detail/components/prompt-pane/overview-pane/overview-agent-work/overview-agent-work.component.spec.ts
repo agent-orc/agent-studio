@@ -3,7 +3,9 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
+import { HttpTestingController } from '@angular/common/http/testing';
 import { AgentWorkSummaryPollService } from '../../../../../polling/services/agent-work-summary-poll.service';
+import { AuthSessionState } from '../../../../../../services/auth.service';
 import { OverviewAgentWorkComponent } from './overview-agent-work.component';
 import type { TaskInfo } from '../../../../../../models/task.model';
 import type { AgentWorkSummary } from '../../../../../session-events';
@@ -42,7 +44,7 @@ function summary(overrides: Partial<AgentWorkSummary> = {}): AgentWorkSummary {
   };
 }
 
-async function build(job: TaskInfo, work: AgentWorkSummary | null) {
+async function build(job: TaskInfo, work: AgentWorkSummary | null, role: 'owner' | 'contributor' | null = null) {
   TestBed.resetTestingModule();
   await TestBed.configureTestingModule({
     imports: [OverviewAgentWorkComponent],
@@ -53,6 +55,9 @@ async function build(job: TaskInfo, work: AgentWorkSummary | null) {
       AgentWorkSummaryPollService,
     ],
   }).compileComponents();
+  if (role) TestBed.inject(AuthSessionState).status.set({ profile: 'networked', bootstrapRequired: false,
+    authenticated: true, user: { id: 'usr', username: role, displayName: role, role, projects: [],
+      disabled: false, mustChangePassword: false } });
   if (work) TestBed.inject(AgentWorkSummaryPollService).summary.set(work);
   const fixture = TestBed.createComponent(OverviewAgentWorkComponent);
   fixture.componentRef.setInput('job', job);
@@ -117,5 +122,20 @@ describe('OverviewAgentWorkComponent', () => {
   it('no session id means no debug tooltip', async () => {
     const fixture = await build(baseJob({ sessionName: null }), summary());
     expect(fixture.componentInstance.sessionDebugTooltip()).toBe('');
+  });
+
+  it('a Product session keeps the summary rows and never requests the refused call breakdown', async () => {
+    const fixture = await build(baseJob(), summary(), 'contributor');
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('[data-testid="agent-work-calls"]')?.textContent).toContain('3 sessions');
+    expect(host.querySelector('app-agent-work-detail')).toBeNull();
+    TestBed.inject(HttpTestingController).expectNone(req => req.url.endsWith('/agent-work-detail'));
+  });
+
+  it('an Owner session still loads the call breakdown', async () => {
+    const fixture = await build(baseJob(), summary(), 'owner');
+
+    expect((fixture.nativeElement as HTMLElement).querySelector('app-agent-work-detail')).not.toBeNull();
   });
 });

@@ -8,6 +8,8 @@ import { ConceptDossierNoticeComponent } from '../../../concept-dossier-notice/c
 import { PlanningSpawnPanelComponent } from '../../../planning-spawn-panel/planning-spawn-panel.component';
 import { DeliveryClaimPanelComponent } from '../../../delivery-claim-panel/delivery-claim-panel.component';
 import { ContinueRoundPanelComponent } from '../../../continue-round-panel/continue-round-panel.component';
+import { HumanReviewDecisionPanelComponent } from '../../../human-review-decision-panel/human-review-decision-panel.component';
+import { ReviewerSession } from '../../../../../../services/reviewer-session.service';
 import { CopyableTaskKeyComponent } from '../../../../../../components/copyable-task-key/copyable-task-key.component';
 import { TaskPromptPopoverComponent } from '../../task-prompt-popover/task-prompt-popover.component';
 import { laneTone } from '../../../../../../models/lane-presentation';
@@ -46,6 +48,7 @@ function makeAttachmentId(): string {
     PlanningSpawnPanelComponent,
     DeliveryClaimPanelComponent,
     ContinueRoundPanelComponent,
+    HumanReviewDecisionPanelComponent,
     CopyableTaskKeyComponent,
     TaskPromptPopoverComponent,
   ],
@@ -71,6 +74,9 @@ export class OverviewTitleBlockComponent {
   readonly referencesChanged = output<void>();
 
   private readonly jobService = inject(TaskService);
+  private readonly reviewer = inject(ReviewerSession);
+  /** AGT-3670: a Reviewer decides the review here; a further round is a run control it lacks. */
+  readonly reviewsOnly = computed(() => this.reviewer.reviewsOnly(this.job().projectName));
   private readonly notifs = inject(NotificationService);
   private readonly modalStack = inject(ModalStackService);
   private readonly createForm = inject(CreateTaskFormService);

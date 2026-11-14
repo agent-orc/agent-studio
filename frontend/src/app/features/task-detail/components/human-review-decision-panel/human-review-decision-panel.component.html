@@ -1,0 +1,46 @@
+@if (applies()) {
+  <section class="review" data-testid="human-review-decision" aria-labelledby="human-review-title-{{ job().id }}">
+    <div class="review__head">
+      <h3 class="review__title" id="human-review-title-{{ job().id }}">Your review</h3>
+      <p class="review__hint">Read the delivery and the review on this card, then accept it or send it back.</p>
+    </div>
+
+    @if (sendingBack()) {
+      <div class="review__form" data-testid="human-review-send-back-form">
+        <label class="review__label" for="human-review-note-{{ job().id }}">Note for the next run</label>
+        <textarea
+          id="human-review-note-{{ job().id }}"
+          class="review__input"
+          data-testid="human-review-note"
+          rows="4"
+          [attr.maxlength]="maxNoteLength"
+          placeholder="What has to change before you accept it"
+          [value]="note()"
+          [disabled]="pending() !== null"
+          (input)="onNoteInput($event)"></textarea>
+        <p class="review__help">The next run receives this note as its follow-up. It also appears on the card timeline.</p>
+        @if (error(); as message) {
+          <p class="review__error" data-testid="human-review-error" role="alert">{{ message }}</p>
+        }
+        <div class="review__actions">
+          <button type="button" class="review__button review__button--primary" data-testid="human-review-send-back"
+            [disabled]="!canSendBack()" [appPendingButton]="pending() === 'send-back'" pendingLabel="Sending back…"
+            (click)="sendBack()">Send back</button>
+          <button type="button" class="review__button review__button--ghost" data-testid="human-review-cancel"
+            [disabled]="pending() !== null" (click)="cancel()">Cancel</button>
+        </div>
+      </div>
+    } @else {
+      @if (error(); as message) {
+        <p class="review__error" data-testid="human-review-error" role="alert">{{ message }}</p>
+      }
+      <div class="review__actions">
+        <button type="button" class="review__button review__button--primary" data-testid="human-review-accept"
+          [disabled]="pending() !== null" [appPendingButton]="pending() === 'accept'" pendingLabel="Accepting…"
+          (click)="accept()">Accept</button>
+        <button type="button" class="review__button" data-testid="human-review-send-back-open"
+          [disabled]="pending() !== null" (click)="openSendBack()">Send back with a note</button>
+      </div>
+    }
+  </section>
+}

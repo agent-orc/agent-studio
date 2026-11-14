@@ -9,6 +9,9 @@ legacy networked backend keeps its own runbook in
 [networked-task-server.md](./networked-task-server.md); its cookies, `enr.*`
 codes and `/api/auth/*` routes are a different contract and do not work
 against the standalone Studio BFF.
+The legacy monolith `/api/auth/bootstrap` profile does not issue an installation
+recovery code. The `recoveryCode` below belongs only to the standalone Task
+Server profile.
 
 `X-Client-Id` and `X-Actor-Id` are attribution hints only. They never
 authenticate anything and are ignored by every route on this page.
@@ -19,19 +22,33 @@ authenticate anything and are ignored by every route on this page.
 |---|---|---|---|
 | Installation | First store start | `installationId` (`ins_*`, public) | Never; migration preserves it |
 | Owner | First login with the installer code | Password, one installation recovery code (`rcv_*`), and a registered second factor | Recovery replaces the password and installation recovery code |
-| Operator / contributor / viewer | Owner (`POST /api/v1/studio/auth/invitations`) | One-time link and password; operators also register a second factor | Owner |
+| Admin / Product / Viewer | Owner (`POST /api/v1/studio/auth/invitations`) | One-time link and password; Admin also registers a second factor, while Product and Viewer are prompted to add one | Owner |
 | Studio edge, engine, each runner host | One-time enrolment (`enr_*`) or Compose bootstrap file | Principal bearer (`ats_*`) in a restricted host file | `POST /api/v1/management/principals/{id}/revoke` |
 
 Every one-time secret is shown once and stored only as a SHA-256 hash.
 The browser never receives an `ats_*` bearer: the Studio BFF keeps its own
 bearer in-process and relays only the human session cookie.
 
+The role names in **Settings > Access** describe what people can do: **Owner**
+holds installation recovery and every permission; **Admin** manages settings,
+operations, production deploys and secrets; **Developer** works on cards, runs,
+chat and documents and deploys outside production; **Product** writes cards and
+accepts them from Human Review in assigned projects (Owner, Admin and Developer
+can also review and accept cards in their scope); **Viewer** reads within
+scope without secret values; **Approver** approves or rejects production
+releases in scope after setting up a second factor. The standalone Task Server invitation API currently accepts
+Admin (`operator`), Product (`contributor`) and Viewer (`viewer`). Developer and
+Approver are Settings > Access roles on the networked backend, not standalone
+invitation roles.
+
 An owner invites a user with a role and an explicit project ID list. The
 response returns a relative `signInLink`; send that link through the chosen
 channel without putting a password in the message. The link expires after
 24 hours and is consumed when the recipient sets a password through
-`POST /api/v1/studio/auth/invite/accept`. A contributor is displayed as
-**Product** and can work only in assigned projects. To grant production
+`POST /api/v1/studio/auth/invite/accept`. The landing page previews the
+inviter, role and projects from the token. Admin must add a second factor
+before entering Studio; Product and Viewer see a one-time recommendation.
+Product can work only in assigned projects. To grant production
 approval for one of those projects, the owner uses
 `PUT /api/v1/studio/auth/users/{userId}/projects/{projectId}/production-approval`
 with `{ "approved": true }`; revocation uses `false`. This grant does not
@@ -50,7 +67,8 @@ provide host, credential, merge, or promotion access.
    `%ProgramData%\AgentOrchestrator` with restricted host permissions.
 2. While no owner exists the server arms that code. Read it over the
    administration channel only. For Compose, use
-   `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`.
+   `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`
+   (`task-server-dev` for the source-built stack).
    On a native Linux host, read the file directly as the installation
    administrator. Do not paste it into task text or logs.
 3. Sign in through the Studio edge and call
@@ -63,8 +81,18 @@ provide host, credential, merge, or promotion access.
    WebAuthn passkey in Studio. Store the one-use factor recovery codes outside
    the browser. They are separate from the installation recovery code. Owner
    and operator sign-in require a registered factor; every step-up requires one
-   regardless of role. A new
-   operator accepts an invitation in the same limited setup session.
+   regardless of role. A new operator accepts an invitation in the same
+   limited setup session.
+
+An authenticator code is accepted once. Sign-in and step-up require a code
+from a later 30-second step than the last accepted code, including the
+enrollment confirmation. A reused code counts as a failed sign-in.
+
+The networked backend has a separate IAM role model: **Owner, Admin,
+Developer, Approver, and Viewer** must register a factor because their permissions
+include run operation, deployment or approval, secrets, or access. Viewer holds
+`secrets.read` for metadata. **Product (Contributor)** may enroll voluntarily. The networked policy is
+described in the [security overview](../security/overview.md#rights-model-role-bindings-per-scope-ip-8).
 
 Studio lists each user's active sessions with device, address, creation time,
 and last use. A user can revoke one or all other sessions; the Owner can revoke

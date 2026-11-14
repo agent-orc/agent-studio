@@ -14,8 +14,21 @@ internal static class ReviewAspectInputBudget
     internal sealed record Result(string Prompt, string Report);
 
     internal static Result Compose(string authored, string material, string screenshotSection)
+        => Compose(authored, material, screenshotSection, string.Empty, 0);
+
+    internal static Result Compose(string authored, string material, string screenshotSection,
+        string dossierSection, int dossierExcerptCharacters)
     {
         var report = new StringBuilder();
+        if (dossierSection.Length > dossierExcerptCharacters && dossierExcerptCharacters > 0)
+        {
+            report.AppendLf($"Dossier excerpt: {dossierSection.Length - dossierExcerptCharacters} characters omitted.");
+            // Keep the excerpt's own truncation marker at the end.
+            var marker = dossierSection.LastIndexOf("[[DOSSIER_EXCERPT_TRUNCATED:", StringComparison.Ordinal);
+            var suffix = marker >= 0 ? dossierSection[marker..] : "\n[[DOSSIER_EXCERPT_TRUNCATED: input budget]]";
+            var head = Math.Max(0, dossierExcerptCharacters - suffix.Length);
+            dossierSection = dossierSection[..head] + suffix;
+        }
         foreach (var line in screenshotSection.Split('\n'))
             if (line.Contains("omitted", StringComparison.OrdinalIgnoreCase))
                 report.AppendLf("Screenshot evidence: " + line.Trim());
@@ -32,8 +45,8 @@ internal static class ReviewAspectInputBudget
         var fences = Regex.Matches(material, @"^```diff\r?\n(?<body>[\s\S]*?)^```\r?$", RegexOptions.Multiline);
         if (fences.Count == 0)
         {
-            var promptWithoutDiff = Join(context, material, screenshotSection, report);
-            return Finish(promptWithoutDiff, report);
+            var promptWithoutDiff = Join(context, material, screenshotSection, dossierSection, report);
+            return Finish(promptWithoutDiff, report, dossierSection);
         }
         var byFence = new List<List<(int Id, string Text, string File)>>();
         var all = new List<(int Id, string Text, string File)>();
@@ -95,16 +108,17 @@ internal static class ReviewAspectInputBudget
         }
         bounded.Append(material, cursor, material.Length - cursor);
         var boundedMaterial = bounded.ToString();
-        return Finish(Join(context, boundedMaterial, screenshotSection, report), report);
+        return Finish(Join(context, boundedMaterial, screenshotSection, dossierSection, report), report,
+            dossierSection);
     }
 
-    private static Result Finish(string prompt, StringBuilder report)
+    private static Result Finish(string prompt, StringBuilder report, string dossier)
     {
         if (prompt.Length > MaximumCharacters)
         {
             var excess = prompt.Length - MaximumCharacters + 512;
             report.AppendLf($"Final input: {excess} additional characters omitted to meet the CLI limit.");
-            prompt = prompt[..(MaximumCharacters - 512)];
+            prompt = TrimKeepingDossier(prompt, MaximumCharacters - 512, dossier);
         }
         var summary = report.Length == 0
             ? "No review input omitted."
@@ -113,11 +127,17 @@ internal static class ReviewAspectInputBudget
             summary = summary[..20_000] + "\nAdditional omission names omitted from this report.";
         var note = "\n\n## Review input omissions\n" + summary;
         if (prompt.Length + note.Length > MaximumCharacters)
-            prompt = prompt[..(MaximumCharacters - note.Length)];
+            prompt = TrimKeepingDossier(prompt, MaximumCharacters - note.Length, dossier);
         return new Result(prompt + note, summary);
     }
 
-    private static string Join(string context, string material, string screenshots, StringBuilder report)
+    private static string TrimKeepingDossier(string prompt, int limit, string dossier)
+        => dossier.Length > 0 && dossier.Length < limit
+           && prompt.EndsWith(dossier, StringComparison.Ordinal)
+            ? prompt[..(limit - dossier.Length)] + dossier
+            : prompt[..limit];
+
+    private static string Join(string context, string material, string screenshots, string dossier, StringBuilder report)
     {
         if (screenshots.Length > 24_000)
         {
@@ -127,8 +147,8 @@ internal static class ReviewAspectInputBudget
         var marker = RemoteReviewWorkspace.SharedMaterialMarker;
         var at = context.IndexOf(marker, StringComparison.Ordinal);
         return at < 0
-            ? context.TrimEnd() + "\n\n" + material + screenshots
-            : context[..at] + material + "\n\n" + context[(at + marker.Length)..].TrimStart() + screenshots;
+            ? context.TrimEnd() + "\n\n" + material + screenshots + dossier
+            : context[..at] + material + "\n\n" + context[(at + marker.Length)..].TrimStart() + screenshots + dossier;
     }
 
     private static string FileName(string section)

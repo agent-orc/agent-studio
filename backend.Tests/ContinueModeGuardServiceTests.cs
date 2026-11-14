@@ -52,7 +52,8 @@ public sealed class ContinueModeGuardServiceTests : IDisposable
 
         Assert.Equal(409, ex.Status);
         Assert.Contains("'concept' mode", ex.Message);
-        Assert.Contains("/api/tasks/agt-2795/promote-concept", ex.Message);
+        Assert.Equal(ContinueModeGuardDecision.RefusalCode, ex.Code);
+        Assert.DoesNotContain("/api/", ex.Message);
 
         // Boundary validation before mutation: the rejected continue must not
         // have appended a continuation note, written a pending intent, or
@@ -73,7 +74,7 @@ public sealed class ContinueModeGuardServiceTests : IDisposable
 
         Assert.Equal(409, ex.Status);
         Assert.Contains("'planning' mode", ex.Message);
-        Assert.Contains("/api/tasks/plan-card/promote-to-coding", ex.Message);
+        Assert.Equal(ContinueModeGuardDecision.RefusalCode, ex.Code);
     }
 
     [Fact]

@@ -145,12 +145,7 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
     public void Confirm_CommitsWithStudioIdentityWhenRepositoryHasNoUserIdentity()
     {
         WriteSchemaTwo("routing-policy");
-        Git("init", "-q");
-        Git("add", "--", "docs");
-        Git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-            "commit", "-qm", "initial");
-        Git("config", "--local", "user.name", "");
-        Git("config", "--local", "user.email", "");
+        InitRepositoryWithoutIdentity();
         var (catalogue, decisions) = Services();
         var fingerprint = catalogue.Read("Project", "routing-policy")!.Fingerprint;
 
@@ -169,6 +164,72 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
         Assert.Equal("Agent Studio <studio@agent-studio.invalid>", Git("show", "-s", "--format=%an <%ae>", "HEAD").Trim());
         Assert.Equal("Agent Studio <studio@agent-studio.invalid>", Git("show", "-s", "--format=%cn <%ce>", "HEAD").Trim());
         Assert.Equal("decided", catalogue.Read("Project", "routing-policy")!.Workbench.Status);
+    }
+
+    [Fact]
+    public void Confirm_CommitsWithTheConfiguredStudioIdentity()
+    {
+        WriteSchemaTwo("routing-policy");
+        InitRepositoryWithoutIdentity();
+        var stack = Stack(new Dictionary<string, string?>
+        {
+            ["Git:StudioCommitIdentity:Name"] = "Studio Bot",
+            ["Git:StudioCommitIdentity:Email"] = "bot@studio.invalid",
+        });
+        var fingerprint = stack.Catalogue.Read("Project", "routing-policy")!.Fingerprint;
+
+        var result = stack.Decisions.Confirm("Project", "routing-policy", FeatureConfirm(fingerprint, "AGT-42", null));
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("Studio Bot <bot@studio.invalid>", Git("show", "-s", "--format=%an <%ae>", "HEAD").Trim());
+        Assert.Equal("Studio Bot <bot@studio.invalid>", Git("show", "-s", "--format=%cn <%ce>", "HEAD").Trim());
+    }
+
+    [Fact]
+    public void Confirm_FailureAfterTheCardWasCreatedRemovesTheCardAndReportsIt()
+    {
+        WriteSchemaTwo("routing-policy");
+        InitRepositoryWithoutIdentity();
+        RejectCommits();
+        var stack = Stack();
+        var card = CreateCard(stack, TaskStates.Ready);
+        var cardKey = stack.Scanner.FindJob(card, stack.WatchPath)!.Key ?? card;
+        var before = File.ReadAllText(Descriptor("routing-policy"));
+        var fingerprint = stack.Catalogue.Read("Project", "routing-policy")!.Fingerprint;
+
+        var result = stack.Decisions.Confirm("Project", "routing-policy",
+            FeatureConfirm(fingerprint, cardKey, card));
+
+        Assert.False(result.Success);
+        Assert.Equal("write-failed", result.ErrorCode);
+        Assert.Equal([card], result.RemovedTaskIds);
+        Assert.Empty(result.RetainedTaskIds);
+        Assert.Contains("No decision was recorded", result.Error);
+        Assert.Contains($"task {cardKey} was removed again", result.Error);
+        Assert.DoesNotContain("git config", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(stack.Scanner.FindJob(card, stack.WatchPath));
+        Assert.Equal(before, File.ReadAllText(Descriptor("routing-policy")));
+        Assert.Null(stack.Catalogue.List("Project", includeHistory: true)!.Items.Single().Decision);
+    }
+
+    [Fact]
+    public void Confirm_FailureKeepsAStartedCardAndNamesIt()
+    {
+        WriteSchemaTwo("routing-policy");
+        InitRepositoryWithoutIdentity();
+        RejectCommits();
+        var stack = Stack();
+        var card = CreateCard(stack, TaskStates.Progress);
+        var fingerprint = stack.Catalogue.Read("Project", "routing-policy")!.Fingerprint;
+
+        var result = stack.Decisions.Confirm("Project", "routing-policy",
+            FeatureConfirm(fingerprint, "AGT-77", card));
+
+        Assert.False(result.Success);
+        Assert.Equal([card], result.RetainedTaskIds);
+        Assert.Empty(result.RemovedTaskIds);
+        Assert.Contains("Task AGT-77 stays on the board without a Dossier link", result.Error);
+        Assert.NotNull(stack.Scanner.FindJob(card, stack.WatchPath));
     }
 
     [Fact]
@@ -426,6 +487,58 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
         Assert.Equal(winner.OperationId, item.Decision!.OperationId);
     }
 
+    private static ConfirmWorkbenchDecisionRequest FeatureConfirm(
+        string? fingerprint, string cardKey, string? cardId) => new()
+    {
+        OperationId = "workbench-ui-confirm-card",
+        Outcome = "feature-spawn",
+        Actor = "Robert",
+        ExpectedFingerprint = fingerprint,
+        Task = FeaturePrepare(fingerprint).Task,
+        SpawnedTaskKeys = [cardKey],
+        SpawnedTaskIds = cardId == null ? null : [cardId],
+        Confirmed = true,
+    };
+
+    /// <summary>
+    /// A repository whose only identity is blank, as on a native service user
+    /// without a global git config.
+    /// </summary>
+    private void InitRepositoryWithoutIdentity()
+    {
+        Git("init", "-q");
+        Git("add", "--", "docs");
+        Git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "commit", "-qm", "initial");
+        Git("config", "--local", "user.name", "");
+        Git("config", "--local", "user.email", "");
+    }
+
+    /// <summary>
+    /// A held branch ref lock makes the decision commit fail after the card
+    /// exists, the way any git refusal would.
+    /// </summary>
+    private void RejectCommits()
+    {
+        var branch = Git("symbolic-ref", "--short", "HEAD").Trim();
+        File.WriteAllText(Path.Combine(_root, ".git", "refs", "heads", branch + ".lock"), "");
+    }
+
+    private static string CreateCard(DecisionStack stack, string lane)
+    {
+        stack.States.EnsureStateFoldersAndMigrate();
+        var id = stack.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Implement the routing policy",
+            WatchPath = stack.WatchPath,
+            Agent = "claude",
+            TargetState = TaskStates.Ready,
+        })!;
+        if (lane != TaskStates.Ready)
+            Assert.Equal(MoveJobStatus.Success, stack.States.MoveJob(id, lane, stack.WatchPath).Status);
+        return id;
+    }
+
     private static PrepareWorkbenchDecisionRequest FeaturePrepare(string? fingerprint) => new()
     {
         OperationId = "workbench-ui-prepare-2",
@@ -494,6 +607,40 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
           {"schemaVersion":1,"id":"{{id}}","title":"Legacy experiment","summary":"Question",
            "entrypoint":"index.html","status":"active","phase":"decision-ready","updatedAt":"2026-07-26T10:00:00Z"}
           """);
+    }
+
+    private sealed record DecisionStack(
+        WorkbenchCatalogueService Catalogue,
+        WorkbenchDecisionService Decisions,
+        TaskScannerService Scanner,
+        TaskStateMachine States,
+        TaskMutationService Mutations,
+        string WatchPath);
+
+    private DecisionStack Stack(IDictionary<string, string?>? settings = null)
+    {
+        var watchPath = Path.Combine(_root, ".orchestrator", "jobs");
+        var values = new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, ".orchestrator"),
+            ["WatchPaths:0:Name"] = "Project",
+            ["WatchPaths:0:RootPath"] = _root,
+            ["WatchPaths:0:Path"] = watchPath,
+        };
+        foreach (var (key, value) in settings ?? new Dictionary<string, string?>()) values[key] = value;
+        var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
+        var mutations = new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), registry,
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var catalogue = new WorkbenchCatalogueService(scanner, registry, git);
+        var decisions = new WorkbenchDecisionService(catalogue, git,
+            spawnedCards: new WorkbenchSpawnedCardCleanup(scanner, states, registry));
+        return new DecisionStack(catalogue, decisions, scanner, states, mutations, watchPath);
     }
 
     private (WorkbenchCatalogueService Catalogue, WorkbenchDecisionService Decisions) Services(

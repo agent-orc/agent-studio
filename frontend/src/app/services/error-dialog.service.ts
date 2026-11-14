@@ -1,6 +1,7 @@
 import { ErrorHandler, Injectable, NgZone, signal, inject } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { ErrorDialogOptions, ErrorDialogState } from '../models/error-dialog.model';
+import { AuthSessionState } from './auth.service';
 
 @Injectable({ providedIn: 'root' })
 export class ErrorDialogService {
@@ -9,10 +10,14 @@ export class ErrorDialogService {
   readonly cliConfigRequest = signal(0);
 
   private copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly authSession = inject(AuthSessionState);
   private returnFocus: HTMLElement | null = null;
   private returnFocusSelector: string | null = null;
 
   show(error: unknown, options: ErrorDialogOptions = {}): void {
+    // AGT-3668: an account without a project is refused every project read;
+    // the shell says so in one sentence instead of a dialog per refusal.
+    if (error instanceof HttpErrorResponse && error.status === 403 && this.authSession.withoutProject()) return;
     this.returnFocus = typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null;
     this.returnFocusSelector = options.returnFocusSelector ?? null;
     const normalizedError = normalizeError(error, options);
@@ -22,6 +27,7 @@ export class ErrorDialogService {
         options.output !== undefined ? serializeValue(options.output) : normalizedError.output,
       stackTrace:
         options.stackTrace !== undefined ? options.stackTrace : normalizedError.stackTrace,
+      refusal: options.refusal ?? null,
     });
     this.copyState.set('idle');
   }
@@ -55,6 +61,8 @@ export class ErrorDialogService {
 
     const payload = [
       `Title: ${activeError.title}`,
+      activeError.refusal ? `Reason: ${activeError.refusal.sentence}` : null,
+      activeError.refusal ? `Next: ${activeError.refusal.nextAction}` : null,
       activeError.source ? `Source: ${activeError.source}` : null,
       '',
       'Message:',

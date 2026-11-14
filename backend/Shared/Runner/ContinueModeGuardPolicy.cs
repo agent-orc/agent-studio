@@ -32,6 +32,13 @@ public sealed record ContinueModeGuardFacts(string JobId, string? Mode, string P
 public sealed record ContinueModeGuardDecision(ContinueModeGuardAction Action, string? Message)
 {
     public static readonly ContinueModeGuardDecision Allowed = new(ContinueModeGuardAction.Allow, null);
+
+    /// <summary>
+    /// Stable error code of the 409 refusal (AGT-3700). The continue panel
+    /// keys on it to offer "keep in this mode and send" and "promote" as
+    /// buttons instead of showing the raw message.
+    /// </summary>
+    public const string RefusalCode = "continue-mode-guard";
 }
 
 /// <summary>
@@ -48,7 +55,11 @@ public sealed record ContinueModeGuardDecision(ContinueModeGuardAction Action, s
 /// A concept or planning card whose follow-up prompt reads as a code-change
 /// request is refused with a message naming the mode and the matching
 /// promotion path, unless the caller explicitly confirms the current mode
-/// via <see cref="ContinueModeGuardFacts.ModeOverride"/>. Coding and research
+/// via <see cref="ContinueModeGuardFacts.ModeOverride"/>. A follow-up that
+/// names a Dossier section or decision is a Dossier edit and is never refused
+/// (AGT-3700): "add one more section D3 File naming" pairs a change verb with
+/// a code-shaped noun, but it is exactly the work a concept card exists for.
+/// Coding and research
 /// cards are never guarded: research is read-only but has no promotion path
 /// this guard can name, and a stray "fix" in a research follow-up is not the
 /// failure this policy exists to catch.
@@ -82,6 +93,18 @@ public static class ContinueModeGuardPolicy
 
     private static readonly Regex CodeFencePattern = new("```", RegexOptions.Compiled);
 
+    /// <summary>Words that name a part of a Dossier rather than of the code.</summary>
+    private static readonly string[] DossierNouns =
+        ["dossier", "section", "sections", "subsection", "subsections", "decision", "decisions",
+         "chapter", "chapters", "heading", "headings", "appendix", "paragraph", "paragraphs",
+         "recommendation", "recommendations", "rationale", "open question", "open questions"];
+
+    private static readonly Regex DossierNounPattern = WordPattern(DossierNouns);
+
+    /// <summary>A Dossier decision id like "D3" or an "Option B" choice; ids are upper case.</summary>
+    private static readonly Regex DossierIdPattern =
+        new(@"\bD\d{1,2}\b|\b[Oo]ption\s+[A-Z0-9]\b|§\s*\d", RegexOptions.Compiled);
+
     public static ContinueModeGuardDecision Decide(ContinueModeGuardFacts facts)
     {
         ArgumentNullException.ThrowIfNull(facts);
@@ -96,14 +119,12 @@ public static class ContinueModeGuardPolicy
         if (!LooksLikeImplementationRequest(facts.Prompt))
             return ContinueModeGuardDecision.Allowed;
 
-        var promotePath = mode == TaskModes.Concept
-            ? $"/api/tasks/{facts.JobId}/promote-concept"
-            : $"/api/tasks/{facts.JobId}/promote-to-coding";
-
+        // AGT-3700: the message is shown to the operator as is, so it names the
+        // two choices in words; API callers resend with modeOverride=<mode>.
         var message =
-            $"This card is in '{mode}' mode and its pipeline is read-only; this follow-up reads like a " +
-            $"code-change request. Promote it to an implementation card first via {promotePath}, or resend " +
-            $"the continue with modeOverride=\"{mode}\" to confirm it should stay in {mode} mode.";
+            $"This card is in '{mode}' mode and its pipeline is read only, and this follow-up reads like a " +
+            $"code-change request. Keep the card in {mode} mode and send the follow-up anyway, or promote " +
+            "the card to implementation.";
 
         return new ContinueModeGuardDecision(ContinueModeGuardAction.Reject, message);
     }
@@ -112,11 +133,13 @@ public static class ContinueModeGuardPolicy
     /// A curated, deterministic heuristic - not NLP. It looks for an
     /// imperative code-change verb, a code fence, or a change verb paired
     /// with a code-shaped target noun or a before/after numeric range (the
-    /// AGT-2795 shape: "demo route count 81 to 83").
+    /// AGT-2795 shape: "demo route count 81 to 83"). A prompt that names a
+    /// Dossier section or decision never matches (AGT-3700).
     /// </summary>
     public static bool LooksLikeImplementationRequest(string? prompt)
     {
         if (string.IsNullOrWhiteSpace(prompt)) return false;
+        if (NamesDossierPart(prompt)) return false;
 
         if (CodeFencePattern.IsMatch(prompt)) return true;
         if (StrongVerbPattern.IsMatch(prompt)) return true;
@@ -126,11 +149,15 @@ public static class ContinueModeGuardPolicy
         return false;
     }
 
+    /// <summary>True when the prompt names a Dossier section, decision, or option.</summary>
+    public static bool NamesDossierPart(string prompt) =>
+        DossierNounPattern.IsMatch(prompt) || DossierIdPattern.IsMatch(prompt);
+
     private static bool IsExplicitlyConfirmed(string? modeOverride, string currentMode) =>
         !string.IsNullOrWhiteSpace(modeOverride)
         && string.Equals(TaskModes.Normalize(modeOverride), currentMode, StringComparison.Ordinal);
 
     private static Regex WordPattern(IReadOnlyList<string> words) =>
-        new($@"\b(?:{string.Join("|", words.Select(Regex.Escape))})\b",
+        new($@"\b(?:{string.Join("|", words.Select(word => Regex.Escape(word).Replace(@"\ ", @"\s+")))})\b",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 }

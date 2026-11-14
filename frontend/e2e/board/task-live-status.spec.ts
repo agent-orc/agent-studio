@@ -11,8 +11,8 @@ const NOW = '2026-07-24T20:00:40Z';
 function task(
   id: string,
   title: string,
-  state: '3-progress' | '4-auto-review',
-  liveStatus: Record<string, unknown>,
+  state: '2-ready' | '3-progress' | '4-auto-review' | '5-human-review',
+  liveStatus: Record<string, unknown> | null,
   lastActivity: string,
 ): Record<string, unknown> {
   return {
@@ -222,7 +222,29 @@ const STALLED = task(
   '2026-07-24T19:48:40Z',
 );
 
-const TASKS = [ACTIVE, QUEUED, REVIEWING, REVIEW_STALLED, DEGRADED, PRE_STEP, STALLED];
+const READY = task('agt-ready', 'Ready for runner pickup', '2-ready', {
+  attempt: 2, activeStep: null,
+  nextSteps: [{ stepId: 'pre-loop-guard', displayName: 'Loop check' }],
+  queue: { kind: 'runner', position: 1 }, latestEventAt: null,
+}, '2026-07-24T19:58:40Z');
+
+const BATCH_GATE = task('agt-batch', 'Waiting for batch verdict', '4-auto-review', {
+  attempt: 2, activeStep: null,
+  nextSteps: [{ stepId: 'pre-loop-guard', displayName: 'Loop check' }],
+  queue: { kind: 'review', position: 2 }, latestEventAt: null,
+}, '2026-07-24T19:58:40Z');
+
+const INTEGRATION = task('agt-integration', 'Waiting for delivery integration', '4-auto-review', {
+  attempt: 2, activeStep: null,
+  nextSteps: [{ stepId: 'pre-loop-guard', displayName: 'Loop check' }],
+  queue: { kind: 'review', reason: 'waiting for delivery integration' }, latestEventAt: null,
+}, '2026-07-24T19:58:40Z');
+
+const HUMAN_REVIEW = task('agt-human', 'Awaiting owner decision', '5-human-review', null,
+  '2026-07-24T19:58:40Z');
+
+const TASKS = [ACTIVE, QUEUED, REVIEWING, REVIEW_STALLED, DEGRADED, PRE_STEP, STALLED,
+  READY, BATCH_GATE, INTEGRATION, HUMAN_REVIEW];
 
 function json(route: Route, body: unknown): Promise<void> {
   return route.fulfill({
@@ -241,6 +263,11 @@ async function installRoutes(page: Page): Promise<void> {
     if (url.includes('/api/v1/studio/auth/status')) {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true });
     }
+    if (url.includes('/batch-gate/state')) return json(route, {
+      plan: { decision: 'wait', reason: 'batch formed', proposedMembers: [], targetSize: 2, upcoming: [] },
+      pending: [], batches: [],
+      members: { [`${WATCH_PATH}::agt-batch`]: { status: 'in-batch', batchId: 'batch-1', phase: 'gate-running', position: 1, size: 2 } },
+    });
     if (url.includes('/api/tasks/archive')) return json(route, { items: [], total: 0 });
     if (route.request().method() === 'GET' && detailMatch && !['archive', 'grouped'].includes(detailMatch[1])) {
       const requestedId = decodeURIComponent(detailMatch[1]).toLowerCase();
@@ -262,13 +289,13 @@ async function installRoutes(page: Page): Promise<void> {
         backlog: [],
         preparation: [],
         orchestratorPrep: [],
-        ready: [],
+        ready: [READY],
         progress: [PRE_STEP, STALLED],
         failedPickup: [],
         codeNotComplete: [],
         review: [],
-        autoReview: [ACTIVE, QUEUED, REVIEWING, REVIEW_STALLED, DEGRADED],
-        humanReview: [],
+        autoReview: [ACTIVE, QUEUED, REVIEWING, REVIEW_STALLED, DEGRADED, BATCH_GATE, INTEGRATION],
+        humanReview: [HUMAN_REVIEW],
         escalated: [],
         completed: [],
         archive: [],
@@ -304,10 +331,47 @@ async function prepareBoard(page: Page, freezeTime = true): Promise<void> {
     content: '.dialog__overlay, [data-testid="offline-banner"] { display: none !important; }',
   });
   await dismissDevErrorDialog(page);
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  await expect(page.getByTestId('studio-board')).toBeVisible();
 }
 
 test.describe('task live status', () => {
   test.use({ viewport: { width: 1600, height: 960 } });
+
+  test('keeps NEXT on the current lane and hold', async ({ page }) => {
+    test.setTimeout(120_000);
+    mkdirSync(RESULTS, { recursive: true });
+    await prepareBoard(page);
+    const cases = [
+      { title: 'Ready for runner pickup', current: 'Queued for runner', next: 'Runner pickup → Loop check', group: 'backlog', lane: 'Ready' },
+      { title: 'Waiting for batch verdict', current: 'Waiting for batch verdict', next: 'Batch verdict', group: 'active', lane: 'Post Processing' },
+      { title: 'Waiting for delivery integration', current: 'Waiting for delivery integration', next: 'Delivery integration', group: 'active', lane: 'Post Processing' },
+      { title: 'Awaiting owner decision', current: 'Waiting for owner review', next: 'Owner decision', group: 'decide', lane: 'Human review' },
+    ];
+
+    for (const width of [1600, 390]) {
+      await page.setViewportSize({ width, height: 960 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        for (const item of cases) {
+          if (width === 390) {
+            if (await page.getByTestId('board-group-switcher').isVisible()) {
+              await page.getByTestId(`board-group-switch-${item.group}`).click();
+            } else {
+              await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: item.lane });
+            }
+          }
+          const card = page.getByTestId('task-card').filter({ hasText: item.title });
+          await expect(card.getByTestId('task-live-current')).toContainText(item.current);
+          await expect(card.getByTestId('task-live-next')).toContainText(item.next);
+          await expect(card.getByTestId('task-live-next')).not.toContainText('Model qualification');
+          await card.screenshot({
+            path: join(RESULTS, `task-live-next-${item.title.toLowerCase().replaceAll(' ', '-')}-${theme}-${width}.png`),
+          });
+        }
+      }
+    }
+  });
 
   test('shows current work, the next chain and honest idle states on cards', async ({ page }) => {
     test.setTimeout(120_000);
@@ -370,37 +434,12 @@ test.describe('task live status', () => {
   });
 
   test('renders and captures the shared detail presentation', async ({ page }) => {
-    test.setTimeout(120_000);
     mkdirSync(RESULTS, { recursive: true });
-    await prepareBoard(page);
-    const activeCard = page.locator('[data-testid="task-card"]', { hasText: 'Live review chain' });
-    await expect(activeCard).toBeVisible({ timeout: 60_000 });
-    const detailHost = activeCard.locator('app-task-live-status');
-
-    // The detail and card use the same Angular component. Switch this mounted
-    // instance through Angular's dev-mode signal input so the screenshot covers
-    // the real `variant="detail"` template and styling without duplicating a
-    // visual-only fixture component.
-    await detailHost.evaluate((host) => {
-      const debug = (window as unknown as {
-        ng?: {
-          getComponent(element: Element): Record<string, unknown> | null;
-          applyChanges(component: object): void;
-        };
-      }).ng;
-      const component = debug?.getComponent(host) as { variant?: (() => string) & Record<PropertyKey, unknown> } | null;
-      const variant = component?.variant;
-      const node = variant && Object.getOwnPropertySymbols(variant)
-        .map(symbol => variant[symbol])
-        .find((value): value is { applyValueToInputSignal(node: object, value: string): void } =>
-          typeof (value as { applyValueToInputSignal?: unknown })?.applyValueToInputSignal === 'function');
-      if (!component || !node) throw new Error('Angular detail-variant input is unavailable');
-      node.applyValueToInputSignal(node, 'detail');
-      debug!.applyChanges(component);
-    });
-
-    const detail = detailHost.getByTestId('task-live-status');
-    await expect(detail).toHaveAttribute('data-attempt', '4', { timeout: 60_000 });
+    await installRoutes(page);
+    await page.goto(`/?job=agt-live&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+    await dismissDevErrorDialog(page);
+    const detail = page.getByTestId('studio-task').getByTestId('task-live-status');
+    await expect(detail).toHaveAttribute('data-attempt', '4', { timeout: 15_000 });
     await expect(detail).toHaveClass(/task-live--detail/);
     await expect(detail).toContainText('Review aspect · Tests and evidence');
     await expect(detail).toContainText('started');
@@ -408,30 +447,9 @@ test.describe('task live status', () => {
     await expect(detail).toContainText('agent-runner-01');
     await expect(detail).toContainText('Grade → Gate → Merge');
 
-    await page.addStyleTag({
-      content: `
-        [data-testid="task-live-detail-showcase"] {
-          padding: var(--studio-spacing-5);
-          background: var(--studio-bg-editor);
-          width: 1080px;
-        }
-        [data-testid="task-live-detail-showcase"] app-task-live-status {
-          display: block;
-          width: 100%;
-        }
-      `,
-    });
-    await detailHost.evaluate((host) => {
-      const showcase = document.createElement('section');
-      showcase.dataset['testid'] = 'task-live-detail-showcase';
-      document.body.appendChild(showcase);
-      showcase.appendChild(host);
-    });
-    const showcase = page.getByTestId('task-live-detail-showcase');
-
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
-      await showcase.screenshot({
+      await detail.screenshot({
         path: join(RESULTS, `task-live-status-detail--mocked--${theme}.png`),
       });
     }

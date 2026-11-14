@@ -1,0 +1,34 @@
+@if (rows().length) {
+  <section class="restart-history" data-testid="remote-host-restart-history"
+           aria-labelledby="remote-host-restart-history-title">
+    <h4 id="remote-host-restart-history-title">
+      Review restarts · {{ rows().length }} · {{ lostLabel(lostTotal()) }}
+    </h4>
+    <ol class="restart-history__list">
+      @for (row of rows(); track row.id) {
+        <li class="restart-history__row" data-testid="remote-host-restart-row"
+            [attr.data-reviews-lost]="row.reviewsLost">
+          <time [attr.datetime]="row.restartedAt" [attr.title]="row.restartedAt">{{ row.restartedAt | date:'short' }}</time>
+          <span class="restart-history__runner">{{ row.runner }}</span>
+          <span class="restart-history__count" data-testid="remote-host-restart-lost-count">{{ lostLabel(row.reviewsLost) }}</span>
+          <code class="restart-history__instance" [attr.title]="'Replacement instance ' + row.instanceId">{{ row.instanceId }}</code>
+          @if (row.lostAttempts.length) {
+            <ul class="restart-history__lost" aria-label="Lost review attempts">
+              @for (lost of row.lostAttempts; track lost.attemptId) {
+                <li data-testid="remote-host-restart-lost-attempt" [attr.data-task-key]="lost.taskKey">
+                  @if (status(lost.taskKey); as reference) {
+                    <app-task-reference-microcard [status]="reference" testId="remote-host-restart-lost-card" />
+                  } @else {
+                    <a data-testid="remote-host-restart-lost-card" [href]="'#/tasks/' + lost.taskKey"
+                       (click)="openCard($event, lost.taskKey)">{{ lost.taskKey }}</a>
+                  }
+                  <code class="restart-history__attempt">{{ lost.attemptId }}</code>
+                </li>
+              }
+            </ul>
+          }
+        </li>
+      }
+    </ol>
+  </section>
+}

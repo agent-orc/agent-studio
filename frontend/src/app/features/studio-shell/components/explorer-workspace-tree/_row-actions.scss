@@ -19,6 +19,10 @@
   transform: translateY(-50%);
 }
 
+.studio-explorer-tree__row-action--magazine {
+  right: calc(var(--studio-rail-trailing-gutter) + var(--studio-spacing-5) + var(--studio-spacing-1));
+}
+
 .studio-explorer-tree__row-action:hover,
 .studio-explorer-tree__row-action:focus-visible {
   background: var(--studio-bg-hover);

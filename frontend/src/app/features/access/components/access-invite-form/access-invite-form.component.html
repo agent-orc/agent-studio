@@ -13,8 +13,10 @@
   </div>
   @if (link(); as created) {
     <div class="invite__link" data-testid="access-invite-link">
-      <p>Send this sign-in link to <strong>{{ created.username }}</strong>. It works once and expires at {{ created.expiresAt }}.</p>
+      <p>Send this invitation only to <strong>{{ created.username }}</strong>. It works once and expires at {{ created.expiresAt }}. {{ created.factor }}</p>
       <p class="access-secret">{{ created.url }}</p>
+      <button type="button" class="access-secondary" data-testid="access-invite-copy" (click)="copyLink()">{{ copied() ? 'Copied' : 'Copy link' }}</button>
+      @if (copyError()) { <p role="alert">Copy failed. Select and copy the link above.</p> }
     </div>
   }
 </div>

@@ -16,6 +16,19 @@ public static class ControlPlaneAuditEndpoints
     {
         var audit = app.MapGroup("/api/auth/audit");
 
+        audit.MapGet("/factors", (HttpContext context, AccessSecurityStore store, int? limit) => AccessSecurityEndpoints.Execute(() =>
+        {
+            var owner = AccessSecurityEndpoints.RequireHuman(context, store);
+            if (owner.User.Role != StudioRoles.Owner)
+                throw new SecurityOperationException(403, "owner-required", "Owner role is required.");
+            var entries = store.ControlPlaneAudit.ReadNewest(entry =>
+                entry.Stream == ControlPlaneAuditStreams.Iam && entry.Operation is
+                    "factor.bound" or "factor.replaced" or "recovery-code.used" or "recovery-codes.regenerated",
+                Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit));
+            context.Response.Headers.CacheControl = "no-store";
+            return Results.Ok(entries.Select(View).ToList());
+        }));
+
         audit.MapGet("/operator-activity", (HttpContext context, AccessSecurityStore store, ControlPlaneAuditMonitor monitor,
             string? operatorAgentId, string? sessionId, int? limit) => AccessSecurityEndpoints.Execute(() =>
             {
@@ -35,6 +48,18 @@ public static class ControlPlaneAuditEndpoints
                     monitor.Integrity, monitor.Forwarding));
             })).RequirePermission(IamPermissions.AccessRead);
 
+        // AGT-3737: backup create, upload, verify, retention, and the offline decrypt and restore, by any actor.
+        audit.MapGet("/backups", (HttpContext context, AccessSecurityStore store, ControlPlaneAuditMonitor monitor, int? limit)
+            => AccessSecurityEndpoints.Execute(() =>
+            {
+                IamEndpoints.Require(context, store, IamPermissions.AccessRead);
+                var entries = store.ControlPlaneAudit.ReadNewest(
+                    entry => entry.Stream == ControlPlaneAuditStreams.Backup,
+                    Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit));
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Ok(new BackupActivityResponse(entries.Select(BackupView).ToList(), monitor.Integrity));
+            })).RequirePermission(IamPermissions.AccessRead);
+
         audit.MapPost("/verify", async (HttpContext context, AccessSecurityStore store, ControlPlaneAuditVerifier verifier) =>
         {
             try { IamEndpoints.Require(context, store, IamPermissions.AccessManage); }
@@ -44,6 +69,20 @@ public static class ControlPlaneAuditEndpoints
             }
             return Results.Ok(await verifier.VerifyAsync(context.RequestAborted));
         }).RequirePermission(IamPermissions.AccessManage);
+    }
+
+    public static BackupAuditEntryView BackupView(ControlPlaneAuditEntry entry)
+    {
+        string? trigger = null, summary = null;
+        if (entry.Details is { ValueKind: System.Text.Json.JsonValueKind.Object } details)
+        {
+            if (details.TryGetProperty("trigger", out var value) && value.ValueKind == System.Text.Json.JsonValueKind.String)
+                trigger = value.GetString();
+            if (details.TryGetProperty("summary", out value) && value.ValueKind == System.Text.Json.JsonValueKind.String)
+                summary = value.GetString();
+        }
+        return new(entry.Sequence, entry.At, entry.Actor, entry.Session, entry.DelegatedBy, entry.Operation,
+            entry.Target, entry.Outcome, trigger, summary, entry.Hash);
     }
 
     public static ControlPlaneAuditEntryView View(ControlPlaneAuditEntry entry) => new(

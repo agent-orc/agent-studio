@@ -145,6 +145,7 @@ async function stubBackgroundApis(page: Page) {
 // Updates, Workspaces (Global) were added. Each
 // section keeps a stable outer overlay test id + an inner component test id.
 const SECTIONS: { key: string; overlayTestid: string; innerTestid: string }[] = [
+  { key: 'operations', overlayTestid: 'workspace-operations-overlay', innerTestid: 'workspace-operations' },
   { key: 'appearance', overlayTestid: 'workspace-appearance-overlay', innerTestid: 'appearance-settings' },
   { key: 'updates', overlayTestid: 'workspace-updates-overlay', innerTestid: 'updates-settings' },
   { key: 'workspaces', overlayTestid: 'workspace-management-overlay', innerTestid: 'workspace-management' },
@@ -197,11 +198,11 @@ test.describe('Workspace settings home (Dach)', () => {
     await expect(settingsHome(page)).toBeVisible();
     if (SETTINGS_SHOT_PHASE === 'after') {
       const rail = page.getByTestId('workspace-settings-rail');
-      const rows = rail.locator('app-tree-row > button[data-testid^="workspace-settings-rail-"]');
+      const rows = rail.locator('app-tree-row button[data-testid^="workspace-settings-rail-"]');
       await expect(page.getByTestId('workspace-settings-group-general')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-global')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-workspace')).toBeVisible();
-      await expect(rows).toHaveCount(20);
+      await expect(rows).toHaveCount(18);
       for (const row of await rows.all()) {
         await expect(row.locator('app-studio-icon')).toHaveCount(1);
         await expect(row.locator('svg')).toHaveAttribute('stroke', 'currentColor');
@@ -231,6 +232,45 @@ test.describe('Workspace settings home (Dach)', () => {
       await setTheme(page, theme);
       await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR ?? SHOT_DIR, `settings-390-${theme}.png`), animations: 'disabled' });
     }
+  });
+
+  test('installation Operations has Security and Backups in light, dark and phone layouts', async ({ page }) => {
+    const json = (body: unknown) => async (route: import('@playwright/test').Route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    await page.route('**/api/security/posture', json({
+      generatedAt: '2026-11-10T12:00:00Z',
+      summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0, actionSoon: 0 },
+      findings: [],
+      exposure: { profile: 'local', httpsRequired: false, cloudflareEdge: false, trustedProxyCount: 0, loginAddressHealthy: true, anonymousRoutes: [], external: [] },
+      credentials: { tokens: [], operatorAgents: [], inventory: [], inventorySource: 'local', inventoryProblem: null },
+      secondFactor: { activeUsers: 0, covered: 0, users: [] },
+      versions: { server: { version: 'test', tag: 'test', commit: 'test', builtAt: null, known: true }, hostSource: 'local', hostProblem: null, hosts: [] },
+      audit: { integrityState: 'ok', integrityCheckedAt: null, sinkConfigured: false, pendingForward: 0, sinkAlert: false, openAlerts: [], lastKillAt: null, lastDrillAt: null, lastDrillPassed: null, activeBreakGlassWindows: 0, windowDays: 7, anomalies: [] },
+      cards: [],
+    }));
+    await page.route('**/api/v1/management/backups', json({
+      state: 'not-configured', configured: false, running: false, keyId: null, secretKeyId: null,
+      intervalHours: 24, verifyIntervalHours: 168, staleAfterHours: 48, retentionCount: 7,
+      nextBackupAt: null, lastGood: null, lastGoodAgeHours: null, stale: false,
+      lastRun: null, lastVerification: null, offHost: { kind: 'none', target: null, state: 'not-configured', lastUploadedId: null, lastUploadedAt: null, lastError: null },
+      warnings: [{ code: 'backup-not-configured', severity: 'warning', message: 'Backups are off.' }],
+      backups: [], generatedAt: '2026-11-10T12:00:00Z',
+    }));
+    await page.getByTestId('studio-titlebar-settings').click();
+    await expect(page.getByTestId('workspace-settings-card-operations')).toBeVisible();
+    await page.getByTestId('workspace-settings-card-operations').click();
+    await expect(page).toHaveURL(/#\/workspace\/settings\/operations$/);
+    await expect(page.getByTestId('operations-security')).toBeVisible();
+    await expect(page.getByTestId('operations-backups')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Open backup runbook' })).toHaveAttribute('href', /studio-backup-restore\.md$/);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await settingsHome(page).screenshot({ path: join(process.env.JOB_RESULTS_DIR ?? SHOT_DIR, `operations-${theme}.png`), animations: 'disabled' });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByTestId('workspace-settings-picker')).toBeVisible();
+    await expect(page.getByTestId('operations-backups')).toBeVisible();
+    await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR ?? SHOT_DIR, 'operations-390.png'), animations: 'disabled' });
   });
 
   test('rail navigates between sections, each keeping its legacy hook', async ({ page }) => {

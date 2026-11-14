@@ -99,7 +99,7 @@ public sealed class PackageReviewExecutorTests : IDisposable
         var plane = new FakePlane();
         var executor = new PackageReviewExecutor(Options(), plane, () => "instance-a", _ => { }, () => Now,
             CacheRoot, (_, _, _, _) => Task.FromResult(new PackageAgentRun(
-                "turn/start failed: input_too_large", 1, null, Now, Now, null)));
+                "", 1, null, Now, Now, null, "turn/start failed: input_too_large")));
 
         await executor.RunClaimedAsync(Claim(Subject(a, b)), default);
 
@@ -107,6 +107,21 @@ public sealed class PackageReviewExecutorTests : IDisposable
         Assert.Equal(ReviewPackageOutcomes.Infrastructure, report.Outcome);
         Assert.Contains(ReviewCliRefusalPolicy.InputTooLarge, report.Summary);
         Assert.Equal(ReviewCliRefusalPolicy.InputTooLarge, Assert.Single(report.Commands).Classification);
+    }
+
+    [Fact]
+    public async Task Unknown_model_takes_precedence_over_refused_turn_in_package_review()
+    {
+        var (a, b) = await SeedTwoMembersAsync();
+        var plane = new FakePlane();
+        var executor = new PackageReviewExecutor(Options(), plane, () => "instance-a", _ => { }, () => Now,
+            CacheRoot, (_, _, _, _) => Task.FromResult(new PackageAgentRun(
+                "", 1, null, Now, Now, null, "turn/start failed: unknown model gpt-6-sol")));
+
+        await executor.RunClaimedAsync(Claim(Subject(a, b)), default);
+
+        var report = Assert.Single(plane.Reports);
+        Assert.Equal(ReviewModelConfigurationPolicy.Classification, Assert.Single(report.Commands).Classification);
     }
 
     [Fact]

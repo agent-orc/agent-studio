@@ -54,7 +54,6 @@
   "packageManager": "npm@11.21.1",
   "dependencies": {
     "@angular/cdk": "^21.2.14",
-    "coding-agent-chat": "0.4.1",
     "@angular/common": "21.2.25",
     "@angular/compiler": "21.2.25",
     "@angular/core": "21.2.25",
@@ -66,10 +65,12 @@
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-image": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
+    "coding-agent-chat": "0.4.1",
     "diff2html": "^3.4.56",
     "dompurify": "^3.4.17",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.3",
+    "qrcode": "^1.5.4",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },
@@ -81,6 +82,7 @@
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.59.1",
     "@types/dompurify": "^3.0.5",
+    "@types/qrcode": "^1.5.6",
     "@vitest/coverage-v8": "^4.1.11",
     "angular-eslint": "21.3.1",
     "eslint": "^10.0.3",

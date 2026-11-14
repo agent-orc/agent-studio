@@ -70,6 +70,41 @@ public sealed class BatchGatePilotFlightQueueTests : BatchGatePilotServiceTests
         Assert.Equal(Formation.Select(item => item.Prefix), started);
     }
 
+    [Fact]
+    public void State_snapshot_positions_equal_the_start_order_of_the_pilot()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        Configure(factory);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        FormInReverseFolderOrder(factory, store);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var formed = store.ListRecoverableManifests()
+            .Where(manifest => store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
+            .ToArray();
+
+        // Formation order first, then with the oldest batch deferred after a
+        // lease-deadline cancellation, so the start order is not the formation order.
+        Assert.Equal(Formation.Select(item => item.BatchId), StartOrder(pilot, formed));
+        AssertSnapshotFollowsStartOrder(factory, pilot, formed);
+        pilot.DeferAtLeaseDeadlineForTesting(ProjectName, Formation[0].BatchId);
+        Assert.Equal(Formation.Skip(1).Append(Formation[0]).Select(item => item.BatchId),
+            StartOrder(pilot, formed));
+        AssertSnapshotFollowsStartOrder(factory, pilot, formed);
+    }
+
+    private static IReadOnlyList<string> StartOrder(BatchGatePilotService pilot,
+        IReadOnlyList<BatchGateManifest> formed)
+        => pilot.StartOrderForTesting(formed).Select(manifest => manifest.BatchId).ToArray();
+
+    private static void AssertSnapshotFollowsStartOrder(WebApplicationFactory<Program> factory,
+        BatchGatePilotService pilot, IReadOnlyList<BatchGateManifest> formed)
+    {
+        var queue = FlightQueue(factory);
+        Assert.Equal(StartOrder(pilot, formed), queue.Select(entry => entry.BatchId));
+        Assert.Equal(Enumerable.Range(1, formed.Count), queue.Select(entry => entry.Position));
+    }
+
     private static void Configure(WebApplicationFactory<Program> factory)
     {
         EnableBatchGate(factory, closeSize: 2, scope: "code");

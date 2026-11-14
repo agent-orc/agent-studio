@@ -2,18 +2,39 @@
 
 ## Install from this checkout
 
-Docker Engine with Compose v2, or Docker Desktop, is required. Allow at least
-8 GB of disk space for images and builds, plus space for task data and runner
-workspaces. From the repository root:
+This is the recommended installation until the first GitHub Release is
+published (see [the setup guide](./README.md#choose-your-path)).
+
+Prerequisites:
+
+- Docker Engine with Compose v2 on Linux, or Docker Desktop on Windows or
+  macOS. On Windows, run the commands below in Git Bash or WSL.
+- Your user reaches the Docker daemon without `sudo`: `docker info` and
+  `docker compose version` both succeed. On Linux that usually means
+  membership in the `docker` group. Root is not needed.
+- Git, and at least 8 GB of disk space for images and builds, plus space for
+  task data and runner workspaces.
+
+Clone the repository and start the stack from its root:
 
 ```sh
+git clone https://github.com/agent-orc/agent-studio.git && cd agent-studio
 scripts/compose-distributed-bootstrap.sh
-docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
+AGENT_STUDIO_VERSION="$(cat VERSION)" docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
 ```
 
-Open `http://localhost:4011`. This source-built path is the verified default
-for the current checkout. To run it in the background, add `-d` before `--wait`.
-The Task Server, Engine, BFF, Studio API, web UI, and coding and review hosts start
+Every source build checks that its version equals `VERSION`. The bootstrap
+copies `.env.example`, whose `AGENT_STUDIO_VERSION` pins the published-image
+release, so the source build needs the `VERSION` value from the environment
+as shown. Without it the image builds fail with `Project version ... does not
+match the repository version ...`. Alternatively set `AGENT_STUDIO_VERSION`
+in `.env` to the content of `VERSION`.
+
+Open `http://127.0.0.1:4011`. This source-built path is the verified default
+for the current checkout; the Compose smoke test (`scripts/compose-smoke-test.sh`)
+builds and starts it in CI. To run it in the background, add `-d` before
+`--wait`. The Task Server, Engine, BFF, Studio API, web UI, and the coding
+(`distributed-runner`) and review (`distributed-review-runner`) hosts start
 together. Browser `/api/v1` requests go through the BFF to the Task Server.
 The remaining dev-seat routes have the option C coverage limit described in
 [the connector gap](./docker-compose-connector-gap.md).
@@ -21,8 +42,21 @@ The compatibility API rejects non-versioned task routes and has no durable
 workspace or project mount. Browser mutations reach the Task Server through
 the BFF on `/api/v1`.
 
+The first sign-in creates the owner account with the one-time owner code that
+the bootstrap service generated:
+
+```sh
+docker compose exec task-server-dev cat /run/agent-studio-secrets/owner_bootstrap_code
+```
+
+Before the first coding task, give the runners provider and Git credentials
+(see [Bootstrap and credentials](#bootstrap-and-credentials)). Then follow
+[your first task](./your-first-task.md).
+
 ## Published images
 
+No release has been published yet, and the `ghcr.io/agent-orc` images are not
+pullable anonymously, so this section applies only after the first release.
 After release CI has checked the published images, pin a release and start the
 same stack without a source build:
 

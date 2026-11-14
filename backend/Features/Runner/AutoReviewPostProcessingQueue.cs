@@ -696,7 +696,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
             // Re-resolve: the transition moved the card's folder.
             var info = _scanner.FindJob(request.JobId, request.WatchPath);
             if (info is null) return;
-            PostProcessingLifecycleStore.Terminalize(
+            var updated = PostProcessingLifecycleStore.Terminalize(
                 info.FolderPath,
                 DateTime.UtcNow,
                 failed: false,
@@ -704,6 +704,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
                 + resumed.Reason + ") and completed the transition.",
                 _logger,
                 onlyWhenActive: true);
+            if (updated) _scanner.InvalidateCache(changedPath: Path.Combine(info.FolderPath, "lifecycle.json"));
         }
         catch (Exception ex)
         {
@@ -820,6 +821,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
                 DateTime.UtcNow,
                 "Post Processing skipped the decision: " + reason + ".",
                 _logger);
+            if (updated) _scanner.InvalidateCache(changedPath: Path.Combine(info.FolderPath, "lifecycle.json"));
             if (string.Equals(info.State, TaskStates.AutoReview, StringComparison.Ordinal))
             {
                 if (integrating)
@@ -856,6 +858,8 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
                     _logger,
                     replaceChecks: false))
             {
+                _scanner.InvalidateCache(changedPath: Path.Combine(info.FolderPath, "lifecycle.json"));
+                _scanner.PublishCoreFromKnownFolder(info.FolderPath);
                 _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.PostProcessingRunning);
             }
         }
@@ -889,6 +893,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
                 detail,
                 _logger,
                 onlyWhenActive: true);
+            if (updated) _scanner.InvalidateCache(changedPath: Path.Combine(info.FolderPath, "lifecycle.json"));
             if (updated && string.Equals(info.State, TaskStates.AutoReview, StringComparison.Ordinal))
                 _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.PostProcessingBlocked);
         }
