@@ -67,10 +67,9 @@
               [disabled]="mode() === 'invalid'" (click)="openRequested.emit()">Open full view</button>
       @if (mode() === 'decision') {
         <button type="button" class="workbench-overview__action-primary"
-                [attr.aria-expanded]="reviewExpanded()"
                 [attr.data-testid]="'workbench-overview-open-' + item().projectName + '-' + item().workbench.id"
-                (click)="reviewToggleRequested.emit()">
-          {{ reviewExpanded() ? 'Close review' : 'Review here' }}
+                (click)="openRequested.emit()">
+          Review here
         </button>
       }
     </div>

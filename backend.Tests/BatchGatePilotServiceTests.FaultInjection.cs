@@ -21,9 +21,9 @@ public sealed class BatchGatePilotFaultInjectionTests : BatchGatePilotServiceTes
     // counting facts pin them, so the crash theories cover every write.
     // AGT-3569 added the flight claim: its grant, step changes and release,
     // and the formed journal entry naming each claim.
-    private const int PublicationWrites = 43;
-    private const int BaseMoveWrites = 50;
-    private const int IsolationWrites = 70;
+    private const int PublicationWrites = 52;
+    private const int BaseMoveWrites = 59;
+    private const int IsolationWrites = 77;
 
     // Each scenario's crash points are their own test class, so the gate runs
     // them in parallel with the rest of the suite instead of after this class.
@@ -394,7 +394,15 @@ public sealed class BatchGatePilotFaultInjectionTests : BatchGatePilotServiceTes
         => Enumerable.Range(1, writes).Select(point => new object[] { point });
 
     private string? LaneOf(string key)
-        => TaskStates.All.SingleOrDefault(state => Directory.Exists(Path.Combine(_watchPath, state, key)));
+    {
+        var lanes = TaskStates.All.Where(state => Directory.Exists(Path.Combine(_watchPath, state, key)))
+            .ToArray();
+        Assert.True(lanes.Length <= 1, $"Card {key} appears in lanes: {string.Join(", ", lanes)}; files: "
+            + string.Join("; ", lanes.Select(state => state + "=" + string.Join(",",
+                Directory.EnumerateFiles(Path.Combine(_watchPath, state, key), "*", SearchOption.AllDirectories)
+                    .Select(path => Path.GetRelativePath(Path.Combine(_watchPath, state, key), path))))));
+        return lanes.SingleOrDefault();
+    }
 
     private static async Task<IReadOnlyList<JsonElement>> Findings(HttpClient client)
     {

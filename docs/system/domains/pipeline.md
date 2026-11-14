@@ -83,6 +83,12 @@ batch panel lists the queue in order and excludes its members from cards waiting
 for another batch. The handoff writes one operator-feed event per paused batch
 with its members.
 
+A per-task gate with a completed parsed test report is a card code failure when
+the integration baseline passes and a clean repeat reproduces the failed tests.
+This holds when fingerprint history is unavailable. The card finding names the
+failed tests. A red baseline, an incomplete run, or a missing parsed report does
+not establish that card finding.
+
 ### Gate run ledger (AGT-3500)
 
 The instance-local gate run ledger lives under `gate-run-ledger` beside the
@@ -787,8 +793,13 @@ it stops after that remote advance and before the publication record, the
 `Publishing` state retains the selected
 run ID and ref-mutation fence. The next tick holds both leases, confirms
 the remote still resolves to the tested SHA and matches that passing durable run,
-then records publication and releases the members. If the remote differs, it
-returns the members for reconstruction on the current base. The pilot publishes
+then records publication and releases the members. The publication coordinator
+journals the push intent, verified remote, receipt, published phase and each
+member's attribution and release against the same run and candidate SHA. A
+restart retries the exact CAS push when the remote is still at the pre-tip.
+When remote proof is missing or the tip differs from both the pre-tip and the
+candidate, `Publishing` holds visibly with `publication-remote-proof-ambiguous`
+and releases no member until proof is resolved. The pilot publishes
 only a tested fast-forward candidate; it does not synthesize a merge commit
 after the gate. A dirty or stale local checkout cannot hold the verified remote
 publication in `Publishing`; local sync is best effort. Ejected and unresolved

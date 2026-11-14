@@ -85,7 +85,10 @@ public sealed partial class BatchGateStore
         var decision = AgentStudio.Runner.MonolithTransitionAdapter.BatchPhaseTransition(
             new BatchPhaseTransitionFacts(current?.State.Phase, current?.Version ?? 0,
                 current?.State.CoordinatorFence ?? 0, state.Phase, state.CoordinatorFence,
-                expectedVersion, current?.Members ?? Claims(manifest), replays));
+                expectedVersion, current?.Members ?? Claims(manifest), replays,
+                current?.State.CandidateSha, state.CandidateSha,
+                current?.State.BatchRunId, state.BatchRunId,
+                current?.State.RefMutationFence, state.RefMutationFence));
         if (!decision.Accepted) return new(false, decision.Refusal, current);
         var record = new BatchPhaseRecord(state.BatchId, state.MembershipDigest,
             decision.Version, state, decision.Members);

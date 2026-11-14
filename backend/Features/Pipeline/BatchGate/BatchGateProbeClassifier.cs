@@ -18,10 +18,25 @@ public static class BatchGateProbeClassifier
         if (gate.Verdict != BuildTestGateVerdict.Fail) return BatchGateFailureClass.InfrastructureRed;
         if (gate.ExitCode is not null && !gate.IsInfrastructureFailure)
             return BatchGateFailureClass.DeterministicSuiteRed;
-        return gate.FailureKind == BuildTestGateFailureKind.Code && !Hung(gate) && FailedTests(gate).Count > 0
+        return CompletedParsedTestRed(gate)
             ? BatchGateFailureClass.DeterministicSuiteRed
             : BatchGateFailureClass.InfrastructureRed;
     }
+
+    /// <summary>A failed test report from a completed code run, shared by isolation and per-task diagnosis.</summary>
+    public static bool CompletedParsedTestRed(BuildTestGateResult gate)
+        => gate.Verdict == BuildTestGateVerdict.Fail
+           && gate.FailureKind == BuildTestGateFailureKind.Code
+           && !Hung(gate)
+           && FailedTests(gate).Count > 0;
+
+    /// <summary>Both diagnostic runs prove a card test failure against a passing baseline.</summary>
+    public static bool RepeatedCardTestRed(BuildTestGateResult candidate,
+        BuildTestGateResult? baseline, BuildTestGateResult? cleanRepeat)
+        => baseline?.Verdict == BuildTestGateVerdict.Ok
+           && CompletedParsedTestRed(candidate)
+           && cleanRepeat is not null
+           && CompletedParsedTestRed(cleanRepeat);
 
     /// <summary>Failed test names from completed runs with a parsed report; empty without one.</summary>
     public static IReadOnlyList<string> FailedTests(BuildTestGateResult gate)
