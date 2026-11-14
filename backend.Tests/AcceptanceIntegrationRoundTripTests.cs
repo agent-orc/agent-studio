@@ -797,7 +797,15 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.Equal(1, await reconciler.RunOnceAsync());
 
-        await WaitUntilAsync(() => deps.Scanner.FindJob(Slug, _watchPath)?.State == TaskStates.Ready);
+        // Promotion to Ready precedes the recovery event. Wait for the handoff
+        // evidence as well, so the assertion does not race the background turn.
+        await WaitUntilAsync(() =>
+        {
+            var current = deps.Scanner.FindJob(Slug, _watchPath);
+            return current?.State == TaskStates.Ready
+                && deps.Timeline.ReadAll(current.FolderPath)
+                    .Any(entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+        });
 
         var queued = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.Ready, queued.State);
