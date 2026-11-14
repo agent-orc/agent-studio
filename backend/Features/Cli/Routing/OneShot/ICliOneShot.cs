@@ -446,6 +446,7 @@ public static class CliOneShotCompatibility
             },
             model = result.EffectiveModel ?? result.Usage?.Model ?? configuredModel,
             quotaDeferred = result.QuotaDeferred,
+            hostWaiting = result.Error?.StartsWith("waiting for a host with ", StringComparison.Ordinal) == true,
             error = result.Error,
         });
 }

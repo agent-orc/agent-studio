@@ -2415,7 +2415,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
         var contentReview = await _reportReview.RunAsync(current, entry.Name, ct);
-        if (contentReview.QuotaDeferred) return;
+        if (contentReview.QuotaDeferred || contentReview.HostWaiting) return;
         var reason = $"Primary report is ready at {resultRef}; code gates are not applicable. "
             + (contentReview.Ran
                 ? contentReview.Reason

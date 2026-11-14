@@ -452,8 +452,13 @@ public sealed class AspectRunnerService
                         Status = PipelineStepStatus.Pending,
                         Reason = deferredReason,
                     });
+                    var hostWaiting = deferredReason.StartsWith("waiting for a host with ", StringComparison.Ordinal);
                     return (index, new AspectVerdict(def.Id, AspectStatus.Pass,
-                        "Waiting for quota reset", string.Empty, null) { IsQuotaDeferred = true });
+                        hostWaiting ? deferredReason : "Waiting for quota reset", string.Empty, null)
+                    {
+                        IsQuotaDeferred = !hostWaiting,
+                        IsHostWaiting = hostWaiting,
+                    });
                 }
 
                 var parsed = AspectVerdictParsing.ParseVerdict(response);
@@ -810,7 +815,9 @@ public sealed class AspectRunnerService
             return root.TryGetProperty("quotaDeferred", out var deferred)
                    && deferred.ValueKind == JsonValueKind.True
                 ? root.TryGetProperty("error", out var error) ? error.GetString() ?? "quota-deferred" : "quota-deferred"
-                : null;
+                : root.TryGetProperty("hostWaiting", out var waiting) && waiting.ValueKind == JsonValueKind.True
+                    ? root.TryGetProperty("error", out var waitingError) ? waitingError.GetString() ?? "waiting for a host" : "waiting for a host"
+                    : null;
         }
         catch (JsonException)
         {
@@ -1030,6 +1037,7 @@ public sealed record AspectRunReport(
 
     /// <summary>True when a quota decision postponed an aspect without a model call.</summary>
     public bool HasQuotaDeferred => Verdicts.Any(v => v.IsQuotaDeferred);
+    public bool HasHostWaiting => Verdicts.Any(v => v.IsHostWaiting);
 
     /// <summary>The aspects that produced no verdict even after the retry.</summary>
     public IReadOnlyList<AspectVerdict> InfraFailures =>

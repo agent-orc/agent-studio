@@ -799,6 +799,25 @@ and remote task execution, and orchestrator chat, pass through
 `QuotaAdmissionService` directly or through the quota-aware `ICliOneShot`
 registry.
 
+### Networked one-shot execution
+
+In a networked security profile, the API never starts a provider CLI or holds
+its login. It submits a bounded one-shot job to a runner host that advertises
+`model-acceptance:<cli>:<model>`. A standalone Task Server owns the queue when
+`TaskServer:BaseUrl` is configured. In the combined deployment, the API mounts
+the same `/api/v1/one-shot-jobs` create, get, claim, and complete contract and
+uses the Task Server's job store in its instance state. Local runner registration
+and capability advertisements are mirrored into that store so claim and
+completion use the same runner instance fence, expiry, and output limit. The
+store's observed one-shot model demands are included in the combined runner
+advertisement response, so hosts can probe newly requested models. The
+API's `RemoteCliOneShot` submits directly to this local store; external runner
+hosts claim and complete through the versioned routes. When no fresh accepted
+host is available, submission returns `waiting for a host with
+model-acceptance:<cli>:<model>` without launching a CLI. Report requirement-fit
+review keeps its post step pending under that condition and retries after a
+capable host advertises itself.
+
 ### Selection service and shared planner
 
 `ModelSelectionPlanner` in the contracts package

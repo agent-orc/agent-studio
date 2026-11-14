@@ -1,8 +1,16 @@
+extern alias TaskServerAssembly;
+
 using AgentStudio.Prompts;
 using AgentStudio.Runner;
 using AgentStudio.Tasks;
+using AgentStudio.Cli;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+using TaskServerStore = TaskServerAssembly::AgentStudio.TaskServer.TaskServerStore;
+using TaskServerOptions = TaskServerAssembly::AgentStudio.TaskServer.TaskServerOptions;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -55,6 +63,66 @@ public sealed class ReportContentReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task Combined_runner_wait_then_review_results_records_the_report_verdict()
+    {
+        var (task, _) = RemoteResearchCard();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 14, 12, 0, 0, TimeSpan.Zero));
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions
+        {
+            DataDirectory = Path.Combine(_root, "one-shot-store"),
+        }), clock);
+        var jobs = new CombinedOneShotJobs(store);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ReviewDecisionOrchestrator:Cli"] = "codex",
+            ["ReviewDecisionOrchestrator:AspectModel"] = "gpt-6-sol",
+            ["Security:Profile"] = "networked",
+        }).Build();
+        var remote = new RemoteCliOneShot("codex", new UnusedClients(), config,
+            pollInterval: TimeSpan.FromMilliseconds(10), combinedJobs: jobs);
+        var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
+        var aspects = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance,
+            oneShotRegistry: new CliOneShotRegistry([remote]));
+        var review = new ReportContentReviewService(aspects, config, authority: _authority);
+
+        var waiting = await review.RunAsync(task, "PROJ-FIXTURE", CancellationToken.None);
+        Assert.True(waiting.HostWaiting);
+        Assert.Contains("waiting for a host with model-acceptance:codex:gpt-6-sol", waiting.Reason);
+        Assert.True(review.IsMissing(task));
+
+        await jobs.RegisterAsync("runner-a", new RegisterRunnerRequest("runner", "host-a", "instance-a",
+            "1.0.0", TaskServerProtocol.Current, [ReviewCapabilities.CodingExecutor]), default);
+        await jobs.AdvertiseAsync(new CapabilityAdvertisementRequest("runner-a", "instance-a",
+            CapabilityProtocol.CurrentSchemaVersion, clock.GetUtcNow().UtcDateTime, 300, 1,
+            [new AdvertisedCapabilityDto(CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol"),
+                "model-acceptance", "ready", CredentialGeneration: "fixture-login",
+                CredentialObservedAt: clock.GetUtcNow().UtcDateTime, ProbeSequence: 1)]), default);
+
+        var late = review.RunLateAsync(task, "PROJ-FIXTURE", CancellationToken.None);
+        OneShotJobWork? work = null;
+        for (var attempt = 0; attempt < 100 && work is null; attempt++)
+        {
+            work = await jobs.ClaimAsync(new OneShotJobClaimRequest("runner-a", "instance-a"), default);
+            if (work is null) await Task.Delay(10);
+        }
+        Assert.NotNull(work);
+        Assert.Contains("results/report.html", work.Request.Prompt);
+        Assert.True(await jobs.CompleteAsync(new OneShotJobCompletion("runner-a", "instance-a",
+            work.JobId, work.ClaimToken, true,
+            "Checked results/report.html.\n[[ASPECT_VERDICT: status=pass; summary=The report answers the brief; evidence_checked=results/report.html; missing=none]]\n[[TASK_DONE]]",
+            null, null), default));
+        var result = await late;
+        Assert.True(result.Ran, result.Reason);
+        Assert.Equal("pass", result.Status);
+        Assert.Equal("pass", CompletionContentEvidence.Read(task, _authority).ContentStatus);
+    }
+
+    private sealed class UnusedClients : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => throw new InvalidOperationException("No standalone URL is configured.");
+    }
+
+    [Fact]
     public async Task Concerns_verdict_keeps_completion_refused()
     {
         var (task, _) = RemoteResearchCard();
@@ -95,10 +163,13 @@ public sealed class ReportContentReviewTests : IDisposable
         Assert.False(CompletionContentPolicy.Decide(facts).Accepted);
     }
 
-    [Fact]
-    public async Task Review_results_runs_only_the_missing_review_once()
+    [Theory]
+    [InlineData(TaskStates.HumanReview)]
+    [InlineData(TaskStates.Escalated)]
+    public async Task Review_results_runs_only_the_missing_review_once(string state)
     {
         var (task, _) = RemoteResearchCard();
+        task = task with { State = state };
         var service = Service("pass");
         Assert.Null(service.LateReviewRefusal(task));
 
@@ -109,7 +180,7 @@ public sealed class ReportContentReviewTests : IDisposable
         Assert.False(second.Ran);
         Assert.Contains("already has a requirement-fit verdict", second.Reason);
         Assert.Single(_calls);
-        Assert.Equal(TaskStates.HumanReview, task.State);
+        Assert.Equal(state, task.State);
     }
 
     [Fact]

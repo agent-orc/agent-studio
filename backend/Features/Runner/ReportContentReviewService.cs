@@ -12,7 +12,8 @@ public sealed record ReportContentReviewResult(
     bool Ran,
     string? Status,
     string Reason,
-    bool QuotaDeferred = false);
+    bool QuotaDeferred = false,
+    bool HostWaiting = false);
 
 /// <summary>
 /// The content verdict path of planning and research cards (AGT-3565). The
@@ -179,6 +180,8 @@ public sealed class ReportContentReviewService
             modelSourceForAspect: _ => stepModel.Source);
         if (report.HasQuotaDeferred)
             return new(false, null, "The requirement-fit review waits for model quota.", QuotaDeferred: true);
+        if (report.HasHostWaiting)
+            return new(false, null, report.Verdicts.First(item => item.IsHostWaiting).Summary, HostWaiting: true);
         var verdict = report.Verdicts.FirstOrDefault(item =>
             string.Equals(item.Aspect, AspectId, StringComparison.OrdinalIgnoreCase));
         if (verdict is null)

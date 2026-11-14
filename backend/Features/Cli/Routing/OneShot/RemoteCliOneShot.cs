@@ -10,7 +10,8 @@ namespace AgentStudio.Cli;
 /// <summary>Networked one-shot transport. Provider credentials remain on runner hosts.</summary>
 public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
     IConfiguration configuration, AdHocUsageRecorder? usageRecorder = null,
-    TimeProvider? timeProvider = null, TimeSpan? pollInterval = null) : ICliOneShot
+    TimeProvider? timeProvider = null, TimeSpan? pollInterval = null,
+    CombinedOneShotJobs? combinedJobs = null) : ICliOneShot
 {
     public string CliType => cliType;
 
@@ -28,18 +29,24 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
         }
         CliOneShotResult Failed(string error) =>
             Finish(CliOneShotResult.SpawnFailure(error, start, DateTime.UtcNow));
-        if (!TaskServerPlaneProxy.IsConfigured(configuration))
-            return Failed("Networked one-shot execution requires the standalone Task Server.");
+        var standalone = TaskServerPlaneProxy.IsConfigured(configuration);
+        if (!standalone && combinedJobs is null)
+            return Failed("Combined one-shot job authority is unavailable.");
         var timeout = (int)Math.Clamp((request.Timeout ?? TimeSpan.FromMinutes(2)).TotalSeconds, 1, 300);
         var jobRequest = new OneShotJobRequest(request.CliType, request.Model, request.Prompt,
             request.ThinkingLevel, timeout, 65_536,
             request.InlineImages?.Select(image => new OneShotJobImage(image.Base64, image.MediaType)).ToArray());
         try
         {
-            var client = clients.CreateClient(TaskServerPlaneProxy.ClientName);
-            using var submitted = await client.PostAsJsonAsync("/api/v1/one-shot-jobs", jobRequest, ct);
-            submitted.EnsureSuccessStatusCode();
-            var job = await submitted.Content.ReadFromJsonAsync<OneShotJobDto>(cancellationToken: ct);
+            var client = standalone ? clients.CreateClient(TaskServerPlaneProxy.ClientName) : null;
+            OneShotJobDto? job;
+            if (standalone)
+            {
+                using var submitted = await client!.PostAsJsonAsync("/api/v1/one-shot-jobs", jobRequest, ct);
+                submitted.EnsureSuccessStatusCode();
+                job = await submitted.Content.ReadFromJsonAsync<OneShotJobDto>(cancellationToken: ct);
+            }
+            else job = await combinedJobs!.CreateAsync(jobRequest, ct);
             if (job is null) return Failed("Task Server returned no one-shot job.");
             if (job.Status == "waiting") return Failed(job.Error ?? $"waiting for a host with {job.Capability}");
             // The Task Server owns queue expiry and extends job expiry at claim.
@@ -52,9 +59,14 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
             {
                 await Task.Delay(pollInterval ?? TimeSpan.FromSeconds(2),
                     timeProvider ?? TimeProvider.System, deadline.Token);
-                using var response = await client.GetAsync($"/api/v1/one-shot-jobs/{job.JobId}", deadline.Token);
-                response.EnsureSuccessStatusCode();
-                var current = await response.Content.ReadFromJsonAsync<OneShotJobDto>(cancellationToken: deadline.Token);
+                OneShotJobDto? current;
+                if (standalone)
+                {
+                    using var response = await client!.GetAsync($"/api/v1/one-shot-jobs/{job.JobId}", deadline.Token);
+                    response.EnsureSuccessStatusCode();
+                    current = await response.Content.ReadFromJsonAsync<OneShotJobDto>(cancellationToken: deadline.Token);
+                }
+                else current = await combinedJobs!.GetAsync(job.JobId, deadline.Token);
                 if (current is null) return Failed("Task Server lost the one-shot job.");
                 if (current.Status == "claimed" && !running)
                 {
@@ -85,7 +97,7 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (OperationCanceledException) { return Failed($"Remote one-shot job timed out after {timeout} seconds."); }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException)
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or ArgumentException)
         { return Failed($"Remote one-shot transport failed: {ex.Message}"); }
     }
 }
