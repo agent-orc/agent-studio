@@ -126,7 +126,7 @@ function cardResource(id: string, name: string, data: unknown) {
 }
 
 async function installMocks(
-  page: Page, descriptor: DescriptorState = DECISION_READY,
+  page: Page, descriptor: DescriptorState = DECISION_READY, failFirstConfirm = false,
 ): Promise<CapturedCalls> {
   const captured: CapturedCalls = { taskBodies: [], decisionBodies: [], steerBodies: [], deletedTaskIds: [] };
   let taskCreated = false;
@@ -134,6 +134,7 @@ async function installMocks(
   let decisionStage: string | null = null;
   let revision = '0123456789abcdef';
   let fingerprint = 'a'.repeat(64);
+  let confirmFailed = false;
   const catalogueStatus = () => decisionStage === 'succeeded' ? 'decided' : descriptor.status;
   const catalogueOpenCount = () => decisionStage === 'succeeded' ? 0
     : descriptor.status === 'decision-pending' || descriptor.phase === 'decision-ready'
@@ -372,6 +373,10 @@ async function installMocks(
     route => {
       const body = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
       captured.decisionBodies.push(body);
+      if (failFirstConfirm && !confirmFailed) {
+        confirmFailed = true;
+        return json(route, { error: 'Decision confirmation failed. Try again.' }, 500);
+      }
       revision = '2345678901abcdef';
       fingerprint = 'c'.repeat(64);
       const outcome = body['outcome'] as string;
@@ -450,6 +455,64 @@ async function seedWorkbench(page: Page, theme: 'light' | 'dark' = 'light') {
     localStorage.setItem('defaultCliType', 'claude');
     localStorage.setItem('defaultModel:claude', 'claude-opus-4-6');
   }, { project: PROJECT, workbenchId: WORKBENCH_ID, theme });
+}
+
+for (const scenario of [
+  { name: 'light', theme: 'light', width: 1600, height: 1000 },
+  { name: 'dark', theme: 'dark', width: 1600, height: 1000 },
+  { name: '390px', theme: 'light', width: 390, height: 844 },
+] as const) {
+  test(`failed Dossier confirmation remains reachable by mouse in ${scenario.name}`, async ({ page, devBackend }) => {
+    expect(devBackend.port).toBeGreaterThan(0);
+    mkdirSync(RESULTS, { recursive: true });
+    await page.setViewportSize({ width: scenario.width, height: scenario.height });
+    const captured = await installMocks(page, DECISION_READY, true);
+    await seedWorkbench(page, scenario.theme);
+    await page.goto('/');
+
+    const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+    await frame.locator('[data-option-id="option-a"] input').check();
+    const inline = page.getByTestId('workbench-inline-decision-action');
+    await inline.getByTestId('workbench-decision-start').click();
+    await inline.getByTestId('workbench-decision-title').fill('Implement the stable naming contract');
+    await inline.getByTestId('workbench-decision-goal').fill('Use the selected public name.');
+    await inline.getByTestId('workbench-decision-confirm').click();
+    await expect(inline.getByRole('alert').first()).toContainText('Decision confirmation failed. Try again.');
+    await expect(inline.getByRole('alert').first()).toBeInViewport();
+    await expect(inline.getByTestId('workbench-decision-confirm')).toBeEnabled();
+    await page.screenshot({
+      path: resolve(RESULTS, `dossier-confirm-failed-${scenario.name}.png`),
+    });
+
+    await page.reload();
+    const restored = page.getByTestId('workbench-inline-decision-action');
+    await expect(restored.getByTestId('workbench-decision-title'))
+      .toHaveValue('Implement the stable naming contract');
+    await expect(restored.getByTestId('workbench-decision-confirm')).toBeEnabled();
+    await page.screenshot({
+      path: resolve(RESULTS, `dossier-confirm-restored-${scenario.name}.png`),
+    });
+
+    if (scenario.name === 'light') {
+      await page.getByTestId(`studio-tab-close-workbench:${PROJECT}:${WORKBENCH_ID}`).click();
+      await page.getByTestId('studio-ab-workbenches').click();
+      await page.getByRole('button', { name: 'Open full view' }).click();
+      await expect(page.getByTestId('workbench-viewer')).toBeVisible();
+      await expect(page.getByTestId('workbench-inline-decision-action')
+        .getByTestId('workbench-decision-confirm')).toBeEnabled();
+    }
+
+    await page.getByTestId('workbench-inline-decision-action')
+      .getByTestId('workbench-decision-confirm').click();
+    await expect(page.getByTestId('workbench-inline-decision-action')
+      .getByTestId('workbench-decision-created-tasks')).toContainText('AGT-2611');
+    expect(captured.deletedTaskIds).toEqual([]);
+    expect(captured.taskBodies).toHaveLength(1);
+    expect(captured.decisionBodies).toHaveLength(4);
+    await page.screenshot({
+      path: resolve(RESULTS, `dossier-confirm-retried-${scenario.name}.png`),
+    });
+  });
 }
 
 test('inline Dossier decision starts a Ready task with the selected agent', async ({ page, devBackend }) => {

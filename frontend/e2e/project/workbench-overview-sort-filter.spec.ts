@@ -143,6 +143,14 @@ async function installMocks(page: Page): Promise<void> {
       urls: [],
     }],
   }]));
+  await page.route('**/api/workspaces/workspace-dossier-demo/quota/admission', route => json(route, {
+    workspaceId: 'workspace-dossier-demo',
+    workspace: {
+      projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false,
+    },
+    projects: [],
+  }));
   await page.route('**/api/environment**', route => json(route, {
     isDev: false,
     devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
@@ -456,7 +464,7 @@ test('Dossier cards keep long and short summaries readable across widths and the
         decision: null,
         documentation: null,
       },
-      html: '<!doctype html><html><body><main><h1>Isolated execution</h1></main></body></html>',
+      html: '<!doctype html><html><body><main><h1>Isolated execution</h1><section data-decision-id="route" data-decision-kind="single"><span data-option-id="direct">Direct</span></section></main></body></html>',
       branch: 'task/agt-2783',
       revision: 'agt2783evidence',
       workingTreeModified: false,
@@ -535,17 +543,9 @@ test('Dossier cards keep long and short summaries readable across widths and the
         `workbench-overview-open-${PROJECT}-isolated-execution`,
       );
       await reviewButton.click();
-      const inlineViewer = longCard.getByTestId(
-        `workbench-overview-inline-${PROJECT}-isolated-execution`,
-      );
-      await expect(inlineViewer).toBeVisible();
-      expect(await inlineViewer.evaluate((viewer, card) => {
-        const viewerWidth = viewer.getBoundingClientRect().width;
-        const cardWidth = (card as HTMLElement).getBoundingClientRect().width;
-        return viewerWidth >= cardWidth * 0.9;
-      }, await longCard.elementHandle())).toBe(true);
-      await reviewButton.click();
-      await expect(inlineViewer).toHaveCount(0);
+      await expect(page.getByTestId('workbench-viewer')).toBeVisible();
+      await expect(page.getByTestId('workbench-inline-decision-action')).toBeVisible();
+      await page.getByTestId('studio-ab-workbenches').click();
     }
 
     for (const theme of ['light', 'dark'] as const) {
