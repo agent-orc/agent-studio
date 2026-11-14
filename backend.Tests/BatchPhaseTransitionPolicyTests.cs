@@ -32,6 +32,7 @@ public sealed class BatchPhaseTransitionPolicyTests
         { BatchPhase.Green, BatchPhase.Publishing },
         { BatchPhase.Green, BatchPhase.Paused },
         { BatchPhase.Green, BatchPhase.Abandoned },
+        { BatchPhase.Publishing, BatchPhase.Publishing },
         { BatchPhase.Publishing, BatchPhase.Published },
         { BatchPhase.Publishing, BatchPhase.Paused },
         { BatchPhase.Publishing, BatchPhase.Abandoned },
@@ -86,6 +87,23 @@ public sealed class BatchPhaseTransitionPolicyTests
         Assert.Equal(3, raced.Version);
         Assert.True(BatchPhaseTransitionPolicy.Decide(Facts(BatchPhase.Formed, BatchPhase.Abandoned,
             version: 3, expectedVersion: 3, requestedFence: 9)).Accepted);
+    }
+
+    [Fact]
+    public void A_publishing_annotation_cannot_change_the_tested_subject()
+    {
+        var facts = Facts(BatchPhase.Publishing, BatchPhase.Publishing) with
+        {
+            CurrentCandidateSha = "candidate-a", RequestedCandidateSha = "candidate-b",
+            CurrentRunId = "run-a", RequestedRunId = "run-a",
+            CurrentRefFence = 7, RequestedRefFence = 7,
+        };
+        Assert.Equal(BatchPhaseTransitionPolicy.PublicationSubjectChanged,
+            BatchPhaseTransitionPolicy.Decide(facts).Refusal);
+        Assert.True(BatchPhaseTransitionPolicy.Decide(facts with
+        {
+            RequestedCandidateSha = "candidate-a",
+        }).Accepted);
     }
 
     [Fact]

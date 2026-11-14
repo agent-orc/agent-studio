@@ -6762,7 +6762,7 @@ public partial class GitService
     /// <summary>Publish only the tested batch SHA with an exact remote pre-tip lease.</summary>
     public GitPushResult PublishBatchCandidate(
         string repoRoot, string integrationBranch, string preTipSha,
-        string testedCandidateSha, CancellationToken ct)
+        string testedCandidateSha, CancellationToken ct, Func<bool>? mutationFenceCurrent = null)
     {
         if (!IsLikelyBranchName(integrationBranch)
             || !ReviewSubjectStore.IsValidResultSha(preTipSha)
@@ -6776,11 +6776,18 @@ public partial class GitService
         if (!string.Equals(remoteBefore, preTipSha, StringComparison.OrdinalIgnoreCase))
             return new GitPushResult(false, testedCandidateSha, "stale-base",
                 lookupCode == 0 ? "Remote integration tip moved before publication." : lookupError.Trim());
+        // The network lookup can outlive either lease. Check both fences at
+        // the last host boundary before the remote ref mutation.
+        if (mutationFenceCurrent is not null && !mutationFenceCurrent())
+            return new GitPushResult(false, testedCandidateSha, "lease-lost",
+                "Publication lease expired before the remote mutation.");
         var refName = $"refs/heads/{integrationBranch}";
-        // The shared ref lease excludes platform publishers. Keep the network
-        // mutation an ordinary fast-forward push; no forced update is allowed.
+        // The candidate is a fast-forward of preTipSha. An explicit expected
+        // ref turns this into a remote compare-and-swap even against writers
+        // outside the shared ref lease.
         var (_, pushError, pushCode) = RunGitArgs(repoRoot, ct,
-            "push", "origin", $"{testedCandidateSha}:{refName}");
+            "push", $"--force-with-lease={refName}:{preTipSha}", "origin",
+            $"{testedCandidateSha}:{refName}");
         if (pushCode != 0)
             return new GitPushResult(false, testedCandidateSha, "stale-base", pushError.Trim());
         var (after, verifyError, verifyCode) = RunGitArgs(

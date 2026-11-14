@@ -23,7 +23,10 @@ public sealed record BatchPhaseTransitionFacts(
     BatchPhase? Current, long CurrentVersion, long CurrentFence,
     BatchPhase Requested, long RequestedFence, long? ExpectedVersion,
     IReadOnlyList<BatchMemberClaim> Members,
-    IReadOnlyDictionary<string, string> ReplayOutcomes);
+    IReadOnlyDictionary<string, string> ReplayOutcomes,
+    string? CurrentCandidateSha = null, string? RequestedCandidateSha = null,
+    string? CurrentRunId = null, string? RequestedRunId = null,
+    long? CurrentRefFence = null, long? RequestedRefFence = null);
 
 /// <summary>
 /// An accepted change carries the next <paramref name="Version"/>, which is
@@ -46,6 +49,7 @@ public static class BatchPhaseTransitionPolicy
     public const string IllegalTransition = "illegal-transition";
     public const string StaleFence = "stale-fence";
     public const string StaleVersion = "stale-version";
+    public const string PublicationSubjectChanged = "publication-subject-changed";
 
     private static readonly IReadOnlyDictionary<BatchPhase, BatchPhase[]> Successors =
         new Dictionary<BatchPhase, BatchPhase[]>
@@ -58,7 +62,7 @@ public static class BatchPhaseTransitionPolicy
             [BatchPhase.Assembled] = [BatchPhase.Assembled, BatchPhase.Running, BatchPhase.Paused, BatchPhase.Abandoned],
             [BatchPhase.Running] = [BatchPhase.Green, BatchPhase.Red, BatchPhase.Paused, BatchPhase.Abandoned],
             [BatchPhase.Green] = [BatchPhase.Publishing, BatchPhase.Paused, BatchPhase.Abandoned],
-            [BatchPhase.Publishing] = [BatchPhase.Published, BatchPhase.Paused, BatchPhase.Abandoned],
+            [BatchPhase.Publishing] = [BatchPhase.Publishing, BatchPhase.Published, BatchPhase.Paused, BatchPhase.Abandoned],
             // A red parent pauses its unresolved cohort to the per-task gate.
             [BatchPhase.Red] = [BatchPhase.Paused, BatchPhase.Abandoned],
             [BatchPhase.Paused] = [BatchPhase.Paused, BatchPhase.Abandoned],
@@ -87,6 +91,11 @@ public static class BatchPhaseTransitionPolicy
         // A coordinator whose lease was superseded holds a lower fence.
         if (facts.RequestedFence < facts.CurrentFence)
             return Refuse(facts, StaleFence);
+        if (facts.Current == BatchPhase.Publishing && facts.Requested == BatchPhase.Publishing
+            && (facts.CurrentCandidateSha != facts.RequestedCandidateSha
+                || facts.CurrentRunId != facts.RequestedRunId
+                || facts.CurrentRefFence != facts.RequestedRefFence))
+            return Refuse(facts, PublicationSubjectChanged);
         var members = facts.Current is null
             ? facts.Members.Select(member => member with { Disposition = BatchMemberDisposition.Claimed }).ToArray()
             : Dispositions(facts.Requested, facts.Members, facts.ReplayOutcomes);

@@ -45,7 +45,7 @@ its history until its next change creates the record.
 | `Assembled` | `Assembled` (document-keyed candidate), `Running`, `Paused`, `Abandoned` |
 | `Running` | `Green`, `Red`, `Paused`, `Abandoned` |
 | `Green` | `Publishing`, `Paused`, `Abandoned` |
-| `Publishing` | `Published`, `Paused`, `Abandoned` |
+| `Publishing` | `Publishing` (same candidate and run, for a visible proof hold), `Published`, `Paused`, `Abandoned` |
 | `Red` | `Paused`, `Abandoned` |
 | `Paused` | `Paused`, `Abandoned` |
 | `Published`, `Abandoned` | none (terminal) |
@@ -87,8 +87,32 @@ shows the last one under `invariants` (`checkedAtUtc` and `findings` with
 after any running tick. Fault-injection tests stop the host after each durable
 write of a publication, of an abandon with re-formation on a moved base, and of
 a red isolation. A restarted host reaches the same valid outcome on its next
-ticks. Later steps of AGT-3552 extract the planner, the flight runner, the
-publication coordinator and the reconciler on top of this record.
+ticks. The AGT-3552 split extracts planner, flight runner, publication coordinator,
+and reconciler responsibilities on top of this record.
+
+## Publication coordinator (AGT-3570)
+
+The publication path records append-only transitions under each batch's
+`publication-steps/` journal. The steps name one passing run and exact candidate
+SHA: `publishing`, `push-intent`, `remote-verified`, `receipt`, `published`, then
+`attributed` and `released` for each member. The phase record remains the
+batch's versioned authority. A restart reads the recorded run and verdict,
+checks the remote ref under coordinator and ref mutation leases, and resumes
+from the last durable effect. If the remote still equals the recorded base, it
+retries the same compare-and-swap push. If the remote equals the candidate, it
+reconstructs the missing publication receipt. A different or unreadable remote
+tip leaves the batch visibly held in `Publishing` with
+`publication-remote-proof-ambiguous`; the generic paused-batch fallback cannot
+give those members evidence from another SHA. Attribution and lane release are
+retried per member. A member's durable record, integration mapping, ownership
+marker and lane guard all refer to the publication's run and candidate SHA.
+When a red parent's isolation is interrupted, a green child in publication
+retains its member. Parent cleanup cannot hand that member to a per-task gate.
+
+The remote push uses the recorded pre-tip as an exact ref lease and checks both
+host fences immediately before the mutation. The candidate is verified as a
+fast-forward of that pre-tip before the push.
+
 ## Operator state and run artifacts
 
 The batch panel derives an unverified run's displayed status from its batch
