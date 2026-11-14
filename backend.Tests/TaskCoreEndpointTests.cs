@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using AgentStudio.Review;
@@ -478,6 +479,56 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.False(gitBody.RootElement.TryGetProperty("info", out _));
         Assert.NotNull(git.Headers.ETag);
         Assert.Equal(scans, index.Misses);
+    }
+
+    [Fact]
+    public async Task GitResource_ServesTheSignedIntegrationVerdict_AndTheContractVerdictForACodeFreeCard()
+    {
+        // AGT-3704: the Git resource read the projection with a key-only task,
+        // whose signature never matched a signed snapshot. Every Git fact was
+        // dropped, so a concept card's Git pane read integration null and the
+        // Human Review Accept said "Await integration".
+        Seed("AGT-coded", TaskStates.HumanReview);
+        Seed("AGT-concept", TaskStates.HumanReview, requiresIntegration: false);
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>()));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        await WarmIndexAsync(factory, "AGT-coded");
+        await WarmIndexAsync(factory, "AGT-concept");
+        var coded = index.GetDetailFacts("AGT-coded", Jobs).Info!;
+        var concept = index.GetDetailFacts("AGT-concept", Jobs).Info!;
+        factory.Services.GetRequiredService<TaskListGitProjectionCache>().SetSnapshot(Jobs,
+            TaskListGitProjection.Empty with
+            {
+                Integration = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal)
+                {
+                    [coded.TaskKey] = new() { Status = IntegrationStatuses.Integrated, IntegrationBranch = "develop" },
+                },
+                Signatures = new[] { coded, concept }.ToDictionary(
+                    task => task.TaskKey, TaskGitSignature.For, StringComparer.Ordinal),
+            }, factory.Services.GetRequiredService<TimeProvider>().GetUtcNow(), "test");
+
+        async Task<JsonElement> GitIntegration(string id)
+        {
+            using var coreResponse = await client.GetAsync($"/api/tasks/{id}/core?project={project.Id}");
+            coreResponse.EnsureSuccessStatusCode();
+            using var core = JsonDocument.Parse(await coreResponse.Content.ReadAsStringAsync());
+            var generation = core.RootElement.GetProperty("coreVersion").GetString();
+            using var git = await client.GetAsync($"/api/tasks/{id}/details/git?project={project.Id}&generation={generation}");
+            git.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await git.Content.ReadAsStringAsync());
+            Assert.Equal("ready", body.RootElement.GetProperty("state").GetString());
+            return body.RootElement.GetProperty("data").GetProperty("integration").Clone();
+        }
+
+        Assert.Equal(IntegrationStatuses.Integrated, (await GitIntegration("AGT-coded")).GetProperty("status").GetString());
+        var codeFree = await GitIntegration("AGT-concept");
+        Assert.Equal(IntegrationStatuses.NotApplicable, codeFree.GetProperty("status").GetString());
+        Assert.Equal("The delivery contract expects no repository change.",
+            codeFree.GetProperty("detail").GetString());
     }
 
     [Fact]

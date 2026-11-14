@@ -17,6 +17,8 @@ import { laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import { stateLabel as fmtStateLabel } from '../../../../services/format.util';
 import type { RunActivityBadge } from '../../../../services/run-activity.util';
 import type { TaskDetail } from '../../../../models/task.model';
+import type { AcceptanceRefusal } from '../../../task-detail/runtime';
+import { AcceptanceRefusalComponent } from '../acceptance-refusal/acceptance-refusal.component';
 
 /** Which of the task detail panes the shell currently shows. */
 export interface ShellPanesVisible {
@@ -54,6 +56,8 @@ export interface StudioTabTriage {
   blockedByDecision?: boolean;
   actingId: string | null;
   menuItems: MenuItem[];
+  /** AGT-3704: why the Human Review Accept is held or was refused, shown before it. */
+  refusal?: AcceptanceRefusal | null;
 }
 
 /**
@@ -82,6 +86,7 @@ export interface StudioTabTriage {
     StudioIconComponent,
     ExecutionLocationBadgeComponent,
     PendingButtonDirective,
+    AcceptanceRefusalComponent,
   ],
   templateUrl: './studio-tab-actions.component.html',
   styleUrl: './studio-tab-actions.component.scss',

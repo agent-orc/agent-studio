@@ -84,6 +84,9 @@ describe('TaskSelectionService · section access', () => {
       // The acceptance read is covered by task-selection-core.spec.ts.
       http.match(freshDetail).filter(request => !request.cancelled)
         .forEach(request => request.flush(null, { status: 503, statusText: 'Unavailable' }));
+      // Human Review opens the Git resource for the acceptance action.
+      http.match(section('git')).filter(request => !request.cancelled)
+        .forEach(request => request.flush(null, { status: 503, statusText: 'Unavailable' }));
       http.verify();
     } finally {
       history.replaceState(null, '', '/');

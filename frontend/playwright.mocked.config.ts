@@ -32,6 +32,7 @@ export default defineConfig({
       '**/studio-shell/activity-bar-single-active.spec.ts',
       '**/cli/consumer-model-policy.spec.ts',
       '**/task-detail/task-detail-instant-navigation.spec.ts',
+      '**/task-detail/concept-accept-refusal.spec.ts',
       '**/task-detail/acceptance-attempt-gap-core-first.spec.ts',
       '**/task-detail/triage-merge-status.spec.ts',
       '**/task-detail/parked-cause-copy.spec.ts',
