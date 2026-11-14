@@ -477,7 +477,7 @@ for (const scenario of [
     await inline.getByTestId('workbench-decision-title').fill('Implement the stable naming contract');
     await inline.getByTestId('workbench-decision-goal').fill('Use the selected public name.');
     await inline.getByTestId('workbench-decision-confirm').click();
-    await expect(inline.getByRole('alert').first()).toContainText('The new task was removed');
+    await expect(inline.getByRole('alert').first()).toContainText('Decision confirmation failed. Try again.');
     await expect(inline.getByRole('alert').first()).toBeInViewport();
     await expect(inline.getByTestId('workbench-decision-confirm')).toBeEnabled();
     await page.screenshot({
@@ -506,8 +506,8 @@ for (const scenario of [
       .getByTestId('workbench-decision-confirm').click();
     await expect(page.getByTestId('workbench-inline-decision-action')
       .getByTestId('workbench-decision-created-tasks')).toContainText('AGT-2611');
-    expect(captured.deletedTaskIds).toEqual(['naming-feature-1']);
-    expect(captured.taskBodies).toHaveLength(2);
+    expect(captured.deletedTaskIds).toEqual([]);
+    expect(captured.taskBodies).toHaveLength(1);
     expect(captured.decisionBodies).toHaveLength(4);
     await page.screenshot({
       path: resolve(RESULTS, `dossier-confirm-retried-${scenario.name}.png`),
