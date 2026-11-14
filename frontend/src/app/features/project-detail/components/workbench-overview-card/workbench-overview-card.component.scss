@@ -9,9 +9,6 @@
 :host + :host {
   border-top: 1px solid color-mix(in srgb, var(--studio-border) 58%, transparent);
 }
-:host(.workbench-overview__row--expanded) {
-  background: color-mix(in srgb, var(--studio-bg-hover) 52%, transparent);
-}
 :host(.workbench-overview__row--invalid) {
   background: color-mix(in srgb, var(--studio-danger, var(--severity-high)) 7%, transparent);
 }

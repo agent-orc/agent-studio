@@ -1,3 +1,5 @@
+import { hostStatusIndicatorTone } from '../../../remote-hosts/models/remote-host.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import {
   ChangeDetectionStrategy,
@@ -9,24 +11,10 @@ import {
   signal,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
-import { RemoteHostsService, type RemoteHost } from '../../../remote-hosts';
-import { hostStatusIndicatorTone } from '../../../remote-hosts/models/remote-host.model';
+import { RemoteHostsService, codingLocationUnavailableReason, type RemoteHost } from '../../../remote-hosts';
 
 type ProbeState = 'pending' | 'running' | 'passed' | 'failed';
 type ProbeKey = 'code' | 'branch' | 'toolchain' | 'noop';
-
-const PROBE_TONES: Record<ProbeState, StatusTone> = {
-  passed: 'success',
-  failed: 'danger',
-  running: 'running',
-  pending: 'neutral',
-};
-
-/** Tone of one readiness probe check; an unknown state is neutral. */
-export function probeCheckTone(state: ProbeState): StatusTone {
-  return PROBE_TONES[state] ?? 'neutral';
-}
 
 interface ProbeCheck {
   key: ProbeKey;
@@ -44,29 +32,35 @@ interface ProjectExecutionSettings {
   integrationBranch?: string;
 }
 
+const PROBE_TONES: Record<ProbeState, StatusTone> = { passed: 'success', failed: 'danger', running: 'running', pending: 'neutral' };
+
+export function probeCheckTone(state: ProbeState): StatusTone {
+  return PROBE_TONES[state] ?? 'neutral';
+}
+
 @Component({
   selector: 'app-execution-assignment-card',
   standalone: true,
-  imports: [SegmentedControlComponent, StatusIndicatorComponent],
+  imports: [StatusIndicatorComponent, SegmentedControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './execution-assignment-card.html',
   styleUrl: './execution-assignment-card.scss',
 })
 export class ExecutionAssignmentCardComponent implements OnInit {
   readonly projectName = input.required<string>();
+  readonly hostTone = hostStatusIndicatorTone;
+  readonly probeTone = probeCheckTone;
 
   private readonly http = inject(HttpClient);
   readonly hostRegistry = inject(RemoteHostsService);
 
-  readonly hostTone = hostStatusIndicatorTone;
-  readonly probeTone = probeCheckTone;
-
   readonly selectedHostId = signal('local');
   readonly pickupMode = signal<'auto' | 'manual' | 'paused'>('manual');
-  readonly localCodingAdmitted = signal(true);
+  readonly localCodingAdmitted = signal(false);
   readonly integrationBranch = signal('develop');
   readonly saving = signal(false);
   readonly saveError = signal<string | null>(null);
+  readonly saveConfirmation = signal<string | null>(null);
   readonly probing = signal(false);
   readonly checks = signal<ProbeCheck[]>(initialChecks());
   private probeGeneration = 0;
@@ -74,6 +68,8 @@ export class ExecutionAssignmentCardComponent implements OnInit {
   readonly assignableHosts = computed(() =>
     this.hostRegistry.hosts().filter((host) => host.status !== 'retired'),
   );
+  readonly unavailableReason = (host: RemoteHost) =>
+    codingLocationUnavailableReason(host, this.localCodingAdmitted());
   readonly selectedHost = computed(() =>
     this.assignableHosts().find((host) => host.id === this.selectedHostId()) ?? null,
   );
@@ -103,7 +99,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
         next: (settings) => {
           const project = settings?.[this.projectName()];
           this.pickupMode.set(project?.pickupMode || 'manual');
-          this.localCodingAdmitted.set(project?.localCodingAdmitted ?? true);
+          this.localCodingAdmitted.set(project?.localCodingAdmitted ?? false);
           this.selectedHostId.set(
             project?.executionLocation
             || (project?.remoteExecutionEnabled === false ? 'local' : project?.executionRunner)
@@ -120,6 +116,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
     this.pickupMode.set(mode);
     this.saving.set(true);
     this.saveError.set(null);
+    this.saveConfirmation.set(null);
     this.http
       .put<ProjectExecutionSettings>(
         `/api/projects/${encodeURIComponent(this.projectName())}/execution-runner`,
@@ -141,11 +138,14 @@ export class ExecutionAssignmentCardComponent implements OnInit {
   }
 
   assign(hostId: string): void {
+    const host = this.assignableHosts().find(candidate => candidate.id === hostId);
+    if (!host || this.unavailableReason(host)) return;
     const previous = this.selectedHostId();
     this.selectedHostId.set(hostId);
     this.resetProbe();
     this.saving.set(true);
     this.saveError.set(null);
+    this.saveConfirmation.set(null);
     this.http
       .put<ProjectExecutionSettings>(
         `/api/projects/${encodeURIComponent(this.projectName())}/execution-runner`,
@@ -157,6 +157,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
         next: (response) => {
           this.selectedHostId.set(response.executionLocation || response.executionRunner || 'local');
           this.saving.set(false);
+          this.saveConfirmation.set('Execution location saved.');
           this.log('assignment-saved', { hostId: this.selectedHostId() });
         },
         error: () => {

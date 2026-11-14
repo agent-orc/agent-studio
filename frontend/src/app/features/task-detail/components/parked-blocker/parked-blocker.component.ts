@@ -1,3 +1,4 @@
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { forkJoin, type Subscription } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -11,16 +12,20 @@ import {
   type ParkedBlockerView,
   type ParkedRecallTone,
 } from '../../../../models/parked-blocker-presentation';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { formatDateTimeUtc } from '../../../../services/format.util';
 import { NowTickService } from '../../../../services/now-tick.service';
 import { TaskService } from '../../../../services/task.service';
+import { TaskSectionAccessService } from '../../../../services/task-section-access.service';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
 import { laneActionsFor } from '../../state/triage-actions.model';
 import { ActivityLogViewComponent } from '../activity-log-view/activity-log-view';
 import { resolveTaskArtifactLink } from '../task-artifact-links/task-artifact-link';
+import { WatchdogReceiptComponent } from '../watchdog-receipt/watchdog-receipt.component';
+
+const RECALL_STATUS_TONES: Readonly<Record<ParkedRecallTone, StatusTone>> = { ok: 'success', warn: 'warning', neutral: 'neutral' };
+export function parkedRecallStatusTone(tone: ParkedRecallTone | null | undefined): StatusTone { return (tone && RECALL_STATUS_TONES[tone]) || 'neutral'; }
 
 const EXPANDED_STORAGE_KEY = 'taskboard.parkedSession.expanded.v1';
 const COLLAPSE_KEY = 'taskboard.parkedBlocker.collapsed';
@@ -62,17 +67,6 @@ export function resolveRunPrompt(
   return promptEntries.find(item => item.runIndex === run.index)?.promptPreview?.trim() || null;
 }
 
-/** Sweep recall verdict tone to shared status tone (AGT-3403); unknown is neutral. */
-const RECALL_STATUS_TONES: Readonly<Record<ParkedRecallTone, StatusTone>> = {
-  ok: 'success',
-  warn: 'warning',
-  neutral: 'neutral',
-};
-
-export function parkedRecallStatusTone(tone: ParkedRecallTone | null | undefined): StatusTone {
-  return (tone && RECALL_STATUS_TONES[tone]) || 'neutral';
-}
-
 /**
  * The authoritative statement about why a parked card is not moving (AGT-2816).
  *
@@ -91,19 +85,21 @@ export function parkedRecallStatusTone(tone: ParkedRecallTone | null | undefined
   selector: 'app-parked-blocker',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ActivityLogViewComponent, DisclosureMarkerComponent, StatusIndicatorComponent],
+  imports: [StatusIndicatorComponent, ActivityLogViewComponent, DisclosureMarkerComponent, WatchdogReceiptComponent],
   templateUrl: './parked-blocker.component.html',
   styleUrl: './parked-blocker.component.scss',
 })
 export class ParkedBlockerComponent {
+  readonly recallTone = parkedRecallStatusTone;
   readonly detail = input.required<TaskDetail>();
 
   private readonly tabs = inject(StudioTabStateService);
   /** Ledger rows; they supply the park cause when the marker predates it. */
   private readonly timeline = inject(TaskTimelinePollService, { optional: true });
   private readonly tasks = inject(TaskService);
+  private readonly sectionAccess = inject(TaskSectionAccessService);
   private readonly destroyRef = inject(DestroyRef);
-  private loadedTaskId: string | null = null;
+  private loadedParkKey: string | null = null;
   private sessionRequest: Subscription | null = null;
   private readonly expandedByTask = signal<Record<string, boolean>>(readExpandedMap());
   private readonly collapsedByTask = signal<Record<string, boolean>>(readCollapseMap());
@@ -150,17 +146,24 @@ export class ParkedBlockerComponent {
   });
 
   private readonly taskChangeEffect = effect(() => {
-    const id = this.info().id;
-    if (id === this.loadedTaskId) return;
-    this.loadedTaskId = id;
+    const info = this.info();
+    const key = `${info.id}:${info.parkedBlocker?.parkedAt ?? ''}:${info.parkedBlocker?.blockerType ?? ''}`;
+    if (key === this.loadedParkKey) return;
+    this.loadedParkKey = key;
     this.resetSession();
     if (this.sessionExpanded()) this.loadSessionExcerpt();
   });
 
   /** Null when the card is not parked; the template renders nothing then. */
   private readonly now = inject(NowTickService).now;
-  readonly view = computed<ParkedBlockerView | null>(() =>
-    buildParkedBlockerView(this.info(), this.now(), this.timeline?.events() ?? []));
+  readonly view = computed<ParkedBlockerView | null>(() => {
+    const park = this.info().parkedBlocker;
+    if (park?.lane !== this.info().state) return null;
+    if (this.info().state === '5-human-review'
+      && park.reason?.includes('Parked with no recorded cause.')
+      && !park.decision?.question?.trim()) return null;
+    return buildParkedBlockerView(this.info(), this.now(), this.timeline?.events() ?? []);
+  });
 
   /**
    * The main sentence when the park states no question (AGT-3586). A park the
@@ -170,6 +173,9 @@ export class ParkedBlockerComponent {
   readonly statement = computed<{ text: string; missingQuestion: boolean } | null>(() => {
     const view = this.view();
     if (!view || view.question) return null;
+    if (view.cause.origin === 'auto-review-watchdog') {
+      return { text: `Parked by the Auto Review watchdog. ${view.reason}`, missingQuestion: false };
+    }
     const identifier = view.questionId ? ', only the identifier below' : '';
     if (view.cause.origin === 'run') {
       return {
@@ -190,6 +196,7 @@ export class ParkedBlockerComponent {
   /** The suggested next step, naming only buttons this lane offers. */
   readonly nextStep = computed(() => {
     const view = this.view();
+    if (view?.cause.origin === 'auto-review-watchdog') return 'Use Retry review to review the same delivery again.';
     return view ? parkNextStepSentence(view.cause.nextSteps, laneActionsFor(this.info().state)) : null;
   });
 
@@ -197,13 +204,12 @@ export class ParkedBlockerComponent {
   readonly collapsedLine = computed(() => {
     const view = this.view();
     if (!view) return '';
+    if (view.cause.origin === 'auto-review-watchdog') return `Parked by the Auto Review watchdog. ${view.reason}`;
     return view.cause.parkedBy ? `${view.cause.parkedBy} parked this card. ${view.reason}` : view.reason;
   });
 
   /** The latest run is only "the parking run" when the run caused the park. */
   readonly runCausedPark = computed(() => this.view()?.cause.origin === 'run');
-
-  readonly recallTone = parkedRecallStatusTone;
 
   readonly parkedAtLabel = computed(() => {
     const view = this.view();
@@ -228,6 +234,7 @@ export class ParkedBlockerComponent {
   /** The park reason as one sentence, without its slug prefix. */
   readonly reasonLine = computed(() => this.view()?.reason ?? '');
 
+
   toggleCollapsed(): void {
     const next = { ...this.collapsedByTask(), [this.info().id]: !this.collapsed() };
     this.collapsedByTask.set(next);
@@ -251,6 +258,10 @@ export class ParkedBlockerComponent {
     const detail = this.detail();
     const info = detail.info;
     const taskId = info.id;
+    if (!this.sectionAccess.canRead('session-events') || !this.sectionAccess.canRead('output')) {
+      this.sessionError.set('Session context is not available to this account.');
+      return;
+    }
     this.sessionLoading.set(true);
     this.sessionRequest = forkJoin({
       timeline: this.tasks.getRunTimeline(info.id, info.watchPath),

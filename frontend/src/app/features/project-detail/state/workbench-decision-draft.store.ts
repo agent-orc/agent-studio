@@ -4,6 +4,8 @@ import { WorkbenchDecisionResponse } from '../../../models/project-docs.model';
 const STORAGE_KEY = 'atp.workbench-decision-drafts.v1';
 
 export interface WorkbenchDecisionDraftCard {
+  id?: string;
+  watchPath?: string;
   key: string;
   taskKey: string;
   title: string;
@@ -105,6 +107,10 @@ export class WorkbenchDecisionDraftStore {
     card: WorkbenchDecisionDraftCard,
   ): void {
     this.patch(projectName, workbenchId, { createdCard: { ...card } });
+  }
+
+  clearCreatedCard(projectName: string, workbenchId: string): void {
+    this.patch(projectName, workbenchId, { createdCard: null });
   }
 
   discard(projectName: string, workbenchId: string): void {

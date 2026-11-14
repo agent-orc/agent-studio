@@ -1,6 +1,13 @@
-<div class="session-manager" [class.session-manager--access]="!!userId()">
+<div class="session-manager" [class.session-manager--access]="!!userId()"
+  [class.session-manager--self-access]="!userId() && !watchNotices()">
   <button type="button" class="session-manager__toggle" data-testid="session-manager-toggle"
-    [attr.aria-expanded]="open()" (click)="toggle()">Sessions</button>
+    [attr.aria-expanded]="open()" [attr.aria-label]="recoveryMode() ? 'Register a new authenticator' : null"
+    (click)="toggle()">
+    @if (recoveryMode()) {
+      <span class="session-manager__toggle-wide">Register a new authenticator</span>
+      <span class="session-manager__toggle-narrow">Register</span>
+    } @else { Sessions }
+  </button>
   @if (notice()) {
     <span role="status" data-testid="new-session-notice">New session detected</span>
     <button type="button" (click)="dismissNotice()">Dismiss</button>
@@ -37,11 +44,24 @@
       @if (!userId()) {
         <section aria-label="Second factors">
           <h3>Second factors</h3>
-          <button type="button" (click)="beginTotp()" [disabled]="busy()">Add authenticator</button>
-          <button type="button" (click)="addPasskey()" [disabled]="busy()">Add passkey</button>
+          <button type="button" (click)="requestEnrollment('totp')" [disabled]="busy()">Add authenticator</button>
+          <button type="button" (click)="requestEnrollment('passkey')" [disabled]="busy()">Add passkey</button>
+          @if (factorNotice()) { <p role="status" data-testid="factor-bound-notice">{{ factorNotice() }}</p> }
+          @if (pendingEnrollment()) {
+            <div data-testid="enrollment-step-up">
+              <p>Verify your current factor before registering a new one.</p>
+              <label>Authenticator or recovery code <input autocomplete="one-time-code" [value]="enrollmentStepUpCode()"
+                (input)="enrollmentStepUpCode.set($any($event.target).value)"></label>
+              <button type="button" (click)="confirmEnrollmentStepUp()" [disabled]="busy() || !enrollmentStepUpCode().trim()">Verify</button>
+              <button type="button" (click)="confirmEnrollmentStepUp(true)" [disabled]="busy()">Use passkey</button>
+              <button type="button" (click)="pendingEnrollment.set(null)" [disabled]="busy()">Cancel</button>
+            </div>
+          }
           @if (totpSecret()) {
             <p>Add this secret to an authenticator app.</p>
             <output data-testid="session-totp-secret">{{ totpSecret() }}</output>
+            <a data-testid="session-totp-link" [href]="totpLink()">Open in authenticator app</a>
+            @if (totpQr()) { <img data-testid="session-totp-qr" class="session-manager__qr" [src]="totpQr()" alt="Authenticator setup QR code"> }
             <label>Authenticator code <input type="text" inputmode="numeric" [value]="totpCode()"
               (input)="totpCode.set($any($event.target).value)"></label>
             <button type="button" (click)="confirmTotp()" [disabled]="busy()">Verify authenticator</button>

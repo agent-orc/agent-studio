@@ -254,6 +254,10 @@ immediately. Poll `GET /api/tasks/batch-move/{id}` until `status` is
 the rest of the batch. Set `runIntent: "revoke"` on each item that may have a
 live remote run. An item without explicit intent is rejected with
 `run-intent-required` when the run is live.
+An Auto Review card that belongs to an active batch is reported as `refused`
+with `active-batch-member` and the batch, phase, and other members. Wait for
+the batch, or withdraw that card with a single `POST /api/tasks/{id}/move`
+carrying `withdrawFromBatch: true` and a `reason`.
 
 ## Process: releasing a task for its gated dependents
 

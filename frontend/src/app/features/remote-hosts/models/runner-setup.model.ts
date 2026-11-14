@@ -1,5 +1,5 @@
 import type { VisibleCliTaskRequest } from '../../visible-cli-task';
-import { isLocalUrl } from '../../task-server';
+import { isLocalUrl } from '../../task-server/runtime';
 import type { RemoteHost } from './remote-host.model';
 
 export type RunnerSetupConnectionMode = 'central' | 'lan' | 'tunnel';

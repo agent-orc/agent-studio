@@ -434,7 +434,7 @@ async function open(page: Page, tabs: Tab[], activeKey: string, now: number): Pr
 }
 
 async function hideDevOverlays(page: Page): Promise<void> {
-  await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay')
+  await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay, app-notification-stack')
     .forEach(element => ((element as HTMLElement).style.display = 'none')));
 }
 

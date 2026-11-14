@@ -28,6 +28,8 @@ public static class ParkedBlockerConditionKinds
     /// that ancestry becoming true.
     /// </summary>
     public const string GitAncestor = "git-ancestor";
+    /// <summary>A completed immutable delivery can receive a fresh review attempt.</summary>
+    public const string ReviewRetryAvailable = "review-retry-available";
 }
 
 /// <summary>Parameter keys used by <see cref="ParkedBlockerConditionKinds"/>.</summary>

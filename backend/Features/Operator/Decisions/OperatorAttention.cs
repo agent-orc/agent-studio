@@ -14,7 +14,8 @@ public sealed record OperatorAttentionItem(
     string Reason,
     DateTime ObservedAt,
     IReadOnlyList<string> SuggestedOperations,
-    IReadOnlyList<OperatorEvidenceLink> Evidence);
+    IReadOnlyList<OperatorEvidenceLink> Evidence,
+    string? Title = null);
 
 /// <summary>
 /// Answer of <c>GET /api/operator/attention</c>. <see cref="Count"/> is the
@@ -43,7 +44,7 @@ public static class OperatorAttention
             .ThenBy(fact => fact.Key, StringComparer.Ordinal)
             .Select(fact => new OperatorAttentionItem(fact.Key, fact.Type, fact.Project, fact.CardKey,
                 fact.Cards ?? (fact.CardKey is { } card ? [card] : []), fact.Reason, fact.ObservedAtUtc,
-                OperatorOperations.For(fact.Type), fact.Evidence))
+                OperatorOperations.For(fact.Type), fact.Evidence, fact.Title))
             .ToArray();
         return new OperatorAttentionResponse(items, items.Length);
     }

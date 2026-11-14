@@ -47,6 +47,12 @@ app-root {
   --studio-z-overlay-modal: 2147483002;
 }
 
+// AGT-3624: tooltips explain overlay content (disabled menu rows), so they
+// stack with the overlay root and follow it in DOM order (OverlayPortalService).
+body > .cac-tooltip {
+  z-index: var(--studio-z-overlay-root);
+}
+
 .studio-overlay-root {
   position: fixed;
   inset: 0;
@@ -743,6 +749,29 @@ input, textarea, [contenteditable]:not([contenteditable="false"]),
 
 /* Dark-mode form controls — ensures select option lists render with readable contrast */
 html { color-scheme: dark; }
+@media (max-width: 480px) {
+  .mobile-lane-picker {
+    display: grid;
+    gap: var(--studio-spacing-2);
+    padding: var(--studio-spacing-3);
+    background: var(--studio-bg-editor);
+    color: var(--studio-fg);
+  }
+  .mobile-lane-picker select {
+    min-width: 0;
+    width: 100%;
+    min-height: var(--studio-target-coarse-min);
+    background: var(--studio-bg-surface);
+    color: var(--studio-fg-strong);
+    border: 1px solid var(--studio-border-strong);
+    border-radius: var(--studio-card-compact-radius);
+  }
+  .studio .dashboard--studio { grid-template-columns: minmax(0, 1fr); }
+  .studio .dashboard--studio .lane-group { min-width: 0; }
+  .studio .dashboard--studio .lane-group + .lane-group { border-left: 0; }
+  .studio .dashboard--studio .lane-group__lanes > app-job-column.mobile-lane-hidden,
+  .studio .dashboard--studio .delivery-column--mobile-hidden { display: none; }
+}
 select, input, textarea { color-scheme: dark; }
 select option,
 select optgroup {
@@ -773,7 +802,8 @@ select option:hover {
 .app-pending-button--pending {
   cursor: wait;
   opacity: 0.78;
-  font-size: 0;
+  // Scoped button font shorthands must not reveal the original text while busy.
+  font-size: 0 !important;
 }
 
 .app-pending-button--pending::before {
@@ -840,4 +870,14 @@ select option:hover {
   background: var(--studio-bg-elevated);
   border-color: var(--studio-border);
   color: var(--studio-text-primary);
+}
+
+.no-project-access {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--studio-spacing-6);
+  background: var(--studio-bg-editor);
+  color: var(--studio-fg);
+  text-align: center;
 }

@@ -66,10 +66,10 @@
   @if (deepLinkMissing(); as missing) {
     <div class="pwiki__deeplink-hint" role="status" data-testid="project-wiki-deeplink-missing">
       <app-studio-icon name="warn" [size]="13"></app-studio-icon>
-      <span>{{ missing.kind === 'folder' ? 'Der verlinkte Ordner' : 'Die verlinkte Seite' }} <code>{{ missing.relPath }}</code> wurde nicht gefunden.</span>
+      <span>The linked {{ missing.kind === 'folder' ? 'folder' : 'page' }} <code>{{ missing.relPath }}</code> was not found.</span>
       <button class="pwiki__deeplink-dismiss" type="button"
               data-testid="project-wiki-deeplink-dismiss"
-              aria-label="Hinweis schließen"
+              aria-label="Dismiss notice"
               (click)="dismissDeepLinkHint()">
         <app-studio-icon name="close" [size]="12"></app-studio-icon>
       </button>

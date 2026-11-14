@@ -107,7 +107,8 @@ public static class OperatorPolicy
     public static bool Covers(StandingGrantScope scope, OperatorGrantTarget target, Func<string, string, bool> sameProject)
         => scope.Kind switch
         {
-            OperatorScopeKinds.Workspace => true,
+            OperatorScopeKinds.Workspace => scope.Projects is null || scope.Projects.Contains("*")
+                || target.Project is null || scope.Projects.Any(project => sameProject(project, target.Project)),
             OperatorScopeKinds.Project => scope.Project is { } project && target.Project is { } requested
                                           && sameProject(project, requested),
             OperatorScopeKinds.Environment => scope.Project is { } project && target.Project is { } requested

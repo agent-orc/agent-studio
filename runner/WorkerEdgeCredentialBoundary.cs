@@ -40,4 +40,18 @@ internal static class WorkerEdgeCredentialBoundary
             if (IsProtectedName(key))
                 environment.Remove(key);
     }
+
+    public static void RemovePersonaDeploymentCredentials<T>(IDictionary<string, T> environment)
+    {
+        foreach (var key in environment.Keys.ToArray())
+            if (key.StartsWith("AWS_", StringComparison.OrdinalIgnoreCase) ||
+                key.StartsWith("AZURE_", StringComparison.OrdinalIgnoreCase) ||
+                key.StartsWith("GCP_", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("GITHUB_TOKEN", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("GH_TOKEN", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("GOOGLE_APPLICATION_CREDENTIALS", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("KUBECONFIG", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("SSH_AUTH_SOCK", StringComparison.OrdinalIgnoreCase))
+                environment.Remove(key);
+    }
 }

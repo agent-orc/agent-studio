@@ -39,7 +39,10 @@
                         <app-copyable-command [command]="entry.text" label="Config entry"
                                               [location]="entry.file + ' › ' + entry.section" testId="readiness-config" />
                       }
-                      @if (check.command) { <app-copyable-command [command]="check.command" testId="readiness-command" /> }
+                      @if (check.command) {
+                        <p class="readiness__remedy-text" data-testid="readiness-host-access">{{ hostAccessReason(check) }}</p>
+                        <app-copyable-command [command]="check.command" testId="readiness-command" />
+                      }
                     </div>
                   } @else { <span class="readiness__none">None needed</span> }
                 </td>

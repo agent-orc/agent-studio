@@ -93,4 +93,30 @@ while IFS=$'\t' read -r index root origin branch bundle; do
 done < "/data/$staging/checkouts.tsv"
 
 rm -rf "/data/$staging"
+# Host-level archives use this extraction path rather than BackupRestore.
+# Apply the same session fence and Owner notice after extraction succeeds.
+node <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const folder = '/data/workspace/.security';
+const statePath = path.join(folder, 'access-state.json');
+fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+function writeAtomic(file, value) {
+  const temporary = `${file}.restore-tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(value, null, 2), { mode: 0o600 });
+  fs.renameSync(temporary, file);
+}
+if (fs.existsSync(statePath)) {
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  if (!state || Array.isArray(state) || typeof state !== 'object') throw Error('restored access state is not a JSON object');
+  for (const key of Object.keys(state)) if (key.toLowerCase() === 'sessions') delete state[key];
+  state.Sessions = [];
+  writeAtomic(statePath, state);
+}
+writeAtomic(path.join(folder, 'restore-notice.json'), {
+  ArchiveId: process.env.RESTORE_ARCHIVE_ID,
+  ArchiveCreatedAt: process.env.RESTORE_ARCHIVE_CREATED,
+  RestoredAt: new Date().toISOString(),
+});
+NODE
 log 'workspace, task storage and Studio refs restored'

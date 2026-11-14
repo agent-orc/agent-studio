@@ -1,3 +1,5 @@
+import { historyRunStateTone } from '../../state/deploy-status-tone';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
@@ -5,17 +7,15 @@ import { take } from 'rxjs';
 import { metric, ratio, type OperationsLogResult, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
-import { BackupStatusPanelComponent } from '../../../backups/backup-status-panel/backup-status-panel.component';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
-import { historyRunStateTone } from '../../state/deploy-status-tone';
 
 @Component({
-  selector: 'app-project-operations', standalone: true, imports: [DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, BackupStatusPanelComponent, StatusIndicatorComponent],
+  selector: 'app-project-operations', standalone: true, imports: [StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent],
   templateUrl: './project-operations.html', styleUrl: './project-operations.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectOperationsComponent {
+  readonly markerTone = historyRunStateTone;
   private readonly http = inject(HttpClient);
   private readGeneration = 0;
   private logGeneration = 0;
@@ -35,8 +35,6 @@ export class ProjectOperationsComponent {
   readonly telemetryAvailable = computed(() => this.snapshot()?.environments.some(row => row.telemetryAvailable) ?? false);
   readonly metric = metric;
   readonly ratio = ratio;
-  /** Markers list past runs, so a past failure stays calm (R4). */
-  readonly markerTone = historyRunStateTone;
   readonly projectSlug = computed(() => studioProjectSlug(this.projectName()));
 
   constructor() { effect(() => this.load(this.projectName())); }

@@ -6,7 +6,11 @@ public static class ReviewRepeatFilterPolicy
     public static bool IsValid(ReviewCommandEvidenceDto repeat, IReadOnlyList<ReviewCommandEvidenceDto> commands)
     {
         if (repeat.Phase != "clean-repeat")
-            return repeat.RepeatFilter is null && repeat.RepeatObservedTests is null;
+            return repeat.RepeatFilter is null && repeat.RepeatObservedTests is null
+                && repeat.RepeatObservation is null;
+        if (repeat.RepeatObservation is not null
+            && (repeat.ExitCode != 0 || !ReviewRepeatObservation.IsKnown(repeat.RepeatObservation)))
+            return false;
         if (repeat.RepeatFilter is null)
             return repeat.RepeatObservedTests is null;
 

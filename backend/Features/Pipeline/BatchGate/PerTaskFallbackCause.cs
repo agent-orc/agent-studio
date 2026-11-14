@@ -38,6 +38,13 @@ public static class PerTaskFallbackRules
     /// restart or crash. Recorded only when no earlier cause is known.
     /// </summary>
     public const string InterruptedGate = "interrupted-gate";
+
+    /// <summary>
+    /// AGT-3740: the passed review ran its own build and tests instead of
+    /// deferring them, so batch admission refuses it. The event names the
+    /// card's route: per-task integration or a re-planned review.
+    /// </summary>
+    public const string ReviewRanBuildTests = "review-ran-build-tests";
 }
 
 /// <param name="Rule">One of <see cref="PerTaskFallbackRules"/>.</param>

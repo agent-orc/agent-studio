@@ -27,10 +27,11 @@
                 <div class="attention-list__text">
                   <div class="attention-list__meta">
                     @if (card(item); as key) { <span class="attention-list__key" data-testid="attention-row-card">{{ key }}</span> }
+                    @if (item.title) { <span class="attention-list__title" data-testid="attention-row-title">{{ item.title }}</span> }
                     @if (item.project) { <span class="attention-list__project">{{ item.project }}</span> }
                     <span class="attention-list__age">{{ age(item) }}</span>
                   </div>
-                  <p class="attention-list__reason" data-testid="attention-row-reason">{{ item.reason }}</p>
+                  <p class="attention-list__reason" data-testid="attention-row-reason" [attr.title]="item.reason">{{ item.reason }}</p>
                 </div>
                 <button type="button" class="attention-list__action" data-testid="attention-row-action"
                         (click)="act(item, group.spec)">{{ actionLabel(item, group.spec) }}</button>

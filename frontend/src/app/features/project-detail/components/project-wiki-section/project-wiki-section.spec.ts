@@ -2164,7 +2164,7 @@ describe('ProjectWikiSectionComponent', () => {
     const hint = el(fixture).querySelector('[data-testid="project-wiki-deeplink-missing"]');
     expect(hint, 'missing-link hint').toBeTruthy();
     expect(hint!.textContent).toContain('ghost/missing.md');
-    expect(hint!.textContent).toContain('Die verlinkte Seite');
+    expect(hint!.textContent).toContain('The linked page ghost/missing.md was not found.');
     expect(window.location.hash).toBe(WIKI_BASE_HASH);
   });
 
@@ -2176,7 +2176,7 @@ describe('ProjectWikiSectionComponent', () => {
     const hint = el(fixture).querySelector('[data-testid="project-wiki-deeplink-missing"]');
     expect(hint, 'missing-link hint').toBeTruthy();
     expect(hint!.textContent).toContain('ghost-folder');
-    expect(hint!.textContent).toContain('Der verlinkte Ordner');
+    expect(hint!.textContent).toContain('The linked folder ghost-folder was not found.');
     expect(window.location.hash).toBe(WIKI_BASE_HASH);
   });
 

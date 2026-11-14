@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { DeliveryClaimPanelComponent } from './delivery-claim-panel.component';
 import { TaskService } from '../../../../services/task.service';
+import { NotificationService } from '../../../../services/notification.service';
 import {
   TaskState,
   type TaskDeliveryClaimAnswer,
@@ -81,6 +82,7 @@ async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())
     providers: [
       provideZonelessChangeDetection(),
       { provide: TaskService, useValue: { getDeliveryClaim } },
+      { provide: NotificationService, useValue: { success: vi.fn() } },
     ],
   }).compileComponents();
   const fixture = TestBed.createComponent(DeliveryClaimPanelComponent);
@@ -103,7 +105,8 @@ describe('DeliveryClaimPanelComponent', () => {
     expect(host.querySelector('[data-testid="concept-fit-comparison"]')?.textContent)
       .toContain('Dossier: replace the workflow.');
     expect(grounds?.textContent).toContain('Contradiction or gap');
-    expect(grounds?.querySelector('[data-testid="completion-content-review-state"]')?.getAttribute('data-tone')).toBe('warning');
+    expect(host.querySelector('[data-testid="stale-brief-acceptance"]')?.textContent)
+      .toContain('Acceptance is blocked');
   });
   /**
    * AGT-2706: contained in develop and in main, integrated by an operator
@@ -120,8 +123,6 @@ describe('DeliveryClaimPanelComponent', () => {
     const release = host.querySelector('[data-testid="delivery-claim-release"]');
     expect(release?.textContent).toContain('In main');
     expect(release?.getAttribute('data-state')).toBe('released');
-    expect(release?.querySelector('[data-testid="delivery-claim-release-state"]')?.getAttribute('data-tone')).toBe('success');
-    expect(host.querySelector('[data-testid="delivery-claim-integration-state"]')?.getAttribute('data-tone')).toBe('success');
   });
 
   it('says "not checked yet" instead of pending when containment is unanswered', async () => {
@@ -134,7 +135,6 @@ describe('DeliveryClaimPanelComponent', () => {
 
     expect(integration?.textContent).toContain('Not checked yet');
     expect(integration?.textContent).not.toContain('pending');
-    expect(integration?.querySelector('[data-testid="delivery-claim-integration-state"]')?.getAttribute('data-tone')).toBe('neutral');
     expect(host.querySelector('[data-testid="delivery-claim-release"]')?.textContent)
       .toContain('Release not checked');
   });
@@ -157,7 +157,6 @@ describe('DeliveryClaimPanelComponent', () => {
 
     expect(marker?.textContent).toContain('Replacement pending');
     expect(marker?.getAttribute('data-state')).toBe('replacement-pending');
-    expect(marker?.querySelector('[data-testid="delivery-claim-supersession-state"]')?.getAttribute('data-tone')).toBe('info');
   });
 
   /** AGT-2795: the override's written reason travels with the completion claim. */
@@ -185,7 +184,6 @@ describe('DeliveryClaimPanelComponent', () => {
 
     expect(host.querySelector('[data-testid="delivery-claim-basis"]')?.textContent)
       .toContain('Completed by operator override');
-    expect(host.querySelector('[data-testid="delivery-claim-basis"]')?.getAttribute('data-tone')).toBe('warning');
     // Not yet released is the ordinary case between two releases, so it stays
     // quiet instead of borrowing the integration row's acute treatment.
     expect(host.querySelector('[data-testid="delivery-claim-release"]')?.getAttribute('data-state'))
@@ -198,9 +196,6 @@ describe('DeliveryClaimPanelComponent', () => {
       .toBe('not-integrated');
     expect(host.querySelector('[data-testid="delivery-claim-panel"]')?.getAttribute('data-settled'))
       .toBe('true');
-    // Acceptance settles the not-integrated warning without erasing the fact.
-    expect(host.querySelector('[data-testid="delivery-claim-integration-state"]')?.getAttribute('data-tone'))
-      .toBe('neutral');
   });
 
   it('says who accepted the card when the system accepted it automatically (AGT-3621)', async () => {

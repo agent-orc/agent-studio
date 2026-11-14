@@ -1,0 +1,57 @@
+<section class="usage-detail usage-detail__section"
+         [id]="sectionId()"
+         data-testid="usage-detail-capacity"
+         [attr.aria-labelledby]="sectionId() + '-title'">
+  <h3 class="usage-detail__title" tabindex="-1" [id]="sectionId() + '-title'">Capacity, Ready cards</h3>
+  @if (view(); as v) {
+    <p class="usage-detail__meta" data-testid="usage-detail-capacity-summary">
+      <span>{{ v.summary }}</span>
+      @if (failed()) { <span class="usage-detail__muted">Last read failed; showing the previous answer.</span> }
+    </p>
+    @if (v.cards.length > 0) {
+      <ul class="usage-detail__groups" data-testid="usage-detail-capacity-cards">
+        @for (card of v.cards; track card.key) {
+          <li class="usage-detail__group" data-testid="usage-detail-capacity-card"
+              [attr.data-card-key]="card.cardKey" [attr.data-outcome]="card.outcome">
+            <p class="usage-detail__group-head">
+              <span class="usage-detail__key">{{ card.cardKey }}</span>
+              <span class="usage-detail__muted">{{ card.project }}</span>
+              <app-status-indicator [tone]="card.tone" [label]="card.outcomeLabel" [compact]="true"
+                                    testId="usage-detail-capacity-outcome" />
+              @if (card.notOffered; as note) {
+                <app-status-indicator tone="warning" label="Not offered" [detail]="note" [compact]="true"
+                                      testId="usage-detail-capacity-not-offered" />
+              }
+            </p>
+            <ul class="usage-detail__runs">
+              @if (card.title) { <li class="usage-detail__note">{{ card.title }}</li> }
+              <li>
+                <span class="usage-detail__muted">Configured</span>
+                <span data-testid="usage-detail-capacity-configured">{{ card.configured }}</span>
+              </li>
+              @if (card.target; as target) {
+                <li>
+                  <span class="usage-detail__muted">Runs on</span>
+                  <span class="usage-detail__route" data-testid="usage-detail-capacity-target">{{ target }}</span>
+                </li>
+              }
+              <li data-testid="usage-detail-capacity-reason">{{ card.reason }}</li>
+              @if (card.reset; as r) {
+                <li>
+                  <span class="usage-detail__muted">{{ card.resetLabel }}</span>
+                  <time [attr.datetime]="r.iso">{{ r.local }}</time>
+                  <span class="usage-detail__utc">({{ r.utc }})</span>
+                  @if (card.countdown) { <span class="usage-detail__muted">{{ card.countdown }}</span> }
+                </li>
+              }
+            </ul>
+          </li>
+        }
+      </ul>
+    }
+  } @else if (failed()) {
+    <p class="usage-detail__muted" data-testid="usage-detail-capacity-summary">Capacity is unavailable.</p>
+  } @else {
+    <p class="usage-detail__muted" data-testid="usage-detail-capacity-summary">Reading capacity</p>
+  }
+</section>

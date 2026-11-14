@@ -67,6 +67,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_anonymous_pull_is_nonblocking_post_release_verification(self):
         check = self.jobs["verify-visibility"]
         self.assertIn("publish-release", self.dependencies("verify-visibility"))
+        self.assertIn("for asset in install.sh agent-studio-setup SHA256SUMS", check)
+        self.assertIn("curl --fail --silent --show-error --location", check)
+        self.assertIn('[[ "$status" == 200 ]]', check)
         self.assertIn("continue-on-error: true", check)
         self.assertIn("docker logout ghcr.io", check)
         self.assertIn("GITHUB_STEP_SUMMARY", check)

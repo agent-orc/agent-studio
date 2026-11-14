@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import { PublicDemoModeService } from '../../services/public-demo-mode.service';
+import { ShellAccessService } from '../../services/shell-access.service';
 
 /**
  * App-wide "read-only public demo" banner (W34 §8 S4). Renders in shell flow
@@ -22,6 +23,6 @@ export class PublicDemoBannerComponent {
   readonly mode = inject(PublicDemoModeService);
 
   constructor() {
-    this.mode.loadFlags();
+    if (!inject(ShellAccessService).limited()) this.mode.loadFlags();
   }
 }

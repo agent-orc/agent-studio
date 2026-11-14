@@ -238,7 +238,8 @@ public sealed record HostTelemetrySample(
     int TaskServerConnectionConsecutiveFailures = 0,
     DateTime? TaskServerConnectionEscalatedAt = null,
     string? TaskServerConnectionLastError = null,
-    DateTime? TaskServerConnectionLastRecoveredAt = null);
+    DateTime? TaskServerConnectionLastRecoveredAt = null,
+    IReadOnlyList<AgentStudio.TaskServer.Contracts.HostFilesystemUsageDto>? Filesystems = null);
 
 public enum RunnerClaimStatus { Claimed, Empty, PreflightRequired, PreflightFailed, Invalid }
 

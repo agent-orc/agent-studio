@@ -4,18 +4,31 @@
            data-testid="concept-dossier-notice"
            [attr.data-state]="missing() ? 'missing' : 'satisfied'">
     @if (dossierPath(); as path) {
-      <app-status-indicator tone="success" label="Dossier" [compact]="true" testId="concept-dossier-linked" />
-      <a class="dossier__link"
-         data-testid="concept-dossier-link"
-         [href]="wikiHref()">{{ path }}</a>
+      <span class="dossier__label">Dossier</span>
+      @if (published()) {
+        <a class="dossier__link"
+           data-testid="concept-dossier-link"
+           [href]="wikiHref()">{{ path }}</a>
+      } @else {
+        <span class="dossier__path" data-testid="concept-dossier-path">{{ path }}</span>
+        <span class="dossier__publication" data-testid="concept-dossier-publication">Not published yet · {{ publicationStage() }}</span>
+      }
+      @if (job().mode === 'concept' && decisionReceipt(); as receipt) {
+        <span data-testid="concept-dossier-decision-receipt">
+          Decisions recorded on {{ dossierId() || path }}: {{ receipt.recorded }} of {{ receipt.total }};
+          spawned @for (key of receipt.spawned; track key) {<span class="dossier__spawn-key">{{ key }}</span>@if (!$last) {, }} @empty {none}.
+          @if (readyToAccept()) { Accept in the task toolbar. }
+        </span>
+      }
     } @else if (summary()?.noDossierNeeded) {
-      <app-status-indicator tone="neutral" label="No dossier needed" [compact]="true" testId="concept-dossier-not-needed" />
+      <span class="dossier__label">No dossier needed</span>
       <span class="dossier__reason" data-testid="concept-dossier-no-need-reason">
         {{ summary()?.noDossierReason }}
       </span>
       <button type="button" class="dossier__action" (click)="openPathEditor()">Add dossier path</button>
     } @else {
-      <app-status-indicator tone="warning" label="No dossier linked" [compact]="true" testId="concept-dossier-missing" />
+      <span class="dossier__signal" aria-hidden="true">!</span>
+      <span class="dossier__label" data-testid="concept-dossier-missing">No dossier linked</span>
       <button type="button"
               class="dossier__action"
               data-testid="concept-dossier-add-path"

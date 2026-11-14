@@ -230,6 +230,7 @@ public sealed class IamAccessStoreTests : IDisposable
         { IamRoles.Developer, IamScope.ForProject("alpha") },
         { IamRoles.Approver, IamScope.ForEnvironment("alpha", "production") },
         { IamRoles.Approver, IamScope.Workspace },
+        { IamRoles.Reviewer, IamScope.ForProject("alpha") },
     };
 
     [Theory]

@@ -23,7 +23,7 @@ export LOCAL_PROJECT='Local restart drill'
 export LOCAL_TASK_ID='RST-101'
 export REMOTE_PROJECT='Remote restart drill'
 export REMOTE_TASK_ID='RST-201'
-# export UPDATE_TOKEN='only-when-the-service-requires-it'
+export UPDATE_TOKEN="$(cat update-service/.update-token)"
 ```
 
 Run the gate and retain its complete output with the release evidence:

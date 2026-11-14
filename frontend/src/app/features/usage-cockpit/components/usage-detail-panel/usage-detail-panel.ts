@@ -1,10 +1,11 @@
+import { usageStateTone } from '../usage-cost-detail/usage-detail-status';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, computed, inject, input, signal } from '@angular/core';
 import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 
+import { UsageCapacityDetailComponent } from '../usage-capacity-detail/usage-capacity-detail';
 import { UsageCostDetailComponent } from '../usage-cost-detail/usage-cost-detail';
-import { usageStateTone } from '../usage-cost-detail/usage-detail-status';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
 import {
   buildUsageDetailView,
@@ -15,8 +16,8 @@ import {
 
 /**
  * Usage detail content (HUC-S3): every CLI's quota windows and observed
- * models, then today's and this week's cost with project split, live runs and
- * slot pools. The desktop popover and the phone sheet render this same
+ * models, the Ready cards that would fall back or wait, then today's and this
+ * week's cost with project split, live runs and slot pools. The desktop popover and the phone sheet render this same
  * component; only the surface around it differs.
  *
  * The panel always holds every section, so one footer entry reaches all usage
@@ -25,12 +26,13 @@ import {
 @Component({
   selector: 'app-usage-detail-panel',
   standalone: true,
-  imports: [UsageCostDetailComponent, DisclosureMarkerComponent, StatusIndicatorComponent],
+  imports: [StatusIndicatorComponent, UsageCapacityDetailComponent, UsageCostDetailComponent, DisclosureMarkerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './usage-detail-panel.html',
   styleUrl: './usage-detail-panel.scss',
 })
 export class UsageDetailPanelComponent implements OnDestroy {
+  readonly stateTone = usageStateTone;
   private readonly remoteHosts = inject(RemoteHostsService);
   readonly chatUsage = this.remoteHosts.interactiveUsage;
   readonly chatUsageOpen = signal(false);
@@ -53,7 +55,6 @@ export class UsageDetailPanelComponent implements OnDestroy {
   /** Prefix for section ids so two panels never share an id. */
   readonly idPrefix = input('usage-detail');
 
-  readonly stateTone = usageStateTone;
   readonly cliManagementHref = CLI_MANAGEMENT_HREF;
 
   private readonly host = inject(ElementRef<HTMLElement>).nativeElement as HTMLElement;
@@ -68,6 +69,7 @@ export class UsageDetailPanelComponent implements OnDestroy {
     return { kind: 'cli', cliId };
   }
 
+  readonly capacityFocus: UsageDetailFocus = { kind: 'capacity' };
   readonly costFocus: UsageDetailFocus = { kind: 'cost' };
 
   isSelected(focus: UsageDetailFocus): boolean {

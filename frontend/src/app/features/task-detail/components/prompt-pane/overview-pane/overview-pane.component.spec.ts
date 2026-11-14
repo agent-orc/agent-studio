@@ -182,10 +182,20 @@ describe('OverviewPaneComponent (smoke)', () => {
       .map(el => el.textContent?.trim());
 
     expect(labels).toContain('Agent');
-    expect(labels).toContain('Owner');
+    expect(labels).not.toContain('Owner');
     expect(labels).not.toContain('Model');
     expect(labels).not.toContain('CLI');
     expect(host.querySelector('[data-testid="overview-agent-cli"]')?.textContent).toContain('Claude Code');
+  });
+
+  it('omits timestamps and owner until a new card has those facts', async () => {
+    const fixture = await build(baseJob({ createdAt: '', lastActivity: '', ownerClientId: null }));
+    const labels = Array.from((fixture.nativeElement as HTMLElement)
+      .querySelectorAll<HTMLElement>('[data-testid="overview-status"] .ov-label'))
+      .map(el => el.textContent?.trim());
+    expect(labels).not.toContain('Last Activity');
+    expect(labels).not.toContain('Created');
+    expect(labels).not.toContain('Owner');
   });
 
   it.each([TaskState.Completed, TaskState.Archive])(

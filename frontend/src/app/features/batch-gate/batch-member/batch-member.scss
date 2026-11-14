@@ -1,0 +1,3 @@
+:host { display: flex; flex-direction: column; align-items: flex-start; gap: var(--studio-spacing-1); min-width: 0; }
+.batch-member__event { display: block; max-width: 30rem; color: var(--studio-fg-muted); font-size: .72rem; line-height: 1.35; overflow-wrap: anywhere; }
+.batch-member__outcome { display: block; margin-block-start: var(--studio-spacing-1); color: var(--studio-fg); }

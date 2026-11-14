@@ -1,3 +1,4 @@
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -21,8 +22,7 @@ import { SectionHeaderComponent } from '../../../../components/section-header/se
 import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceSettingsService } from '../../state/workspace-settings.service';
-import { WorkspaceQuotaDisclosureComponent } from '../../../quota';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { WorkspaceQuotaDisclosureComponent } from '../../../quota/lazy';
 
 interface WorkspaceProjectDragData {
   projectId: string;
@@ -49,7 +49,7 @@ interface WorkspaceManagementRow extends RegistryWorkspaceListItem {
 @Component({
   selector: 'app-workspace-management',
   standalone: true,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup, FormsModule, TooltipDirective, SectionHeaderComponent, MenuComponent, WorkspaceQuotaDisclosureComponent, StatusIndicatorComponent],
+  imports: [StatusIndicatorComponent, CdkDrag, CdkDropList, CdkDropListGroup, FormsModule, TooltipDirective, SectionHeaderComponent, MenuComponent, WorkspaceQuotaDisclosureComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-management.component.html',
   styleUrl: './workspace-management.component.scss',
@@ -164,16 +164,6 @@ export class WorkspaceManagementComponent implements OnInit {
 
   onAddWorkspace(): void {
     this.workspaceManager.openCreate();
-  }
-
-  /** F45b — prompt for a new workspace name and create it. */
-  createRegistryWorkspace(): void {
-    const name = window.prompt('New workspace name')?.trim();
-    if (!name) return;
-    this.jobService.createRegistryWorkspace(name).subscribe({
-      next: () => this.reloadRegistryWorkspaces(),
-      error: (err: unknown) => this.registryWorkspacesError.set(this.errMsg(err)),
-    });
   }
 
   /** F66 — click-to-edit rename (state owned by WorkspaceSettingsService). */

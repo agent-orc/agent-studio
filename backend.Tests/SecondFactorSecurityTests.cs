@@ -12,6 +12,172 @@ namespace AgentStudio.Tests;
 public sealed class SecondFactorSecurityTests
 {
     private static readonly DateTime TestUtcNow = new(2026, 11, 2, 12, 0, 0, DateTimeKind.Utc);
+
+    [Theory]
+    [InlineData(IamRoles.Owner, true)]
+    [InlineData(IamRoles.Admin, true)]
+    [InlineData(IamRoles.Developer, true)]
+    [InlineData(IamRoles.Approver, true)]
+    [InlineData(IamRoles.Contributor, false)]
+    [InlineData(IamRoles.Viewer, true)]
+    public void Human_roles_enroll_when_permissions_require_it_and_registered_totp_guards_every_login(
+        string role, bool enrollmentRequired)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = NewStore(root);
+            var owner = store.Bootstrap(new BootstrapRequest("owner", "proper pass phrase!", "Owner"));
+            var scope = role switch
+            {
+                IamRoles.Owner or IamRoles.Admin => IamScope.Workspace,
+                IamRoles.Approver => IamScope.ForEnvironment("alpha", "production"),
+                _ => IamScope.ForProject("alpha")
+            };
+            var username = "user." + role;
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var invitation = store.InviteUser(new InviteUserRequest(username, role, "", null,
+                [new IamGrantRequest(role, scope)]), owner.User.Id);
+            var accepted = store.AcceptInvitation(new AcceptInvitationRequest(invitation.Token, password), publicEntry: true);
+
+            Assert.Equal(enrollmentRequired,
+                store.AuthenticateSession(accepted.SessionToken)!.Session.SecondFactorEnrollmentOnly);
+            var beforeEnrollment = store.Login(username, password, username + "-client", requireSecondFactor: true);
+            Assert.Equal(enrollmentRequired,
+                store.AuthenticateSession(beforeEnrollment.SessionToken)!.Session.SecondFactorEnrollmentOnly);
+
+            var principal = store.AuthenticateSession(accepted.SessionToken)!;
+            var secret = store.BeginTotpEnrollment(principal);
+            store.ConfirmTotpEnrollment(principal, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
+
+            Assert.Equal("second-factor-required", Assert.Throws<SecurityOperationException>(() =>
+                store.Login(username, password, username + "-missing", requireSecondFactor: true)).Code);
+            Assert.Equal("second-factor-required", Assert.Throws<SecurityOperationException>(() =>
+                store.Login(username, password, username + "-store-call")).Code);
+            var wrong = Assert.Throws<SecurityOperationException>(() =>
+                store.Login(username, password, username + "-wrong", "000000", requireSecondFactor: true));
+            Assert.Equal("invalid-second-factor", wrong.Code);
+            Assert.Equal("The second factor is invalid.", wrong.Message);
+            var signedIn = store.Login(username, password, username + "-valid",
+                SecondFactorCodes.CurrentTotp(secret, TestUtcNow.AddSeconds(30)), requireSecondFactor: true);
+            Assert.False(store.AuthenticateSession(signedIn.SessionToken)!.Session.SecondFactorEnrollmentOnly);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Group_grant_requires_enrollment_even_when_the_legacy_summary_is_contributor()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = NewStore(root);
+            var owner = store.Bootstrap(new BootstrapRequest("owner", "proper pass phrase!", "Owner"));
+            var group = store.CreateGroup(new CreateGroupRequest("Operators", null, null), owner.User.Id);
+            store.AddBinding(new IamBindingRequest(IamPrincipalKind.Group, group.Id, IamRoles.Developer,
+                IamScope.ForProject("alpha")), owner.User.Id);
+            var invitation = store.InviteUser(new InviteUserRequest("group.product", "Group product", "", null,
+                [new IamGrantRequest(IamRoles.Contributor, IamScope.ForProject("alpha"))]), owner.User.Id);
+            store.UpdateGroup(group.Id, new UpdateGroupRequest(null, null, [invitation.User.Id]), owner.User.Id);
+
+            var accepted = store.AcceptInvitation(new AcceptInvitationRequest(invitation.Token, "safe group pass phrase!"),
+                publicEntry: true);
+
+            Assert.Equal(StudioRoles.Contributor, accepted.User.Role);
+            Assert.True(store.AuthenticateSession(accepted.SessionToken)!.Session.SecondFactorEnrollmentOnly);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+    [Fact]
+    public void Replacing_authenticator_requires_fresh_step_up_and_audits_the_session()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var clock = new FakeTimeProvider(new DateTimeOffset(TestUtcNow));
+            var store = NewStore(root, clock);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+            var original = store.BeginTotpEnrollment(owner);
+            store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(original, TestUtcNow));
+
+            var denied = Assert.Throws<SecurityOperationException>(() => store.BeginTotpEnrollment(owner));
+            Assert.Equal(403, denied.Status);
+            Assert.Equal("step-up-required", denied.Code);
+            Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
+                () => store.BeginPasskeyRegistration(owner)).Code);
+            // AGT-3675 rejects a TOTP step that was already accepted, so step up in the next step.
+            clock.Advance(TimeSpan.FromSeconds(30));
+            store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(original, clock.GetUtcNow().UtcDateTime));
+            var replacement = store.BeginTotpEnrollment(owner);
+            store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(replacement, clock.GetUtcNow().UtcDateTime));
+            Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
+                () => store.BeginTotpEnrollment(owner)).Code);
+
+            var audit = File.ReadAllText(Path.Combine(store.SecurityFolder, AccessSecurityStore.IamAuditFileName));
+            Assert.Contains("factor.bound", audit);
+            Assert.Contains("factor.replaced", audit);
+            Assert.Contains("recovery-codes.regenerated", audit);
+            Assert.Contains(owner.Session.Id, audit);
+            var events = store.ControlPlaneAudit.ReadNewest(entry => entry.Operation == "factor.replaced", 1);
+            Assert.Single(events);
+            Assert.Equal(owner.Session.Id, events[0].Session);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Recovery_sign_in_reports_remaining_codes_and_authorizes_one_enrollment()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = NewStore(root);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+            var original = store.BeginTotpEnrollment(owner);
+            var codes = store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(original, TestUtcNow));
+            var login = store.Login("owner", password, "recovery-client", codes[0], requireSecondFactor: true);
+            var recovered = store.AuthenticateSession(login.SessionToken)!;
+            Assert.Equal(codes.Count - 1, recovered.Session.RecoveryCodesRemaining);
+            var replacement = store.BeginTotpEnrollment(recovered);
+            store.ConfirmTotpEnrollment(recovered, SecondFactorCodes.CurrentTotp(replacement, TestUtcNow));
+            Assert.Null(store.AuthenticateSession(login.SessionToken)!.Session.RecoveryCodesRemaining);
+            Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
+                () => store.BeginTotpEnrollment(recovered)).Code);
+            var audit = File.ReadAllText(Path.Combine(store.SecurityFolder, AccessSecurityStore.IamAuditFileName));
+            Assert.Contains("recovery-code.used", audit);
+            Assert.Contains(recovered.Session.Id, audit);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Recovery_sign_in_enrollment_authority_expires_after_five_minutes()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var clock = new FakeTimeProvider(new DateTimeOffset(TestUtcNow));
+            var store = NewStore(root, clock);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+            var secret = store.BeginTotpEnrollment(owner);
+            var codes = store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
+            var login = store.Login("owner", password, "recovery-client", codes[0], requireSecondFactor: true);
+            var recovered = store.AuthenticateSession(login.SessionToken)!;
+            Assert.True(store.IsRecoveryEnrollmentAllowed(recovered.Session));
+            clock.Advance(TimeSpan.FromMinutes(6));
+            Assert.False(store.IsRecoveryEnrollmentAllowed(recovered.Session));
+            var denied = Assert.Throws<SecurityOperationException>(() => store.BeginTotpEnrollment(recovered));
+            Assert.Equal(403, denied.Status);
+            Assert.Equal("step-up-required", denied.Code);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
     [Fact]
     public void Owner_password_alone_cannot_create_a_networked_session()
     {
@@ -51,7 +217,7 @@ public sealed class SecondFactorSecurityTests
 
             Assert.Equal("second-factor-required", Assert.Throws<SecurityOperationException>(
                 () => store.Login("owner", password, "client", requireSecondFactor: true)).Code);
-            var totp = store.Login("owner", password, "client", SecondFactorCodes.CurrentTotp(secret, TestUtcNow),
+            var totp = store.Login("owner", password, "client", SecondFactorCodes.CurrentTotp(secret, TestUtcNow.AddSeconds(30)),
                 requireSecondFactor: true);
             Assert.False(store.AuthenticateSession(totp.SessionToken)!.Session.SecondFactorEnrollmentOnly);
             Assert.Equal("second-factor-required", Assert.Throws<SecurityOperationException>(
@@ -59,6 +225,101 @@ public sealed class SecondFactorSecurityTests
             store.VerifyStepUp(store.AuthenticateSession(totp.SessionToken)!, recovery[0]);
             Assert.Equal("invalid-second-factor", Assert.Throws<SecurityOperationException>(
                 () => store.VerifyStepUp(store.AuthenticateSession(totp.SessionToken)!, recovery[0])).Code);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Restored_access_state_and_escrowed_key_keep_the_enrolled_authenticator_working()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = Path.Combine(root, "source");
+            var restored = Path.Combine(root, "restored");
+            var store = NewStore(source);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var owner = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var secret = store.BeginTotpEnrollment(store.AuthenticateSession(owner.SessionToken)!);
+            var code = SecondFactorCodes.CurrentTotp(secret, TestUtcNow);
+            store.ConfirmTotpEnrollment(store.AuthenticateSession(owner.SessionToken)!, code);
+            var originalState = Path.Combine(source, "workspace", ".security", "access-state.json");
+            var onDisk = File.ReadAllText(originalState);
+            Assert.DoesNotContain(secret, onDisk, StringComparison.Ordinal);
+            Assert.Contains("sealed:v1:", onDisk, StringComparison.Ordinal);
+
+            var restoredState = Path.Combine(restored, "workspace", ".security", "access-state.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(restoredState)!);
+            File.Copy(originalState, restoredState);
+            var restoredKey = Path.Combine(restored, "secrets.kek");
+            File.Copy(Path.Combine(source, "secrets.kek"), restoredKey);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(restoredKey, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var reopened = NewStore(restored, new FakeTimeProvider(new DateTimeOffset(TestUtcNow.AddSeconds(30))));
+            var nextCode = SecondFactorCodes.CurrentTotp(secret, TestUtcNow.AddSeconds(30));
+            var login = reopened.Login("owner", password, "restored", nextCode, requireSecondFactor: true);
+            Assert.False(reopened.AuthenticateSession(login.SessionToken)!.Session.SecondFactorEnrollmentOnly);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Legacy_plaintext_seed_is_sealed_when_access_state_is_first_loaded()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = NewStore(root);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var owner = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var secret = store.BeginTotpEnrollment(store.AuthenticateSession(owner.SessionToken)!);
+            var code = SecondFactorCodes.CurrentTotp(secret, TestUtcNow);
+            store.ConfirmTotpEnrollment(store.AuthenticateSession(owner.SessionToken)!, code);
+            var statePath = Path.Combine(root, "workspace", ".security", "access-state.json");
+            var document = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(statePath))!;
+            document["Users"]![0]!["TotpSecret"] = secret;
+            File.WriteAllText(statePath, document.ToJsonString());
+            var migrationSnapshot = Path.Combine(root, "workspace", ".security", "access-state.v0.before.json");
+            File.Copy(statePath, migrationSnapshot);
+
+            var reopened = NewStore(root, new FakeTimeProvider(new DateTimeOffset(TestUtcNow.AddSeconds(30))));
+            Assert.NotNull(reopened.Login("owner", password, "migrated", SecondFactorCodes.CurrentTotp(secret, TestUtcNow.AddSeconds(30)), requireSecondFactor: true));
+            Assert.DoesNotContain(secret, File.ReadAllText(statePath), StringComparison.Ordinal);
+            Assert.Contains("sealed:v1:", File.ReadAllText(statePath), StringComparison.Ordinal);
+            Assert.DoesNotContain(secret, File.ReadAllText(migrationSnapshot), StringComparison.Ordinal);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Totp_step_is_one_use_across_sign_in_and_step_up_and_survives_reload()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var clock = new FakeTimeProvider(new DateTimeOffset(TestUtcNow));
+            var store = NewStore(root, clock);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+            var secret = store.BeginTotpEnrollment(owner);
+            store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
+
+            clock.Advance(TimeSpan.FromSeconds(30));
+            var code = SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime);
+            var login = store.Login("owner", password, "client", code, requireSecondFactor: true);
+            store = NewStore(root, clock);
+            var replay = Assert.Throws<SecurityOperationException>(() =>
+                store.Login("owner", password, "client", code, requireSecondFactor: true));
+            Assert.Equal((401, "invalid-second-factor"), (replay.Status, replay.Code));
+            Assert.Equal(1, store.LoginStateCounts.Clients);
+            Assert.Equal("invalid-second-factor", Assert.Throws<SecurityOperationException>(() =>
+                store.VerifyStepUp(store.AuthenticateSession(login.SessionToken)!, code)).Code);
+
+            clock.Advance(TimeSpan.FromSeconds(30));
+            store.VerifyStepUp(store.AuthenticateSession(login.SessionToken)!,
+                SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+            Assert.Equal("invalid-second-factor", Assert.Throws<SecurityOperationException>(() =>
+                store.Login("owner", password, "client", code, requireSecondFactor: true)).Code);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -75,7 +336,7 @@ public sealed class SecondFactorSecurityTests
             var principal = store.AuthenticateSession(bootstrap.SessionToken)!;
             var secret = store.BeginTotpEnrollment(principal);
             store.ConfirmTotpEnrollment(principal, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
-            var code = SecondFactorCodes.CurrentTotp(secret, TestUtcNow);
+            var code = SecondFactorCodes.CurrentTotp(secret, TestUtcNow.AddSeconds(30));
             var other = store.Login("owner", password, "client", code, requireSecondFactor: true,
                 device: "Test browser", address: "192.0.2.1");
             Assert.Contains(store.ListSessions(principal), x => x.Device == "Test browser" && x.Address == "192.0.2.1");
@@ -100,7 +361,7 @@ public sealed class SecondFactorSecurityTests
             store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
             Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
                 () => store.RevokeOtherSessions(owner, owner.User.Id)).Code);
-            store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
+            store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(secret, TestUtcNow.AddSeconds(30)));
             store.RevokeOtherSessions(owner, owner.User.Id);
             Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
                 () => store.RevokeOtherSessions(owner, owner.User.Id)).Code);
@@ -133,8 +394,11 @@ public sealed class SecondFactorSecurityTests
         {
             var store = NewStore(root);
             var password = "long pass phrase " + Guid.NewGuid().ToString("N");
-            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
-            var principal = store.AuthenticateSession(bootstrap.SessionToken)!;
+            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", "proper pass phrase!", "Owner"));
+            var invitation = store.InviteUser(new InviteUserRequest("viewer", "Viewer", "", null,
+                [new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))]), bootstrap.User.Id);
+            var accepted = store.AcceptInvitation(new AcceptInvitationRequest(invitation.Token, password), publicEntry: true);
+            var principal = store.AuthenticateSession(accepted.SessionToken)!;
             using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
             const string rpId = "studio.invalid";
             const string origin = "https://studio.invalid";
@@ -145,13 +409,15 @@ public sealed class SecondFactorSecurityTests
             var registration = new PasskeyRegistrationProof(idEncoded,
                 ClientData("webauthn.create", registerChallenge, origin), WebAuthnProofs.Encode(registrationData), "Test passkey");
             store.RegisterPasskey(principal, registration, origin, rpId);
-            var challenge = store.BeginPasskeyAssertion("owner", "client");
+            Assert.Equal("second-factor-required", Assert.Throws<SecurityOperationException>(() =>
+                store.Login("viewer", password, "missing-passkey", requireSecondFactor: true)).Code);
+            var challenge = store.BeginPasskeyAssertion("viewer", "client");
             var clientData = ClientData("webauthn.get", challenge, origin);
             var authData = AssertionData(rpId, 1);
             var signed = authData.Concat(SHA256.HashData(WebAuthnProofs.Decode(clientData))).ToArray();
             var signature = key.SignData(signed, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
             var proof = new PasskeyAssertionProof(idEncoded, clientData, WebAuthnProofs.Encode(authData), WebAuthnProofs.Encode(signature));
-            var login = store.Login("owner", password, "client", requireSecondFactor: true, passkey: proof, origin: origin, rpId: rpId);
+            var login = store.Login("viewer", password, "client", requireSecondFactor: true, passkey: proof, origin: origin, rpId: rpId);
             Assert.False(store.AuthenticateSession(login.SessionToken)!.Session.SecondFactorEnrollmentOnly);
             var stepChallenge = store.BeginPasskeyStepUp(store.AuthenticateSession(login.SessionToken)!);
             var stepClientData = ClientData("webauthn.get", stepChallenge, origin);
@@ -165,20 +431,21 @@ public sealed class SecondFactorSecurityTests
             Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
                 () => store.RevokeOtherSessions(store.AuthenticateSession(login.SessionToken)!, login.User.Id)).Code);
             Assert.Equal("passkey-challenge-expired", Assert.Throws<SecurityOperationException>(
-                () => store.Login("owner", password, "client", requireSecondFactor: true, passkey: proof, origin: origin, rpId: rpId)).Code);
+                () => store.Login("viewer", password, "client", requireSecondFactor: true, passkey: proof, origin: origin, rpId: rpId)).Code);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
-    private static AccessSecurityStore NewStore(string root)
+    private static AccessSecurityStore NewStore(string root, TimeProvider? clock = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["TaskRepository"] = root,
+            ["TaskRepository"] = Path.Combine(root, "workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(root, "secrets.kek"),
             ["Security:Profile"] = SecurityProfiles.Networked
         }).Build();
         return new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance,
-            new FakeTimeProvider(new DateTimeOffset(TestUtcNow)));
+            clock ?? new FakeTimeProvider(new DateTimeOffset(TestUtcNow)));
     }
 
     private static string ClientData(string type, string challenge, string origin)

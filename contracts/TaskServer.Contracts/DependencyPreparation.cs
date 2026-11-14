@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.TaskServer.Contracts;
 
@@ -32,7 +33,8 @@ public static class DependencyPreparationState
 
         var hash = ComputeLockHash(installRoot, present);
         var dependencyDirectory = Path.Combine(installRoot, DependencyDirectoryName);
-        if (!Directory.Exists(dependencyDirectory))
+        if (RequiresDependencyDirectory(installRoot, present)
+            && !Directory.Exists(dependencyDirectory))
             return Evidence(scope, "miss", "deps-dir-missing", hash, present, installRan);
 
         var marker = Path.Combine(installRoot, MarkerFileName);
@@ -61,6 +63,52 @@ public static class DependencyPreparationState
             || !Directory.Exists(installRoot))
             return;
         File.WriteAllText(Path.Combine(installRoot, MarkerFileName), lockHash);
+    }
+
+    /// <summary>
+    /// An empty npm lockfile may complete installation without creating
+    /// node_modules. Unknown or unreadable lockfile shapes require the directory
+    /// so a damaged install cannot be mistaken for a prepared scope.
+    /// </summary>
+    public static bool RequiresDependencyDirectory(
+        string installRoot,
+        IReadOnlyList<string> lockfiles)
+    {
+        foreach (var lockfile in lockfiles)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(installRoot, lockfile)));
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return true;
+                if (!root.TryGetProperty("lockfileVersion", out var version)
+                    || version.ValueKind != JsonValueKind.Number) return true;
+                if (HasEntries(root, "dependencies")) return true;
+                if (!root.TryGetProperty("packages", out var packages)) continue;
+                if (packages.ValueKind != JsonValueKind.Object) return true;
+                foreach (var package in packages.EnumerateObject())
+                {
+                    if (package.Name.Length > 0) return true;
+                    if (package.Value.ValueKind != JsonValueKind.Object) return true;
+                    if (HasEntries(package.Value, "dependencies")
+                        || HasEntries(package.Value, "devDependencies")
+                        || HasEntries(package.Value, "optionalDependencies")) return true;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool HasEntries(JsonElement value, string property)
+    {
+        if (value.ValueKind != JsonValueKind.Object
+            || !value.TryGetProperty(property, out var entries)) return false;
+        return entries.ValueKind != JsonValueKind.Object
+               || entries.EnumerateObject().MoveNext();
     }
 
     public static string ComputeLockHash(
@@ -134,6 +182,8 @@ public static class DependencyPreparationSkipPolicy
 public sealed class DependencyCacheSession
 {
     public const string IntegrityMarkerFileName = ".gate-cache-valid";
+    public const string CompletenessMarkerFileName = ".cache-complete";
+    public const string QuarantineDirectoryName = "quarantine";
 
     private readonly string _workspace;
     private readonly string _cacheRoot;
@@ -149,6 +199,10 @@ public sealed class DependencyCacheSession
     public bool SavedVerified { get; private set; }
     public long RestoredSizeBytes { get; private set; }
     public TimeSpan? RestoredAge { get; private set; }
+    public string? QuarantinedPath { get; private set; }
+    public string? QuarantineReason { get; private set; }
+
+    private string? _recordedCompleteness;
 
     private DependencyCacheSession(
         string workspace,
@@ -284,7 +338,310 @@ public sealed class DependencyCacheSession
     /// </summary>
     public IReadOnlyList<string> SaveVerified() => SaveCore(verified: true);
 
-    private IReadOnlyList<string> SaveCore(bool verified)
+    /// <summary>
+    /// AGT-3748: records what a complete install of every lockfile scope looks
+    /// like right after preparation succeeded: the stamped lockfile digest, the
+    /// top-level module count, and the <c>.bin</c> entries. Returns the reason
+    /// when the workspace is not a complete install, so nothing is recorded.
+    /// </summary>
+    public string? RecordComplete()
+    {
+        _recordedCompleteness = null;
+        var (fingerprint, reason) = Completeness(_workspace, requireWorkspaceLock: true);
+        if (fingerprint is null) return reason;
+        _recordedCompleteness = fingerprint;
+        return null;
+    }
+
+    /// <summary>
+    /// AGT-3748: saves the workspace only when it still is the complete install
+    /// <see cref="RecordComplete"/> saw. An interrupted or failed install, a
+    /// review step that removed or changed modules, or a quarantined session
+    /// never becomes the entry the next review restores.
+    /// </summary>
+    public IReadOnlyList<string> SaveComplete()
+    {
+        if (QuarantinedPath is not null)
+            return [Refused("quarantined")];
+        if (_recordedCompleteness is null)
+            return [Refused("install-not-complete")];
+        var (current, reason) = Completeness(_workspace, requireWorkspaceLock: true);
+        if (current is null)
+            return [Refused(reason ?? "install-not-complete")];
+        if (!string.Equals(current, _recordedCompleteness, StringComparison.Ordinal))
+            return [Refused("workspace-changed-after-prepare")];
+        return SaveCore(verified: false, completeness: current);
+    }
+
+    /// <summary>
+    /// AGT-3748: claims the entry with one rename (a concurrent prepare then
+    /// sees a miss, never a half-moved tree), checks its completeness marker
+    /// against the claimed tree and this workspace's lockfiles, and only then
+    /// moves the content in. A missing or mismatched marker is a miss and the
+    /// claimed entry is quarantined (moved aside with its reason).
+    /// </summary>
+    public IReadOnlyList<string> RestoreComplete()
+    {
+        var messages = new List<string>();
+        var contentRoot = Path.Combine(_cacheRoot, "content");
+        if (!Directory.Exists(contentRoot))
+        {
+            messages.Add($"dependency-cache restore repository={CacheKey} state=miss reason=no-entry");
+            return messages;
+        }
+
+        var claimed = Path.Combine(_cacheRoot, "content.restoring-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.Move(contentRoot, claimed);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            messages.Add(
+                $"dependency-cache restore repository={CacheKey} state=miss " +
+                $"reason=claimed-by-another-prepare detail={exception.GetType().Name}");
+            return messages;
+        }
+
+        RestoredSizeBytes = DirectorySize(claimed);
+        var markerPath = Path.Combine(claimed, CompletenessMarkerFileName);
+        RestoredAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(
+            File.Exists(markerPath) ? markerPath : claimed);
+        var refusal = CheckClaimed(claimed, markerPath);
+        // A complete entry for another lockfile is still a sound base for the
+        // install that now runs over it; only its stamp says lock-changed.
+        var lockChanged = refusal == "lock-changed";
+        if (refusal is not null && !lockChanged)
+        {
+            messages.Add($"dependency-cache restore refused repository={CacheKey} reason={refusal}");
+            messages.Add(MoveToQuarantine(claimed, "restore-" + refusal));
+            foreach (var message in messages) _log?.Invoke(message);
+            return messages;
+        }
+
+        foreach (var relative in CacheDirectories(claimed))
+        {
+            MoveDirectory(
+                ResolveWithin(claimed, relative),
+                ResolveWithin(_workspace, relative),
+                "restore",
+                relative,
+                messages);
+        }
+        foreach (var scope in _scopes)
+        {
+            var marker = Combine(scope.WorkingSubdir, DependencyPreparationState.MarkerFileName);
+            MoveFile(
+                ResolveWithin(claimed, marker),
+                ResolveWithin(_workspace, marker),
+                "restore",
+                marker,
+                messages);
+        }
+        DeleteBestEffort(claimed);
+        Restored = !lockChanged && messages.Any(message =>
+            message.Contains(" state=moved", StringComparison.Ordinal)
+            && !message.Contains(DependencyPreparationState.MarkerFileName, StringComparison.Ordinal));
+        var summary =
+            $"dependency-cache restore repository={CacheKey} scopes={_scopes.Count} " +
+            $"state={(Restored ? "restored" : "miss")}";
+        messages.Add(summary);
+        _log?.Invoke(summary);
+        return messages;
+    }
+
+    /// <summary>
+    /// AGT-3748: a review command lost a tool or module that the restored
+    /// entry should have carried. The restored dependency directories leave
+    /// the workspace for a quarantine folder with the reason beside them, so
+    /// neither this review's save nor a later restore can serve them again.
+    /// Nothing is deleted in place. Idempotent: a second call returns the
+    /// first quarantine.
+    /// </summary>
+    public IReadOnlyList<string> Quarantine(string reason)
+    {
+        if (QuarantinedPath is not null)
+            return [$"dependency-cache quarantine repository={CacheKey} state=already path={QuarantinedPath}"];
+        var holding = Path.Combine(_cacheRoot, "content.quarantining-" + Guid.NewGuid().ToString("N"));
+        var messages = new List<string>();
+        foreach (var relative in CacheDirectories(_workspace))
+        {
+            MoveDirectory(
+                ResolveWithin(_workspace, relative),
+                ResolveWithin(holding, relative),
+                "quarantine",
+                relative,
+                messages);
+        }
+        foreach (var scope in _scopes)
+        {
+            var marker = Combine(scope.WorkingSubdir, DependencyPreparationState.MarkerFileName);
+            MoveFile(
+                ResolveWithin(_workspace, marker),
+                ResolveWithin(holding, marker),
+                "quarantine",
+                marker,
+                messages);
+        }
+        Directory.CreateDirectory(holding);
+        messages.Add(MoveToQuarantine(holding, reason));
+        return messages;
+    }
+
+    private string? CheckClaimed(string claimed, string markerPath)
+    {
+        if (!File.Exists(markerPath)) return "completeness-marker-missing";
+        string recorded;
+        try
+        {
+            recorded = File.ReadAllText(markerPath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return "completeness-marker-unreadable";
+        }
+
+        var (actual, reason) = Completeness(claimed, requireWorkspaceLock: false);
+        if (actual is null) return reason;
+        if (!CoversRecorded(actual, recorded))
+            return "completeness-mismatch";
+
+        foreach (var scope in _scopes)
+        {
+            if (scope.Lockfiles.Count == 0) continue;
+            var installRoot = ResolveWithin(_workspace, scope.WorkingSubdir);
+            var present = scope.Lockfiles
+                .Where(name => File.Exists(Path.Combine(installRoot, name)))
+                .ToArray();
+            if (present.Length == 0) continue;
+            var expected = DependencyPreparationState.ComputeLockHash(installRoot, present);
+            if (!recorded.Contains($"scope={DisplayScope(scope.WorkingSubdir)} lockHash={expected} ",
+                    StringComparison.Ordinal))
+                return "lock-changed";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A claimed tree is complete when every recorded scope keeps its lock
+    /// stamp, at least its recorded top-level module count, and every recorded
+    /// <c>.bin</c> entry. Extra entries do not tear an install.
+    /// </summary>
+    private static bool CoversRecorded(string actual, string recorded)
+    {
+        static Dictionary<string, (string Lock, int Modules, string[] Bins)> Parse(string text)
+            => text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => line.StartsWith("scope=", StringComparison.Ordinal))
+                .Select(line => line.Split(' ')
+                    .Select(part => part.Split('=', 2))
+                    .ToDictionary(pair => pair[0], pair => pair.Length > 1 ? pair[1] : ""))
+                .ToDictionary(
+                    fields => fields.GetValueOrDefault("scope", ""),
+                    fields => (
+                        fields.GetValueOrDefault("lockHash", ""),
+                        int.TryParse(fields.GetValueOrDefault("modules"), out var count) ? count : int.MaxValue,
+                        fields.GetValueOrDefault("bins", "").Split(',', StringSplitOptions.RemoveEmptyEntries)),
+                    StringComparer.Ordinal);
+
+        if (!recorded.StartsWith("version=1\n", StringComparison.Ordinal)) return false;
+        var have = Parse(actual);
+        foreach (var (scope, want) in Parse(recorded))
+        {
+            if (!have.TryGetValue(scope, out var found)
+                || !string.Equals(found.Lock, want.Lock, StringComparison.Ordinal)
+                || found.Modules < want.Modules
+                || want.Bins.Except(found.Bins, StringComparer.Ordinal).Any())
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Completeness fingerprint of <paramref name="root"/>: one line per
+    /// lockfile scope with the stamped digest, the top-level module count, and
+    /// the sorted <c>.bin</c> entries. With <paramref name="requireWorkspaceLock"/>
+    /// the stamp must also match the lockfiles in <paramref name="root"/>.
+    /// </summary>
+    private (string? Fingerprint, string? Reason) Completeness(string root, bool requireWorkspaceLock)
+    {
+        var builder = new StringBuilder("version=1\n");
+        foreach (var scope in _scopes)
+        {
+            if (scope.Lockfiles.Count == 0) continue;
+            var installRoot = ResolveWithin(root, scope.WorkingSubdir);
+            if (requireWorkspaceLock)
+            {
+                var decision = DependencyPreparationState.Evaluate(installRoot, scope);
+                if (decision.Reason == "no-lockfile") continue;
+                if (decision.State != "hit") return (null, "install-" + decision.Reason);
+            }
+            var stampPath = Path.Combine(installRoot, DependencyPreparationState.MarkerFileName);
+            var modules = Path.Combine(installRoot, DependencyPreparationState.DependencyDirectoryName);
+            if (!File.Exists(stampPath)) return (null, "install-marker-missing");
+            if (!Directory.Exists(modules)) return (null, "install-deps-dir-missing");
+            string stamp;
+            int moduleCount;
+            string[] bins;
+            try
+            {
+                stamp = File.ReadAllText(stampPath).Trim();
+                moduleCount = Directory.EnumerateFileSystemEntries(modules)
+                    .Count(entry => !Path.GetFileName(entry).StartsWith('.'));
+                var binDirectory = Path.Combine(modules, ".bin");
+                bins = Directory.Exists(binDirectory)
+                    ? Directory.EnumerateFileSystemEntries(binDirectory)
+                        .Select(entry => Path.GetFileName(entry))
+                        .OrderBy(name => name, StringComparer.Ordinal)
+                        .ToArray()
+                    : [];
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return (null, "install-unreadable");
+            }
+            builder.Append($"scope={DisplayScope(scope.WorkingSubdir)} lockHash={stamp} ")
+                .Append($"modules={moduleCount} bins={string.Join(',', bins)}\n");
+        }
+        return (builder.ToString(), null);
+    }
+
+    private string MoveToQuarantine(string source, string reason)
+    {
+        var target = Path.Combine(
+            _cacheRoot,
+            QuarantineDirectoryName,
+            $"{DateTime.UtcNow:yyyyMMddTHHmmssZ}-{Guid.NewGuid().ToString("N")[..8]}");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            Directory.Move(source, target);
+            File.WriteAllText(
+                Path.Combine(target, "quarantine-reason.txt"),
+                $"reason={reason}\nquarantinedAtUtc={DateTimeOffset.UtcNow:O}\n");
+            QuarantinedPath = target;
+            QuarantineReason = reason;
+            var message = $"dependency-cache quarantined repository={CacheKey} reason={reason} path={target}";
+            _log?.Invoke(message);
+            return message;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            var message =
+                $"dependency-cache quarantine repository={CacheKey} state=failed " +
+                $"reason={reason} detail={exception.GetType().Name}";
+            _log?.Invoke(message);
+            return message;
+        }
+    }
+
+    private string Refused(string reason)
+    {
+        var message = $"dependency-cache save repository={CacheKey} state=refused reason={reason}";
+        _log?.Invoke(message);
+        return message;
+    }
+
+    private IReadOnlyList<string> SaveCore(bool verified, string? completeness = null)
     {
         var stopwatch = Stopwatch.StartNew();
         var messages = new List<string>();
@@ -316,6 +673,22 @@ public sealed class DependencyCacheSession
                 messages);
             movedAny |= outcome == MoveOutcome.Moved;
             failed |= outcome == MoveOutcome.Failed;
+        }
+
+        if (completeness is not null && movedAny && !failed)
+        {
+            try
+            {
+                Directory.CreateDirectory(stagingRoot);
+                File.WriteAllText(Path.Combine(stagingRoot, CompletenessMarkerFileName), completeness);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                failed = true;
+                messages.Add(
+                    $"dependency-cache save item={CompletenessMarkerFileName} state=failed " +
+                    $"reason={exception.GetType().Name}");
+            }
         }
 
         if (verified && movedAny && !failed)

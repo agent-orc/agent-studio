@@ -1,0 +1,167 @@
+<main class="team-view" [attr.data-testid]="personaId() === 'magazine' ? 'team-magazine-page' : personaId() ? 'persona-page' : 'team-page'">
+  <header class="team-header">
+    <div>
+      @if (personaId()) { <button type="button" class="team-link" (click)="open(null)">← Team</button> }
+      <p class="team-kicker">Workspace personas</p>
+      <h1>{{ personaId() === 'magazine' ? 'Magazine' : current()?.title ?? 'Team' }}</h1>
+      @if (current(); as person) { <p>{{ person.activation?.roleId ? roleLabel(person.activation!.roleId!) : roleLabel(person.aspect) }} · {{ person.id }}</p> }
+    </div>
+    <div class="team-actions">
+      @if (!personaId()) {
+        <label>Workspace <select data-testid="team-workspace" [value]="workspaceId()" (change)="selectWorkspace($any($event.target).value)">
+          @for (workspace of workspaces(); track workspace.id) { <option [value]="workspace.id">{{ workspace.displayName }}</option> }
+        </select></label>
+        <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label>
+        <button type="button" [appPendingButton]="busy() === 'Renew team grants'" [disabled]="!!busy()" (click)="action('renew-grants', 'Renew team grants', undefined, true)">Renew team grants</button>
+        <button type="button" [appPendingButton]="busy() === 'Stop all personas'" [disabled]="!!busy()" (click)="stopAll()" data-testid="team-stop-all">Stop all personas</button>
+        <button type="button" class="team-primary" (click)="tab.set('charter')" data-testid="team-activate">Activate persona</button>
+      } @else if (current(); as person) {
+        <button type="button" (click)="ask()" data-testid="persona-ask">Ask</button>
+        @if (person.activation?.state !== 'retired') { <button type="button" [disabled]="!!busy()" (click)="change(person, 'run-now')">Run now</button> }
+        @if (person.activation?.state !== 'retired') {
+          @if (person.activation?.state === 'paused') { <button type="button" [disabled]="!!busy()" (click)="change(person, 'resume')">Resume</button> }
+          @else { <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'pause')">Pause</button> }
+          <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'deactivate')">Deactivate</button>
+          <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'retire')">Retire</button>
+        }
+      }
+    </div>
+  </header>
+  @if (loading()) { <app-loading-surface kind="list" label="Loading team…" /> }
+  @if (error()) { <p class="team-error" role="alert">{{ error() }} <button type="button" (click)="load()">Retry</button></p> }
+  @if (personaId() === 'magazine') {
+    @if (workspaceId()) { <app-weekly-issue-view [workspaceId]="workspaceId()" /> }
+  } @else if (!personaId()) {
+    @if (workspaceId()) { <app-weekly-issue-view [workspaceId]="workspaceId()" [compact]="true" /> }
+    <section class="team-pool" aria-label="Weekly persona pool">
+      <div><span>Used</span><strong data-testid="team-used">{{ totals().used | number }}</strong></div>
+      <div><span>Allocated</span><strong data-testid="team-allocated">{{ totals().allocated | number }}</strong></div>
+      <div><span>Unallocated</span><strong data-testid="team-unallocated">{{ totals().unallocated | number }}</strong></div>
+      <div><span>Workspace pool limit</span><strong data-testid="team-pool">{{ totals().pool | number }}</strong></div>
+    </section>
+    @if (tab() === 'charter') {
+      <section class="team-catalogue"><h2>Activate a persona</h2><p>Activation requires an Owner step-up. Enter a verification code or use your passkey.</p><label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label>
+        @for (entry of entries(); track entry.id) {
+          @if (!entry.activation || entry.activation.state === 'inactive') {
+            <div class="team-row"><div><strong>{{ entry.title }}</strong><small>{{ roleLabel(entry.aspect) }} · {{ entry.descriptor.charter }}</small></div>
+              <button type="button" [disabled]="!!busy()" (click)="change(entry, 'activate')">Activate</button></div>
+          }
+        }
+        <button type="button" (click)="tab.set('feed')">Close</button>
+      </section>
+    }
+    @for (group of roleGroups(); track group.role) {
+      <section class="team-group"><h2>{{ roleLabel(group.role) }}</h2><div class="team-grid">
+        @for (card of group.cards; track card.entry.id) {
+          <article class="team-card" [class.team-card--critical]="card.highest !== null && card.highest >= 90" [attr.data-testid]="'team-card-' + card.entry.id">
+            <div class="team-card-heading"><button type="button" class="team-card-title" (click)="open(card.entry.id)">{{ card.entry.title }}</button>
+              <app-status-indicator [tone]="card.entry.activation?.state === 'active' ? 'success' : card.entry.activation?.state === 'shadow' ? 'info' : 'neutral'" [label]="card.entry.activation?.state ?? 'inactive'" /></div>
+            <p class="team-role">{{ card.entry.id }} · Rank: Probation</p>
+            <div class="team-meter-label"><span>Allowance</span><strong>{{ card.used | number }} / {{ card.allowance | number }}</strong></div>
+            <div class="team-meter" role="meter" [attr.aria-valuenow]="card.used" [attr.aria-valuemax]="card.allowance" aria-valuemin="0" aria-label="Weekly allowance"><span [style.width.%]="percent(card.used, card.allowance)"></span></div>
+            <dl><dt>Last report</dt><dd>{{ card.report ? (card.report.publishedAtUtc | date:'mediumDate') : 'None yet' }}</dd>
+              <dt>Reporting</dt><dd>{{ card.overdue ? 'Overdue' : 'On schedule' }}</dd>
+              <dt>Highest open</dt><dd [class.team-acute]="card.highest !== null && card.highest >= 90">{{ card.highest ?? 'None' }}</dd></dl>
+          </article>
+        }
+      </div></section>
+    }
+    @if (!loading() && cards().length === 0) { <p class="team-message">No personas are active in this workspace.</p> }
+  } @else if (current(); as person) {
+    <nav class="team-tabs" aria-label="Persona sections" data-testid="persona-tabs">
+      <app-segmented-control [options]="tabOptions" [value]="tab()" ariaLabel="Persona sections" (valueChange)="tab.set($event)" />
+    </nav>
+    @switch (tab()) {
+      @case ('feed') {
+        <div class="team-filters"><label>Sort <select [value]="sort()" (change)="sort.set($any($event.target).value)"><option value="importance">Importance</option><option value="time">Newest</option></select></label>
+          <label>Kind <select [value]="kind()" (change)="kind.set($any($event.target).value)"><option value="all">All</option><option value="finding">Findings</option><option value="proposal">Proposals</option><option value="decision-request">Decisions</option><option value="report-line">Report lines</option></select></label>
+          <label>State <select [value]="state()" (change)="state.set($any($event.target).value)"><option value="open">Open</option><option value="all">All</option><option value="deferred">Deferred</option><option value="resolved">Resolved</option><option value="accepted">Accepted</option><option value="rejected">Rejected</option></select></label></div>
+        <div class="team-list">@for (item of feed(); track item.id) {
+          <article class="team-item" [attr.data-testid]="'persona-item-' + item.id" [class.team-item--critical]="isOpenPersonaItem(item) && item.importance >= 90">
+            <span class="team-importance">{{ item.importance }}</span><div><h2>{{ item.title }}</h2><p>{{ item.body }}</p><small>{{ item.kind }} · {{ item.state }} · Impact {{ item.impact }} · Urgency {{ item.urgency }} · Confidence {{ item.confidence }} · Floor {{ item.floor }}</small></div>
+            @if (person.activation?.state !== 'retired' && item.kind === 'finding' && isOpenPersonaItem(item)) { <button type="button" [disabled]="!!busy()" (click)="decide(item, 'resolved')">Resolve</button> }
+          </article>
+        } @empty { <p class="team-message">No matching items.</p> }</div>
+      }
+      @case ('reports') { <div class="team-list">@for (report of personaReports(); track report.id) {
+        <article class="team-row"><div><h2>{{ report.template }} · {{ report.publishedAtUtc | date:'medium' }}</h2><p>{{ report.state }} · {{ report.reason }}</p><small>Sources read: {{ report.sourcesRead.join(', ') || 'None' }} · Missing: {{ report.sourcesMissing.join(', ') || 'None' }}</small>
+          @if (ratingFor(report.id); as rating) { <p>Owner rating: {{ rating === 'useful' ? 'Useful' : 'Not useful' }}</p> }
+          @else if (person.activation?.state !== 'retired') { <div><button type="button" [disabled]="!!busy()" (click)="rateReport(report, 'useful')">Useful</button><button type="button" [disabled]="!!busy()" (click)="rateReport(report, 'not-useful')">Not useful</button></div> }
+        </div></article>
+      } @empty { <p class="team-message">No reports yet.</p> }</div> }
+      @case ('proposals') { <div class="team-list">@for (item of proposals(); track item.id) {
+        <article class="team-row"><div><h2>{{ item.title }}</h2><p>{{ item.body }}</p><small>{{ item.state }}@if (item.deferredUntilUtc) { until {{ item.deferredUntilUtc | date:'mediumDate' }} } · Importance {{ item.importance }} · Dossier {{ item.dossierKey }} {{ item.dossierSection }}</small></div>
+          @if (person.activation?.state !== 'retired' && isOpenPersonaItem(item)) {
+          <div class="team-actions"><button type="button" [disabled]="!!busy()" (click)="decide(item, 'accepted')">Accept</button><button type="button" [disabled]="!!busy()" (click)="decide(item, 'rejected')">Reject</button><button type="button" [disabled]="!!busy()" (click)="decide(item, 'deferred')">Defer</button></div>
+          } @else if (item.promotedTaskKey) { <small>Promoted to {{ item.promotedTaskKey }}</small> }</article>
+      } @empty { <p class="team-message">No proposals yet.</p> }</div> }
+      @case ('budget') { <section class="team-pool"><div><span>Used this week</span><strong>{{ currentCard()?.used ?? 0 | number }}</strong></div><div><span>Allowance</span><strong>{{ currentCard()?.allowance ?? 0 | number }}</strong></div><div><span>Team pool</span><strong>{{ totals().pool | number }}</strong></div></section> }
+      @case ('sheet') {
+        <section class="team-sheet" data-testid="persona-sheet">
+          <div class="team-sheet-heading"><div><h2>Character sheet</h2><p>Role: {{ person.activation?.roleId || person.id }} · Activation revision {{ person.activation?.activationRevision }}</p></div>
+            @if (sheet(); as record) { <div><strong>{{ record.rank }}</strong><p>{{ record.eligibility }} · Experience {{ record.experience | number:'1.1-1' }}</p></div> }</div>
+          @if (person.activation?.state !== 'retired' && editedAttributes(); as attributes) {
+            <div class="team-sheet-editor"><h3>Attributes</h3><p>Saving creates a new activation revision and requires Owner verification.</p>
+              @if (attributes.focus) { <fieldset><legend>Focus weights · {{ focusTotal() }} / 100</legend><p>Controls the share of grounds and report items by area. An area at zero is excluded.</p>
+                <div class="team-sheet-focus">@for (area of attributes.focus | keyvalue; track area.key) {
+                  <label>{{ roleLabel(area.key) }} <input type="number" min="0" max="100" [value]="area.value" (input)="editFocus(area.key, +$any($event.target).value)" /></label>
+                }</div>
+                @if (focusTotal() !== 100) { <small role="alert">Focus weights must sum to 100.</small> }
+              </fieldset> }
+              <div class="team-sheet-controls">
+                <label>Autonomy <small>Controls granted operations: observe, propose, or manager decisions within grants.</small><select [value]="attributes.autonomy" (change)="editAttribute('autonomy', $any($event.target).value)"><option value="A0">A0 · Observe</option><option value="A1">A1 · Propose</option>@if (person.kind === 'manager') { <option value="A2">A2 · Decide</option> }</select></label>
+                <label>Risk appetite <small>Controls whether proposals may be reversible in one area, cross area, or structural.</small><select [value]="attributes.riskAppetite" (change)="editAttribute('riskAppetite', $any($event.target).value)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+                <label>Thoroughness <small>Sets evidence depth and thinking level; 4 or 5 permits a weekly investigation.</small><input type="number" min="1" max="5" [value]="attributes.thoroughness" (input)="editAttribute('thoroughness', +$any($event.target).value)" /></label>
+                <label>Signal threshold <small>Minimum importance for reports; verified fact floors always pass.</small><input type="number" min="0" max="100" [value]="attributes.signalThreshold" (input)="editAttribute('signalThreshold', +$any($event.target).value)" /></label>
+              </div>
+              <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label>
+              <button type="button" class="team-primary" [appPendingButton]="busy() === 'Save attributes'" [disabled]="!canSaveAttributes()" (click)="saveAttributes(person)">Save attributes</button>
+            </div>
+          }
+          @if (sheet(); as record) {
+            @if (record.value; as value) {
+              <section class="team-sheet-window" data-testid="persona-value"><h3>Value</h3>
+                <dl><dt>Weighted accepted value</dt><dd>{{ value.weightedAcceptedPer100kTokens ?? 'Unavailable' }} per 100,000 tokens · team median {{ value.teamMedianWeightedPer100kTokens ?? 'Unavailable' }}</dd>
+                  <dt>Cost per accepted finding</dt><dd>{{ value.costPerAcceptedUsd ?? 'Unavailable' }} USD · team median {{ value.teamMedianCostPerAcceptedUsd ?? 'Unavailable' }} USD</dd>
+                  <dt>Noise</dt><dd>{{ value.noisePercent ?? 'Unavailable' }}% ({{ value.noiseNumerator }} / {{ value.raised }} raised)</dd>
+                  <dt>Owner ratings</dt><dd>{{ value.useful }} Useful · {{ value.notUseful }} Not useful</dd></dl>
+                <h4>Misses</h4><ul>@for (miss of value.misses; track miss.source + miss.sourceId) { <li><a [href]="miss.url">{{ miss.name }}</a> · {{ miss.importance }} · first raised by {{ miss.source }}</li> } @empty { <li>None recorded.</li> }</ul>
+                <h4>Promoted card outcomes</h4><ul>@for (outcome of value.outcomes; track outcome.itemId) { <li><a [href]="outcome.url">{{ outcome.title }}</a> · {{ outcome.taskKey }} · {{ outcome.outcome }}</li> } @empty { <li>No promoted cards.</li> }</ul>
+                <h4>Review suggestions</h4><p>The Owner decides whether to act.</p><ul>@for (suggestion of value.suggestions; track suggestion.kind + suggestion.reason) { <li>{{ suggestion.reason }}</li> } @empty { <li>No change suggested.</li> }</ul>
+              </section>
+            }
+            <h3>Derived record</h3><div class="team-sheet-windows">@for (window of record.windows; track window.window) {
+              <article class="team-sheet-window"><h4>{{ window.window }}</h4>
+                <dl><dt>Findings</dt><dd>{{ window.raised }} raised · {{ window.accepted }} accepted · {{ window.rejected }} rejected · {{ window.duplicate }} duplicate · {{ window.open }} open</dd>
+                  <dt>Acceptance</dt><dd>@if (window.acceptance.percent === null) { too few decisions } @else { {{ window.acceptance.percent }}% } ({{ window.acceptance.numerator }} / {{ window.acceptance.denominator }})</dd>
+                  <dt>Cards and outcomes</dt><dd>{{ window.cards.promoted }} promoted · {{ window.cards.completed }} completed · {{ window.cards.open }} open · {{ window.cards.rejectedInReview }} rejected in review · {{ window.cards.archivedWithoutDelivery }} archived without delivery</dd>
+                  <dt>Tokens</dt><dd>{{ window.tokens | number }}</dd><dt>Cost</dt><dd>${{ window.pricedCostUsd | number:'1.2-6' }} priced · {{ window.unknownPriceSessions }} price unknown sessions</dd>
+                  <dt>Cost per accepted</dt><dd>@if (window.costPerAcceptedUsd === null) { {{ window.tooFewDecisions ? 'too few decisions' : 'Unavailable' }} ({{ window.accepted }} accepted) } @else { ${{ window.costPerAcceptedUsd | number:'1.2-6' }} ({{ window.accepted }} accepted) }</dd>
+                  <dt>Response</dt><dd>Median {{ window.medianResponseHours ?? 'Unavailable' }} h · p90 {{ window.p90ResponseHours ?? 'Unavailable' }} h</dd>
+                  <dt>Punctuality</dt><dd>@if (window.punctuality.percent === null) { too few decisions } @else { {{ window.punctuality.percent }}% } ({{ window.punctuality.numerator }} / {{ window.punctuality.denominator }} reports due)</dd>
+                  <dt>Calibration</dt><dd>{{ window.calibration ?? 'No adjustments' }}</dd><dt>Misses</dt><dd>{{ window.misses }} recorded</dd></dl>
+              </article>
+            }</div>
+            @if (record.value?.showRevisionComparison) { <h3>Before and after by activation revision</h3> } @else { <h3>By activation revision</h3> }
+            <div class="team-sheet-windows">@for (revision of record.revisions; track revision.activationRevision) {
+              <article class="team-sheet-window"><h4>Revision {{ revision.activationRevision || 'legacy' }}</h4>
+                <dl><dt>Findings</dt><dd>{{ revision.raised }} raised · {{ revision.accepted }} accepted · {{ revision.rejected }} rejected · {{ revision.duplicate }} duplicate · {{ revision.open }} open</dd>
+                  <dt>Acceptance</dt><dd>@if (revision.acceptance.percent === null) { too few decisions } @else { {{ revision.acceptance.percent }}% } ({{ revision.acceptance.numerator }} / {{ revision.acceptance.denominator }})</dd>
+                  <dt>Cards and outcomes</dt><dd>{{ revision.cards.promoted }} promoted · {{ revision.cards.completed }} completed · {{ revision.cards.open }} open · {{ revision.cards.rejectedInReview }} rejected in review · {{ revision.cards.archivedWithoutDelivery }} archived without delivery</dd>
+                  <dt>Tokens</dt><dd>{{ revision.tokens | number }}</dd><dt>Cost</dt><dd>${{ revision.pricedCostUsd | number:'1.2-6' }} priced · {{ revision.unknownPriceSessions }} price unknown sessions</dd>
+                  <dt>Cost per accepted</dt><dd>@if (revision.costPerAcceptedUsd === null) { {{ revision.tooFewDecisions ? 'too few decisions' : 'Unavailable' }} ({{ revision.accepted }} accepted) } @else { ${{ revision.costPerAcceptedUsd | number:'1.2-6' }} ({{ revision.accepted }} accepted) }</dd>
+                  <dt>Response</dt><dd>Median {{ revision.medianResponseHours ?? 'Unavailable' }} h · p90 {{ revision.p90ResponseHours ?? 'Unavailable' }} h</dd>
+                  <dt>Punctuality</dt><dd>@if (revision.punctuality.percent === null) { too few decisions } @else { {{ revision.punctuality.percent }}% } ({{ revision.punctuality.numerator }} / {{ revision.punctuality.denominator }} reports due)</dd>
+                  <dt>Calibration</dt><dd>{{ revision.calibration ?? 'No adjustments' }}</dd><dt>Misses</dt><dd>{{ revision.misses }} recorded</dd></dl>
+              </article>
+            }</div>
+          }
+        </section>
+      }
+      @case ('charter') { <section class="team-charter"><h2>Charter</h2><p>{{ person.descriptor.charter }}</p><p>Role: {{ person.activation?.roleId || person.id }} · Revision: {{ person.activation?.descriptorRevision || person.revision }}</p>
+        @if (person.activation?.state !== 'retired' && person.adoptableRevision) { <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label><button type="button" [disabled]="!!busy()" (click)="change(person, 'adopt')">Adopt revision {{ person.adoptableRevision }}</button> }
+        <h2>Revision history</h2><ul>@for (event of person.activation?.history ?? []; track $index) { <li>{{ event.at | date:'medium' }} · {{ event.action }} · {{ event.descriptorRevision }}</li> }</ul></section> }
+      @case ('history') { <div class="team-list">@for (event of person.activation?.history ?? []; track $index) { <div class="team-row"><span>{{ event.at | date:'medium' }}</span><strong>{{ event.action }}</strong><span>{{ event.state }}</span></div> } @empty { <p class="team-message">No history yet.</p> }</div> }
+    }
+  } @else if (!loading()) { <p class="team-message">Persona not found in this workspace.</p> }
+</main>

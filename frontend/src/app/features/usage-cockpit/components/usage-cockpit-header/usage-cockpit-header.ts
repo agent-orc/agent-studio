@@ -4,6 +4,7 @@ import type { MenuItemClickEvent } from '../../../../components/menu/menu.types'
 
 export interface CockpitNavItem { id: string; label: string; inlineFrom: 'tablet' | 'desktop' | null; }
 export interface UsageDetailRequest { section: 'cli' | 'cost' | 'details'; cliId: string | null; }
+const CLOSED_MENU_ITEMS: { kind: 'row'; id: string; label: string }[] = [];
 
 /** One navigation row; compact destinations live in the text-only More menu. */
 @Component({
@@ -19,6 +20,7 @@ export class StudioNavigationHeaderComponent {
   private readonly moreTrigger = viewChild<ElementRef<HTMLButtonElement>>('moreTrigger');
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   menuItems() {
+    if (!this.moreOpen()) return CLOSED_MENU_ITEMS;
     const width = this.host.nativeElement.clientWidth;
     return this.navItems().filter(item => item.inlineFrom === null
       || (item.inlineFrom === 'desktop' ? width < 1100 : width < 720))

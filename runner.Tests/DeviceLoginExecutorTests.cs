@@ -693,6 +693,99 @@ public sealed class DeviceLoginExecutorTests
     }
 
     [Fact]
+    public async Task Claude_still_waiting_after_the_code_counts_as_a_rejected_code_and_is_stopped()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 9, 9, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var pidFile = Path.Combine(directory, "cli.pid");
+            var tokenFile = DeviceLoginExecutor.ClaudeTokenPath(directory);
+            var cli = CodeWaitingClaude(directory, PastedCode(), "sk-ant-" + new string('r', 32), pidFile,
+                waitAfterWrongCode: true);
+            var takes = 0;
+            var run = new DeviceLoginExecutor(cli, tokenFile, _ => Task.FromResult(true), clock, provider: "claude",
+                takeCode: _ => { Interlocked.Increment(ref takes); return Task.FromResult<string?>(PastedCode()); })
+                .RunAsync((_, _) => Task.CompletedTask, default);
+            var pid = await ReadPidAsync(pidFile);
+            await WaitUntilAsync(() =>
+            {
+                clock.Advance(DeviceLoginPoller.PollInterval);
+                return Volatile.Read(ref takes) > 0;
+            });
+            Assert.False(run.IsCompleted);
+
+            // The CLI answered the code with its retry prompt; nothing ends it but the acceptance window.
+            await WaitUntilAsync(() =>
+            {
+                clock.Advance(DeviceLoginPoller.PollInterval);
+                return run.IsCompleted;
+            });
+            var result = await run;
+            Assert.Equal("failed", result.Result);
+            Assert.Equal(DeviceLoginExecutor.CodeRejectedDetail, result.Detail);
+            Assert.Equal(1, Volatile.Read(ref takes));
+            await WaitUntilAsync(() => !Alive(pid));
+            Assert.False(File.Exists(tokenFile));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Tty_only_claude_fake_refuses_a_code_on_a_piped_stdin()
+    {
+        // Proves the fake models the real CLI: the pipe that AGT-3243 first used cannot deliver a code.
+        if (OperatingSystem.IsWindows()) return;
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var code = PastedCode();
+            var token = "sk-ant-" + new string('n', 32);
+            var info = new ProcessStartInfo(CodeWaitingClaude(directory, code, token))
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            info.ArgumentList.Add("setup-token");
+            using var process = Process.Start(info)!;
+            var output = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+            var error = process.StandardError.ReadToEndAsync(CancellationToken.None);
+            try
+            {
+                await process.StandardInput.WriteAsync(code + "\n");
+                process.StandardInput.Close();
+            }
+            catch (IOException)
+            {
+                Assert.True(process.HasExited); // The fake exited before the write.
+            }
+            await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(2, process.ExitCode);
+            Assert.Contains("Raw mode is not supported", await error);
+            Assert.DoesNotContain(token, await output, StringComparison.Ordinal);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public void Extracts_the_claude_url_and_token_from_terminal_ui_output()
+    {
+        var url = "https://claude.com/cai/oauth/authorize?code=true&client_id=studio&state=s";
+        var hyperlink = "\u001b]8;;" + url + "\u001b\\" + url + "\u001b]8;;\u001b\\";
+        Assert.Equal(url, DeviceLoginExecutor.SafeVerificationUrl("\u001b[?25l\u001b[2K\u001b[1G" + hyperlink, "claude"));
+        Assert.Equal(url, DeviceLoginExecutor.SafeVerificationUrl("\u001b]8;;" + url + "\u0007" + url, "claude"));
+        var token = "sk-ant-" + new string('u', 32);
+        Assert.Equal(token, DeviceLoginExecutor.ClaudeToken("\u001b[1m" + token + "\u001b[22m\u001b[?25h"));
+    }
+
+    [Fact]
     public async Task Claude_login_waiting_for_a_code_times_out_and_stops_the_cli()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -790,21 +883,30 @@ public sealed class DeviceLoginExecutorTests
     }
 
     /// <summary>
-    /// A headless <c>claude setup-token</c>: prints the authorize URL, waits for one stdin line and
-    /// prints a setup token only for the expected code. It fails if stdin stays open after that line.
+    /// A headless <c>claude setup-token</c>: refuses to run unless stdin and stdout are a terminal,
+    /// as the Ink prompt of the real CLI does, turns echo off like its masked input, prints the
+    /// authorize URL, reads one line and prints a setup token only for the expected code. A wrong
+    /// code either exits with an error or, like the real retry prompt, keeps waiting.
     /// </summary>
-    private static string CodeWaitingClaude(string directory, string expectedCode, string token, string? pidFile = null)
+    private static string CodeWaitingClaude(string directory, string expectedCode, string token,
+        string? pidFile = null, bool waitAfterWrongCode = false)
     {
         var cli = Path.Combine(directory, "fake-claude-setup-token");
         File.WriteAllText(cli, "#!/bin/sh\n"
             + (pidFile is null ? "" : $"echo $$ > '{pidFile}'\n")
             + "[ \"$*\" = setup-token ] || exit 9\n"
+            + "if [ ! -t 0 ] || [ ! -t 1 ]; then\n"
+            + "  echo 'Raw mode is not supported on the current process.stdin, which Ink uses as input stream by default.' >&2\n"
+            + "  exit 2\nfi\n"
+            + "stty -echo\n"
             + "printf '%s\\n' 'Browser did not open? Use the url below to sign in:' "
             + "'https://claude.com/cai/oauth/authorize?code=true&client_id=studio&response_type=code&state=s1'\n"
             + "printf 'Paste code here if prompted > '\n"
             + "IFS= read -r line || exit 3\n"
-            + $"[ \"$line\" = '{expectedCode}' ] || {{ echo 'OAuth error: Invalid code'; exit 1; }}\n"
-            + "if IFS= read -r extra; then exit 4; fi\n"
+            + $"if [ \"$line\" != '{expectedCode}' ]; then\n"
+            + "  echo 'OAuth error: Invalid code'\n"
+            + (waitAfterWrongCode ? "  echo 'Press Enter to retry.'\n  exec sleep 60\n" : "  exit 1\n")
+            + "fi\n"
             + $"printf '\\n%s\\n' '{token}'\n");
         File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         return cli;

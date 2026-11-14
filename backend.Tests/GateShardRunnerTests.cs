@@ -140,6 +140,33 @@ public sealed class GateShardRunnerTests : IDisposable
         Assert.Null(killed.Rerun);
     }
 
+    [SkippableTheory]
+    [InlineData("hang-after-result", "completed report but host still alive")]
+    [InlineData("hang-mid-test", "no result or output")]
+    public async Task A_stalled_test_host_is_ended_with_named_shard_evidence(string mode, string kind)
+    {
+        Skip.If(OperatingSystem.IsWindows(), "The fake dotnet is a POSIX shell script.");
+        File.WriteAllText(Mode, mode);
+        var result = await RunGateAsync(shardLanes: 2, fastHang: true);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
+        Assert.True(result.IsInfrastructureFailure);
+        Assert.False(result.RetryPerformed);
+        var shard = Assert.Single(Assert.Single(result.TestShards).Shards,
+            item => item.Detail == GateShardDetails.InfrastructureHang);
+        Assert.Equal(GateShardOutcomes.Infrastructure, shard.Outcome);
+        Assert.NotNull(shard.Hang);
+        Assert.Equal(kind, shard.Hang.Kind);
+        Assert.True(shard.Hang.StallMs >= 500);
+        Assert.Contains("Product.Tests.FlakyTests.Sometimes", shard.Hang.Tests);
+        Assert.Contains($"shard {shard.Index + 1}/3", result.Reason);
+        Assert.Contains("Product.Tests.FlakyTests.Sometimes", result.Reason);
+        Assert.Contains("infrastructure hang", result.Output);
+        Assert.All(result.Processes.Where(process => process.Phase == BuildTestGateRunner.TestShardPhase
+            && process.ShardHang is not null), process => Assert.True(process.TimedOut));
+    }
+
     [SkippableFact]
     public async Task A_secondary_host_part_runs_only_its_own_shards_and_skips_other_test_steps()
     {
@@ -286,13 +313,18 @@ public sealed class GateShardRunnerTests : IDisposable
         Assert.Equal(expectedSource, planned?.Plan.CountSource);
     }
 
-    private Task<BuildTestGateResult> RunGateAsync(int shardLanes, GateShardPart? part = null)
+    private Task<BuildTestGateResult> RunGateAsync(int shardLanes, GateShardPart? part = null, bool fastHang = false)
     {
         var runner = new BuildTestGateRunner(
             NullLogger<BuildTestGateRunner>.Instance,
             BuildTestMachineGateMode.BypassForHermeticTest,
             Path.Combine(_root, "cache"),
             shardLanes: shardLanes);
+        if (fastHang)
+        {
+            runner.ShardIdleBoundForTesting = TimeSpan.FromMilliseconds(1500);
+            runner.ShardCompletedGraceForTesting = TimeSpan.FromMilliseconds(500);
+        }
         return runner.RunAsync(
             new BuildTestGateRequest(Repository, null, "test", RequireExactSubject: false)
             {
@@ -383,6 +415,12 @@ public sealed class GateShardRunnerTests : IDisposable
             if [ "$mode" = oom ]; then case "$run" in *GammaTests*) exit 137;; esac; fi
             if [ "$mode" = early1 ] && [ -n "$settings" ]; then case "$run" in *FlakyTests*) exit 1;; esac; fi
             if [ "$mode" = zero ] && [ -n "$settings" ]; then case "$run" in *FlakyTests*) run="";; esac; fi
+            if [ "$mode" = hang-mid-test ] && [ -n "$settings" ]; then
+              case "$run" in *FlakyTests*)
+                echo "Starting Product.Tests.FlakyTests.Sometimes"
+                while :; do sleep 1; done;;
+              esac
+            fi
             # nomatch: the targeted re-run's filter matches nothing, VSTest still exits 0.
             if [ "$mode" = nomatch ] && [ -z "$settings" ]; then run=""; fi
             failed=""; summary=Completed; aborted=""
@@ -411,6 +449,9 @@ public sealed class GateShardRunnerTests : IDisposable
             if [ -n "$aborted" ]; then echo "The active test run was aborted. Reason: Test host process crashed"; echo "Test Run Aborted."; fi
             if [ -n "$prefix" ] && [ -n "$dir" ]; then
               echo "<?xml version=\"1.0\" encoding=\"utf-8\"?><TestRun><Results>$results</Results><TestDefinitions>$definitions</TestDefinitions><ResultSummary outcome=\"$summary\" /></TestRun>" > "$dir/${prefix}_1.trx"
+            fi
+            if [ "$mode" = hang-after-result ] && [ -n "$settings" ]; then
+              case "$run" in *FlakyTests*) while :; do sleep 1; done;; esac
             fi
             if [ -n "$failed" ]; then exit 1; fi
             exit 0

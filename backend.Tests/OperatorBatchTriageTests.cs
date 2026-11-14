@@ -321,19 +321,34 @@ public sealed class OperatorBatchTriageTests : IDisposable
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var alpha = Manifest("alpha", ["alpha-1", "alpha-2"]);
         store.CloseManifest(alpha);
-        store.AppendState(new BatchGateState(alpha.BatchId, alpha.MembershipDigest, BatchPhase.Running,
+        BatchGateStates.Reach(store, new BatchGateState(alpha.BatchId, alpha.MembershipDigest, BatchPhase.Running,
             CandidateSha, 1, _clock));
 
         var red = Manifest("beta", ["beta-1", "beta-2", "beta-3"]);
         store.CloseManifest(red);
-        store.AppendState(new BatchGateState(red.BatchId, red.MembershipDigest, BatchPhase.Red,
+        BatchGateStates.Reach(store, new BatchGateState(red.BatchId, red.MembershipDigest, BatchPhase.Red,
             CandidateSha, 1, _clock, "deterministic suite red"));
         var child = Manifest("beta", ["beta-1", "beta-2"], parent: red.BatchId);
         store.CloseManifest(child);
-        store.AppendState(new BatchGateState(child.BatchId, child.MembershipDigest, BatchPhase.Running,
+        BatchGateStates.Reach(store, new BatchGateState(child.BatchId, child.MembershipDigest, BatchPhase.Running,
             CandidateSha, 1, _clock));
+        var solo = Manifest("beta", ["beta-3"], parent: red.BatchId);
+        store.CloseManifest(solo);
+        var runId = Guid.NewGuid().ToString("N");
+        var evidence = Path.Combine(_workspace, runId + ".jsonl");
+        File.WriteAllText(evidence, "deterministic test failure");
+        BatchGateStates.Reach(store, new BatchGateState(solo.BatchId, solo.MembershipDigest,
+            BatchPhase.Assembled, CandidateSha, 1, _clock));
+        store.RecordRun(new BatchGateRunRecord(runId, solo.BatchId, solo.MembershipDigest,
+            solo.BaseSha, CandidateSha, solo.Scope.GateProfile,
+            solo.Scope.GateProfileDigest, "fixture", 1, ["echo test"], _clock, evidence));
+        store.RecordVerdict(new BatchGateRunVerdict(runId, solo.BatchId, solo.MembershipDigest,
+            CandidateSha, solo.Scope.GateProfileDigest, "red", "DeterministicSuiteRed",
+            evidence, _clock));
+        BatchGateStates.Reach(store, new BatchGateState(solo.BatchId, solo.MembershipDigest,
+            BatchPhase.Red, CandidateSha, 1, _clock));
         store.RecordIsolationFinding(new BatchGateIsolationFinding("beta", red.BatchId, "beta-3", "run-beta-3",
-            ResultSha, BaseSha, "proven-red", "evidence", _clock));
+            ResultSha, BaseSha, "proven-red", evidence, _clock, solo.BatchId, runId));
         return new Flights(alpha.BatchId, red.BatchId, child.BatchId);
     }
 

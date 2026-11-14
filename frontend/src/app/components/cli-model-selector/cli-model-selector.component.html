@@ -4,7 +4,7 @@
   class="model-selector"
   [class.model-selector--disabled]="effectiveDisabledReason() !== null"
   [class.model-selector--open]="pickerOpen()"
-  [attr.data-testid]="triggerTestid()"
+  [attr.data-testid]="triggerTestid()" [attr.data-model]="model() || null" [attr.data-thinking-level]="thinkingLevel() || null"
   [attr.aria-label]="ariaLabel()"
   aria-haspopup="dialog"
   [attr.aria-expanded]="pickerOpen()"

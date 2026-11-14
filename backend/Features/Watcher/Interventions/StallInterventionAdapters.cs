@@ -495,7 +495,7 @@ public sealed class BatchGateInterventionControl(BatchGateStore store, BatchGate
 
     /// <summary>Projects with a formed, assembling, running or publishing batch.</summary>
     public static IReadOnlySet<string> ActiveBatchProjects(BatchGateStore store)
-        => store.ListManifests().Where(manifest => HasState(store, manifest.BatchId)
+        => store.ListManifests().Where(manifest => store.HasState(manifest.BatchId)
                 && store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Assembling
                     or BatchPhase.Assembled or BatchPhase.Running or BatchPhase.Publishing)
             .Select(manifest => manifest.Scope.Project).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -506,12 +506,6 @@ public sealed class BatchGateInterventionControl(BatchGateStore store, BatchGate
         var matches = jobs.Where(job => string.Equals(TaskIdentity.AuthorityKey(job), key, StringComparison.Ordinal)
             || string.Equals(job.Id, key, StringComparison.Ordinal)).Take(2).ToArray();
         return matches.Length == 1 ? matches[0].State : null;
-    }
-
-    private static bool HasState(BatchGateStore store, string batchId)
-    {
-        var path = Path.Combine(store.BatchDirectory(batchId), "state");
-        return Directory.Exists(path) && Directory.EnumerateFiles(path, "*.json").Any();
     }
 }
 

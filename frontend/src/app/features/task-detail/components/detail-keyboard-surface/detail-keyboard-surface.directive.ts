@@ -48,12 +48,18 @@ export class DetailKeyboardSurfaceDirective implements AfterViewInit {
     if (!this.detailKeyboardInitialFocus()) return;
     queueMicrotask(() => {
       const host = this.host.nativeElement;
-      const detail = host.closest('app-task-detail, app-job-detail') ?? host.parentElement;
+      const detail = host.closest('.detail__panes, app-task-detail, app-job-detail') ?? host.parentElement;
       const prompt = detail?.querySelector<HTMLElement>('[data-testid="pane-prompt-body"]') ?? null;
       const protocol = detail?.querySelector<HTMLElement>('[data-testid="pane-protocol-body"]') ?? null;
       const promptOwnsRoute = prompt?.dataset['activeTab'] === 'timeline'
         || prompt?.dataset['activeTab'] === 'evidence';
-      const preferred = promptOwnsRoute ? prompt : (protocol ?? prompt);
+      const isVisible = (candidate: HTMLElement | null): boolean => {
+        for (let node: HTMLElement | null = candidate; node && node !== detail; node = node.parentElement) {
+          if (node.hidden || node.style.display === 'none' || getComputedStyle(node).display === 'none') return false;
+        }
+        return candidate !== null;
+      };
+      const preferred = promptOwnsRoute && isVisible(prompt) ? prompt : (isVisible(protocol) ? protocol : prompt);
       if (preferred === host) this.focus();
     });
   }

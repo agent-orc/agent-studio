@@ -37,6 +37,12 @@
   outline-offset: 1px;
 }
 
+.model-migration__dot--label {
+  width: auto;
+  padding: 0 var(--studio-spacing-1);
+  border-radius: 8px;
+}
+
 .model-migration__dot-glyph {
   transform: translateY(-0.5px);
 }

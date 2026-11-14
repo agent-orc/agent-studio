@@ -1,0 +1,12 @@
+ RUN  v4.1.11 /repo/frontend
+
+ ✓ |frontend| src/app/utils/ansi-text.spec.ts (2 tests) 5ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  03:06:59
+   Duration  1.12s (transform 40ms, setup 272ms, import 5ms, tests 5ms, environment 685ms)
+
+JSON report written to /tmp/agent-studio-vitest-hvzEqZ/report.json
+Test Files  1 passed (1)
+Tests  2 passed (2)

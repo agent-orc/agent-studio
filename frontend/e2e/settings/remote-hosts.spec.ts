@@ -75,6 +75,11 @@ async function stubBackgroundApis(page: Page) {
     { id: 'agent-runner-01', displayName: 'agent-runner-01', kind: 'service', registeredAt: now, lastSeenAt: now,
       runnerGitStatus: 'ready', runnerGitCheckedAt: now, runnerDaemonState: 'running', runnerActiveSlots: 0, runnerAvailableSlots: 2 },
   ]));
+  await page.route('**/api/host/filesystems', json({ host: 'studio-api', observedAt: now,
+    level: 'warning', reason: 'Instance data at /data has 12.0 GiB free.',
+    filesystems: [{ purpose: 'instance data', path: '/data', freeBytes: 12 * 1073741824,
+      totalBytes: 100 * 1073741824, ownedBytes: { 'gate evidence': 5 * 1073741824 } }],
+  }));
   await page.route('**/api/v1/management/remote-hosts', json([]));
   await page.route('**/api/v1/management/links', json([]));
   // AGT-2826: keep the release column deterministic; individual tests override
@@ -116,7 +121,7 @@ async function stubOnlineJobsHub(page: Page) {
   });
 }
 
-async function stubGroupedHostApis(page: Page, claimGate = false) {
+async function stubGroupedHostApis(page: Page, claimGate = false, oneShotRoute = false) {
   const now = new Date();
   const observed = now.toISOString();
   const codingObserved = new Date(now.getTime() - 1_000).toISOString();
@@ -233,6 +238,11 @@ async function stubGroupedHostApis(page: Page, claimGate = false) {
             state: 'closed', loadPerCore: 5.51, threshold: 4,
             sustainedSeconds: 702, since: new Date(now.getTime() - 702_000).toISOString(), activeSlots: 7,
           } } : {}),
+          ...(oneShotRoute ? { oneShotClaimRoute: {
+            condition: 'claim-route-missing', statusCode: 404, backoffSeconds: 300,
+            firstSeenAt: new Date(now.getTime() - 1_500_000).toISOString(), lastSeenAt: codingObserved,
+            detail: 'POST /api/v1/one-shot-jobs/claim is not mapped on this server.',
+          } } : {}),
         },
         roleMaxParallelism: claimGate ? 10 : 2,
         effectiveMaxParallelism: claimGate ? 10 : 2,
@@ -319,27 +329,62 @@ test.describe('Execution Hosts settings section', () => {
     await dismissDevErrorDialog(page);
   });
 
-  test('networked profile hides legacy and local phantom machines', async ({ page }) => {
-    await page.route('**/api/auth/status', route => route.fulfill({
+  test('networked profile shows the measured API host without seeded phantom runners', async ({ page }) => {
+    const networkedAuth = {
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'operator', username: 'operator', displayName: 'Operator', role: 'owner',
+        projects: ['agent-taskboard'], disabled: false, mustChangePassword: false },
+    };
+    const respond = (route: Route) => route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true,
-        user: { id: 'operator', username: 'operator', displayName: 'Operator', role: 'owner',
-          projects: ['agent-taskboard'], disabled: false, mustChangePassword: false } }),
+      body: JSON.stringify(networkedAuth),
+    });
+    await page.route('**/api/auth/sessions', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [] }),
     }));
+    await page.route('**/api/auth/status', respond);
+    await page.route('**/api/v1/studio/auth/status', respond);
     await page.reload();
     await page.goto('/#/workspace/settings/execution-hosts');
     await dismissDevErrorDialog(page);
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
-    await expect(page.getByTestId('remote-host-card')).toHaveCount(0);
+    await expect(page.getByTestId('remote-host-card')).toHaveCount(1);
     await expect(page.getByText('Local machine')).toHaveCount(0);
     await expect(page.getByText('agent-runner-01')).toHaveCount(0);
+    const api = page.getByTestId('remote-host-card').filter({ hasText: 'studio-api' });
+    await expandHost(api);
+    const filesystems = api.getByTestId('remote-host-filesystems');
+    await expect(filesystems).toContainText('/data');
+    await expect(filesystems).toContainText('gate evidence');
+    await filesystems.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(SHOT_DIR, 'networked-hosts-no-phantoms.png'), fullPage: false });
+  });
+
+  test('fresh local profile has no invented remote machine', async ({ page }) => {
+    await page.unroute('**/api/clients');
+    await page.route('**/api/clients', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: '[]',
+    }));
+    await page.reload();
+    await page.goto('/#/workspace/settings/execution-hosts');
+    const panel = page.getByTestId('remote-hosts-panel');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByTestId('remote-host-primary-row')).toHaveCount(1);
+    await expect(panel.getByText('agent-runner-01')).toHaveCount(0);
+    const output = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(output, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await panel.screenshot({ path: join(output, `fresh-environment--${theme}.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await panel.screenshot({ path: join(output, 'fresh-environment--390px.png') });
   });
 
   test('hosts, topology, installation and history render at readable sizes in both themes', async ({ page }) => {
     await stubGroupedHostApis(page);
     await page.setViewportSize({ width: 1600, height: 900 });
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-remote-hosts').click();
     const panel = page.getByTestId('remote-hosts-panel');
     const output = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
@@ -461,9 +506,10 @@ test.describe('Execution Hosts settings section', () => {
       await expect(panel.getByTestId('remote-host-primary-row').first()).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       const bar = page.getByTestId('status-bar');
-      const chat = bar.getByTestId('usage-chat-trigger');
-      await expect(chat).toBeInViewport();
-      const fits = await chat.evaluate(el => {
+      const usage = bar.getByTestId('footer-usage-cost');
+      await usage.scrollIntoViewIfNeeded();
+      await expect(usage).toBeInViewport();
+      const fits = await usage.evaluate(el => {
         const item = el.getBoundingClientRect();
         const bar = el.closest('[data-testid="status-bar"]')!.getBoundingClientRect();
         return { whiteSpace: getComputedStyle(el).whiteSpace, height: item.height,
@@ -472,10 +518,11 @@ test.describe('Execution Hosts settings section', () => {
       expect(fits.whiteSpace).toBe('nowrap');
       expect(fits.top).toBeGreaterThanOrEqual(fits.barTop - 1);
       expect(fits.bottom).toBeLessThanOrEqual(fits.barBottom + 1);
-      for (const id of ['status-bar-running', 'footer-usage-cost', 'studio-titlebar-settings']) {
+      for (const id of ['status-bar-running', 'footer-usage-cost']) {
         const item = bar.getByTestId(id);
         await expect(item).toHaveCSS('white-space', 'nowrap');
       }
+      await expect(page.getByTestId('studio-titlebar-settings')).toBeVisible();
       if (width === 390) await expect(bar.getByTestId('status-bar-review')).toBeHidden();
       await page.screenshot({ path: join(output, `environment-responsive-${width}-light.png`), animations: 'disabled' });
       await setTheme(page, 'dark');
@@ -720,22 +767,36 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('crash-recovery-prompt')).toBeVisible();
   });
 
-  test('local one shot claim route is shown once in installation status', async ({ page }) => {
+  const localInfrastructure = (route: Route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({
+      gate: { host: null, busy: 0, total: 0, reachability: 'not-configured', workers: [],
+        capacity: { slots: 1, processorsPerGate: 1, hostCores: null, allowOversubscription: false },
+        capacitySource: 'configuration' },
+      taskServer: 'local monolith', workstation: 'local',
+      engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
+    }),
+  });
+
+  test('local monolith without a runner report shows no one shot route status', async ({ page }) => {
     await stubGroupedHostApis(page);
-    await page.route('**/api/system/execution-infrastructure', route => route.fulfill({
-      status: 200, contentType: 'application/json', body: JSON.stringify({
-        gate: { host: null, busy: 0, total: 0, reachability: 'not-configured', workers: [],
-          capacity: { slots: 1, processorsPerGate: 1, hostCores: null, allowOversubscription: false },
-          capacitySource: 'configuration' },
-        taskServer: 'local monolith', workstation: 'local',
-        engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
-      }),
-    }));
+    await page.route('**/api/system/execution-infrastructure', localInfrastructure);
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-hosts-panel').getByTestId('environment-installation-toggle').click();
+    await expect(page.getByTestId('execution-infrastructure')).toContainText('local monolith');
+    await expect(page.getByTestId('one-shot-route-status')).toHaveCount(0);
+  });
+
+  test('reported one shot claim route condition is shown once with host, time and action', async ({ page }) => {
+    await stubGroupedHostApis(page, false, true);
+    await page.route('**/api/system/execution-infrastructure', localInfrastructure);
     await page.goto('/#/workspace/settings/execution-hosts');
     await page.getByTestId('remote-hosts-panel').getByTestId('environment-installation-toggle').click();
     const status = page.getByTestId('one-shot-route-status');
     await expect(status).toHaveCount(1);
-    await expect(status).toContainText('Claim route unavailable on the local monolith');
+    await expect(status).toContainText('agent-runner-01 reports the claim route answers 404 since');
+    await expect(status).toContainText('retrying every 5 min');
+    await expect(status).toContainText('connect them to a standalone Task Server');
+    const surface = page.getByTestId('execution-infrastructure-status');
     const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
     mkdirSync(directory, { recursive: true });
     for (const width of [1280, 390]) {
@@ -743,8 +804,8 @@ test.describe('Execution Hosts settings section', () => {
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
         await expect(status).toBeVisible();
-        await status.scrollIntoViewIfNeeded();
-        await page.screenshot({ path: join(directory, `one-shot-route-${width}-${theme}.png`),
+        await surface.scrollIntoViewIfNeeded();
+        await surface.screenshot({ path: join(directory, `one-shot-route-${width}-${theme}.png`),
           animations: 'disabled' });
       }
     }
@@ -1014,7 +1075,7 @@ test.describe('Execution Hosts settings section', () => {
     await page.goto('/#/workspace/settings/execution-hosts');
     await dismissDevErrorDialog(page);
 
-    await expect(page.getByTestId('remote-hosts-stable-release')).toHaveText('Stable 0.3.0');
+    await expect(page.getByTestId('remote-hosts-stable-release')).toHaveText('Stable 0.3.0 · aaaaaaa');
     await expect(page.getByTestId('remote-hosts-release-behind')).toContainText('1 behind Stable');
 
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
@@ -1039,6 +1100,94 @@ test.describe('Execution Hosts settings section', () => {
       await setTheme(page, theme);
       await expect(machine.getByTestId('remote-host-release-id')).toBeVisible();
       await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-release-drift-${theme}--mocked.png`) });
+    }
+  });
+
+  /**
+   * AGT-3648 S4-F12 (9.11.2026): a review host built from develop of 5
+   * November (f947f2b) served a server built on 9 November (3d61e8b). VERSION
+   * was 0.9.5 on both and the host read "current". Equal versions with another
+   * commit now read "differs from Stable <sha>" on the row and the header, the
+   * header names Stable's commit, and the review role shows its running image
+   * next to the one the server expects.
+   */
+  test('marks a host on the Stable version but another commit as differing from Stable', async ({ page }) => {
+    // All host and release responses are mocked; no backend lifecycle is needed.
+    await stubGroupedHostApis(page);
+    const observedAt = new Date().toISOString();
+    const stableCommit = '3d61e8b0c4ab' + '0'.repeat(28);
+    const running = `registry.example/agent-review@sha256:${'5f0e1d2c'.repeat(8)}`;
+    const expected = `registry.example/agent-review@sha256:${'9a8b7c6d'.repeat(8)}`;
+    const entry = (runnerId: string, review: boolean) => ({
+      runnerId,
+      name: runnerId,
+      hostId: 'agent-runner-01',
+      role: review ? 'review' : 'coding',
+      release: review
+        ? { releaseId: '20261105T090000Z-review-f947f2b1c3d4', version: '0.9.5', commit: 'f947f2b1c3d4',
+            builtAt: '2026-11-05T09:00:00Z', imageRef: running }
+        : { releaseId: '20261109T101203Z-v0.9.5-3d61e8b0c4ab', version: '0.9.5', commit: stableCommit,
+            builtAt: '2026-11-09T10:12:03Z' },
+      state: review ? 'differs' : 'current',
+      behindByHours: null,
+      behindForHours: review ? 2 : null,
+      alarmDue: false,
+      reason: review
+        ? 'The host runs commit f947f2b while Stable runs 3d61e8b, both as version 0.9.5.'
+        : 'The host runs the same commit as Stable.',
+      lastSeenAt: observedAt,
+      heartbeatStale: false,
+      expectedImageRef: review ? expected : null,
+    });
+    await page.unroute('**/api/v1/management/host-releases');
+    await page.route('**/api/v1/management/host-releases', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        observedAt,
+        stable: { version: '0.9.5', commit: stableCommit, builtAt: null },
+        behindCount: 0,
+        differsCount: 1,
+        hosts: [entry('agent-runner-01', false), entry('agent-runner-01-review', true)],
+      }),
+    }));
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await dismissDevErrorDialog(page);
+
+    await expect(page.getByTestId('remote-hosts-stable-release')).toHaveText('Stable 0.9.5 · 3d61e8b');
+    await expect(page.getByTestId('remote-hosts-release-differs')).toHaveText('1 differs from Stable 3d61e8b');
+    await expect(page.getByTestId('remote-hosts-release-behind')).toHaveCount(0);
+    const machineRow = page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first();
+    await expect(machineRow.getByTestId('remote-host-release-differs')).toHaveText('differs from Stable 3d61e8b');
+
+    await machineRow.click();
+    const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
+    const image = machine.getByTestId('remote-host-review-image');
+    await expect(image).toBeVisible();
+
+    // The review role's own detail carries the marker and the old commit.
+    await page.getByTestId('remote-host-role-row').filter({ hasText: 'Review' }).first().click();
+    const release = page.getByTestId('remote-host-release');
+    await expect(release.getByTestId('remote-host-release-drift')).toHaveText('differs from Stable 3d61e8b');
+    await expect(release.getByTestId('remote-host-release-commit')).toHaveText('f947f2b');
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-release-differs-review-role--mocked.png'), animations: 'disabled' });
+    await machineRow.click();
+    await expect(image.getByTestId('remote-host-review-image-running')).toHaveText('sha256:5f0e1d2c5f0e');
+    await expect(image.getByTestId('remote-host-review-image-expected')).toHaveText('sha256:9a8b7c6d9a8b');
+    await expect(image.getByTestId('remote-host-review-image-state')).toContainText('Differs from expected');
+
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await dismissDevErrorDialog(page);
+        await image.scrollIntoViewIfNeeded();
+        await expect(image).toBeVisible();
+        await page.screenshot({
+          path: join(SHOT_DIR, `execution-hosts-release-differs-${theme}-${width}--mocked.png`),
+          animations: 'disabled',
+        });
+      }
     }
   });
 

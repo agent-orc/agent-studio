@@ -9,7 +9,8 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { EMPTY, Observable, catchError, map, of, switchMap, tap } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
+import { EMPTY, Observable, catchError, map, of, switchMap, tap, throwError } from 'rxjs';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import {
@@ -28,7 +29,6 @@ import {
   WorkbenchDecisionDraftStore,
 } from '../../state/workbench-decision-draft.store';
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
   actionErrorMessage,
   bounded,
@@ -50,7 +50,7 @@ export function decisionAnswerCountLabel(count: number, complete: boolean): stri
 @Component({
   selector: 'app-workbench-decision-actions',
   standalone: true,
-  imports: [CliModelSelectorComponent, PendingButtonDirective, StatusIndicatorComponent],
+  imports: [CliModelSelectorComponent, PendingButtonDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-decision-actions.component.html',
   styleUrl: './workbench-decision-actions.component.scss',
@@ -105,7 +105,7 @@ export class WorkbenchDecisionActionsComponent {
   readonly canPrepareFeature = computed(() =>
     !this.settled() && !this.pending() && this.answersComplete());
   readonly canCreateFeature = computed(() =>
-    this.canPrepareFeature() && this.mode() === 'feature-spawn'
+    !this.settled() && this.answersComplete() && this.mode() === 'feature-spawn'
     && this.title().trim().length > 0 && this.goal().trim().length > 0);
   readonly canRequestRework = computed(() =>
     !this.settled() && !this.pending() && this.reworkAvailable() && this.hasReworkComment());
@@ -196,8 +196,11 @@ export class WorkbenchDecisionActionsComponent {
     this.actionError.set(null);
     this.store.prepare(this.projectName(), this.document().workbench.id, request).pipe(
       switchMap(prepared => this.createCard(prepared.taskDraft ?? request.task!).pipe(
+        switchMap(card => this.resolveCardId(card)),
         map(card => ({ prepared, card })))),
-      switchMap(({ prepared, card }) => this.confirmFeature(request, card, prepared)),
+      switchMap(({ prepared, card }) => this.confirmFeature(request, card, prepared).pipe(
+        catchError(error => this.settleUnlinkedCard(card, error)),
+      )),
       catchError(error => this.fail(error)),
     ).subscribe(() => this.finish());
   }
@@ -228,6 +231,7 @@ export class WorkbenchDecisionActionsComponent {
       expectedRevision: result.revision,
       expectedFingerprint: result.fingerprint,
       spawnedTaskKeys: [card.key],
+      spawnedTaskIds: card.id ? [card.id] : [],
       ...this.agent(),
       confirmed: true,
     };
@@ -255,9 +259,18 @@ export class WorkbenchDecisionActionsComponent {
         thinkingLevelExplicit: true,
         taskType: draft.taskType,
         mode: draft.mode,
-      })),
-      switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName())),
-      map(detail => ({
+        dossier: { path: this.document().workbench.entryPath },
+      }).pipe(switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName()).pipe(
+        map(detail => ({ detail, id: created.id, watchPath })),
+        catchError(() => this.tasks.deleteJob(created.id, watchPath).pipe(
+          catchError(() => throwError(() => new Error(
+            `The task was created, but its details could not be read. The task may remain on the board. Ask a Studio operator to remove task ${created.id}.`))),
+          switchMap(() => throwError(() => new Error('The task was created, but its details could not be read. The task was removed. Try again.'))),
+        )),
+      )))),
+      map(({ detail, id, watchPath }) => ({
+        id,
+        watchPath,
         key: detail.info.key || detail.info.displayKey || taskKeyTail(detail.info.taskKey),
         taskKey: detail.info.taskKey,
         title: detail.info.title,
@@ -269,6 +282,45 @@ export class WorkbenchDecisionActionsComponent {
         this.tasks.refresh();
       }),
     );
+  }
+
+  /**
+   * A card restored from an older draft may lack its job id. The server
+   * removes an unlinked card by id only, so the id is looked up first; a card
+   * that cannot be found keeps no id and is never removed by its display key.
+   */
+  private resolveCardId(card: WorkbenchDecisionDraftCard): Observable<WorkbenchDecisionDraftCard> {
+    if (card.id) return of(card);
+    return this.tasks.getDetailByProject(card.taskKey || card.key, this.projectName()).pipe(
+      map(detail => detail.info.id ? { ...card, id: detail.info.id, watchPath: detail.info.watchPath } : card),
+      tap(resolved => {
+        if (!resolved.id) return;
+        this.createdCard.set(resolved);
+        this.drafts.rememberCreatedCard(this.projectName(), this.document().workbench.id, resolved);
+      }),
+      catchError(() => of(card)),
+    );
+  }
+
+  /**
+   * The server removes the card of a decision it could not record and says so
+   * in its answer. Without that answer the card is kept for the retry, which
+   * links it under the same operation id.
+   */
+  private settleUnlinkedCard(card: WorkbenchDecisionDraftCard, error: unknown): Observable<never> {
+    const payload = (error as HttpErrorResponse | null)?.error as Partial<WorkbenchDecisionResult> | null;
+    if (card.id && payload?.removedTaskIds?.includes(card.id)) {
+      this.createdCard.set(null);
+      this.drafts.clearCreatedCard(this.projectName(), this.document().workbench.id);
+      return throwError(() => error);
+    }
+    if (card.id && payload?.retainedTaskIds?.includes(card.id)) return throwError(() => error);
+    if (!card.id)
+      return throwError(() => new Error(
+        `The Dossier decision could not be saved. Task ${card.key} could not be checked, so it was not removed and may remain on the board without a Dossier link. Remove it before you try again.`));
+    if (payload?.error) return throwError(() => error);
+    return throwError(() => new Error(
+      `The Dossier decision could not be confirmed. Task ${card.key} was created and is kept for the retry. Try again to link it.`));
   }
 
   private prepareRequest(outcome: Exclude<ActionMode, null>): PrepareWorkbenchDecisionRequest | null {
@@ -298,12 +350,10 @@ export class WorkbenchDecisionActionsComponent {
   private seedFeatureDraft(): void {
     this.resetFeedback();
     const operationId = createOperationId();
-    const decisions = this.selectedSummary();
     const draft = this.drafts.beginFeature(this.projectName(), this.document().workbench.id, {
       actor: this.actor(),
       title: `Implement ${this.document().workbench.title}`,
-      goal: bounded([this.document().workbench.summary.trim(), decisions
-        ? `Recorded decisions:\n${decisions}` : ''].filter(Boolean).join('\n\n'), 20_000),
+      goal: bounded(`Implement ${this.document().workbench.title} according to the source Dossier and its recorded decisions.`, 20_000),
       operationId,
     }, this.responses());
     this.title.set(draft.title);
@@ -351,6 +401,9 @@ export class WorkbenchDecisionActionsComponent {
 
   private fail(error: unknown): Observable<never> {
     this.actionError.set(actionErrorMessage(error));
+    requestAnimationFrame(() => this.host.nativeElement
+      .querySelector<HTMLElement>('.decision-actions__error')
+      ?.scrollIntoView({ block: 'nearest' }));
     return EMPTY;
   }
 

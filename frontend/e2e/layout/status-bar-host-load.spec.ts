@@ -21,7 +21,7 @@ async function stubHostLoad(
   telemetrySlots: number,
   load1: number,
   cliRepairs: unknown[] = [],
-  postProcessing: { reviewing: number; waiting: number } = { reviewing: 0, waiting: 0 },
+  postProcessing: { reviewing: number; waiting: number; integration?: number } = { reviewing: 0, waiting: 0 },
 ): Promise<void> {
   const now = new Date().toISOString();
   const baseTask = (id: string, projectName: string) => ({
@@ -63,7 +63,7 @@ async function stubHostLoad(
   }));
   // Post Processing cards (AGT-3589): the footer review entry counts these.
   const reviewActivity = new Date(Date.now() - 7 * 60_000).toISOString();
-  const autoReview = Array.from({ length: postProcessing.reviewing + postProcessing.waiting }, (_, index) => ({
+  const autoReview = Array.from({ length: postProcessing.reviewing + postProcessing.waiting + (postProcessing.integration ?? 0) }, (_, index) => ({
     ...baseTask(`review-${index + 1}`, 'review-project'),
     state: '4-auto-review',
     lastActivity: reviewActivity,
@@ -73,7 +73,9 @@ async function stubHostLoad(
       nextSteps: [],
       queue: index < postProcessing.reviewing
         ? { kind: 'review', state: 'reviewing', executorId: 'agent-runner-review-01', since: now }
-        : null,
+        : index < postProcessing.reviewing + postProcessing.waiting
+          ? { kind: 'review', position: index - postProcessing.reviewing + 1 }
+          : { kind: 'review', state: 'integration', reason: 'waiting for delivery integration' },
       latestEventAt: reviewActivity,
     },
   }));
@@ -425,6 +427,25 @@ test.describe('Status bar execution-host load companion signal', () => {
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await page.screenshot({ path: join(RESULTS_DIR, `f14-review-waiting-${theme}--mocked.png`) });
+    }
+  });
+
+  test('integration waits have their own footer count without review attention', async ({ page }) => {
+    await stubHostLoad(page, 0, 0, 0, 0.8, [], { reviewing: 0, waiting: 0, integration: 3 });
+    await page.goto('/');
+
+    const review = page.getByTestId('status-bar-review');
+    await expect(review).toContainText('review idle · 3 awaiting integration');
+    await expect(review).not.toHaveAttribute('data-signal-tone', 'mismatch');
+    await review.hover();
+    await expect(page.getByTestId('cac-tooltip')).toContainText('3 waiting for integration');
+    await expect(page.getByTestId('task-live-current').first()).toContainText('Waiting for delivery integration');
+
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId('status-bar').screenshot({
+        path: join(RESULTS_DIR, `agt-3721-integration-footer-${theme}.png`),
+      });
     }
   });
 

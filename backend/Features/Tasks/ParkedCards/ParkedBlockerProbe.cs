@@ -1,4 +1,5 @@
 using AgentStudio.Git;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Tasks;
 
@@ -13,7 +14,8 @@ namespace AgentStudio.Tasks;
 public sealed record ParkedBlockerContext(
     string? RepositoryRoot = null,
     string? TaskBranch = null,
-    string? IntegrationBranch = null);
+    string? IntegrationBranch = null,
+    string? TaskKey = null);
 
 /// <summary>
 /// Decides whether a park condition still holds. Separated behind an interface
@@ -41,8 +43,13 @@ public interface IParkedBlockerProbe
 public sealed class ParkedBlockerProbe : IParkedBlockerProbe
 {
     private readonly GitService? _git;
+    private readonly AttemptAuthorityService? _attempts;
 
-    public ParkedBlockerProbe(GitService? git = null) => _git = git;
+    public ParkedBlockerProbe(GitService? git = null, AttemptAuthorityService? attempts = null)
+    {
+        _git = git;
+        _attempts = attempts;
+    }
 
     public ParkedBlockerEvaluation Evaluate(
         ParkedBlockerCondition condition,
@@ -51,8 +58,22 @@ public sealed class ParkedBlockerProbe : IParkedBlockerProbe
         => condition.Kind switch
         {
             ParkedBlockerConditionKinds.GitAncestor => EvaluateGitAncestor(condition, context, now),
+            ParkedBlockerConditionKinds.ReviewRetryAvailable => EvaluateReviewRetry(context, now),
             _ => Undeterminable(now, "The blocker has no automatic condition; a person has to decide."),
         };
+
+    private ParkedBlockerEvaluation EvaluateReviewRetry(ParkedBlockerContext context, DateTime now)
+    {
+        if (_attempts is null || string.IsNullOrWhiteSpace(context.TaskKey))
+            return Undeterminable(now, "Review attempt authority is unavailable.");
+        var projection = _attempts.GetTaskProjection(context.TaskKey);
+        var run = projection.CurrentRunAttempt;
+        var review = projection.CurrentReviewAttempt;
+        return run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null, ResultSha: not null }
+            && review?.State is not (AttemptLifecycleState.Pending or AttemptLifecycleState.Leased)
+            ? Recallable(now, "The completed delivery is available for Retry review.")
+            : Blocked(now, "The completed delivery is unavailable or a review already owns it.");
+    }
 
     private ParkedBlockerEvaluation EvaluateGitAncestor(
         ParkedBlockerCondition condition,

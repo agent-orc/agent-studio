@@ -9,6 +9,7 @@ import { WorkspaceOverlaysService } from '../../../shell';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import type { OperatorAttentionItem } from '../../../operator-attention';
 import { AttentionControlComponent } from './attention-control';
+import { CredentialInventoryService } from '../../../credentials/credential-inventory.service';
 
 const items: OperatorAttentionItem[] = [
   { id: 'h1', type: 'human-review.ready', project: 'alpha', cardKey: 'AGT-2', cards: ['AGT-2'],
@@ -22,7 +23,7 @@ const items: OperatorAttentionItem[] = [
 describe('AttentionControlComponent', () => {
   afterEach(() => TestBed.resetTestingModule());
 
-  async function setup() {
+  async function setup(backupState: 'ok' | 'disabled' = 'ok', dossierCount = 0) {
     const openReferenceOrNotify = vi.fn(() => true);
     const overlays = { open: vi.fn() };
     await TestBed.configureTestingModule({
@@ -38,6 +39,12 @@ describe('AttentionControlComponent', () => {
     const openTab = vi.spyOn(tabs, 'open').mockImplementation(() => undefined);
     const fixture = TestBed.createComponent(AttentionControlComponent);
     fixture.detectChanges();
+    http.expectOne('/api/workbenches').flush({ items: dossierCount ? [{ projectName: 'alpha', workbench: {
+      id: 'dossier-1', key: 'DOC-1', title: 'Concept Dossier', status: 'decision-pending',
+      openDecisionCount: dossierCount, updatedAtUtc: '2026-11-09T09:00:00Z',
+    } }] : [] });
+    http.expectOne('/api/operator/backups').flush({ state: backupState, stale: false,
+      generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
     http.expectOne('/api/operator/attention').flush({ items, count: items.length });
     await fixture.whenStable();
     return { fixture, http, openReferenceOrNotify, overlays, openTab };
@@ -66,6 +73,47 @@ describe('AttentionControlComponent', () => {
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await fixture.whenStable();
     expect(rows()).toHaveLength(0);
+  });
+
+  it('adds backup and credential warnings to the visible installation group', async () => {
+    const { fixture, http, overlays } = await setup('disabled');
+    TestBed.inject(CredentialInventoryService).inventory.set({
+      generatedAt: '2026-11-09T09:00:00Z',
+      items: [{ id: 'provider', label: 'Provider token', state: 'expiring', detail: 'Expires soon.' } as never],
+    });
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim()).toBe('5');
+    (host.querySelector('[data-testid="studio-attention-trigger"]') as HTMLButtonElement).click();
+    http.expectOne('/api/operator/backups').flush({ state: 'disabled', stale: false,
+      generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
+    http.expectOne('/api/operator/attention').flush({ items, count: items.length });
+    await fixture.whenStable();
+    const group = document.querySelector('[data-testid="attention-group-installation"]') as HTMLElement;
+    expect(group.querySelector('[data-testid="attention-count-in-group"]')?.textContent?.trim()).toBe('2');
+    expect(group.textContent).toContain('Backups off');
+    expect(group.textContent).toContain('Expires soon.');
+    expect(group.querySelectorAll<HTMLButtonElement>('[data-testid="attention-row-action"]')[0].textContent).toContain('Open operations');
+    const action = group.querySelectorAll<HTMLButtonElement>('[data-testid="attention-row-action"]')[1];
+    expect(action.textContent).toContain('Open credentials');
+    action.click();
+    expect(overlays.open).toHaveBeenCalledWith('credentials');
+  });
+
+  it('adds open Dossier gates with their decision count and opens the Dossier', async () => {
+    const { fixture, http, openTab } = await setup('ok', 2);
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim()).toBe('4');
+    (host.querySelector('[data-testid="studio-attention-trigger"]') as HTMLButtonElement).click();
+    http.expectOne('/api/operator/backups').flush({ state: 'ok', stale: false,
+      generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
+    http.expectOne('/api/operator/attention').flush({ items, count: items.length });
+    await fixture.whenStable();
+    const group = document.querySelector('[data-testid="attention-group-dossier"]') as HTMLElement;
+    expect(group.textContent).toContain('2 open decisions');
+    (group.querySelector('[data-testid="attention-row-action"]') as HTMLButtonElement).click();
+    expect(openTab).toHaveBeenCalledWith({ kind: 'workbench', projectName: 'alpha',
+      workbenchId: 'dossier-1', title: 'Concept Dossier', key: 'DOC-1' });
   });
 
   it('opens the card of a review row and the hosts surface of a host row', async () => {

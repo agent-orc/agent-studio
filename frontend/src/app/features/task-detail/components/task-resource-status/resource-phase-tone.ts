@@ -13,6 +13,7 @@ const RESOURCE_PHASE_TONES: Readonly<Record<ResourcePhase, StatusTone>> = {
   ready: 'success',
   stale: 'warning',
   unavailable: 'warning',
+  restricted: 'warning',
   error: 'danger',
 };
 

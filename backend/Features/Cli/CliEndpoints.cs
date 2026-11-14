@@ -146,7 +146,9 @@ public static class CliEndpoints
                 return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
             try
             {
-                var catalogue = await router.Get(cliType).GetModelCatalogAsync(false, ct);
+                // AGT-3709: the Create dialog reads this while the operator
+                // types; it uses the same bounded catalogue as the create path.
+                var catalogue = await RequestPathModelCatalogue.GetAsync(router, cliType, ct);
                 return Results.Ok(registry.Recommend(taskType, catalogue, state.EconomyMode));
             }
             catch (Exception ex)
