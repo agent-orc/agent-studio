@@ -1,4 +1,4 @@
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
   ChangeDetectionStrategy,
   Component,
