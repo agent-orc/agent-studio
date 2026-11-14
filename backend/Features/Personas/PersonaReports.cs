@@ -7,7 +7,10 @@ public sealed record PersonaReportRecordV1(string Id, string PersonaId, string R
     string OccurrenceKey, string Template, string State, string Reason, DateTime PublishedAtUtc,
     IReadOnlyList<PersonaReportItemV1> OpenItems,
     IReadOnlyList<string> SourcesRead, IReadOnlyList<string> SourcesMissing,
-    long TokensUsed, int SessionsUsed);
+    long TokensUsed, int SessionsUsed)
+{
+    public IReadOnlyList<string> Coverage { get; init; } = [];
+}
 
 /// <summary>Application-owned, immutable reports keyed by occurrence.</summary>
 public sealed class PersonaReportStore
@@ -58,6 +61,46 @@ public sealed class PersonaReportStore
             }
             return report;
         }
+    }
+
+    public PersonaReportRecordV1 SaveCompleted(string workspaceId, PersonaOccurrenceReceipt receipt,
+        PersonaActivationV1 activation, PersonaGroundsV1 grounds,
+        IReadOnlyList<PersonaItemV1> items, DateTime now)
+    {
+        lock (_gate)
+        {
+            var reports = Load(workspaceId);
+            var existing = reports.FirstOrDefault(r => r.OccurrenceKey == receipt.Key);
+            if (existing is not null) return existing;
+            var template = PersonaReportTemplates.Find(activation.Descriptor.Report.Template);
+            var kinds = grounds.Sources.Select(s => s.Kind).Distinct(StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
+            var coverage = template?.Anchors.Select(anchor => anchor + ":" +
+                (grounds.Sources.Any(s => s.Summary.Contains(anchor.Replace('-', ' '), StringComparison.OrdinalIgnoreCase)
+                    || s.Summary.Contains(anchor, StringComparison.OrdinalIgnoreCase))
+                    ? "observed" : "no-evidence")).ToArray() ?? [];
+            var report = new PersonaReportRecordV1("prp_" + Guid.CreateVersion7().ToString("N"),
+                activation.PersonaId, activation.RoleId ?? activation.Descriptor.Id, receipt.Key,
+                activation.Descriptor.Report.Template,
+                receipt.WindowEndUtc <= activation.ShadowUntil ? "shadow" : "published", "completed", now,
+                items.Where(i => i.State is "open" or "draft")
+                    .OrderByDescending(i => i.Importance).Take(activation.Descriptor.Report.MaxItems)
+                    .Select(i => new PersonaReportItemV1(i.Id, i.Title, i.Importance)).ToArray(),
+                grounds.Sources.Select(s => s.Ref).ToArray(),
+                template?.SourceKinds.Where(kind => !kinds.Contains(kind)).ToArray() ?? [],
+                receipt.Tokens, 1) { Coverage = coverage };
+            reports.Add(report);
+            Persist(workspaceId, reports);
+            return report;
+        }
+    }
+
+    private void Persist(string workspaceId, List<PersonaReportRecordV1> reports)
+    {
+        if (PathFor(workspaceId) is not { } path) return;
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(reports, Json));
+        File.Move(temp, path, true);
     }
 
     private List<PersonaReportRecordV1> Load(string workspaceId)

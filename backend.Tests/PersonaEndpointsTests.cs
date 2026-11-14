@@ -61,7 +61,10 @@ public sealed class PersonaEndpointsTests : IDisposable
         var list = await ReadOk(owner.GetAsync(personas));
         Assert.Equal(workspaceId, list.GetProperty("workspaceId").GetString());
         var entries = list.GetProperty("personas").EnumerateArray().ToList();
-        Assert.Equal(11, entries.Count);
+        Assert.Equal(factory.Services.GetRequiredService<AgentStudio.Personas.PersonaCatalogue>().Entries.Count,
+            entries.Count);
+        Assert.Contains(entries, entry => entry.GetProperty("id").GetString() == "improvement-scout"
+            && entry.GetProperty("activation").ValueKind == JsonValueKind.Null);
         var warden = entries.Single(entry => entry.GetProperty("id").GetString() == "operations-warden");
         Assert.Equal("inactive", warden.GetProperty("activation").GetProperty("state").GetString());
         Assert.Equal(JsonValueKind.Null,

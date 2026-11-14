@@ -363,7 +363,8 @@ public sealed class PersonaSchedulingService
             if (scheduledUtc >= activation.ActivatedAt)
                 windows[scheduledUtc] = new HashSet<string>(["cadence"], StringComparer.Ordinal);
         }
-        if (activation.Attributes.Thoroughness >= 4 &&
+        if ((activation.Attributes.Thoroughness >= 4 ||
+            (activation.RoleId ?? activation.Descriptor.Id) == "improvement-scout") &&
             activation.Allowance.InvestigationsPerWeek is > 0 &&
             cadence.Investigation == "P7D" && elapsed >= 0 && elapsed % 7 == 0)
         {
@@ -375,8 +376,13 @@ public sealed class PersonaSchedulingService
             && (t.Type == ManualRunTrigger || activation.Descriptor.Triggers.Contains(t.Type, StringComparer.Ordinal))))
         {
             var hours = trigger.Floor >= 90 ? 1 : 6;
-            var end = trigger.Type == ManualRunTrigger ? trigger.At :
-                trigger.At.Date.AddHours((Math.Floor(trigger.At.TimeOfDay.TotalHours / hours) + 1) * hours);
+            var scout = (activation.RoleId ?? activation.Descriptor.Id) == "improvement-scout";
+            var localTrigger = TimeZoneInfo.ConvertTimeFromUtc(trigger.At, timeZone);
+            var scoutLocalEnd = localTrigger.Date.Add(time);
+            if (localTrigger > scoutLocalEnd) scoutLocalEnd = scoutLocalEnd.AddDays(1);
+            var end = trigger.Type == ManualRunTrigger ? trigger.At : scout
+                ? TimeZoneInfo.ConvertTimeToUtc(scoutLocalEnd, timeZone)
+                : trigger.At.Date.AddHours((Math.Floor(trigger.At.TimeOfDay.TotalHours / hours) + 1) * hours);
             if (!windows.TryGetValue(end, out var refs)) windows[end] = refs = new(StringComparer.Ordinal);
             refs.Add(trigger.Ref);
         }
