@@ -787,8 +787,13 @@ it stops after that remote advance and before the publication record, the
 `Publishing` state retains the selected
 run ID and ref-mutation fence. The next tick holds both leases, confirms
 the remote still resolves to the tested SHA and matches that passing durable run,
-then records publication and releases the members. If the remote differs, it
-returns the members for reconstruction on the current base. The pilot publishes
+then records publication and releases the members. The publication coordinator
+journals the push intent, verified remote, receipt, published phase and each
+member's attribution and release against the same run and candidate SHA. A
+restart retries the exact CAS push when the remote is still at the pre-tip.
+When remote proof is missing or the tip differs from both the pre-tip and the
+candidate, `Publishing` holds visibly with `publication-remote-proof-ambiguous`
+and releases no member until proof is resolved. The pilot publishes
 only a tested fast-forward candidate; it does not synthesize a merge commit
 after the gate. A dirty or stale local checkout cannot hold the verified remote
 publication in `Publishing`; local sync is best effort. Ejected and unresolved

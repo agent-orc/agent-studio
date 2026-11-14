@@ -2727,6 +2727,147 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
     }
 
     [Theory]
+    [InlineData("before-push")]
+    [InlineData("after-push")]
+    [InlineData("before-receipt")]
+    [InlineData("after-receipt")]
+    [InlineData("before-first-move")]
+    [InlineData("after-first-move")]
+    [InlineData("after-second-move")]
+    public async Task Publication_transition_crash_matrix_resumes_exact_sha_and_every_member(string crashPoint)
+    {
+        var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var first = SeedMember(factory, "DOC-PUBLICATION-STEP-A", "docs/publication-step-a.md");
+        var second = SeedMember(factory, "DOC-PUBLICATION-STEP-B", "docs/publication-step-b.md");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var crashed = false;
+        void Crash()
+        {
+            if (crashed) return;
+            crashed = true;
+            throw new IOException("Simulated publication process exit.");
+        }
+        if (crashPoint == "after-push") pilot.AfterRemotePushForTesting = Crash;
+        if (crashPoint is "after-first-move" or "after-second-move")
+            pilot.AfterMemberMoveForTesting = key =>
+            {
+                if (key == (crashPoint == "after-first-move" ? first.Key : second.Key)) Crash();
+            };
+        BatchGateDurableWrites.ObserverForTesting = (path, stage) =>
+        {
+            if (stage != BatchGateWriteStage.Completed || crashed) return;
+            var file = Path.GetFileName(path);
+            if (crashPoint == "before-push" && file == "push-intent.json"
+                || crashPoint == "before-receipt" && file == "remote-verified.json"
+                || crashPoint == "after-receipt" && file == "publication.json"
+                || crashPoint == "before-first-move" && file.StartsWith("attributed-", StringComparison.Ordinal))
+                Crash();
+        };
+        try
+        {
+            try
+            {
+                await pilot.TickAsync(CancellationToken.None);
+                await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+            }
+            catch (IOException) when (crashed) { }
+        }
+        finally
+        {
+            BatchGateDurableWrites.ObserverForTesting = null;
+            factory.Dispose();
+        }
+        Assert.True(crashed);
+
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 2);
+        var recovered = restarted.Services.GetRequiredService<BatchGatePilotService>();
+        for (var tick = 0; tick < 3; tick++)
+            await recovered.TickAsync(CancellationToken.None);
+        var manifest = Assert.Single(store.ListManifests());
+        var publication = Assert.IsType<BatchGatePublication>(store.ReadPublication(manifest.BatchId));
+        Assert.Equal(publication.TestedCandidateSha, RemoteTip());
+        AssertLane(first.Key, TaskStates.HumanReview);
+        AssertLane(second.Key, TaskStates.HumanReview);
+        foreach (var step in new[] { "publishing", "push-intent", "remote-verified",
+                     "receipt", "published" })
+            Assert.Equal(publication.TestedCandidateSha,
+                store.ReadPublicationStep(manifest.BatchId, step)?.CandidateSha);
+        foreach (var member in new[] { first, second })
+        {
+            var record = Assert.IsType<BatchGateMemberRecord>(
+                store.TryReadMember(manifest.BatchId, member.Key, publication.BatchRunId));
+            Assert.Equal(publication.TestedCandidateSha, record.TestedCandidateSha);
+            Assert.Equal(publication.TestedCandidateSha,
+                store.ReadPublicationStep(manifest.BatchId, "released", member.Key)?.CandidateSha);
+        }
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
+    public async Task Ambiguous_remote_after_push_holds_all_members_without_another_sha_verdict()
+    {
+        var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var first = SeedMember(factory, "DOC-AMBIGUOUS-A", "docs/ambiguous-a.md");
+        var second = SeedMember(factory, "DOC-AMBIGUOUS-B", "docs/ambiguous-b.md");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        _gate.Batch = request => Green(request.ExpectedSha);
+        pilot.AfterRemotePushForTesting = () => throw new IOException("Process stopped after remote push.");
+        try
+        {
+            await pilot.TickAsync(CancellationToken.None);
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        }
+        catch (IOException) { }
+        var manifest = Assert.Single(store.ListManifests());
+        Assert.Null(store.ReadPublication(manifest.BatchId));
+        AssertPhase(store, manifest.BatchId, BatchPhase.Publishing);
+        Git(_repo, "fetch", "-q", "origin");
+        AdvanceOriginDevelop("docs/another-remote-writer.md");
+        factory.Dispose();
+
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 2);
+        await restarted.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+        var held = AssertPhase(store, manifest.BatchId, BatchPhase.Publishing);
+        Assert.Equal("publication-remote-proof-ambiguous", held.Reason);
+        Assert.Null(store.ReadPublication(manifest.BatchId));
+        AssertLane(first.Key, TaskStates.AutoReview);
+        AssertLane(second.Key, TaskStates.AutoReview);
+        Assert.Null(store.TryReadMember(manifest.BatchId, first.Key, held.BatchRunId!));
+        Assert.Null(store.TryReadMember(manifest.BatchId, second.Key, held.BatchRunId!));
+        Assert.Equal(0, _gate.FallbackRuns);
+    }
+
+    [Fact]
+    public void Remote_cas_refuses_a_lost_host_fence_at_the_push_boundary()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var baseSha = RemoteTip();
+        var member = SeedMember(factory, "DOC-FENCE-BOUNDARY", "docs/fence-boundary.md");
+        var git = factory.Services.GetRequiredService<AgentStudio.Git.GitService>();
+        var result = git.PublishBatchCandidate(_repo, "develop", baseSha,
+            member.ResultSha, CancellationToken.None, mutationFenceCurrent: () => false);
+
+        Assert.False(result.Success);
+        Assert.Equal("lease-lost", result.Status);
+        Assert.Equal(baseSha, RemoteTip());
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Unattributable_member_leaves_through_containment_after_batch_or_publication_recovery(
