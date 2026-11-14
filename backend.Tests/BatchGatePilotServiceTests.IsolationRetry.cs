@@ -137,6 +137,70 @@ public sealed class BatchGatePilotIsolationRetryTests : BatchGatePilotServiceTes
     }
 
     [Fact]
+    public async Task Per_task_report_red_returns_failing_test_to_the_card()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        var member = SeedMember(factory, "CODE-REPORT-FALLBACK", "src/report-fallback.cs");
+        _gate.Fallback = request => ReportRed(request.ExpectedSha, exitCode: 1);
+        _gate.Base = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.RequestCloseNow(ProjectName);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.Escalated);
+        var parked = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!.ParkedBlocker;
+        Assert.NotEqual(HumanReviewEscalationCategories.GateInfrastructure, parked?.BlockerType);
+        Assert.Contains("OperatorPolicyStepTests.Refuses_outside_the_catalogue", parked?.Reason);
+        Assert.DoesNotContain("gate-infrastructure", parked?.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Per_task_report_red_on_a_red_tip_retests_the_card_on_its_own_base()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        var member = SeedMember(factory, "CODE-RED-TIP-FALLBACK", "src/red-tip-fallback.cs");
+        PushToOriginDevelop("docs/red-tip-drift.md", "integration moved after review\n");
+        _gate.Fallback = request => request.ExpectedSha == member.ResultSha
+            ? Green(request.ExpectedSha) : ReportRed(request.ExpectedSha, exitCode: 1);
+        _gate.Base = request => Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.RequestCloseNow(ProjectName);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Contains(_gate.Requests, request => request.Executor == "batch-fallback"
+            && request.ExpectedSha == member.ResultSha);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Null(factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!.ParkedBlocker);
+    }
+
+    [Fact]
+    public async Task Per_task_failure_without_a_parsed_report_stays_infrastructure()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        var member = SeedMember(factory, "CODE-NO-REPORT-FALLBACK", "src/no-report-fallback.cs");
+        _gate.Fallback = request => Infrastructure() with { TestedSha = request.ExpectedSha };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.RequestCloseNow(ProjectName);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.Escalated);
+        var parked = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!.ParkedBlocker;
+        Assert.Equal(HumanReviewEscalationCategories.GateInfrastructure, parked?.BlockerType);
+    }
+
+    [Fact]
     public async Task Solo_flight_with_a_parsed_failed_test_report_is_a_code_red_not_gate_infra()
     {
         using var factory = BuildFactory();

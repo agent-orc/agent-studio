@@ -83,6 +83,12 @@ batch panel lists the queue in order and excludes its members from cards waiting
 for another batch. The handoff writes one operator-feed event per paused batch
 with its members.
 
+A per-task gate with a completed parsed test report is a card code failure when
+the integration baseline passes and a clean repeat reproduces the failed tests.
+This holds when fingerprint history is unavailable. The card finding names the
+failed tests. A red baseline, an incomplete run, or a missing parsed report does
+not establish that card finding.
+
 ### Gate run ledger (AGT-3500)
 
 The instance-local gate run ledger lives under `gate-run-ledger` beside the

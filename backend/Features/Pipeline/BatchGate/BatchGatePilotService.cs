@@ -3502,9 +3502,10 @@ public sealed partial class BatchGatePilotService
                     return await RunPerTaskFallbackCoreAsync(pending, ct, recordInStore)
                         .ConfigureAwait(false);
                 }
+                var infrastructure = BatchGateProbeClassifier.Classify(gate, subject.TestedSha!)
+                    == BatchGateFailureClass.InfrastructureRed;
                 await EscalateFallbackAsync(task, pending,
-                    gate.Reason ?? (gate.IsInfrastructureFailure
-                        ? "GateInfra" : "deterministic-suite-red"), gate.IsInfrastructureFailure,
+                    FallbackGateFailureReason(gate), infrastructure,
                     recordInStore, ct).ConfigureAwait(false);
                 RecordFallbackSuites(pending, "escalated");
                 return FallbackSettled(pending);
@@ -3808,6 +3809,15 @@ public sealed partial class BatchGatePilotService
     private static TransitionDecision BatchShadowDecision(TaskInfo task, string reviewAttemptId, BatchGateOutcome outcome)
         => AgentStudio.Runner.MonolithTransitionAdapter.StageGateTransition(task.Id, reviewAttemptId,
             outcome.Failed ? 1 : 0, 0, outcome.MaximumCardRounds, outcome.Infrastructure).Transition!;
+
+    private static string FallbackGateFailureReason(BuildTestGateResult gate)
+    {
+        var reason = gate.Reason ?? (gate.IsInfrastructureFailure ? "GateInfra" : "deterministic-suite-red");
+        var failedTests = BatchGateProbeClassifier.FailedTests(gate);
+        return !gate.IsInfrastructureFailure && failedTests.Count > 0
+            ? "Failing tests: " + string.Join(", ", failedTests) + ". " + reason
+            : reason;
+    }
 
     /// <summary>
     /// AGT-3234: the batch effects of an applied engine GateResult decision
