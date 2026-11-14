@@ -16,11 +16,13 @@ internal sealed class PersonaLeaseRunner(RunnerOptions options, TaskServerClient
 {
     public async Task PollAsync(CancellationToken shutdown)
     {
+        var consecutiveFailures = 0;
         while (!shutdown.IsCancellationRequested)
         {
             try
             {
                 var lease = await client.ClaimPersonaAsync(options.RunnerId, shutdown);
+                consecutiveFailures = 0;
                 if (lease is not null) await RunAsync(lease, shutdown);
                 else await Task.Delay(TimeSpan.FromSeconds(5), shutdown);
             }
@@ -28,7 +30,9 @@ internal sealed class PersonaLeaseRunner(RunnerOptions options, TaskServerClient
             catch (Exception ex)
             {
                 log($"persona-lease-poll-failed error={ex.GetType().Name}: {ex.Message}");
-                try { await Task.Delay(TimeSpan.FromSeconds(5), shutdown); }
+                consecutiveFailures = Math.Min(consecutiveFailures + 1, 4);
+                var backoffSeconds = Math.Min(60, 5 * (1 << consecutiveFailures));
+                try { await Task.Delay(TimeSpan.FromSeconds(backoffSeconds), shutdown); }
                 catch (OperationCanceledException) { break; }
             }
         }

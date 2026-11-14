@@ -134,7 +134,8 @@ public static class PersonaEndpoints
         {
             if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is RunnerPrincipal principal
                 && principal.RunnerId != request.RunnerId) return Results.Unauthorized();
-            return Results.Ok(await occurrences.ClaimAsync(request.RunnerId, DateTime.UtcNow, ct));
+            var lease = await occurrences.ClaimAsync(request.RunnerId, DateTime.UtcNow, ct);
+            return lease is null ? Results.NoContent() : Results.Ok(lease);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
         app.MapPost("/api/runner/personas/complete", async (HttpContext context,
             PersonaLeaseCompletion completion, PersonaOccurrenceService occurrences, CancellationToken ct) =>

@@ -26,6 +26,8 @@ local repository ends the lease with a failed receipt.
 Standalone Task Server runner hosts use `RUNNER_POST_MERGE_STATE_URL` as the Studio
 API authority for persona claim and completion, with the same service identity
 used by the existing post-merge state read. Hosts without that route wait.
+An idle persona claim returns HTTP 204. Hosts also accept an empty HTTP 200
+from older servers as idle, and back off after failed polls.
 
 Review host load per core divides the host load average by the host CPU count.
 The review role's cgroup quota is a separate capacity limit and is never used
