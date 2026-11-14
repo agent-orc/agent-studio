@@ -73,6 +73,8 @@ public sealed record BoardWorkspaceImportRequest(
     IReadOnlyList<BoardWorkspaceCard>? Upserts,
     IReadOnlyList<string>? Removals);
 
+public sealed record BoardWorkspaceGenerationRequest(long Generation);
+
 public sealed record BoardImportRejection(string TaskKey, string Code, string Message);
 
 public sealed record BoardWorkspaceImportResponse(

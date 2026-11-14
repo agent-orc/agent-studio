@@ -131,7 +131,7 @@
       "description": "Non-secret preparation environment values. Executor profiles supply secrets.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^(?!.*(?:TOKEN|PASSWORD|SECRET|PRIVATE_KEY|API_KEY)$)[A-Za-z_][A-Za-z0-9_]*$"
+        "pattern": "^(?!.*(?:[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy])$)[A-Za-z_][A-Za-z0-9_]*$"
       },
       "additionalProperties": {
         "type": "string"

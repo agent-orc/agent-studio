@@ -42,7 +42,7 @@ public sealed class BoardReadModelTests
         Assert.Equal(3, ready.Count);
         Assert.Equal(5, model.LiveCount);
         Assert.Equal(1, model.ArchivedCount);
-        Assert.Equal("\"board-v1-g7-w3\"", model.ETag);
+        Assert.Equal("\"board-v1-g7\"", model.ETag);
         Assert.Equal(3, model.WorkspaceSourceGeneration);
     }
 
@@ -176,11 +176,8 @@ public sealed class BoardReadModelTests
                 $"/api/v1/projects/{project.Name}/board");
             conditional.Headers.IfNoneMatch.ParseAdd(board.ETag);
             using var refreshed = await client.SendAsync(conditional);
-            Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
-            var refreshedModel = (await refreshed.Content.ReadFromJsonAsync<BoardReadModelResponse>())!;
-            Assert.Equal(board.Generation, refreshedModel.Generation);
-            Assert.Equal(42, refreshedModel.WorkspaceSourceGeneration);
-            Assert.NotEqual(board.ETag, refreshedModel.ETag);
+            Assert.Equal(HttpStatusCode.NotModified, refreshed.StatusCode);
+            Assert.Equal(42, (await store.GetBoardReadModelAsync(project.ProjectId, default)).WorkspaceSourceGeneration);
 
             var repeat = await store.ImportWorkspaceBoardAsync(project.ProjectId,
                 new BoardWorkspaceImportRequest(43, [new BoardWorkspaceCard(task.TaskKey, task.Title, TaskStates.Progress, 3)], ["BRD-90"]),

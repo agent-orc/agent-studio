@@ -72,6 +72,8 @@ public sealed class HostRouteClassificationTests : IDisposable
         new("POST", "/api/runner/logs", Monolith.RunnerScope),
         new("POST", "/api/runner/orchestrator-decisions/claim", Monolith.RunnerScope),
         new("POST", "/api/runner/orchestrator-decisions/complete", Monolith.RunnerScope),
+        new("POST", "/api/runner/personas/claim", Monolith.RunnerScope),
+        new("POST", "/api/runner/personas/complete", Monolith.RunnerScope),
         new("GET", "/api/runner/post-merge/projects/{}", Monolith.RunnerScope),
         new("POST", "/api/runner/project-chat/claim", Monolith.RunnerScope),
         new("POST", "/api/runner/project-chat/complete", Monolith.RunnerScope),

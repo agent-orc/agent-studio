@@ -469,9 +469,31 @@ public sealed class NetworkedEdgeHardeningOwnHostTests : NetworkedEdgeHardeningT
         bootstrap.Headers.Add("Origin", Studio);
         using var response = await client.SendAsync(bootstrap);
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Equal("bootstrap-code-required",
-            (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("bootstrap-validation", body.GetProperty("error").GetString());
+        Assert.Equal("A valid installer owner code is required.",
+            body.GetProperty("errors").GetProperty("bootstrapCode")[0].GetString());
+        Assert.True(factory.Services.GetRequiredService<AccessSecurityStore>().BootstrapRequired);
+    }
+
+    [Fact]
+    public async Task Bootstrap_reports_code_and_password_errors_together()
+    {
+        using var factory = BuildFactory(remoteIp: "172.30.83.3");
+        using var client = NewClient(factory);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/bootstrap")
+        {
+            Content = JsonContent.Create(new { username = "owner", password = "owner", displayName = "Owner", bootstrapCode = "wrong" }),
+        };
+        request.Headers.Add("Origin", Studio);
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var errors = body.GetProperty("errors");
+        Assert.Equal("A valid installer owner code is required.", errors.GetProperty("bootstrapCode")[0].GetString());
+        Assert.Equal(2, errors.GetProperty("password").GetArrayLength());
         Assert.True(factory.Services.GetRequiredService<AccessSecurityStore>().BootstrapRequired);
     }
 

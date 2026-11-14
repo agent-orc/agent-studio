@@ -2,7 +2,10 @@
 # Backup and restore drill for the networked website stack (AGT-3365).
 #
 # Starts a throwaway stack without a backup destination and checks that it
-# runs and reports backups as off. It then signs in, stores a sealed secret,
+# runs and reports backups as off. It then signs in, checks on the Operations
+# page data that the first scheduled in-app backup and its restore
+# verification passed while the API holds the control plane lock, and that
+# an on-demand Create backup succeeds (AGT-3729). It stores a sealed secret,
 # adds a project checkout with a Studio-only ref and task storage, and sends
 # an encrypted backup to a write-only directory. A second, empty stack is
 # restored from that archive with the offline age identity and the separate
@@ -95,6 +98,8 @@ services:
     image: $api_image
     environment:
       Security__TrustedProxyAddresses: $subnet.3,$subnet.2
+      # The first scheduled in-app backup runs right after start instead of after five minutes.
+      Backup__StartupDelayMinutes: '0'
     networks: !override
       website: {ipv4_address: $subnet.4}
   frontend:
@@ -181,6 +186,49 @@ probe_value="drill-$(openssl rand -hex 12)"
 curl "${curl_base[@]}" --fail -b "$work/a/jar" -H 'Content-Type: application/json' -H "Origin: $url" -H "X-CSRF-Token: $csrf" \
   -d "{\"name\":\"backup-drill\",\"value\":\"$probe_value\"}" "$url/api/secrets/workspace" > /dev/null
 
+# backup_overview <cookie-jar> <file>: the Operations page backup panel data.
+backup_overview() {
+  curl "${curl_base[@]}" --fail -b "$1" -H 'X-Client-Id: local-default' "$url/api/v1/management/backups" > "$2"
+}
+
+# backup_check <file> <expected trigger prefix>: a good backup from that trigger, verified, with no failure warning.
+backup_check() {
+  python3 - "$1" "$2" <<'PY'
+import json, sys
+overview = json.load(open(sys.argv[1]))
+run = overview.get("lastRun") or {}
+problems = []
+if not run.get("trigger", "").startswith(sys.argv[2]): problems.append(f"last run trigger is {run.get('trigger')!r}")
+if run.get("outcome") != "succeeded": problems.append(f"last run {run.get('outcome')!r}: {run.get('error')}")
+if not overview.get("lastGood") or overview["lastGood"]["id"] != run.get("backupId"):
+    problems.append("the last run is not the newest good backup")
+codes = {warning["code"] for warning in overview.get("warnings", [])}
+for code in ("backup-failed", "backup-missing", "backup-files-unreadable", "verification-failed"):
+    if code in codes: problems.append(f"warning {code}")
+if overview.get("state") == "failing": problems.append("state is failing")
+if problems:
+    print("Backup panel: " + "; ".join(problems), file=sys.stderr)
+    print(json.dumps(overview, indent=2), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+echo '== Stack A: in-app backups while the API holds the control plane lock'
+# The kill switch holds this lock exclusively for the API's lifetime (AGT-3729).
+compose_in "$work/a/stack" "$project_a" exec -T api test -e /data/workspace/.security/control-plane.lock
+scheduled_done=0
+for attempt in $(seq 1 60); do
+  backup_overview "$work/a/jar" "$work/a/backups.json"
+  if python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); sys.exit(0 if (o.get("lastRun") or {}).get("trigger") == "schedule" and (o.get("lastVerification") or {}).get("outcome") else 1)' \
+    "$work/a/backups.json"; then scheduled_done=1; break; fi
+  sleep 2
+done
+[ "$scheduled_done" = 1 ] || { echo 'No scheduled backup and verification ran' >&2; cat "$work/a/backups.json" >&2; exit 1; }
+backup_check "$work/a/backups.json" schedule
+[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["lastVerification"]["outcome"])' "$work/a/backups.json")" = verified ] \
+  || { echo 'The scheduled restore verification did not pass' >&2; cat "$work/a/backups.json" >&2; exit 1; }
+echo 'The first scheduled backup succeeded and its restore verification passed.'
+
 # A project checkout with a ref that exists only in Studio, a worktree, and
 # task storage outside any checkout.
 git init -q --bare "$work/remote.git"
@@ -201,6 +249,19 @@ studio_ref="$(in_api_image -v "$work/a/data/projects:/data/projects" -v "$work/r
   mkdir -p /data/projects/.task-storage/PROJ-1
   echo 'task card' > /data/projects/.task-storage/PROJ-1/AGT-1.md
   echo \$commit")"
+
+# Settings > Task Server > Create backup, as the browser sends it.
+idempotency="drill-$(openssl rand -hex 8)"
+create_status="$(curl "${curl_base[@]}" -o "$work/a/create.json" -w '%{http_code}' -b "$work/a/jar" \
+  -H 'Content-Type: application/json' -H "Origin: $url" -H "X-CSRF-Token: $csrf" -H 'X-Client-Id: local-default' \
+  -H "Idempotency-Key: $idempotency" \
+  -d "{\"kind\":\"backup-create\",\"dryRun\":false,\"confirmation\":\"backup-create\",\"idempotencyKey\":\"$idempotency\"}" \
+  "$url/api/v1/management/commands")"
+[ "$create_status" = 200 ] || { echo "Create backup answered HTTP $create_status" >&2; cat "$work/a/create.json" >&2; exit 1; }
+[ "$(json_field "$work/a/create.json" affected)" = 1 ] || { cat "$work/a/create.json" >&2; exit 1; }
+backup_overview "$work/a/jar" "$work/a/backups.json"
+backup_check "$work/a/backups.json" manual:
+echo 'An on-demand backup from the Task Server settings succeeded.'
 
 echo '== Stack A: encrypted backup to a write-only destination'
 mkdir -p "$work/offline" "$work/offsite"
@@ -265,6 +326,15 @@ fi
 grep -q "needs $key_id" "$work/b/wrong-key.log"
 (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --identity "$work/offline/identity.txt" \
   --secret-key "$work/offline/secrets.kek" "$archive")
+node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const folder = process.argv[1];
+  const state = JSON.parse(fs.readFileSync(path.join(folder, "access-state.json"), "utf8"));
+  const notice = JSON.parse(fs.readFileSync(path.join(folder, "restore-notice.json"), "utf8"));
+  if (state.Sessions?.length !== 0 || notice.ArchiveId !== process.argv[2] || !notice.ArchiveCreatedAt)
+    process.exit(1);
+' "$work/b/data/workspace/.security" "$(basename "$archive")"
 if (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --identity "$work/offline/identity.txt" \
   --secret-key "$work/offline/secrets.kek" "$archive") > /dev/null 2> "$work/b/again.log"; then
   echo 'restore.sh restored into a stack that is not empty' >&2
@@ -291,7 +361,7 @@ in_api_image -v "$work/b/data/projects:/data/projects:ro" "$api_image" -c "
   grep -qx 'task card' /data/projects/.task-storage/PROJ-1/AGT-1.md"
 echo 'Restored stack signs in, opens the sealed secret, and has the Studio ref and task storage back.'
 
-message='Backup and restore drill passed: off state reported, encrypted write-only backup, restore into an empty stack, sign-in.'
+message='Backup and restore drill passed: off state reported, scheduled and on-demand in-app backups, encrypted write-only backup, restore into an empty stack, sign-in.'
 echo "$message"
 if [ -n "${JOB_RESULTS_DIR:-}" ]; then
   mkdir -p "$JOB_RESULTS_DIR"

@@ -65,6 +65,8 @@ public static class OperatorRequestClassifier
         if (rule.Refinement == OperatorRouteRefinement.None
             && rule.OperationId != OperatorOperationIds.OperatorLogAppend)
             return OperatorOperationCatalog.Refine(rule, new OperatorRequestFacts());
+        if (rule.Refinement == OperatorRouteRefinement.PersonaOperation)
+            return OperatorOperationCatalog.Refine(rule, new OperatorRequestFacts(PersonaOperationId: routeValue("operationId")));
 
         var body = await BodyStringsAsync(context.Request);
         if (rule.OperationId == OperatorOperationIds.OperatorLogAppend)

@@ -13,6 +13,7 @@ import {
 } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { PendingButtonDirective } from '../async-feedback';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import { NotificationService } from '../../services/notification.service';
 import { TaskService } from '../../services/task.service';
 import {
@@ -54,6 +55,11 @@ import { OverlayPortalRef, OverlayPortalService, type ConnectedOverlayPositionRe
  * rung below it), and the popover states the level the proposal target would
  * run at. Both read the live catalog; no per-model mapping is hard-coded.
  *
+ * AGT-3584: a pin the installed CLI's catalog marks unavailable reads "Not
+ * offered" with the catalog's note, never "update available"; the card would
+ * be refused at launch, which is a different fact from a newer model existing.
+ * A migration proposal for it stays reachable from the same control.
+ *
  * The popover is portaled to the shared body-level overlay layer
  * (`OverlayPortalService`) so it is never clipped by an ancestor's
  * `overflow: hidden` / `content-visibility` containment (the board card sets
@@ -62,7 +68,7 @@ import { OverlayPortalRef, OverlayPortalService, type ConnectedOverlayPositionRe
 @Component({
   selector: 'app-model-migration-badge',
   standalone: true,
-  imports: [TooltipDirective, PendingButtonDirective],
+  imports: [TooltipDirective, PendingButtonDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './model-migration-badge.component.html',
   styleUrl: './model-migration-badge.component.scss',
@@ -117,6 +123,24 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
     const pinned = this.thinkingLevel()?.trim().toLowerCase() || null;
     if (!proposal || !pinned) return null;
     return this.mappingFor(proposal.to) ?? { level: pinned, mappedFrom: null };
+  });
+
+  /** Catalog note when the installed CLI does not offer the pinned model; `null` when offered or unknown. */
+  readonly notOffered = computed<string | null>(() => {
+    const cli = this.cliType();
+    const id = this.model();
+    if (!this.explicit() || !cli || !id) return null;
+    const model = this.catalogs.modelsFor(cli as CliType).find((candidate) => candidate.id === id);
+    if (model?.available !== false) return null;
+    return model.availabilityNote?.trim() || 'Not offered by the installed CLI.';
+  });
+
+  /** Accessible name and tooltip of the popover trigger. */
+  readonly triggerLabel = computed(() => {
+    const proposal = this.proposal();
+    if (!proposal) return '';
+    const note = this.notOffered();
+    return note ? `${note} Proposed model: ${proposal.to}` : `Model update available: ${proposal.from} -> ${proposal.to}`;
   });
 
   readonly isPending = computed(() => (this.jobId() ? this.selfPending() : this.pending()));

@@ -30,6 +30,7 @@ export class IntegrationDeadEndComponent {
    */
   readonly continueCheck = signal<FailureContinuationCheck | null>(null);
   readonly continueAvailable = computed(() => this.continueCheck()?.available === true);
+  readonly isolationActive = computed(() => this.continueCheck()?.isolationActive === true);
   private readonly tasks = inject(TaskService);
   private readonly notifications = inject(NotificationService);
   private checkedFor: string | null = null;
@@ -46,7 +47,7 @@ export class IntegrationDeadEndComponent {
   }
 
   continueTask(): void {
-    if (this.busy()) return;
+    if (this.busy() || !this.continueAvailable()) return;
     this.busy.set(true);
     this.tasks.continueFromFailure(this.jobId(), this.watchPath() ?? undefined).subscribe({
       next: (response) => {

@@ -20,6 +20,32 @@ public sealed class AccessSecurityTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "studio-security-tests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void Bootstrap_and_invitation_sessions_keep_device_and_address_and_disabled_login_explains_state()
+    {
+        var (store, _, _) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", "First Owner"),
+            device: "Owner browser", address: "192.0.2.10");
+        var ownerSession = store.AuthenticateSession(owner.SessionToken)!.Session;
+        Assert.Equal(("Owner browser", "192.0.2.10"), (ownerSession.Device, ownerSession.Address));
+
+        var invitation = store.InviteUser(new InviteUserRequest("invited.user", "Invited User", StudioRoles.Viewer,
+            ["sample"]), owner.User.Id);
+        var accepted = store.AcceptInvitation(new AcceptInvitationRequest(invitation.Token, "new invited password phrase!"),
+            device: "Invited browser", address: "192.0.2.11");
+        var invitedSession = store.AuthenticateSession(accepted.SessionToken)!.Session;
+        Assert.Equal(("Invited browser", "192.0.2.11"), (invitedSession.Device, invitedSession.Address));
+
+        store.UpdateUser(invitation.User.Id, new UpdateUserRequest(null, null, null, true), owner.User.Id);
+        Assert.Null(store.AuthenticateSession(accepted.SessionToken));
+        var disabled = Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invited.user", "new invited password phrase!", "disabled-client"));
+        Assert.Equal("account-disabled", disabled.Code);
+        Assert.Equal("This account is disabled. Ask the owner.", disabled.Message);
+        Assert.Equal("invalid-credentials", Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invited.user", "wrong password", "wrong-client")).Code);
+    }
+
+    [Fact]
     public async Task Quota_admission_accepts_only_the_configured_service_bearer()
     {
         var serviceToken = "quota-service-" + Guid.NewGuid().ToString("N");

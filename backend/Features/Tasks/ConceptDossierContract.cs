@@ -28,11 +28,11 @@ public static partial class ConceptDossierContract
         var closure = ConceptDossierClosureStore.Read(taskFolder);
         return new ConceptDossierSummary
         {
-            RepoRelativePath = path,
-            ReferenceSource = source,
-            NoDossierNeeded = path is null && (closure?.NoDossierNeeded ?? false),
-            NoDossierReason = path is null ? closure?.Reason : null,
-            DeclaredAt = path is null ? closure?.DeclaredAt : null,
+            RepoRelativePath = closure?.NoDossierNeeded == true ? null : path,
+            ReferenceSource = closure?.NoDossierNeeded == true ? null : source,
+            NoDossierNeeded = closure?.NoDossierNeeded ?? false,
+            NoDossierReason = closure?.Reason,
+            DeclaredAt = closure?.DeclaredAt,
         };
     }
 

@@ -103,6 +103,18 @@ export class ResultViewComponent {
   readonly latestAspectVerdicts = computed(() =>
     this.detail().info.reviewProjection?.attempts?.[0]?.aspects ?? []);
 
+  /**
+   * Which build graded the latest review attempt, when that matters: a
+   * superseded worker release (AGT-2863) or a host that did not run the
+   * Stable build (AGT-3689). The verdict stands; this only says who made it.
+   */
+  readonly gradingReleaseNotices = computed(() => {
+    const attempt = this.detail().info.reviewProjection?.attempts?.[0];
+    return [attempt?.workerReleaseStable, attempt?.workerReleaseSuperseded]
+      .map(notice => notice?.trim())
+      .filter((notice): notice is string => !!notice);
+  });
+
   openResultReference(reference: { path: string; line: number | null }): void {
     const fileName = reference.path.split('/').pop() ?? reference.path;
     if (/^(?:aspect-[^/]+\.md|remote-review-(?:grade-)?[^/]+)$/i.test(fileName)) {

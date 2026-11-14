@@ -54,6 +54,41 @@ internal static partial class ReviewTargetedRerunPolicy
         return command;
     }
 
+    /// <summary>
+    /// AGT-3650: <c>dotnet test</c> names a passed test only at normal console
+    /// verbosity; its default prints the summary alone. A clean repeat asks
+    /// for the names, so its output can show the failed tests passed. Any
+    /// other command, or one that already chose a console logger, is returned
+    /// unchanged.
+    /// </summary>
+    internal static ReviewCommandDto WithPassedTestNames(ReviewCommandDto command)
+    {
+        if (Path.GetFileNameWithoutExtension(command.FileName).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+            && command.Arguments.FirstOrDefault() == "test")
+        {
+            var hasConsoleLogger = command.Arguments.Zip(command.Arguments.Skip(1))
+                .Any(pair => pair.First is "--logger" or "-l"
+                    && pair.Second.StartsWith("console", StringComparison.OrdinalIgnoreCase));
+            return hasConsoleLogger ? command
+                : command with { Arguments = [.. command.Arguments, "--logger", NormalConsoleLogger] };
+        }
+
+        if (Path.GetFileName(command.FileName) is not ("sh" or "bash" or "dash")) return command;
+        var arguments = command.Arguments.ToArray();
+        for (var index = 0; index + 1 < arguments.Length; index++)
+        {
+            if (arguments[index] is not ("-c" or "-lc")) continue;
+            var shell = arguments[index + 1].Trim();
+            if (!shell.StartsWith("dotnet test ", StringComparison.OrdinalIgnoreCase)
+                || ShellChain().IsMatch(shell) || ShellConsoleLogger().IsMatch(shell)) return command;
+            arguments[index + 1] = shell.TrimEnd() + $" --logger \"{NormalConsoleLogger}\"";
+            return command with { Arguments = arguments };
+        }
+        return command;
+    }
+
+    private const string NormalConsoleLogger = "console;verbosity=normal";
+
     internal static string? ClassFilter(IReadOnlyList<string> failures)
     {
         var names = failures.Select(name => name.Split('(', 2)[0]).ToArray();
@@ -106,6 +141,9 @@ internal static partial class ReviewTargetedRerunPolicy
 
     [GeneratedRegex(@"\s(?:&&|\|\||\||;)\s")]
     private static partial Regex ShellChain();
+
+    [GeneratedRegex(@"\s(?:--logger|-l)\s+[""']?console", RegexOptions.IgnoreCase)]
+    private static partial Regex ShellConsoleLogger();
 
     [GeneratedRegex(@"\s--filter\s+(?<value>""[^""]*""|'[^']*'|\S+)", RegexOptions.IgnoreCase)]
     private static partial Regex ShellFilter();

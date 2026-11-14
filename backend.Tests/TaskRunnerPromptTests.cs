@@ -835,6 +835,7 @@ public class TaskRunnerPromptTests
         Assert.Contains("workbench.json", framing);
         Assert.Contains("index.html", framing);
         Assert.Contains("status: \"decision-pending\"", framing);
+        Assert.Contains("status `decision-pending` alone already lets the operator decide", framing);
         Assert.Contains("sourceTaskKeys", framing);
         Assert.Contains("results/deliverables.md", framing);
         Assert.Contains("status.md", framing);

@@ -1,5 +1,7 @@
 using System.Diagnostics;
 
+using AgentStudio.Git;
+
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -173,7 +175,13 @@ public class WikiFolderViewTests : IDisposable
         var folder = root!.Children.Single(c => c.RelPath == "target-architecture");
         Assert.Equal(committedAt, folder.UpdatedAt);
         Assert.Equal("git", folder.UpdatedAtSource);
-        Assert.Equal(3, coldRollup.Spawns); // repo-root lookup + HEAD probe + one batched log
+        // One batched log. The repo-root lookup and the HEAD probe read the
+        // repository files (AGT-3567) and spawn Git only where those files do
+        // not settle them, for example on Windows or under a symlinked path.
+        var expectedColdSpawns = 1
+            + (GitRefFiles.WorkTreeRoot(_tempDir) is null ? 1 : 0)
+            + (GitRefFiles.TryResolveHead(_tempDir, out _) == GitRefFileAnswer.Unknown ? 1 : 0);
+        Assert.Equal(expectedColdSpawns, coldRollup.Spawns);
 
         var pages = docs.GetWikiFolder(ProjectName, "target-architecture", git);
         var warmRollup = LastRollup(log);

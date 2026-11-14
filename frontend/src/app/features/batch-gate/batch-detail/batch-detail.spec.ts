@@ -35,6 +35,14 @@ describe('BatchDetailComponent', () => {
     expect(host.querySelector('[data-testid="task-batch-open-panel"]')!.classList).toContain('studio-button');
   });
 
+  it('shows the batch phase and run start on the card', async () => {
+    const batch = { ...redHalvingState.batches[1], phaseAtUtc: '2026-11-09T21:11:00Z',
+      runs: [{ ...redHalvingState.batches[1].runs[0], startedAtUtc: '2026-11-09T21:11:00Z' }] };
+    const { host } = await mount({ ...redHalvingState, batches: [redHalvingState.batches[0], batch] }, { id: 'AGT-2' });
+    expect(host.querySelector('[data-testid="task-batch-phase-time"]')?.textContent).toContain('running since 21:11 UTC');
+    expect(host.textContent).toContain('since 21:11 UTC');
+  });
+
   it('counts a queued member', async () => {
     const { host } = await mount(redHalvingState, { id: 'AGT-1' });
     expect(host.querySelector('[data-testid="task-batch-summary"]')!.textContent).toContain('pending');
@@ -48,6 +56,18 @@ describe('BatchDetailComponent', () => {
       reviewFixWaits: [{ taskKey: 'CARD-7', reviewAttemptId: 'review-7', round: 1, maximum: 1, aspects: ['code-quality'] }],
     }, { key: 'CARD-7', id: 'CARD-7' });
     expect(host.querySelector('[data-testid="task-batch-review-fix"]')?.textContent).toContain('before batch admission');
+  });
+
+  it('states the paused batch reason and the red and green outcomes', async () => {
+    const { host } = await mount({ ...redHalvingState, members: { ...redHalvingState.members,
+      'AGT-9': { status: 'fallback', batchId: 'batch-9', phase: 'abandoned',
+        position: 2, size: 4, fallbackRule: 'batch-paused',
+        fallbackEvent: 'batch batch-9 paused: fresh gate verdict required' },
+    } }, { id: 'AGT-9' });
+    expect(host.querySelector('[data-testid="task-batch-fallback-reason"]')?.textContent)
+      .toContain('batch batch-9 paused: fresh gate verdict required');
+    expect(host.querySelector('[data-testid="task-batch-fallback-outcome"]')?.textContent)
+      .toContain('Red escalates the card; green integrates it.');
   });
 
   it('shows the push wait of a member', async () => {
@@ -99,5 +119,42 @@ describe('BatchDetailComponent', () => {
       'AGT-9': { status: 'pre-check-red', preCheck } } }, { id: 'AGT-9' });
     expect([...red.host.querySelectorAll('[data-testid="task-batch-pre-check-tests"] li')].map(item => item.textContent))
       .toEqual(['Product.Tests.One', 'Product.Tests.Two']);
+  });
+
+  it('explains an interrupted red parent and the member wait', async () => {
+    const parent = { ...redHalvingState.batches[0], phase: 'paused', phaseReason: 'isolation interrupted',
+      phaseAtUtc: '2026-11-10T03:12:00Z' };
+    const state = { ...redHalvingState, batches: [parent], members: {
+      ...redHalvingState.members, 'AGT-2': { status: 'pending' as const, batchId: parent.batchId },
+    } };
+    const { host } = await mount(state, { id: 'AGT-2' });
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Ended without a verdict at 2026-11-10T03:12:00Z');
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Waiting for: Its own gate after interrupted isolation');
+  });
+
+  it('shows when a live isolation flight began', async () => {
+    const parent = { ...redHalvingState.batches[0], isolationActive: true,
+      phaseAtUtc: '2026-11-10T03:10:00Z' };
+    const { host } = await mount({ ...redHalvingState, batches: [parent], members: {
+      ...redHalvingState.members, 'AGT-2': { status: 'in-batch' as const, batchId: parent.batchId, phase: 'red' },
+    } }, { id: 'AGT-2' });
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Isolating since 2026-11-10T03:10:00Z');
+  });
+
+  it('keeps the interruption visible after the member enters a new batch', async () => {
+    const old = { ...redHalvingState.batches[0], phase: 'paused',
+      phaseReason: 'isolation interrupted', phaseAtUtc: '2026-11-10T03:12:00Z' };
+    const next = { ...redHalvingState.batches[1], batchId: 'batch-next', parentBatchId: null, phase: 'formed' };
+    const state = { ...redHalvingState, batches: [next, old], members: {
+      ...redHalvingState.members, 'AGT-2': { status: 'in-batch' as const, batchId: 'batch-next', phase: 'formed' },
+    } };
+    const { host } = await mount(state, { id: 'AGT-2' });
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Ended without a verdict at 2026-11-10T03:12:00Z');
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Waiting for: Batch batch-next verification');
   });
 });

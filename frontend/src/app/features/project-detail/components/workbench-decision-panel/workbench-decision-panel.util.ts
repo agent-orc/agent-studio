@@ -1,4 +1,6 @@
 import { laneName } from '../../../../models/lane-presentation';
+import { HttpErrorResponse } from '@angular/common/http';
+import { CLI_TYPES, CliType } from '../../../../models/task.model';
 import {
   WorkbenchDecisionPoint,
   WorkbenchDecisionResponse,
@@ -107,6 +109,37 @@ export function taskKeyTail(taskKey: string): string {
 
 export function bounded(value: string, length: number): string {
   return value.length <= length ? value : value.slice(0, length);
+}
+
+export function readDefaultCli(): CliType {
+  const value = readStorage('defaultCliType');
+  return value && (CLI_TYPES as readonly string[]).includes(value) ? value as CliType : 'claude';
+}
+
+export function readDefaultModel(cli: CliType): string { return readStorage(`defaultModel:${cli}`) ?? ''; }
+export function readDefaultThinkingLevel(cli: CliType): string | null {
+  return readStorage(`defaultThinkingLevel:${cli}`);
+}
+
+function readStorage(key: string): string | null {
+  try { return globalThis.localStorage?.getItem(key) ?? null; }
+  catch { return null; }
+}
+
+/** Preserve the server's cleanup result when a newly created card was not linked. */
+export function unlinkedCardFailure(
+  card: { id?: string; key: string }, error: unknown,
+): { removed: boolean; error: unknown } {
+  const payload = (error as HttpErrorResponse | null)?.error as {
+    removedTaskIds?: string[]; retainedTaskIds?: string[]; error?: string;
+  } | null;
+  if (card.id && payload?.removedTaskIds?.includes(card.id)) return { removed: true, error };
+  if (card.id && payload?.retainedTaskIds?.includes(card.id)) return { removed: false, error };
+  if (!card.id) return { removed: false, error: new Error(
+    `The Dossier decision could not be saved. Task ${card.key} could not be checked, so it was not removed and may remain on the board without a Dossier link. Remove it before you try again.`) };
+  if (payload?.error) return { removed: false, error };
+  return { removed: false, error: new Error(
+    `The Dossier decision could not be confirmed. Task ${card.key} was created and is kept for the retry. Try again to link it.`) };
 }
 
 export function laneLabel(lane: string | null): string {

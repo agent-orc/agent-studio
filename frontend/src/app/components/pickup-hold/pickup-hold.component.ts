@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
-import { pickupHoldMechanismLabel, titleCaseToken } from '../../models/ready-wait-reason';
+import { hostCapabilityWait, pickupHoldMechanismLabel, titleCaseToken } from '../../models/ready-wait-reason';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
 import { NowTickService } from '../../services/now-tick.service';
 import { PickupHoldResolutionComponent } from '../pickup-hold-resolution/pickup-hold-resolution.component';
@@ -62,6 +62,7 @@ export class PickupHoldComponent {
   readonly headline = computed(() => {
     const hold = this.hold();
     if (!hold) return '';
+    if (hold.mechanism === 'host-capability-missing') return hostCapabilityWait(hold.reason).headline;
     return hold.classification === 'unsatisfiable' || hold.unsatisfiable
       ? 'Held: this cannot clear by itself'
       : hold.classification === 'stalled'
@@ -93,7 +94,11 @@ export class PickupHoldComponent {
   readonly reason = computed(() => {
     const hold = this.hold();
     if (!hold) return null;
-    const duplicated = this.variant() === 'card' && hold.mechanism === 'dispatch-rejection';
+    // AGT-3709: a host-capability refusal is the same durable record, shown
+    // below whenever the card carries it for the current lane stay.
+    const duplicated = this.variant() === 'card'
+      && (hold.mechanism === 'dispatch-rejection'
+        || (hold.mechanism === 'host-capability-missing' && !!this.task().executionLocation?.lastRejection));
     return duplicated ? null : hold.reason;
   });
 

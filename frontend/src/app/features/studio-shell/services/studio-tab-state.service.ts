@@ -450,6 +450,8 @@ export class StudioTabStateService {
         return { kind: 'board', projectName: tab.projectName };
       case 'feed':
         return { kind: 'feed' };
+      case 'magazine':
+        return { kind: 'magazine', scope: tab.scope, label: tab.label };
       case 'task': {
         const scope = normalizeTaskTabScope(tab.scope);
         return { kind: 'task', taskKey: tab.taskKey, ...(scope ? { scope } : {}) };
@@ -490,6 +492,8 @@ export class StudioTabStateService {
         return { kind: 'workspace-settings' };
       case 'deployment-dashboard':
         return { kind: 'deployment-dashboard' };
+      case 'team':
+        return { kind: 'team', personaId: tab.personaId };
       case 'structure':
         return { kind: 'structure', ...(tab.projectName ? { projectName: tab.projectName } : {}) };
       case 'welcome':

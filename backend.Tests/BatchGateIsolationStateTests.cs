@@ -38,6 +38,17 @@ public sealed class BatchGateIsolationStateTests : IDisposable
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
 
     [Fact]
+    public void State_exposes_the_latest_phase_start_and_live_flight_status()
+    {
+        var manifest = CloseParent();
+        var state = State();
+        var batch = state.GetProperty("batches").EnumerateArray()
+            .Single(item => item.GetProperty("batchId").GetString() == manifest.BatchId);
+        Assert.Equal(Now, batch.GetProperty("phaseAtUtc").GetDateTimeOffset());
+        Assert.False(batch.GetProperty("liveFlight").GetBoolean());
+    }
+
+    [Fact]
     public void Proven_red_finding_carries_the_proving_run_and_its_failed_tests()
     {
         var parent = CloseParent();
@@ -129,6 +140,26 @@ public sealed class BatchGateIsolationStateTests : IDisposable
         Assert.Null(_store.IsolationEvidencePath("project", parent.BatchId, "task-2"));
     }
 
+    [Fact]
+    public void State_names_live_isolation_and_the_interrupted_terminal_time()
+    {
+        var parent = CloseParent();
+        var active = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true), now: Now,
+            activeIsolationFlights: new HashSet<string> { parent.BatchId }),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var running = Assert.Single(active.GetProperty("batches").EnumerateArray());
+        Assert.True(running.GetProperty("isolationActive").GetBoolean());
+        Assert.Equal(Now, running.GetProperty("phaseAtUtc").GetDateTimeOffset());
+
+        _store.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest,
+            BatchPhase.Paused, Candidate, 2, Now.AddMinutes(1), "isolation interrupted"));
+        var ended = Assert.Single(State().GetProperty("batches").EnumerateArray());
+        Assert.False(ended.GetProperty("isolationActive").GetBoolean());
+        Assert.Equal("isolation interrupted", ended.GetProperty("phaseReason").GetString());
+        Assert.Equal(Now.AddMinutes(1), ended.GetProperty("phaseAtUtc").GetDateTimeOffset());
+    }
+
     private JsonElement State()
         => JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
             _store, "project", new BatchGateFormationOptions(Enabled: true), now: Now),
@@ -146,7 +177,7 @@ public sealed class BatchGateIsolationStateTests : IDisposable
             BatchGatePolicy.MembershipDigest(Base, Scope, members), Now, members, [],
             members.Select(member => member.TaskKey).ToArray());
         _store.CloseManifest(manifest);
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Red, Candidate, 1, Now));
         return manifest;
     }
@@ -161,7 +192,8 @@ public sealed class BatchGateIsolationStateTests : IDisposable
             EligibleKeys = [key], ParentBatchId = parent.BatchId, Diagnostic = true,
         };
         _store.CloseManifest(child);
-        _store.AppendState(new BatchGateState(child.BatchId, digest, BatchPhase.Assembled, Candidate, 1, Now));
+        BatchGateStates.Reach(_store, new BatchGateState(child.BatchId, digest, BatchPhase.Assembled,
+            Candidate, 1, Now));
         var evidence = Path.Combine(_store.BatchDirectory(child.BatchId), "gate-evidence.jsonl");
         File.WriteAllText(evidence, "{}\n");
         var runId = "run-" + key;
@@ -169,7 +201,8 @@ public sealed class BatchGateIsolationStateTests : IDisposable
             "full", "digest", "agent-runner-01", 1, ["dotnet test"], Now, evidence));
         _store.RecordVerdict(new BatchGateRunVerdict(runId, child.BatchId, digest, Candidate,
             "digest", "fail", "DeterministicSuiteRed", evidence, Now));
-        _store.AppendState(new BatchGateState(child.BatchId, digest, BatchPhase.Red, Candidate, 1, Now));
+        BatchGateStates.Reach(_store, new BatchGateState(child.BatchId, digest, BatchPhase.Red,
+            Candidate, 1, Now));
         _store.RecordExecution(new BatchGateExecutionFact("project", child.BatchId, runId, Candidate,
             "fail", "agent-runner-01", Now, Now, 0, 0, evidence, MemberKeys: [key]));
         return (child, runId, evidence);

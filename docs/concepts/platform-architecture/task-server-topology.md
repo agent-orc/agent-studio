@@ -59,6 +59,15 @@ and what is left.
 The Runner never accepts inbound task mutations and browsers never talk to a
 Runner. All Runner traffic is outbound to whichever server it is pointed at.
 
+### First-run checklist on a networked monolith
+
+A networked monolith serves owner and second-factor enrollment through
+`/api/auth/status`. It does not serve the standalone Task Server's
+`/api/v1/installation` route. The Studio checklist reads the monolith auth
+status to verify its Owner row when that installation route returns 404. The
+checklist's Task Server enrollment, project registration and proof routes still
+require an attached standalone Task Server.
+
 ## State ownership
 
 | State | Owner today | Storage |

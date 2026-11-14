@@ -1,0 +1,14 @@
+@if (summary()?.phaseMinutes; as phases) {
+  <section class="phase-metrics" [attr.aria-labelledby]="headingId" data-testid="batch-phase-metrics">
+    <h3 [id]="headingId">Today's card wait and run time</h3>
+    <div class="phase-metrics__scroll"><table>
+      <thead><tr><th scope="col">Phase</th><th scope="col">p50</th><th scope="col">p90</th><th scope="col">Cards</th></tr></thead>
+      <tbody>@for (row of rows; track row.key) {
+        <tr><th scope="row">{{ row.label }}</th><td>{{ minutes(phases[row.key]?.p50) }}</td>
+          <td>{{ minutes(phases[row.key]?.p90) }}</td><td>{{ phases[row.key]?.cards ?? 0 }}</td></tr>
+      }</tbody>
+    </table></div>
+    <p>Diagnostic rerun: {{ share(summary()?.diagnosticRerunShare) }} of published batch cards.</p>
+    <p>Per-task fallback cards are excluded from these percentiles.</p>
+  </section>
+}

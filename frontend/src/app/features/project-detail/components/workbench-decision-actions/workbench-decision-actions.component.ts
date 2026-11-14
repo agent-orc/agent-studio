@@ -12,7 +12,7 @@ import {
   untracked,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { EMPTY, Observable, catchError, map, of, switchMap, tap } from 'rxjs';
+import { EMPTY, Observable, catchError, map, of, switchMap, tap, throwError } from 'rxjs';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { CliCatalogStore } from '../../../cli';
@@ -38,9 +38,13 @@ import {
   cardPrompt,
   createOperationId,
   laneLabel,
+  readDefaultCli,
+  readDefaultModel,
+  readDefaultThinkingLevel,
   reworkPrompt,
   selectedDecisionText,
   taskKeyTail,
+  unlinkedCardFailure,
 } from '../workbench-decision-panel/workbench-decision-panel.util';
 
 type ActionMode = 'feature-spawn' | 'rework' | null;
@@ -110,7 +114,7 @@ export class WorkbenchDecisionActionsComponent {
   readonly canPrepareFeature = computed(() =>
     !this.settled() && !this.pending() && this.answersComplete());
   readonly canCreateFeature = computed(() =>
-    this.canPrepareFeature() && this.mode() === 'feature-spawn'
+    !this.settled() && this.answersComplete() && this.mode() === 'feature-spawn'
     && this.title().trim().length > 0 && this.goal().trim().length > 0);
   readonly canRequestRework = computed(() =>
     !this.settled() && !this.pending() && this.reworkAvailable());
@@ -215,8 +219,11 @@ export class WorkbenchDecisionActionsComponent {
     this.actionError.set(null);
     this.store.prepare(this.projectName(), this.document().workbench.id, request).pipe(
       switchMap(prepared => this.createCard(prepared.taskDraft ?? request.task!).pipe(
+        switchMap(card => this.resolveCardId(card)),
         map(card => ({ prepared, card })))),
-      switchMap(({ prepared, card }) => this.confirmFeature(request, card, prepared)),
+      switchMap(({ prepared, card }) => this.confirmFeature(request, card, prepared).pipe(
+        catchError(error => this.settleUnlinkedCard(card, error)),
+      )),
       catchError(error => this.fail(error)),
     ).subscribe(() => this.finish());
   }
@@ -242,6 +249,7 @@ export class WorkbenchDecisionActionsComponent {
       expectedRevision: result.revision,
       expectedFingerprint: result.fingerprint,
       spawnedTaskKeys: [card.key],
+      spawnedTaskIds: card.id ? [card.id] : [],
       ...this.agent(),
       confirmed: true,
     };
@@ -269,9 +277,18 @@ export class WorkbenchDecisionActionsComponent {
         thinkingLevelExplicit: true,
         taskType: draft.taskType,
         mode: draft.mode,
-      })),
-      switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName())),
-      map(detail => ({
+        dossier: { path: this.document().workbench.entryPath },
+      }).pipe(switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName()).pipe(
+        map(detail => ({ detail, id: created.id, watchPath })),
+        catchError(() => this.tasks.deleteJob(created.id, watchPath).pipe(
+          catchError(() => throwError(() => new Error(
+            `The task was created, but its details could not be read. The task may remain on the board. Ask a Studio operator to remove task ${created.id}.`))),
+          switchMap(() => throwError(() => new Error('The task was created, but its details could not be read. The task was removed. Try again.'))),
+        )),
+      )))),
+      map(({ detail, id, watchPath }) => ({
+        id,
+        watchPath,
         key: detail.info.key || detail.info.displayKey || taskKeyTail(detail.info.taskKey),
         taskKey: detail.info.taskKey,
         title: detail.info.title,
@@ -283,6 +300,38 @@ export class WorkbenchDecisionActionsComponent {
         this.tasks.refresh();
       }),
     );
+  }
+
+  /**
+   * A card restored from an older draft may lack its job id. The server
+   * removes an unlinked card by id only, so the id is looked up first; a card
+   * that cannot be found keeps no id and is never removed by its display key.
+   */
+  private resolveCardId(card: WorkbenchDecisionDraftCard): Observable<WorkbenchDecisionDraftCard> {
+    if (card.id) return of(card);
+    return this.tasks.getDetailByProject(card.taskKey || card.key, this.projectName()).pipe(
+      map(detail => detail.info.id ? { ...card, id: detail.info.id, watchPath: detail.info.watchPath } : card),
+      tap(resolved => {
+        if (!resolved.id) return;
+        this.createdCard.set(resolved);
+        this.drafts.rememberCreatedCard(this.projectName(), this.document().workbench.id, resolved);
+      }),
+      catchError(() => of(card)),
+    );
+  }
+
+  /**
+   * The server removes the card of a decision it could not record and says so
+   * in its answer. Without that answer the card is kept for the retry, which
+   * links it under the same operation id.
+   */
+  private settleUnlinkedCard(card: WorkbenchDecisionDraftCard, error: unknown): Observable<never> {
+    const failure = unlinkedCardFailure(card, error);
+    if (failure.removed) {
+      this.createdCard.set(null);
+      this.drafts.clearCreatedCard(this.projectName(), this.document().workbench.id);
+    }
+    return throwError(() => failure.error);
   }
 
   private prepareRequest(outcome: Exclude<ActionMode, null>): PrepareWorkbenchDecisionRequest | null {
@@ -312,12 +361,10 @@ export class WorkbenchDecisionActionsComponent {
   private seedFeatureDraft(): void {
     this.resetFeedback();
     const operationId = createOperationId();
-    const decisions = this.selectedSummary();
     const draft = this.drafts.beginFeature(this.projectName(), this.document().workbench.id, {
       actor: this.actor(),
       title: `Implement ${this.document().workbench.title}`,
-      goal: bounded([this.document().workbench.summary.trim(), decisions
-        ? `Recorded decisions:\n${decisions}` : ''].filter(Boolean).join('\n\n'), 20_000),
+      goal: bounded(`Implement ${this.document().workbench.title} according to the source Dossier and its recorded decisions.`, 20_000),
       operationId,
     }, this.responses());
     this.title.set(draft.title);
@@ -353,11 +400,7 @@ export class WorkbenchDecisionActionsComponent {
     if (draft.thinkingLevel !== undefined) this.thinkingLevel.set(draft.thinkingLevel);
   }
 
-  /**
-   * Without a stored default the form starts on the model the picker marks as
-   * default, so confirming never waits for an explicit pick (AGT-3703). Runs
-   * once per Dossier; a later explicit "CLI default" choice stays as chosen.
-   */
+  /** Preselect the picker default once per Dossier, preserving later explicit choices. */
   private preselectDefaultModel(): void {
     if (this.model().trim()) return;
     const cli = this.cliType();
@@ -389,6 +432,9 @@ export class WorkbenchDecisionActionsComponent {
 
   private fail(error: unknown): Observable<never> {
     this.actionError.set(actionErrorMessage(error));
+    requestAnimationFrame(() => this.host.nativeElement
+      .querySelector<HTMLElement>('.decision-actions__error')
+      ?.scrollIntoView({ block: 'nearest' }));
     return EMPTY;
   }
 
@@ -396,23 +442,8 @@ export class WorkbenchDecisionActionsComponent {
     this.validationError.set(message);
     return null;
   }
-
   private resetFeedback(): void {
     this.validationError.set(null);
     this.actionError.set(null);
   }
-}
-
-function readDefaultCli(): CliType {
-  const value = readStorage('defaultCliType');
-  return value && (CLI_TYPES as readonly string[]).includes(value) ? value as CliType : 'claude';
-}
-
-function readDefaultModel(cli: CliType): string { return readStorage(`defaultModel:${cli}`) ?? ''; }
-function readDefaultThinkingLevel(cli: CliType): string | null {
-  return readStorage(`defaultThinkingLevel:${cli}`);
-}
-function readStorage(key: string): string | null {
-  try { return globalThis.localStorage?.getItem(key) ?? null; }
-  catch { return null; }
 }

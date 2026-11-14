@@ -53,6 +53,7 @@ export const TIMELINE_KIND = {
   postAcceptanceReviewReportRecorded: 'post_acceptance_review_report_recorded',
   taskReleased: 'task_released',
   laneChanged: 'lane_changed',
+  ownerMoveRefused: 'owner_move_refused',
   mergedIn: 'merged_in',
   readOnlyContainmentViolation: 'read_only_containment_violation',
   executionContext: 'execution_context',
@@ -65,6 +66,10 @@ export const TIMELINE_KIND = {
   followUpSuperseded: 'follow_up_superseded',
   steeringFeedback: 'steering_feedback',
   continuationBaseRecorded: 'continuation_base_recorded',
+  briefChanged: 'brief_changed',
+  completionContentRefused: 'completion_content_refused',
+  completionContentOverridden: 'completion_content_overridden',
+  contentReviewRequested: 'content_review_requested',
 } as const;
 
 /** The three terminals of the completion loop. */

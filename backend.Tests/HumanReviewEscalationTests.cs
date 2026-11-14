@@ -70,6 +70,16 @@ public sealed class HumanReviewEscalationTests : IDisposable
         new(_states, _transitions, _workspaceRoot, NullLogger<HumanReviewEscalation>.Instance);
 
     [Fact]
+    public void Environmental_watchdog_stub_names_the_review_recall_condition()
+    {
+        var stub = HumanReviewEscalation.BuildStatusStub(
+            HumanReviewEscalationCategories.Environmental, "Review owner disappeared.",
+            parkDetail: HumanReviewEscalationCategories.AutoReviewStranded);
+        Assert.Contains("fresh review attempt", stub);
+        Assert.DoesNotContain("Only a person can clear this park", stub);
+    }
+
+    [Fact]
     public async Task EscalateAsync_WatchdogKill_MovesAndRecordsVerdictAndStatus()
     {
         const string jobId = "bug-card-delete-button";

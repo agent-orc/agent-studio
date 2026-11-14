@@ -16,6 +16,8 @@ public sealed record CauseWaitRecord
     [JsonPropertyName("failureClass")] public string FailureClass { get; init; } = "";
     [JsonPropertyName("since")] public DateTime Since { get; init; } = DateTime.UtcNow;
     [JsonPropertyName("reason")] public string Reason { get; init; } = "";
+    /// <summary>What the cause is, in plain words (<see cref="CauseBreakerWording"/>).</summary>
+    [JsonPropertyName("summary")] public string? Summary { get; init; }
     /// <summary>Set while this card runs as the breaker's probe; the marker then does not block the attempt.</summary>
     [JsonPropertyName("probe")] public bool Probe { get; init; }
 }
@@ -92,7 +94,10 @@ public static class CauseWaitMarker
             marker.Fingerprint,
             marker.FailureClass,
             marker.Since,
-            marker.Reason);
+            marker.Reason,
+            string.IsNullOrWhiteSpace(marker.Summary)
+                ? CauseBreakerWording.Summary(marker.FailureClass)
+                : marker.Summary);
 }
 
 /// <summary>

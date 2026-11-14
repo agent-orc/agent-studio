@@ -5,6 +5,11 @@ namespace AgentRunner;
 internal enum ReviewSlotContinuationKind
 {
     Reattach,
+    /// <summary>
+    /// The worker is gone but the lease is still this host's: run the attempt
+    /// again from its checkpoint instead of settling a restart loss (AGT-3647).
+    /// </summary>
+    Relaunch,
     SettleNonAdoptable,
 }
 
@@ -34,6 +39,7 @@ internal sealed record ReviewProcessObservation(bool Live, string Reason);
 internal enum ReviewSlotRecoveryAction
 {
     Reattach,
+    Relaunch,
     SettleNonAdoptable,
     PurgeInvalidAuthority,
     PurgeAged,
@@ -46,14 +52,19 @@ internal static class ReviewSlotRecoveryPolicy
         bool processLive,
         bool hasDurableResult,
         bool exceedsMaximumDormantAge,
-        bool? leaseValid)
+        bool? leaseValid,
+        bool relaunchable = false)
     {
         if (processLive) return ReviewSlotRecoveryAction.Reattach;
         if (exceedsMaximumDormantAge) return ReviewSlotRecoveryAction.PurgeAged;
         if (leaseValid is null) return ReviewSlotRecoveryAction.Defer;
         if (!leaseValid.Value) return ReviewSlotRecoveryAction.PurgeInvalidAuthority;
-        return hasDurableResult
-            ? ReviewSlotRecoveryAction.Reattach
+        if (hasDurableResult) return ReviewSlotRecoveryAction.Reattach;
+        // A daemon or container restart ended the worker, not the review. The
+        // lease still belongs to this host, so the attempt runs again from its
+        // checkpoint; only a worker that keeps dying is settled as lost.
+        return relaunchable
+            ? ReviewSlotRecoveryAction.Relaunch
             : ReviewSlotRecoveryAction.SettleNonAdoptable;
     }
 
@@ -181,7 +192,8 @@ internal sealed class ReviewSlotReconciler
                 process.Live,
                 hasDurableResult,
                 exceedsMaximumDormantAge,
-                leaseValid);
+                leaseValid,
+                DurableReviewProcess.CanRelaunch(slot));
             switch (action)
             {
                 case ReviewSlotRecoveryAction.Reattach:
@@ -189,6 +201,12 @@ internal sealed class ReviewSlotReconciler
                         slot,
                         ReviewSlotContinuationKind.Reattach,
                         process.Live ? process.Reason : reason));
+                    break;
+                case ReviewSlotRecoveryAction.Relaunch:
+                    continuations.Add(new ReviewSlotContinuation(
+                        slot,
+                        ReviewSlotContinuationKind.Relaunch,
+                        process.Reason));
                     break;
                 case ReviewSlotRecoveryAction.SettleNonAdoptable:
                     continuations.Add(new ReviewSlotContinuation(

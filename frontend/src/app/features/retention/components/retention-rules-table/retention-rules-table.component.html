@@ -1,6 +1,8 @@
 <section class="rules" data-testid="retention-rules">
   @if (loading()) {
     <p class="rules__state" data-testid="retention-rules-loading">Loading retention rules…</p>
+  } @else if (unavailable()) {
+    <p class="rules__state" data-testid="retention-rules-unavailable">Retention rules require a connected Task Server. This local connection does not serve that panel.</p>
   } @else if (error() && !workspacePolicy()) {
     <p class="rules__state rules__state--error" role="alert">{{ error() }}</p>
   } @else {

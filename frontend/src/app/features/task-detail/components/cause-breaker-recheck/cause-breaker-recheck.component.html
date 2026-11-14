@@ -1,0 +1,50 @@
+@if (breaker(); as cause) {
+  <section class="cause-recheck" data-testid="cause-breaker-recheck" role="status"
+           [attr.data-probe-state]="cause.probeState ?? null">
+    <span class="cause-recheck__dot" aria-hidden="true"></span>
+    <div class="cause-recheck__body">
+      <p class="cause-recheck__line" data-testid="cause-breaker-recheck-line">
+        {{ held().length === 1 ? '1 card is' : held().length + ' cards are' }} held behind this card: {{ cause.summary }}
+      </p>
+      @if (cause.resolving) {
+        <p class="cause-recheck__hint" data-testid="cause-breaker-recheck-state">
+          The cause is resolved. Each held card gets a fresh review.
+        </p>
+      } @else if (cause.probeKey; as probeKey) {
+        <p class="cause-recheck__hint" data-testid="cause-breaker-recheck-state">
+          Re-checking
+          <button type="button" class="cause-recheck__link" (click)="open(probeKey)">{{ probeKey }}</button>.
+          When its review passes, every held card gets a fresh review.
+        </p>
+      } @else {
+        <p class="cause-recheck__hint">
+          Review skips the held cards while this cause is open. Re-check now reviews the newest delivery@if (firstHeld(); as first) { ({{ first.key }})} again;
+          when it passes, every held card gets a fresh review. Moving this card to Accepted records your decision that the cause is resolved.
+        </p>
+      }
+      <ul class="cause-recheck__list" aria-label="Held cards">
+        @for (card of held(); track card.taskKey) {
+          <li class="cause-recheck__item" data-testid="cause-breaker-held-card" [attr.data-key]="card.key">
+            <button type="button" class="cause-recheck__link" (click)="open(card.key)">{{ card.key }}</button>
+            @if (card.title) { <span class="cause-recheck__title">{{ card.title }}</span> }
+            <span class="cause-recheck__meta">{{ delivered(card) }}</span>
+            @if (!card.recheckFirst && canRecheck()) {
+              <button type="button" class="cause-recheck__ghost"
+                      [attr.data-testid]="'cause-breaker-recheck-card-' + card.key"
+                      [appPendingButton]="pending() === card.taskKey" pendingLabel="Requesting…"
+                      (click)="recheck(card)">Re-check this card</button>
+            }
+          </li>
+        }
+      </ul>
+      @if (error(); as message) {
+        <p class="cause-recheck__error" data-testid="cause-breaker-recheck-error" role="alert">{{ message }}</p>
+      }
+      <div class="cause-recheck__actions">
+        <button type="button" class="cause-recheck__primary" data-testid="cause-breaker-recheck-now"
+                [disabled]="!canRecheck()" [appPendingButton]="pending() === ''" pendingLabel="Requesting…"
+                (click)="recheck()">Re-check now</button>
+      </div>
+    </div>
+  </section>
+}

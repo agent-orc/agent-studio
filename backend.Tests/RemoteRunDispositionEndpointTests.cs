@@ -118,6 +118,15 @@ public sealed class RemoteRunDispositionEndpointTests : IDisposable
         Assert.True(promptEdit.StatusCode == HttpStatusCode.OK,
             await promptEdit.Content.ReadAsStringAsync());
         Assert.NotEqual(original, BriefVersionStore.ReadOrCreate(Current(factory, "AGT-OLDER-BRIEF").FolderPath));
+        var difference = await client.GetFromJsonAsync<BriefVersionStore.BriefDifference>(
+            $"/api/tasks/AGT-OLDER-BRIEF/brief-difference?watchPath={Uri.EscapeDataString(WatchPath)}");
+        Assert.NotNull(difference);
+        Assert.Equal("Original brief", difference.Before);
+        Assert.Equal("Sharpened brief", difference.After);
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>()
+            .ReadAll(Current(factory, "AGT-OLDER-BRIEF").FolderPath),
+            row => row.Kind == TimelineEventKinds.BriefChanged
+                && row.Details?.GetValueOrDefault("fromVersion") == original);
 
         var completion = await client.PostAsJsonAsync("/api/runner/completion", DeliveredCompletion(taskKey, attempt));
         Assert.True(completion.StatusCode == HttpStatusCode.OK,

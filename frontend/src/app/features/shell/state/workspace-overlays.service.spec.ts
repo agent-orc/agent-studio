@@ -83,6 +83,11 @@ describe('WorkspaceOverlaysService canonical settings routes', () => {
 
     service.select('remote-hosts');
     expect(window.location.hash).toBe('#/workspace/settings/environment');
+
+    service.select('operations');
+    expect(window.location.hash).toBe('#/workspace/settings/operations');
+    service.close();
+    expect(window.location.hash).toBe('');
   });
 
   it('reads legacy loose routes and republishes the canonical path', () => {

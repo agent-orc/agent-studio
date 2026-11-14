@@ -158,6 +158,8 @@ export function buildComposerLocationContext(
       return { project: tab.projectName === '__all__' ? null : tab.projectName, surface: 'Board' };
     case 'feed':
       return { project: null, surface: 'Feed' };
+    case 'magazine':
+      return { project: null, surface: 'Magazine', detail: tab.label };
     case 'task':
       return taskContext('Task', tab.taskKey, tasks);
     case 'workbench':
@@ -186,6 +188,8 @@ export function buildComposerLocationContext(
       return { project: null, surface: 'Deployment dashboard' };
     case 'structure':
       return { project: null, surface: 'Structure' };
+    case 'team':
+      return { project: null, surface: 'Team', ...(tab.personaId ? { detail: tab.personaId, referenceKey: `persona:${tab.personaId}` } : {}) };
     case 'welcome':
       return { project: null, surface: 'Welcome' };
   }

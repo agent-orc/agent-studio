@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,8 +12,10 @@ namespace AgentRunner;
 /// <c>claude setup-token</c>. Child output is parsed for the verification URL, the one-time code
 /// and the Claude setup token, and is never logged. Codex gets a closed stdin, so it never reads
 /// the daemon's. Headless <c>claude setup-token</c> waits for the authorization code of its callback
-/// page: its stdin pipe receives only the code the Owner pasted in Studio, written once and then
-/// closed (AGT-3243). Success requires a changed credential file and a real provider probe.
+/// page and reads it only from a terminal, so it runs in a pseudo-terminal that receives nothing
+/// but the code the Owner pasted in Studio, typed once (AGT-3243). A CLI that is still running
+/// <see cref="CodeAcceptanceTimeout"/> after the code counts as a rejected code and is stopped.
+/// Success requires a changed credential file and a real provider probe.
 /// Cancellation (Studio cancel, session timeout, runner shutdown) or a failed instruction
 /// publish stops the process tree, and no Claude token is accepted afterwards.
 /// </summary>
@@ -25,6 +26,14 @@ public sealed partial class DeviceLoginExecutor(
     Func<CancellationToken, Task<bool>>? sessionRunning = null,
     Action<string>? log = null, Func<CancellationToken, Task<string?>>? takeCode = null)
 {
+    /// <summary>
+    /// How long the CLI may run after the typed code before the code counts as rejected. Claude
+    /// answers a wrong code with a retry prompt and keeps waiting; a right one exits within seconds.
+    /// </summary>
+    internal static readonly TimeSpan CodeAcceptanceTimeout = TimeSpan.FromMinutes(2);
+
+    internal const string CodeRejectedDetail = "Claude did not accept the authorization code.";
+
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
     [GeneratedRegex(@"https://[^\s<>]+", RegexOptions.IgnoreCase)]
@@ -36,7 +45,8 @@ public sealed partial class DeviceLoginExecutor(
     [GeneratedRegex(@"\bsk-ant-[A-Za-z0-9_-]{10,}\b")]
     private static partial Regex ClaudeTokenPattern();
 
-    [GeneratedRegex(@"\x1B\[[0-9;]*[A-Za-z]")]
+    /// <summary>CSI sequences (cursor moves of a terminal UI included) and OSC sequences such as hyperlinks.</summary>
+    [GeneratedRegex(@"\x1B\[[0-?]*[ -/]*[@-~]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)")]
     private static partial Regex AnsiPattern();
 
     /// <summary>The Claude setup token this runner restores into its environment at start.</summary>
@@ -66,6 +76,7 @@ public sealed partial class DeviceLoginExecutor(
         using var limit = new CancellationTokenSource(TimeSpan.FromMinutes(15), _clock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, limit.Token);
         using var codeWait = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        // The launch spec stays in this launcher; the child only drives the I/O of the process.
         var info = new ProcessStartInfo(binary)
         {
             CreateNoWindow = true,
@@ -78,7 +89,9 @@ public sealed partial class DeviceLoginExecutor(
         foreach (var argument in arguments) info.ArgumentList.Add(argument);
         info.Environment["NO_BROWSER"] = "1";
         info.Environment["BROWSER"] = "false";
-        using var process = new Process { StartInfo = info };
+        using IDeviceLoginChild child = awaitsCode
+            ? new TerminalDeviceLoginChild(info, _clock, log)
+            : new PipedDeviceLoginChild(info, log);
         var started = false;
         var gate = new object();
         string? url = null;
@@ -88,11 +101,11 @@ public sealed partial class DeviceLoginExecutor(
         var closed = false;
         var publishFailed = false;
         var codeWritten = false;
+        var codeRejected = false;
         Task publishing = Task.CompletedTask;
         var published = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        void Capture(string? line)
+        void Capture(string line)
         {
-            if (line is null) return;
             DeviceLoginInstructionsRequest? instructions = null;
             lock (gate)
             {
@@ -126,8 +139,9 @@ public sealed partial class DeviceLoginExecutor(
             }
             if (awaitsCode) await DeliverCodeAsync(codeWait.Token);
         }
-        // Polls for the Owner's pasted code while the CLI waits, writes it to stdin once and closes
-        // stdin, so a rejected code ends the CLI instead of leaving it at a second prompt.
+        // Polls for the Owner's pasted code while the CLI waits and types it into the CLI's
+        // terminal once. The CLI answers a rejected code with a retry prompt instead of exiting,
+        // so a CLI still running after CodeAcceptanceTimeout counts as a rejected code.
         async Task DeliverCodeAsync(CancellationToken ct)
         {
             var readFailed = false;
@@ -147,20 +161,20 @@ public sealed partial class DeviceLoginExecutor(
                     readFailed = false;
                     if (pasted is null) continue;
                     lock (gate) codeWritten = true;
-                    var input = process.StandardInput;
-                    // The server validates the shape; a value that could add a second line is never written.
+                    // The server validates the shape; a value that could add a second line is never typed.
                     if (DeviceLoginSessions.IsAuthorizationCode(pasted))
                     {
-                        await input.WriteAsync((pasted.Trim() + "\n").AsMemory(), ct);
-                        await input.FlushAsync(ct);
+                        await child.SubmitCodeAsync(pasted.Trim(), ct);
+                        await Task.Delay(CodeAcceptanceTimeout, _clock, ct);
                     }
-                    input.Close();
+                    lock (gate) codeRejected = true;
+                    await deadline.CancelAsync();
                     return;
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                return; // The CLI exited or the sign-in ended before a code arrived.
+                return; // The CLI exited or the sign-in ended.
             }
             catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
             {
@@ -172,22 +186,17 @@ public sealed partial class DeviceLoginExecutor(
             previousCredential = File.Exists(store)
                 ? await File.ReadAllBytesAsync(store, deadline.Token) : null;
             snapshotReady = true;
-            if (!process.Start()) return new("failed", $"The {label} process could not start.");
+            if (!await child.StartAsync(Capture, deadline.Token))
+                return new("failed", $"The {label} process could not start.");
             started = true;
-            if (!awaitsCode) process.StandardInput.Close();
-            process.OutputDataReceived += (_, e) => Capture(e.Data);
-            process.ErrorDataReceived += (_, e) => Capture(e.Data);
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            await process.WaitForExitAsync(deadline.Token);
-            process.WaitForExit(); // Drain redirected DataReceived callbacks before checking instructions.
+            var exitCode = await child.WaitForExitAsync(deadline.Token);
             await codeWait.CancelAsync();
             if (sent) await published.Task.WaitAsync(deadline.Token);
             bool wroteCode;
             lock (gate) wroteCode = codeWritten;
-            if (wroteCode && process.ExitCode != 0)
-                return new("failed", "Claude did not accept the authorization code.");
-            if (process.ExitCode != 0 || !sent)
+            if (wroteCode && exitCode != 0)
+                return new("failed", CodeRejectedDetail);
+            if (exitCode != 0 || !sent)
                 return new("failed", $"{label} device sign-in failed before verification.");
             if (claude) return await AcceptClaudeTokenAsync(store,
                 previousCredential is null ? null : SHA256.HashData(previousCredential), token, deadline.Token);
@@ -209,10 +218,14 @@ public sealed partial class DeviceLoginExecutor(
         }
         catch (Exception ex)
         {
-            if (started) Stop(process);
+            if (started) child.Stop();
             lock (gate)
+            {
                 if (publishFailed)
                     return new("failed", $"The {label} sign-in instructions could not be published.");
+                if (codeRejected && !cancellationToken.IsCancellationRequested)
+                    return new("failed", CodeRejectedDetail);
+            }
             return ex is OperationCanceledException
                 ? new("failed", "The device sign-in timed out or was cancelled.")
                 : new("failed", $"Device sign-in failed: {ex.GetType().Name}.");
@@ -313,21 +326,6 @@ public sealed partial class DeviceLoginExecutor(
     internal static string? ClaudeToken(string line)
         => ClaudeTokenPattern().Match(AnsiPattern().Replace(line, string.Empty)).Value is { Length: > 0 } token
             ? token : null;
-
-    private void Stop(Process process)
-    {
-        try
-        {
-            if (process.HasExited) return;
-            process.Kill(entireProcessTree: true);
-            process.WaitForExit(TimeSpan.FromSeconds(5));
-        }
-        catch (InvalidOperationException) { return; } // Exit raced the stop request.
-        catch (Exception ex) when (ex is Win32Exception or AggregateException or NotSupportedException)
-        {
-            log?.Invoke($"device-login process stop failed: {ex.GetType().Name}");
-        }
-    }
 
     private static async Task<bool> ProbeAsync(string binary, DateTimeOffset startedAt, CancellationToken ct)
     {

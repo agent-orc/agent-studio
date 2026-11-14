@@ -199,6 +199,48 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Plan_skew_continuation_reopens_from_full_ref_without_a_review_finding()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "plan-skew-round",
+            reviewOutcome: ReviewTerminalOutcome.DeliveryPredatesReviewPlan);
+        var resultRef = $"refs/heads/task/{card.Id}";
+        var continuationBase = ReviewFixRoundBase.Decide(
+            card.ReviewAttemptId, resultRef, card.DeliverySha, DateTime.UnixEpoch);
+        Assert.NotNull(continuationBase);
+        var entry = JournalEntry(card, stack);
+        var report = entry.Report with
+        {
+            Outcome = Contract.ReviewOutcomeKinds.DeliveryPredatesReviewPlan,
+            Summary = "Review plan needs scripts/check-release-build.sh, which this delivery predates; merge round sent.",
+        };
+        entry = entry with
+        {
+            Report = report,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Continuation = new RemoteReviewContinuation(
+                RemoteReviewContinuationKind.PlanMergeRound,
+                $"Merge develop into the delivery at `{resultRef}` and submit the result.",
+                [], 0, new CardRoundBudgetState(0, 4), Base: continuationBase),
+        };
+        var task = stack.Scanner.FindJob(card.Id, _watchPath)!;
+
+        Assert.True(await RemoteReviewContinuationProjection.ApplyAsync(
+            task, entry, stack.Scanner, stack.Transitions, stack.Mutations,
+            stack.Timeline, NullLogger.Instance, () => true, CancellationToken.None));
+
+        var ready = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, ready.State);
+        Assert.Contains(resultRef, File.ReadAllText(Path.Combine(ready.FolderPath, "prompt.md")),
+            StringComparison.Ordinal);
+        Assert.Null(ReviewConcernRoundStore.Read(ready.FolderPath));
+        Assert.Contains(stack.Timeline.ReadAll(ready.FolderPath), item =>
+            item.Kind == TimelineEventKinds.QualityLoopReopened
+            && item.Details?.GetValueOrDefault("cause") == "review-plan-skew");
+    }
+
+    [Fact]
     public async Task Delivery_resume_rechecks_owner_after_integration_and_rollback_retries()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -399,6 +441,47 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             AutoReviewResumeRetryStore.Read(card.FolderPath, card.ReviewAttemptId));
         Assert.True(retry.WaitingForIntegration);
         Assert.Equal(0, retry.Attempts);
+        Assert.True(retry.NextAtUtc > clock.GetUtcNow() - TimeSpan.FromMinutes(10));
+    }
+
+    [Fact]
+    public async Task Rewritten_origin_push_resumes_card_without_a_manual_fetch()
+    {
+        var clock = new FakeTimeProvider();
+        var stack = Build(clock: clock, guardedTransitions: true);
+        var card = SeedPassedDelivery(stack, "rewritten-origin");
+        RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
+
+        var first = await stack.Resume.ResumeAsync(
+            stack.Scanner.FindJob(card.Id, _watchPath)!, "before-push");
+        Assert.Equal(AutoReviewDeliveryResumeService.Reasons.IntegrationOwnedWait, first.Reason);
+        Assert.Equal(TaskStates.AutoReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+        var retry = Assert.IsType<AutoReviewResumeRetryRecord>(
+            AutoReviewResumeRetryStore.Read(card.FolderPath, card.ReviewAttemptId));
+        Assert.NotNull(retry.NextAtUtc);
+        Assert.Equal(IntegrationStatuses.MergedLocally, Status(stack, card.Id).Status);
+
+        Git(_repo, "config", $"url.file://{_origin}.insteadOf", "rewrite://fixture");
+        Git(_repo, "remote", "set-url", "origin", "rewrite://fixture");
+        var publishedSha = Git(_repo, "rev-parse", GitService.IntegrationLaneRef("develop"));
+        var git = new GitService(NullLogger<GitService>.Instance, stack.Scanner, stack.Configuration);
+        var runner = new MergeIntoDevelopRunner(git, stack.Pipeline,
+            NullLogger<MergeIntoDevelopRunner>.Instance);
+        var pushed = await runner.PushIntegrationBranchAsync(
+            Project, card.Id, card.FolderPath, _watchPath, "develop",
+            approvedSha: publishedSha);
+
+        Assert.True(pushed.Success, pushed.Error);
+        Assert.Equal("pushed", pushed.Status);
+        Assert.Equal(publishedSha, Git(_origin, "rev-parse", "develop"));
+        Assert.Equal(publishedSha, Git(_repo, "rev-parse", "origin/develop"));
+        Assert.Equal(IntegrationStatuses.Integrated, Status(stack, card.Id).Status);
+
+        var resumed = await stack.Resume.RunOnceAsync("scheduled-resume");
+        Assert.Equal(1, resumed.Completed);
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+        Assert.Null(AutoReviewResumeRetryStore.Read(
+            stack.Scanner.FindJob(card.Id, _watchPath)!.FolderPath, card.ReviewAttemptId));
     }
 
     [Fact]
@@ -1478,7 +1561,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal(1, report.Completed);
         var parked = restarted.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, parked.State);
-        Assert.Equal("automatic recovery budget used: 2/2", parked.ParkedBlocker?.Reason);
+        Assert.Contains("Delivery integration stopped after automatic recovery budget used: 2/2", parked.ParkedBlocker?.Reason);
+        Assert.Contains("Review the integration evidence and retry", parked.ParkedBlocker?.Reason);
         Assert.True(parked.ParkedBlocker?.RequiresDecisionCard);
     }
 
@@ -1551,6 +1635,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         var moved = restarted.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, moved.State);
         Assert.True(IsOnIntegrationLane(card.DeliverySha), "the delivery did not reach the integration lane");
+        Assert.Equal(RemoteDeliveryParkReason.CompletedReviewPark, moved.ParkedBlocker?.Reason);
     }
 
     /// <summary>
@@ -1591,7 +1676,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal(1, first.Integrated);
         var parked = seeded.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, parked.State);
-        Assert.Equal("integration: branch-sync-failed", parked.ParkedBlocker?.Reason);
+        Assert.Equal(RemoteDeliveryParkReason.ForCode(AcceptedIntegrationFailureCodes.BranchSyncFailed), parked.ParkedBlocker?.Reason);
         Assert.Equal(
             RemoteDeliverySettlementStage.LaneSettled,
             RemoteDeliverySettlementStore.Read(parked.FolderPath)!.Stage);

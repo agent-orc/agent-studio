@@ -74,6 +74,7 @@ public sealed class TaskIntegrationStatusService
     private readonly Func<string, string?> _readOriginUrl;
     private readonly GitReachabilityIndex? _reachability;
     private readonly BatchGateStore _batchGates;
+    private readonly TaskScannerService? _scanner;
 
     /// <summary>The delivered lanes this verdict applies to. Cards outside get no entry.</summary>
     internal static readonly HashSet<string> DeliveredLanes = new(StringComparer.Ordinal)
@@ -107,9 +108,10 @@ public sealed class TaskIntegrationStatusService
         ProjectRegistry? registry = null,
         GitOriginStore? originStore = null,
         GitReachabilityIndex? reachability = null,
-        BatchGateStore? batchGates = null)
+        BatchGateStore? batchGates = null,
+        TaskScannerService? scanner = null)
         : this(git, settings, pipelineLog, logger, TimeProvider.System, registry,
-            originStore: originStore, reachability: reachability, batchGates: batchGates)
+            originStore: originStore, reachability: reachability, batchGates: batchGates, scanner: scanner)
     {
     }
 
@@ -123,7 +125,8 @@ public sealed class TaskIntegrationStatusService
         Func<string, string?>? readOriginUrl = null,
         GitOriginStore? originStore = null,
         GitReachabilityIndex? reachability = null,
-        BatchGateStore? batchGates = null)
+        BatchGateStore? batchGates = null,
+        TaskScannerService? scanner = null)
     {
         _git = git;
         _settings = settings;
@@ -138,6 +141,7 @@ public sealed class TaskIntegrationStatusService
         // card classification shares it with provenance and the integration view.
         _reachability = reachability;
         _batchGates = batchGates ?? new BatchGateStore();
+        _scanner = scanner;
         _cache = new GenerationSingleFlightCache<RepoIntegration>(timeProvider);
         _contentCache = new GenerationSingleFlightCache<bool?>(timeProvider);
         _pathCache = new GenerationSingleFlightCache<IReadOnlyList<string>>(timeProvider);
@@ -164,8 +168,15 @@ public sealed class TaskIntegrationStatusService
 
     /// <summary>Acceptance also checks gates on publications after the delivery's verified tree.</summary>
     public TaskIntegrationStatus BuildForAcceptance(TaskInfo job)
+        => WithLaterPublicationGates(job, BuildForCompletion(job));
+
+    /// <summary>
+    /// The acceptance check of <see cref="BuildForAcceptance"/> on an already
+    /// computed status. The board projection applies it to Human Review cards,
+    /// so the card detail shows the reason acceptance would give (AGT-3753).
+    /// </summary>
+    private TaskIntegrationStatus WithLaterPublicationGates(TaskInfo job, TaskIntegrationStatus status)
     {
-        var status = BuildForCompletion(job);
         var verification = status.Verification;
         if (status.Status != IntegrationStatuses.Integrated
             || verification?.State != IntegrationVerificationStates.Verified
@@ -194,30 +205,92 @@ public sealed class TaskIntegrationStatusService
             var publications = new List<IntegrationPublicationGatePolicy.Publication>();
             var laterBySha = laterCommits.ToDictionary(item => item.Sha,
                 item => item.ParentSha, StringComparer.OrdinalIgnoreCase);
+            // Why a source on a later commit was not counted, per commit, so a
+            // refusal can name the uncovered commit and each source's answer.
+            var uncountedGates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var gate in PublishedGateEvidenceStore.Read(job.WatchPath))
             {
-                if (!gate.Passed || !IntegrationVerificationProjection.SameBranch(gate.IntegrationBranch, branch)
-                    || !ReviewSubjectStore.IsValidResultSha(gate.TreeSha)
-                    || !string.Equals(gate.TreeSha, gate.PublishedSha, StringComparison.OrdinalIgnoreCase)
+                if (!ReviewSubjectStore.IsValidResultSha(gate.TreeSha)
                     || !laterBySha.TryGetValue(gate.TreeSha, out var parent)) continue;
-                publications.Add(new(gate.TreeSha, parent, gate.Describe()));
+                var uncounted = !gate.Passed ? $"gate {gate.GateStep} of {gate.SourceJobId} returned {gate.GateVerdict}"
+                    : !IntegrationVerificationProjection.SameBranch(gate.IntegrationBranch, branch)
+                        ? $"gate {gate.GateStep} of {gate.SourceJobId} was recorded for branch {gate.IntegrationBranch}"
+                    : !string.Equals(gate.TreeSha, gate.PublishedSha, StringComparison.OrdinalIgnoreCase)
+                        ? $"gate {gate.GateStep} of {gate.SourceJobId} names published SHA {gate.PublishedSha}, not this tree"
+                    : null;
+                if (uncounted is not null)
+                {
+                    uncountedGates.TryAdd(gate.TreeSha, uncounted);
+                    continue;
+                }
+                var fullSuite = string.Equals(gate.TestLevel, TestExecutionLevels.Full, StringComparison.OrdinalIgnoreCase);
+                if (!fullSuite && gate.TestLevel is null && _scanner?.FindJob(gate.SourceJobId, job.WatchPath) is { } source)
+                    fullSuite = PublishedGateEvidenceBackfill.PassedReceipts(source.FolderPath)
+                        .Any(receipt => string.Equals(receipt.Sha, gate.TreeSha, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(receipt.TestLevel, TestExecutionLevels.Full, StringComparison.OrdinalIgnoreCase));
+                publications.Add(new(gate.TreeSha, parent, gate.Describe(), fullSuite));
             }
             var batches = _batchGates;
+            var currentProfile = BatchGatePilotService.GateProfile(
+                _settings.Get(job.ProjectName).BuildProfile, root);
+            var uncountedBaseChecks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var failedBaseChecks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var verdict in batches.ListBaseVerdicts(job.ProjectName))
+            {
+                if (!laterBySha.TryGetValue(verdict.BaseSha, out var parent)) continue;
+                if (verdict.Outcome != "pass")
+                {
+                    failedBaseChecks.TryAdd(verdict.BaseSha, verdict.Outcome);
+                    continue;
+                }
+                var uncounted = verdict.Provisional ? "it is provisional"
+                    : verdict.Source is not (BatchGateBaseCheckSources.FullSuite or null)
+                        ? $"its source is {verdict.Source}, not the full suite"
+                    : verdict.VerifiedSha is not null
+                        && !string.Equals(verdict.VerifiedSha, verdict.BaseSha, StringComparison.OrdinalIgnoreCase)
+                        ? $"it verified {verdict.VerifiedSha}"
+                    : !string.Equals(verdict.GateProfileDigest, currentProfile, StringComparison.Ordinal)
+                        ? $"its gate profile digest {verdict.GateProfileDigest ?? "none"} is not the current gate profile {currentProfile}; "
+                            + "a verdict under an older gate profile is not counted"
+                    : !File.Exists(verdict.EvidencePath) ? "its evidence file is missing"
+                    : null;
+                if (uncounted is not null)
+                {
+                    uncountedBaseChecks[verdict.BaseSha] = uncounted;
+                    continue;
+                }
+                publications.Add(new(verdict.BaseSha, parent,
+                    $"full-suite batch base gate on {verdict.BaseSha}"));
+            }
             IntegrationPublicationGatePolicy.Publication? mappedBatchGate = null;
+            var uncountedBatches = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var manifest in batches.ListManifests()
                 .Where(item => string.Equals(item.Scope.Project, job.ProjectName, StringComparison.Ordinal)
                     && IntegrationVerificationProjection.SameBranch(item.Scope.IntegrationBranch, branch)))
             {
                 var publication = batches.ReadPublication(manifest.BatchId);
-                if (publication is null || publication.MembershipDigest != manifest.MembershipDigest
-                    || publication.PreTipSha != manifest.BaseSha
-                    || !laterBySha.ContainsKey(publication.TestedCandidateSha)
-                    || publication.VerifiedRemoteSha != publication.TestedCandidateSha
-                    || batches.ReadVerdict(manifest.BatchId, publication.BatchRunId) is not { Outcome: "pass" } verdict
-                    || verdict.BatchRunId != publication.BatchRunId
-                    || verdict.MembershipDigest != publication.MembershipDigest
-                    || verdict.TestedCandidateSha != publication.TestedCandidateSha
-                    || !File.Exists(verdict.EvidencePath)) continue;
+                if (publication is null || !laterBySha.ContainsKey(publication.TestedCandidateSha)) continue;
+                var verdict = batches.ReadVerdict(manifest.BatchId, publication.BatchRunId);
+                var uncountedBatch = publication.MembershipDigest != manifest.MembershipDigest
+                        ? "its publication membership differs from the manifest"
+                    : publication.PreTipSha != manifest.BaseSha
+                        ? $"its publication base {Short(publication.PreTipSha)} differs from the manifest base {Short(manifest.BaseSha)}"
+                    : publication.VerifiedRemoteSha != publication.TestedCandidateSha
+                        ? $"the remote was verified at {Short(publication.VerifiedRemoteSha ?? "nothing")}, not at the tested candidate"
+                    : verdict is null ? $"run {publication.BatchRunId} has no verdict"
+                    : verdict.Outcome != "pass" ? $"run {publication.BatchRunId} verdict is {verdict.Outcome}"
+                    : verdict.BatchRunId != publication.BatchRunId
+                        || verdict.MembershipDigest != publication.MembershipDigest
+                        || verdict.TestedCandidateSha != publication.TestedCandidateSha
+                        ? $"run {publication.BatchRunId} verdict belongs to another run, membership or candidate"
+                    : !File.Exists(verdict.EvidencePath) ? $"run {publication.BatchRunId} evidence file is missing"
+                    : null;
+                if (uncountedBatch is not null)
+                {
+                    uncountedBatches.TryAdd(publication.TestedCandidateSha,
+                        $"batch gate {manifest.BatchId} is not counted: {uncountedBatch}");
+                    continue;
+                }
                 var baseSha = publication.PreTipSha;
                 var crossesMappedTree = !laterBySha.ContainsKey(baseSha)
                     && !string.Equals(baseSha, verification.Sha, StringComparison.OrdinalIgnoreCase)
@@ -250,10 +323,45 @@ public sealed class TaskIntegrationStatusService
                     laterCommits, publications, neutralCommits);
             }
             if (!decision.Verified)
+            {
+                var hole = decision.MissingTree!;
+                var subject = _git.GetCommitSubject(root, hole);
+                var named = subject is null ? Short(hole) : $"{Short(hole)} \"{subject}\"";
+                var published = publications.LastOrDefault(item =>
+                    string.Equals(item.TreeSha, hole, StringComparison.OrdinalIgnoreCase));
+                var gateAnswer = uncountedGates.TryGetValue(hole, out var gateWhy)
+                    ? $"published gate evidence is not counted: {gateWhy}"
+                    : "no published gate evidence for that tree";
+                var baseAnswer = uncountedBaseChecks.TryGetValue(hole, out var why)
+                    ? $"a batch base check passed on it but is not counted: {why}"
+                    : failedBaseChecks.TryGetValue(hole, out var outcome)
+                        ? $"a batch base check on it did not pass (outcome {outcome})"
+                    : "no batch base verdict on it";
+                var batchAnswer = published is not null
+                    ? $"{published.Gate} on it starts at {Short(published.BaseSha)}, which is not on the first-parent line "
+                        + $"between the verified tree {Short(verification.Sha!)} and it"
+                    : uncountedBatches.TryGetValue(hole, out var batchWhy) ? batchWhy
+                    : "no batch publication covering it";
                 return status with { Verification = UnverifiedAcceptance(tip,
-                    $"The later publication {decision.MissingTree} has no passed gate on the first-parent integration line.") };
+                    $"The later publication {hole} has no passed gate on the first-parent integration line. "
+                    + $"First uncovered commit after verified tree {Short(verification.Sha!)} up to {Short(tip!)}: {named}; "
+                    + $"{gateAnswer}; {baseAnswer}; {batchAnswer}. "
+                    + "A passed per-task gate on that published tree or a full-suite batch base verdict "
+                    + "for the current gate profile with its evidence would cover it.") with
+                {
+                    UncoveredPublication = named,
+                } };
+            }
             var neutralEvidence = neutralCommits.Count == 0 ? string.Empty
                 : $" Gate-neutral Dossier descriptor commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
+            if (decision.CoveringPublication is { } covering)
+                return status with { Verification = verification with
+                {
+                    Reason = $"{verification.Reason} {covering.Gate} passed a full suite on later first-parent "
+                        + $"publication {covering.TreeSha}, covering earlier publications through "
+                        + $"{Short(verification.Sha!)}.{neutralEvidence}",
+                    GateNeutralCommits = neutralCommits.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+                } };
             if (mappedBatchGate is not null)
                 return status with { Verification = verification with
                 {
@@ -316,7 +424,8 @@ public sealed class TaskIntegrationStatusService
         {
             if (TestStatusOverride?.Invoke(job) is { } testStatus)
             {
-                result[job.TaskKey] = testStatus;
+                result[job.TaskKey] = memoizeVerification && job.State == TaskStates.HumanReview
+                    ? WithLaterPublicationGates(job, testStatus) : testStatus;
                 continue;
             }
             var primaryRoot = RootFor(job);
@@ -378,12 +487,17 @@ public sealed class TaskIntegrationStatusService
                 Verification = IntegrationStatuses.IsMerged(classified.Status)
                     ? ResolveVerification(
                         job,
+                        classified,
                         CurrentIntegrationSha(classified, card, reaches),
                         classified.IntegrationBranch,
                         CurrentReviewSubject(job)?.ResultSha ?? classified.Sha,
                         BranchHistory(classified, card, reaches), memoizeVerification)
                     : null,
             };
+            // AGT-3753: the card detail of a Human Review card answers what
+            // acceptance answers, including a later publication without a gate.
+            if (memoizeVerification && job.State == TaskStates.HumanReview)
+                result[job.TaskKey] = WithLaterPublicationGates(job, result[job.TaskKey]);
         }
 
         return result;
@@ -622,6 +736,7 @@ public sealed class TaskIntegrationStatusService
 
     private TaskIntegrationVerification? ResolveVerification(
         TaskInfo job,
+        TaskIntegrationStatus classified,
         string? currentIntegrationSha,
         string currentIntegrationBranch,
         string? currentDeliverySha,
@@ -630,20 +745,50 @@ public sealed class TaskIntegrationStatusService
     {
         try
         {
+            var ownRecord = memoizeVerification ? ReadVerificationRecord(job.FolderPath)
+                : IntegrationVerificationStore.Read(job.FolderPath);
             var projected = IntegrationVerificationProjection.Resolve(
-                memoizeVerification ? ReadVerificationRecord(job.FolderPath)
-                    : IntegrationVerificationStore.Read(job.FolderPath),
+                ownRecord,
                 ReadLatestMergeStep(job),
                 job.IntegrationRecords,
                 currentIntegrationSha,
                 currentIntegrationBranch,
                 currentDeliverySha,
-                branchHistory);
+                branchHistory,
+                sha => _git.ResolveRepoRootForWatchPath(job.WatchPath) is { } root
+                    ? _git.GetNetChangeSource(root, sha) : null);
             if (IntegrationVerificationStates.PermitsCompletion(projected)
                 || branchHistory is null
                 || !ReviewSubjectStore.IsValidResultSha(currentDeliverySha)) return projected;
             var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
             if (root is null) return projected;
+            bool TreeContainsDelivery(string tree)
+            {
+                if (_git.IsAncestor(root, currentDeliverySha!, tree)) return true;
+                // Use the commit memberships that produced the card's integrated
+                // and superseded detail. The review result can be a later fence
+                // snapshot while its effective delivery commits are in a merge.
+                var current = classified.Repositories.SelectMany(repository => repository.Commits)
+                    .Where(commit => commit.IntegrationRule is not
+                        (CommitIntegrationRules.Superseded or CommitIntegrationRules.LifecycleMarker))
+                    .ToArray();
+                return current.Length > 0 && current.All(commit =>
+                    ReviewSubjectStore.IsValidResultSha(commit.Sha)
+                    && (commit.OnIntegrationBranch && _git.IsAncestor(root, commit.Sha, tree)
+                        || ReviewSubjectStore.IsValidResultSha(commit.SupersededBySha)
+                            && _git.IsAncestor(root, commit.SupersededBySha!, tree)));
+            }
+
+            if (ownRecord is { State: IntegrationVerificationStates.Verified }
+                && IntegrationVerificationProjection.SameBranch(ownRecord.IntegrationBranch, currentIntegrationBranch)
+                && ReviewSubjectStore.IsValidResultSha(ownRecord.Sha)
+                && branchHistory(ownRecord.Sha!)
+                && TreeContainsDelivery(ownRecord.Sha!))
+                return ownRecord.ToProjection() with
+                {
+                    Reason = $"{ownRecord.Reason} The current delivery's effective commits are contained in "
+                        + $"verified tree {ownRecord.Sha}, which {currentIntegrationBranch} still carries at {currentIntegrationSha}.",
+                };
             var external = ExternalPublishedVerificationStore.Read(job.WatchPath)
                 .FirstOrDefault(record => IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, currentIntegrationBranch)
                     && branchHistory(record.CandidateSha)
@@ -663,9 +808,19 @@ public sealed class TaskIntegrationStatusService
                 currentIntegrationBranch,
                 branchHistory,
                 tree => _git.IsAncestor(root, currentDeliverySha!, tree));
-            return publishedGate is null
-                ? projected
-                : IntegrationVerificationProjection.FromPublishedGate(publishedGate, currentIntegrationBranch, currentIntegrationSha);
+            if (publishedGate is not null)
+                return IntegrationVerificationProjection.FromPublishedGate(
+                    publishedGate, currentIntegrationBranch, currentIntegrationSha);
+            if (ownRecord is null || ownRecord.State != IntegrationVerificationStates.Verified
+                && !ownRecord.GateFailed)
+            {
+                var batch = IntegrationVerificationProjection.FindPublishedBatchBaseVerdict(
+                    _batchGates.ListBaseVerdicts(job.ProjectName), branchHistory, TreeContainsDelivery);
+                if (batch is not null)
+                    return IntegrationVerificationProjection.FromPublishedBatchBaseVerdict(
+                        batch, currentIntegrationBranch, currentIntegrationSha);
+            }
+            return projected;
         }
         catch (Exception ex)
         {
@@ -1311,6 +1466,7 @@ public sealed class TaskIntegrationStatusService
                     Stage = failedStep?.StepId,
                     EvidenceExcerpt = evidenceExcerpt,
                     RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
+                    ReplayAvailable = failure.ReplayAvailable,
                     FailureClass = failure.FailureClass,
                     FailureSignature = failure.FailureSignature,
                     ConflictReport = failure.ConflictReport,

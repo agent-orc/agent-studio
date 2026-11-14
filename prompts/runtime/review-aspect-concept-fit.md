@@ -2,9 +2,11 @@
 
 Review the delivered Concept Dossier against the current task brief. This is a
 read-only content review. The brief below is `prompt.md` as frozen in the
-ReviewSubject; the executor appends the exact Result-SHA diff containing the
-delivered Dossier. Use that diff and the results inventory as evidence. Do not
-infer the Dossier from the agent's status claim.
+ReviewSubject. The published Dossier snapshot below contains the index and its
+linked files after delivery. Judge completeness against that snapshot. The
+executor also appends the exact Result-SHA diff for the current round. A
+follow-up diff may omit unchanged Dossier files. Do not infer the Dossier from
+the agent's status claim.
 
 Check each requirement the brief actually makes:
 
@@ -54,12 +56,16 @@ be made, return `concerns` and name the missing evidence. Do not claim a pass.
 {{results_inventory}}
 ```
 
+## Published Dossier
+
+{{dossier_material}}
+
 ## Review material
 
 {{diff_summary}}
 
 The executor appends the authoritative changed-file list and unified diff
-after this template. That material is the source for Dossier content.
+after this template. Use it to check what changed in this round.
 
 Respond in under 150 words, then emit exactly one verdict sentinel:
 

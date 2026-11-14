@@ -574,6 +574,25 @@ public sealed class WaitsOnEndpointsTests : IClassFixture<WaitsOnEndpointsTests.
         Assert.Equal("APP-1", link.GetProperty("sourceKey").GetString());
         Assert.Equal("workbenches", link.GetProperty("kind").GetString());
 
+        // A typed reference can remain an ordinary link. The visible card list
+        // follows the explicit primary task.dossier association.
+        var dossierPath = item.GetProperty("entryPath").GetString();
+        using var assign = await client.PutAsJsonAsync(
+            $"/api/tasks/consumer/dossier?watchPath={Uri.EscapeDataString(_appWatch)}",
+            new { path = dossierPath });
+        assign.EnsureSuccessStatusCode();
+        var scanner = _host.Services.GetRequiredService<TaskScannerService>();
+        Assert.Equal(dossierPath, scanner.FindJob("consumer", _appWatch)?.Dossier?.Path);
+        var assigned = Assert.Single(scanner.ScanAllJobsWithArchiveForBackgroundIndex()
+            .Where(task => task.Id == "consumer"));
+        Assert.Equal(App, assigned.ProjectName);
+        Assert.Equal("APP-1", assigned.Key);
+        Assert.Equal(dossierPath, assigned.Dossier?.Path);
+        using var linkedCatalogue = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{App}/workbenches?history=true"));
+        Assert.Equal("APP-1", Assert.Single(Assert.Single(linkedCatalogue.RootElement.GetProperty("items")
+            .EnumerateArray()).GetProperty("linkedTaskKeys").EnumerateArray()).GetString());
+
         using var rejected = await client.PutAsJsonAsync(
             $"/api/tasks/consumer/references?watchPath={Uri.EscapeDataString(_appWatch)}",
             new { workbenches = new[] { key![..key.LastIndexOf('W')] + "W999" } });

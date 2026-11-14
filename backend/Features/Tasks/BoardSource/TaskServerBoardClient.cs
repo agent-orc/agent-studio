@@ -58,6 +58,13 @@ public sealed class TaskServerBoardClient(IHttpClientFactory factory, IConfigura
             ?? throw new HttpRequestException("The Task Server answered an empty import result.");
     }
 
+    public async Task RecordWorkspaceGenerationAsync(long generation, CancellationToken ct)
+    {
+        using var response = await Client().PutAsJsonAsync("api/v1/board/workspace-generation",
+            new BoardWorkspaceGenerationRequest(generation), ct);
+        await EnsureSuccessAsync(response, ct);
+    }
+
     /// <summary>Null when the Task Server does not know the project.</summary>
     public async Task<TaskFileMirrorResponse?> MirrorTaskFilesAsync(
         string project, TaskFileMirrorRequest batch, CancellationToken ct)

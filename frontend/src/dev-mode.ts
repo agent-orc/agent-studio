@@ -1,5 +1,5 @@
-// Per-checkout DEV-mode visual marker. Runs once before Angular bootstrap so
-// the manifest/favicon link tags are swapped before the browser caches them.
+// Per-checkout DEV-mode visual marker. Runs once after the authenticated
+// session confirms operator access, then swaps the manifest/favicon tags.
 //
 // Activated by GET /api/environment returning { isDev: true }, which the
 // backend derives from appsettings.Local.json (gitignored, only present in

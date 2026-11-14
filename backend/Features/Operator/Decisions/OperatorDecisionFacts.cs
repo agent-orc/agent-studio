@@ -1,6 +1,7 @@
 using System.Globalization;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
+using AgentStudio.Review;
 using AgentStudio.Shared;
 using AgentStudio.Watcher;
 
@@ -19,7 +20,7 @@ public static class OperatorDecisionFacts
     /// <summary>Watcher stall kinds that mean the execution backend stopped making progress.</summary>
     public static readonly IReadOnlySet<string> BackendStallKinds = new HashSet<string>(StringComparer.Ordinal)
     {
-        "host-offline", "host-overload", "memory-pressure", "deploy-drift", "claim-refusal", "batch-gate-stuck",
+        "host-offline", "host-overload", "memory-pressure", "deploy-drift", "claim-refusal",
     };
 
     /// <summary>Watcher stall kinds that mean capacity is idle while cards wait.</summary>
@@ -47,12 +48,12 @@ public static class OperatorDecisionFacts
                     task.ProjectName, card,
                     FirstText(task.ParkedBlocker?.Reason, task.ParkedBlocker?.ConditionDescription)
                         ?? $"{card} entered the escalated lane.",
-                    Utc(task.EnteredLaneAt), evidence));
+                    Utc(task.EnteredLaneAt), evidence, Title: task.Title));
             if (task.State == TaskStates.HumanReview)
                 facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.HumanReviewReady,
                     Key(OperatorDecisionTypes.HumanReviewReady, task.ProjectName, card, Stamp(task.EnteredLaneAt)),
-                    task.ProjectName, card, $"{card} is ready for human review.",
-                    Utc(task.EnteredLaneAt), evidence));
+                    task.ProjectName, card, ReviewReason(task),
+                    Utc(task.EnteredLaneAt), evidence, Title: task.Title));
             if (TaskKinds.IsDecision(task.Kind) && task.Decision is { } decision
                 && DecisionStatuses.IsOpen(decision.Status)
                 && task.State is not (TaskStates.Completed or TaskStates.Archive))
@@ -61,7 +62,7 @@ public static class OperatorDecisionFacts
                         decision.History.Count.ToString(CultureInfo.InvariantCulture)),
                     task.ProjectName, card,
                     FirstText(decision.Question) ?? $"Decision card {card} is open.",
-                    Utc(task.CreatedAt), evidence));
+                    Utc(task.CreatedAt), evidence, Title: task.Title));
             if (task.QuotaWait is { } wait)
                 facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.QuotaExhausted,
                     Key(OperatorDecisionTypes.QuotaExhausted, "card", task.ProjectName, card, Stamp(wait.StartedAt)),
@@ -91,6 +92,7 @@ public static class OperatorDecisionFacts
                 continue;
             var kind = item.LastDetails.GetValueOrDefault("stallKind");
             var type = kind is null ? null
+                : kind == "batch-gate-stuck" ? OperatorDecisionTypes.BatchGateStuck
                 : BackendStallKinds.Contains(kind) ? OperatorDecisionTypes.BackendStalled
                 : IdleWithReadyKinds.Contains(kind) ? OperatorDecisionTypes.ProgressIdleWithReady
                 : null;
@@ -150,6 +152,23 @@ public static class OperatorDecisionFacts
         return facts;
     }
 
+    /// <summary>
+    /// AGT-3681: one fact per batch record the store quarantined. The occurrence
+    /// is the file as written, so a restored and later damaged file is new.
+    /// </summary>
+    public static IReadOnlyList<OperatorDecisionFact> FromQuarantinedBatchRecords(
+        IEnumerable<BatchGateQuarantinedRecord> records)
+        => records.Select(record => new OperatorDecisionFact(OperatorDecisionTypes.BatchRecordUnreadable,
+            Key(OperatorDecisionTypes.BatchRecordUnreadable, record.File, Stamp(record.FileWrittenAtUtc.UtcDateTime)),
+            record.Project, null,
+            $"Batch record unreadable: the {record.Kind} record of batch {record.BatchId} in project "
+                + $"{record.Project ?? "unknown"} does not read ({record.File}): {record.Error} "
+                + $"Next step: {record.NextStep}",
+            record.DetectedAtUtc.UtcDateTime,
+            record.Project is { } project
+                ? [new OperatorEvidenceLink("batch-gate-state", ProjectHref(project, "batch-gate/state"))]
+                : [new OperatorEvidenceLink("batch-triage", "/api/operator/batch-triage")])).ToArray();
+
     /// <summary>Pending integration pushes past the batch gate's own age alert.</summary>
     public static IReadOnlyList<OperatorDecisionFact> FromPendingPushes(string project,
         IEnumerable<PendingIntegrationPushWait> waits, Func<string, string?> cardKeyOf)
@@ -166,6 +185,32 @@ public static class OperatorDecisionFacts
         }).ToArray();
 
     /// <summary>
+    /// AGT-3695: a Post Processing card whose latest integration merged locally
+    /// but whose publication to origin was refused. The card waits on its
+    /// integration owner and holds no push reservation, so neither the lane nor
+    /// the pending-push facts name it.
+    /// </summary>
+    public static IReadOnlyList<OperatorDecisionFact> FromBlockedPublications(
+        IEnumerable<TaskInfo> tasks, Func<TaskInfo, PipelineStepExecution?> latestMergeOf)
+    {
+        var facts = new List<OperatorDecisionFact>();
+        foreach (var task in tasks)
+        {
+            if (task.State != TaskStates.AutoReview || latestMergeOf(task) is not { } merge) continue;
+            var failure = AcceptedIntegrationFailurePolicy.Classify(merge.Status, merge.Verdict,
+                merge.Reason, merge.VerdictSummary, merge.FailureCode);
+            if (failure?.Code != AcceptedIntegrationFailureCodes.IntegrationPushBlocked) continue;
+            var card = CardKey(task);
+            var since = merge.CompletedAt ?? merge.StartedAt ?? task.EnteredLaneAt;
+            facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.PushBlocked,
+                Key(OperatorDecisionTypes.PushBlocked, task.ProjectName, card, Stamp(since)),
+                task.ProjectName, card, $"Push of {card} is blocked: {failure.Reason}", Utc(since),
+                [new OperatorEvidenceLink("card", TaskHref(task))]));
+        }
+        return facts;
+    }
+
+    /// <summary>
     /// Provider limits the runner recorded for a CLI; they apply to the whole
     /// installation. The registry replaces an entry when a later limit is
     /// observed, so the occurrence is the CLI until its limit clears.
@@ -179,6 +224,35 @@ public static class OperatorDecisionFacts
 
     public static string CardKey(TaskInfo task)
         => FirstText(task.Key, task.TaskKey) ?? task.Id;
+
+    private static string ReviewReason(TaskInfo task)
+    {
+        if (task.OlderBriefDelivery is { Status: "pending" })
+            return "Cannot be accepted: brief changed.";
+        var grade = task.Tags.FirstOrDefault(tag => tag.StartsWith("code-review:grade-", StringComparison.OrdinalIgnoreCase));
+        var letter = grade is null ? null : grade["code-review:grade-".Length..].ToUpperInvariant();
+        if (letter is null) return "Ready for human review.";
+        var concerns = GradeFindings(task.FolderPath);
+        return concerns is { } count
+            ? $"Grade {letter} · {count} {(count == 1 ? "concern" : "concerns")}."
+            : $"Grade {letter} · review concerns unavailable.";
+    }
+
+    private static int? GradeFindings(string folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder)) return null;
+        try
+        {
+            if (!Directory.Exists(folder)) return null;
+            var latest = Directory.EnumerateFiles(folder, "code-review-grade-*.md")
+                .OrderByDescending(Path.GetFileName, StringComparer.Ordinal).FirstOrDefault();
+            return latest is null ? null : CodeReviewFindingParsing.Parse(File.ReadAllText(latest)).Count;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     private static string TaskHref(TaskInfo task) => "/api/tasks/" + Uri.EscapeDataString(task.Id);
 

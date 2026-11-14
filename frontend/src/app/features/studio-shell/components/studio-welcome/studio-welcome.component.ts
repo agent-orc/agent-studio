@@ -13,6 +13,8 @@ import { StudioEmptyStateComponent } from '../studio-empty-state/studio-empty-st
 })
 export class StudioWelcomeComponent {
   readonly projects = input.required<readonly ProjectSidebarRow[]>();
+  /** Replaces the default no-projects line, e.g. for a Product session without a project. */
+  readonly emptyMessage = input<string | null>(null);
   readonly boardOpened = output<string>();
   readonly deploymentDashboardOpened = output<void>();
   readonly chatOpened = output<void>();

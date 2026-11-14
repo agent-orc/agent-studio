@@ -1,0 +1,31 @@
+@use '../round-actions' as round;
+
+:host { display: block; min-width: 0; }
+
+// AGT-3700: the guard asks for a choice, so the refusal carries a quiet warn
+// tint (background and border, never a left bar, R1).
+.refusal {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-spacing-2);
+  border: 1px solid color-mix(in srgb, var(--studio-warn) 34%, var(--studio-border));
+  border-radius: var(--studio-radius-md);
+  background: color-mix(in srgb, var(--studio-warn) 7%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
+}
+
+.refusal__message,
+.refusal__note { margin: 0; overflow-wrap: anywhere; }
+.refusal__note { color: var(--studio-fg-muted); }
+.refusal__source { color: var(--studio-fg); font-weight: 600; }
+.refusal__error { margin: 0; color: var(--studio-error); overflow-wrap: anywhere; }
+.refusal__items {
+  margin: 0;
+  padding-inline-start: var(--studio-spacing-4);
+  color: var(--studio-fg);
+  overflow-wrap: anywhere;
+}
+
+@include round.actions;
+
+.round__actions { margin-top: 0; }
