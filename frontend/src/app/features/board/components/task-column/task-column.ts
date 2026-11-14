@@ -55,7 +55,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
 @Component({
   selector: 'app-task-column, app-job-column',
   standalone: true,
-  imports: [StatusIndicatorComponent, 
+  imports: [StatusIndicatorComponent,
     TaskCardComponent,
     LaneCardWindowComponent,
     LaneGroupHeadComponent,

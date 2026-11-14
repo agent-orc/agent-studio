@@ -62,7 +62,7 @@ import {
   selector: 'app-escalation-summary',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [StatusIndicatorComponent, 
+  imports: [StatusIndicatorComponent,
     TooltipDirective,
     PendingButtonDirective,
     EscalationDetailsComponent,
