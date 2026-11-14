@@ -1,0 +1,8 @@
+.task-move-refusal {
+  margin: var(--studio-spacing-2) 0;
+  padding: var(--studio-spacing-3) var(--studio-spacing-4);
+  background: color-mix(in srgb, var(--studio-status-danger) 9%, var(--studio-bg));
+  color: var(--studio-fg-strong);
+  border: 1px solid var(--studio-border);
+  line-height: 1.45;
+}

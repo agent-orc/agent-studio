@@ -51,6 +51,35 @@ public sealed class RunnerEnrollmentCommandTests
         Assert.Equal(0, handler.Calls);
     }
 
+    [Fact]
+    public async Task Enrollment_names_the_server_refusal_code()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "runner-enrollment-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var http = new HttpClient(new RefusalHandler());
+            using var error = new StringWriter();
+            var result = await RunnerEnrollmentCommand.RunAsync(
+                "https://studio.example", "one-time-code", TextWriter.Null, error,
+                CancellationToken.None, http, directory);
+            Assert.Equal(4, result);
+            Assert.Contains("HTTP 401, invalid-enrollment", error.ToString());
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    private sealed class RefusalHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{\"error\":\"invalid-enrollment\"}", Encoding.UTF8, "application/json"),
+            });
+    }
+
     private sealed class FakeEnrollmentHandler : HttpMessageHandler
     {
         public int Calls { get; private set; }

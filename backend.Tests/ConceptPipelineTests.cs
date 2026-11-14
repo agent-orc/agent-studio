@@ -1,4 +1,6 @@
 using System.Text.Json;
+using AgentStudio.Git;
+using AgentStudio.Docs;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -131,11 +133,21 @@ public sealed class ConceptPipelineTests : IDisposable
             Id = "concept-card",
             Mode = TaskModes.Concept,
             FolderPath = taskFolder,
+            Dossier = new TaskDossier { Path = dossierPath },
         });
         Assert.NotNull(summary);
         Assert.True(summary.ContractSatisfied);
         Assert.Equal(dossierPath, summary.RepoRelativePath);
-        Assert.Equal("results/deliverables.md", summary.ReferenceSource);
+        Assert.Equal("task.json.dossier", summary.ReferenceSource);
+        var legacyOnly = TaskEndpointHelpers.BuildConceptDossierSummary(new TaskInfo
+        {
+            Id = "older-concept", Mode = TaskModes.Concept, FolderPath = taskFolder,
+        });
+        Assert.False(legacyOnly!.ContractSatisfied);
+        Assert.True(ConceptDossierClosureStore.Write(taskFolder, "Concept discarded."));
+        var closed = ConceptDossierContract.Read(taskFolder);
+        Assert.True(closed.NoDossierNeeded);
+        Assert.Null(closed.RepoRelativePath);
         Assert.Contains(dossierPath, File.ReadAllText(Path.Combine(taskFolder, "status.md")));
         Assert.Contains(dossierPath, File.ReadAllText(Path.Combine(taskFolder, "results", "deliverables.md")));
         Assert.Null(ConceptDossierContract.NormalizePath("/docs/sidesheet-concept/index.html"));
@@ -189,13 +201,20 @@ public sealed class ConceptPipelineTests : IDisposable
     [Fact]
     public void Promotion_CreatesCodingCardsFromPublishedDocument_Idempotently()
     {
-        var (taskStore, _, scanner, _, mutations, source) = PublishConceptWithTwoSlices();
+        var (taskStore, config, scanner, _, mutations, source) = PublishConceptWithTwoSlices();
 
         var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore);
         Assert.NotNull(plan);
         Assert.Equal(2, plan!.Items.Count);
+        var notifier = new WorkbenchChangeNotifier(NullLogger<WorkbenchChangeNotifier>.Instance);
+        var updates = new List<WorkbenchDecisionRecordedEvent>();
+        notifier.DecisionRecorded += updates.Add;
         var service = new ConceptPromotionService(
-            scanner, mutations, NullLogger<ConceptPromotionService>.Instance);
+            scanner, mutations,
+            new ManagedRepositoryMutationService(
+                new GitService(NullLogger<GitService>.Instance, scanner, config)),
+            notifier,
+            NullLogger<ConceptPromotionService>.Instance);
 
         var first = service.Promote(source, plan, new PromoteConceptRequest());
         var repeated = service.Promote(source, plan, new PromoteConceptRequest());
@@ -224,6 +243,11 @@ public sealed class ConceptPipelineTests : IDisposable
         Assert.Equal("§4", apiCard?.Dossier?.Section);
         Assert.Equal("delivery-mode", apiCard?.Dossier?.Decision);
         Assert.Equal(0, apiCard?.Dossier?.ImplementationIndex);
+        using var descriptor = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            _root, "repository", "docs", "delivery-flow", "workbench.json")));
+        Assert.NotEqual("decided", descriptor.RootElement.GetProperty("status").GetString());
+        Assert.Equal(2, scanner.BuildPromoteConceptPlan(source.Id, taskStore)?.Items.Count);
+        Assert.Empty(updates);
     }
 
     [Fact]
@@ -357,7 +381,11 @@ public sealed class ConceptPipelineTests : IDisposable
         var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         pipelineLog.Begin(source.FolderPath, PipelineCatalogue.Concept, source.ProjectName, source.Id);
         var service = new ConceptPromotionService(
-            scanner, mutations, NullLogger<ConceptPromotionService>.Instance, pipelineLog);
+            scanner, mutations,
+            new ManagedRepositoryMutationService(
+                new GitService(NullLogger<GitService>.Instance, scanner, config)),
+            new WorkbenchChangeNotifier(NullLogger<WorkbenchChangeNotifier>.Instance),
+            NullLogger<ConceptPromotionService>.Instance, pipelineLog);
         var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore)!;
         Assert.Empty(service.WithPromotedSlices(source, plan).Promoted);
 

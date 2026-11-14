@@ -655,7 +655,8 @@ public sealed class WorkspaceArtifactCommitService
                 var candidates = modified.Out
                     .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                     .Where(path => !IsRuntimeOnlyPath(path)
-                        && !AgentStudio.Git.SecurityStorePathPolicy.IsSecurityStorePath(path))
+                        && !AgentStudio.Git.SecurityStorePathPolicy.IsSecurityStorePath(path)
+                        && !AgentStudio.Magazine.MagazineStorePathPolicy.IsMagazineStorePath(path))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 var oversized = FindOversizedFiles(gitRoot, candidates);

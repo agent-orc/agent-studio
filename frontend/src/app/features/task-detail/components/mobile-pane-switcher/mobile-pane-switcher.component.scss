@@ -1,0 +1,70 @@
+app-mobile-pane-switcher { display: none; }
+
+@media (max-width: 599px) {
+  .detail {
+    height: auto;
+    min-height: auto;
+    overflow: visible;
+    padding-bottom: var(--studio-spacing-3);
+  }
+
+  .detail > app-pane-toggle-bar { display: none; }
+  .detail > app-mobile-pane-switcher { display: block; }
+
+  .detail__mobile-pane-switcher {
+    width: 100%;
+  }
+
+  .detail__mobile-pane-switcher app-segmented-control { display: block; }
+  .detail__mobile-pane-switcher .segmented.segmented {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+  .detail__mobile-pane-switcher[data-show-git='false'] .segmented.segmented {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .detail__mobile-pane-switcher .segmented__option {
+    min-width: 0;
+    min-height: var(--studio-target-coarse-min);
+  }
+
+  .detail .detail__panes,
+  .detail .detail__panes .pane,
+  .detail .detail__panes .pane__body {
+    flex: 0 0 auto;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .detail__panes .pane-header__btn,
+  .detail__panes .pane__maximize,
+  .detail__panes .pane__hide { display: none; }
+
+  .detail__panes[data-mobile-pane='prompt'] .pane:not(.pane--prompt),
+  .detail__panes[data-mobile-pane='protocol'] .pane:not(.pane--protocol),
+  .detail__panes[data-mobile-pane='git'] .pane:not(.pane--git) { display: none; }
+
+  .detail .detail__panes .pane--protocol { border-top: 0; }
+
+  .studio-tabbar:has(.studio-tab-action__pane-toggles) {
+    .studio-tab-action__pane-toggles { display: none; }
+    .studio-tab-action__triage > .studio-tab-action--primary { display: none; }
+  }
+
+  .studio-editor__main:has([data-testid='studio-task'] > app-job-detail) .studio-projected-content {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+
+  .workspace__main--studio:has(> app-job-detail) {
+    flex: 0 0 auto;
+    min-height: auto;
+    flex-direction: column;
+  }
+  .workspace__main--studio > app-job-detail {
+    flex: 0 0 auto;
+    height: auto;
+    min-height: auto;
+  }
+}

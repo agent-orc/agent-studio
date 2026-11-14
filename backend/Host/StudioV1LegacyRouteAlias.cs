@@ -96,6 +96,8 @@ public static class StudioV1LegacyRouteAlias
         }
         if (rest.Length == 3 && Is(rest[0], "auth") && Is(rest[1], "invite") && Is(rest[2], "accept") && post)
             return new LegacyTarget("/api/auth/invite/accept", null);
+        if (rest.Length == 3 && Is(rest[0], "auth") && Is(rest[1], "invite") && Is(rest[2], "preview") && get)
+            return new LegacyTarget("/api/auth/invite/preview", null);
         if (rest.Length == 1 && Is(rest[0], "board") && get)
             return new LegacyTarget("/api/tasks/grouped", null);
         if (rest.Length >= 3 && Is(rest[0], "orchestrator") && Is(rest[1], "context"))

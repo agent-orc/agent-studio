@@ -3,6 +3,37 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+## Persona occurrences, PT-4
+
+PT-D4, PT-D5 and PT-D8 use the Dossier's recommended option B. The Watcher
+sweep admits an occurrence through PT-3's workspace-week ledger. A runner host
+claims its fenced persona lease, receives a bounded `PersonaGroundsV1` pack and
+runs one read-only digest call. The grounds pack contains only in-scope project
+references, Watcher cases, cards and prior item outcomes; it is capped at
+12,000 input tokens. Completion validates every reference and scope before
+writing a completed or failed receipt. Valid items enter the application-owned
+persona item store, then the Agent Message Bus as `Persona` messages. The
+importance service owns factor scoring, confidence caps, floors and urgency
+history. Admission refusals publish an immutable stub report with coverage,
+budget use and open items plus typed fact floors without a model call. The
+persona instance id and role id remain separate in the lease,
+receipt, item and bus participant.
+Weekly investigation leases require thoroughness 4 or 5, one in-scope local
+repository checkout and a 15-minute cap. The runner clones into a fresh
+read-only directory, exposes only read tools, disables MCP with a strict empty
+configuration, and removes runner and deploy credential variables. A missing
+local repository ends the lease with a failed receipt.
+Standalone Task Server runner hosts use `RUNNER_POST_MERGE_STATE_URL` as the Studio
+API authority for persona claim and completion, with the same service identity
+used by the existing post-merge state read. Hosts without that route wait.
+An idle persona claim returns HTTP 204. Hosts also accept an empty HTTP 200
+from older servers as idle, and back off after failed polls.
+
+Review host load per core divides the host load average by the host CPU count.
+The review role's cgroup quota is a separate capacity limit and is never used
+as the denominator for host load. A known load or slot-capacity hold keeps a
+pending Auto Review card out of the ownerless-card escalation path.
+
 Task Server connectivity stays capability-ready until three consecutive failed
 requests span at least 60 seconds. The capability detail retains the failure
 count, and the route advertises structured `since`, `httpStatus`, and `request`
@@ -203,11 +234,34 @@ reports `codeState: awaiting`. The Owner signs in, pastes the code into the
 first-run checklist, and the browser posts it once with its session key
 (`POST /api/v1/management/device-logins/{handle}/code`). The server keeps it
 only in memory and hands it once to the claiming runner
-(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which writes it
-to the CLI's stdin and then closes stdin. The code is never logged, audited,
+(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which types it
+once into the CLI's pseudo-terminal and presses Enter. The code is never logged, audited,
 echoed in a response or written to disk; cancel, timeout and completion drop a
 code no runner took. A code the CLI refuses ends the session with
-"Claude did not accept the authorization code." While the CLI runs, the runner reads the session state
+"Claude did not accept the authorization code."
+
+`claude setup-token` reads that code only from a terminal: it renders its
+prompt with Ink, which switches stdin to raw mode and fails with "Raw mode is
+not supported" on a pipe (checked in the Claude Code 2.1 bundle; the `auth login`
+fallback that reads a piped stdin does not print a setup token). The runner
+therefore starts the Claude sign-in in a pseudo-terminal through Porta.Pty, the
+library its host quota probe already uses, never with plain stdin. Limits:
+
+- The terminal is 4000 columns wide so the authorize URL and the token each stay
+  on one line; output is parsed after stripping CSI and OSC (hyperlink) escapes.
+  Stdout and stderr arrive merged.
+- The CLI answers a wrong code with a retry prompt instead of exiting. A CLI
+  that is still running two minutes after the code (`CodeAcceptanceTimeout`)
+  counts as a refused code, is stopped with its process tree and reports the
+  message above. A slower provider exchange fails the same way; start again.
+- The runner types only one code per session and never presses a key for the
+  retry prompt. A code that is not one `code#state` value of URL-safe
+  characters is never typed.
+- The host needs a working pseudo-terminal device (`/dev/ptmx` on Linux). The
+  pseudo-terminal path is covered on Linux only; Windows ConPTY is untested.
+- Codex keeps its closed stdin pipe; it takes no code.
+
+While the CLI runs, the runner reads the session state
 every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
 only). A Studio cancel, a Task Server timeout or a failed instruction publish
 stops the process tree, accepts no credential and reports `failed`; on runner
@@ -902,9 +956,13 @@ unreported claim expires with its lease and is queued again.
   Changing a remotely placed project to local execution requires the Owner.
 - `runner/OneShotJobAdmission.cs`: coding and review hosts poll bounded model
   jobs independently of task claims. The review host starts this poll after
-  client registration. A missing claim route (HTTP 404) is logged once and
-  retried every five minutes; a successful poll logs restoration and returns
-  to the normal three-second interval.
+  client registration. A missing claim route (HTTP 404) or a refusal saying
+  networked one-shot execution requires the standalone Task Server is logged
+  once and retried every five minutes. `OneShotClaimRouteObservation` keeps the
+  condition with first and last seen time and the backoff, and the daemon sends
+  it as `HostTelemetrySnapshotDto.OneShotClaimRoute` with its minutely
+  capability advertisement. A successful poll clears it, logs restoration and
+  returns to the normal three-second interval.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -1686,7 +1744,9 @@ unreported claim expires with its lease and is queued again.
   one host against the release this server runs; the watchdog projects the
   verdict at `GET /api/v1/management/host-releases` for Execution Hosts and
   raises one `host_release_drift` operator-feed alarm per host release that
-  stays more than 24 hours behind Stable. A same-instance registration may
+  stays more than 24 hours behind Stable. The same version from another commit
+  is `differs` (AGT-3689), never `current`, and a host that names no commit is
+  never `current` either; a differing build alarms on the observed duration. A same-instance registration may
   retain its last reported release when the field is omitted, while a changed
   instance clears an omitted identity to prevent rollback drift from being
   hidden. Operator behaviour and the incident that motivated it live in
@@ -1817,9 +1877,14 @@ unreported claim expires with its lease and is queued again.
   identity. Each persisted Coding slot emits one startup reconciliation line:
   `reattached`, `purged` with the process-proof reason, or fail-closed
   `retained`. Missing or mismatched coding processes are actively released and
-  returned to Ready. A non-adoptable review is settled as `ReviewInfra` with
-  classification `ExecutorRestarted`, the completed-command count and duration,
-  the failed process proof, and the retry reason. DB lease presence alone is
+  returned to Ready. A review whose worker is gone while its lease is still
+  valid is relaunched within the same attempt and resumes from
+  `review-progress.json`; a stop during workspace preparation hands the slot
+  over and the replacement prepares again (AGT-3647). Only after
+  `DurableReviewProcess.MaximumWorkerRelaunches` relaunches is a non-adoptable
+  review settled as `ReviewInfra` with classification `ExecutorRestarted`, the
+  completed-command count and duration, the failed process proof, and the
+  retry reason. DB lease presence alone is
   never process-liveness evidence. systemd must use `KillMode=process`. It must
   also use `PrivateTmp=false`: a private-`/tmp` unit unmounts its namespace-scoped
   `/tmp` on every restart even though `KillMode=process` leaves the detached
@@ -1964,6 +2029,11 @@ unreported claim expires with its lease and is queued again.
   and does not shift the positions of eligible cards.
 - A re-open starts a new run. It must rerun pre steps, core, post steps, and
   append run history instead of flattening earlier evidence.
+- An operator's Escalated to Ready reissue carries the confirmed findings and
+  owner note in `operator-reissue.json`, written after the old review artifacts
+  rotate into history. The first pickup in that review epoch reads this handoff
+  even without the automatic reissue tag or an active prior pipeline record.
+  A later automatic reissue reads its new follow-up and review findings instead.
 - Before any automatic auto-review follow-up is persisted,
   `ReviewDecisionOrchestrator` compares its whitespace- and case-normalized
   base text with every prompt under `orchestrator-follow-up-history/`. A match
@@ -2649,7 +2719,11 @@ attempts, batch-gate pending records, card lane
 timestamps and claim failures, and the host release drift snapshot. Thresholds
 under `Watcher` are `HostTargetPercent` (85), `HostOverloadMinutes` (10),
 `MemoryUsedPercent` (90), `SwapBytesPerSecond` (65536), `IdleWaitMinutes` (15),
-`GatePendingHours` (2), `LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10).
+`LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10). Batch gate stalls use
+the running batch's configured `GateTimeoutMinutes`, measured from its gate
+run start. An idle plan with pending members is reported on the next sweep.
+The attention list groups these cases with batches and opens the project's
+batch panel.
 Every finding has a stable
 case fingerprint, subject, severity, since time, affected card count, evidence,
 and suggested action. A successful healthy sweep resolves an open operational

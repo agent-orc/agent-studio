@@ -1,4 +1,5 @@
 using AgentStudio.Operator;
+using AgentStudio.Pipeline;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -75,6 +76,41 @@ public sealed class OperatorAttentionTests : IDisposable
 
         Assert.Equal(["A-1"], current.Select(fact => fact.CardKey));
     }
+
+    /// <summary>
+    /// AGT-3695: a Post Processing card whose publication was refused is on
+    /// the list with the plain reason; a passed merge or another lane is not.
+    /// </summary>
+    [Fact]
+    public void A_post_processing_card_with_a_refused_publication_needs_the_owner()
+    {
+        var sha = new string('c', 40);
+        var blocked = new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId, Status = PipelineStepStatus.Failed, Verdict = "error",
+            FailureCode = AcceptedIntegrationFailureCodes.IntegrationPushBlocked, CompletedAt = At,
+            Reason = $"Publication failed (sha-not-on-branch); The approved merge result {sha} is not contained in local develop; refusing to push it.",
+        };
+        var passed = blocked with { Status = PipelineStepStatus.Passed, Verdict = "merged", FailureCode = null };
+        var tasks = new[]
+        {
+            Card("A-1", TaskStates.AutoReview), Card("A-2", TaskStates.AutoReview), Card("A-3", TaskStates.HumanReview),
+        };
+
+        var facts = OperatorDecisionFacts.FromBlockedPublications(tasks, task => task.Id == "A-2" ? passed : blocked);
+        var item = Assert.Single(OperatorAttention.Project(facts, OperatorDecisionReader.Everything).Items);
+
+        Assert.Equal(OperatorDecisionTypes.PushBlocked, item.Type);
+        Assert.Equal("A-1", item.CardKey);
+        Assert.Equal(At, item.ObservedAt);
+        Assert.StartsWith("Push of A-1 is blocked: Publication stopped: the approved merge result ccccccccc", item.Reason);
+        Assert.Equal(OperatorOperations.For(OperatorDecisionTypes.PushBlocked), item.SuggestedOperations);
+    }
+
+    private static TaskInfo Card(string key, string state) => new()
+    {
+        Id = key, Key = key, ProjectName = "alpha", State = state, EnteredLaneAt = At, CreatedAt = At,
+    };
 
     private OperatorDecisionPublisher Publisher(OperatorDecisionLog log, IOperatorDecisionFactSource source)
         => new(log, [source], _options, _clock, NullLogger<OperatorDecisionPublisher>.Instance);

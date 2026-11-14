@@ -58,6 +58,18 @@ public sealed class GateShardVerdictPolicyTests
         => Assert.Equal(BuildTestGateFailureKind.Environment,
             GateShardVerdictPolicy.MergeShards([Shard(0, GateShardOutcomes.Infrastructure)]));
 
+    [Fact]
+    public void A_hung_shard_keeps_a_concurrent_red_from_charging_a_member()
+    {
+        var hung = Shard(0, GateShardOutcomes.Infrastructure, BuildTestGateFailureKind.Environment) with
+        {
+            Hang = new GateShardHangEvidence("backend-routine", 0, 2, "no result or output",
+                600_000, ["Product.Tests.Stalled"]),
+        };
+        Assert.Equal(BuildTestGateFailureKind.Environment, GateShardVerdictPolicy.MergeShards(
+            [hung, Shard(1, GateShardOutcomes.Failed, BuildTestGateFailureKind.Code)]));
+    }
+
     private static GateShardSuiteEvidence Suite(string host, int count, params GateShardEvidence[] shards)
         => new("backend-routine", "dotnet test B.csproj", count, GateShardCountSources.Profile,
             GateShardStrategies.Timings, "plan-1", 2, 5000, shards)
@@ -110,6 +122,45 @@ public sealed class GateShardVerdictPolicyTests
         Assert.Equal(2, suite.ClassDurationsMs.Count);
         Assert.StartsWith("# ===== gate host kori-gate (host part 1/2): Ok =====", merged.Output);
         Assert.Contains("sharded across 2 host(s): kori-gate part 1/2=Ok, agent-runner-01 part 2/2=Ok", merged.Reason);
+    }
+
+    [Fact]
+    public void A_red_share_keeps_its_tested_sha_when_the_primary_was_stopped_before_checkout()
+    {
+        // AGT-3759: the primary is cancelled because its sibling went red and
+        // reports no tested SHA; the red share's proof must survive the merge.
+        var stopped = new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 1, "",
+            "Remote verification was cancelled.", false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Cancellation,
+            ExpectedSha = Sha,
+        };
+        var merged = GateShardVerdictPolicy.MergeHosts(
+        [
+            new("kori-gate", new GateShardPart(0, 2), stopped),
+            new("agent-runner-01", new GateShardPart(1, 2), Red("agent-runner-01",
+                Suite("agent-runner-01", 2, Shard(1, GateShardOutcomes.Failed, BuildTestGateFailureKind.Code, "agent-runner-01")))),
+        ]);
+
+        Assert.Equal(BuildTestGateFailureKind.Code, merged.FailureKind);
+        Assert.Equal(Sha, merged.TestedSha);
+        Assert.Equal(BatchGateFailureClass.DeterministicSuiteRed, BatchGateProbeClassifier.Classify(merged, Sha));
+    }
+
+    [Fact]
+    public void Hosts_that_tested_different_shas_prove_no_tested_sha()
+    {
+        var other = "fedcba9876543210fedcba9876543210fedcba98";
+        var merged = GateShardVerdictPolicy.MergeHosts(
+        [
+            new("kori-gate", new GateShardPart(0, 2), Green("kori-gate",
+                Suite("kori-gate", 2, Shard(0, GateShardOutcomes.Passed))) with { TestedSha = other }),
+            new("agent-runner-01", new GateShardPart(1, 2), Red("agent-runner-01",
+                Suite("agent-runner-01", 2, Shard(1, GateShardOutcomes.Failed, BuildTestGateFailureKind.Code, "agent-runner-01")))),
+        ]);
+
+        Assert.Null(merged.TestedSha);
+        Assert.Equal(BatchGateFailureClass.InfrastructureRed, BatchGateProbeClassifier.Classify(merged, Sha));
     }
 
     [Fact]

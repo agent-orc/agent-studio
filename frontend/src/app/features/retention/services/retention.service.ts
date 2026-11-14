@@ -2,9 +2,6 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 import { tap } from 'rxjs';
 import type {
-  FullBackupSummary,
-  ListFullBackupsResponse,
-  RestoreFullBackupResult,
   RetentionApplyResult,
   RetentionArchiveManifest,
   RetentionPlan,
@@ -13,11 +10,9 @@ import type {
   RetentionRunSummary,
   RetentionSchedule,
   UpdateRetentionPolicyRequest,
-  VerifyFullBackupResult,
 } from '../models/retention.model';
 
-const MANAGEMENT = '/api/v1/management';
-const RETENTION = `${MANAGEMENT}/retention`;
+const RETENTION = '/api/v1/management/retention';
 
 @Injectable({ providedIn: 'root' })
 export class RetentionService {
@@ -88,25 +83,4 @@ export class RetentionService {
     }));
   }
 
-  listFullBackups() {
-    return this.http.get<ListFullBackupsResponse>(`${MANAGEMENT}/backups/full`);
-  }
-
-  createFullBackup() {
-    return this.http.post<FullBackupSummary>(`${MANAGEMENT}/backups/full`, {});
-  }
-
-  verifyFullBackup(backupId: string) {
-    return this.http.post<VerifyFullBackupResult>(
-      `${MANAGEMENT}/backups/full/${encodeURIComponent(backupId)}/verify`,
-      {},
-    );
-  }
-
-  restoreFullBackup(backupId: string) {
-    return this.http.post<RestoreFullBackupResult>(
-      `${MANAGEMENT}/backups/full/${encodeURIComponent(backupId)}/restore`,
-      { backupId },
-    );
-  }
 }

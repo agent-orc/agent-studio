@@ -1,9 +1,11 @@
 /** Ordered children of the Studio task header zone, ending at the pane controls. */
 export const TASK_HEADER_SLOTS = [
+  'app-mobile-lane-primary',
   'app-task-resource-status',
   'app-detail-header',
   'app-archived-task-notice',
   'app-task-live-status',
+  'app-cause-breaker-recheck',
   'app-card-environment-badges',
   'app-task-preview',
   'app-batch-detail',
@@ -15,4 +17,5 @@ export const TASK_HEADER_SLOTS = [
   'app-escalation-summary',
   'app-command-deck',
   'app-pane-toggle-bar',
+  'app-mobile-pane-switcher',
 ] as const;

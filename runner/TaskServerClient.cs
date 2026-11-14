@@ -1366,6 +1366,39 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         }
     }
 
+    public async Task<PersonaLeaseWire?> ClaimPersonaAsync(string runnerId, CancellationToken ct)
+    {
+        var path = "/api/runner/personas/claim";
+        var url = _useV1 ? _options?.PostMergeStateUrl is { } studio ? studio + path : null : path;
+        if (url is null) return null;
+        try
+        {
+            return await SendJsonAsync<object, PersonaLeaseWire>(HttpMethod.Post, url,
+                new { runnerId }, ct, allowEmptyResponse: true);
+        }
+        catch (TaskServerException ex) when (ex.StatusCode == (int)HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    public async Task<bool> CompletePersonaAsync(PersonaLeaseCompletionWire completion, CancellationToken ct)
+    {
+        var path = "/api/runner/personas/complete";
+        var url = _useV1 ? _options?.PostMergeStateUrl is { } studio ? studio + path : null : path;
+        if (url is null) return false;
+        try
+        {
+            _ = await PostJsonAsync<PersonaLeaseCompletionWire, object>(url,
+                completion, ct);
+            return true;
+        }
+        catch (TaskServerException ex) when (ex.StatusCode is 409 or 422)
+        {
+            return false;
+        }
+    }
+
     public async Task<RemoteChatWorkClaimResponse> ClaimProjectChatWorkAsync(
         RemoteChatWorkClaimRequest request,
         CancellationToken ct)
@@ -2386,7 +2419,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             TryReadApiErrorCode(text));
     }
 
-    private async Task<TResp?> SendJsonAsync<TReq, TResp>(HttpMethod method, string url, TReq body, CancellationToken ct)
+    private async Task<TResp?> SendJsonAsync<TReq, TResp>(HttpMethod method, string url, TReq body,
+        CancellationToken ct, bool allowEmptyResponse = false)
     {
         // The standalone Task Server's established HTTP contract uses numeric
         // enum values. Legacy monolith DTOs continue to use string enums.
@@ -2407,6 +2441,13 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                 $"POST {url} -> {(int)resp.StatusCode}: {(resp.StatusCode == HttpStatusCode.RequestEntityTooLarge ? text : Trim(text))}",
                 ProxyErrorCode((int)resp.StatusCode) ?? errorCode);
         }
+        if (allowEmptyResponse)
+        {
+            if (resp.StatusCode == HttpStatusCode.NoContent) return default;
+            var responseBody = await resp.Content.ReadAsStringAsync(ct);
+            return string.IsNullOrWhiteSpace(responseBody)
+                ? default : JsonSerializer.Deserialize<TResp>(responseBody, Json);
+        }
         return await resp.Content.ReadFromJsonAsync<TResp>(Json, ct);
     }
 
@@ -2421,6 +2462,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         ".html" or ".htm" => "text/html",
         ".png" => "image/png",
         ".jpg" or ".jpeg" => "image/jpeg",
+        ".webp" => "image/webp",
         ".svg" => "image/svg+xml",
         ".md" or ".txt" or ".log" => "text/plain",
         _ => "application/octet-stream",

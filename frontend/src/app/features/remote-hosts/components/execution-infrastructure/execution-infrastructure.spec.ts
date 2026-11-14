@@ -3,7 +3,8 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { describe, expect, it } from 'vitest';
-import { ExecutionInfrastructureComponent } from './execution-infrastructure';
+import type { RemoteHost } from '../../models/remote-host.model';
+import { ExecutionInfrastructureComponent, oneShotRouteReports } from './execution-infrastructure';
 
 describe('ExecutionInfrastructureComponent', () => {
   it('shows current use and saves capacity for the next gate', async () => {
@@ -23,7 +24,7 @@ describe('ExecutionInfrastructureComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     const form = fixture.nativeElement.querySelector('[data-testid="gate-capacity-settings"]') as HTMLElement;
-    expect(fixture.nativeElement.querySelectorAll('[data-testid="one-shot-route-status"]')).toHaveLength(1);
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="one-shot-route-status"]')).toHaveLength(0);
     expect(form.textContent).toContain('1 of 5 reported host slots in use');
     const slots = form.querySelector('input[name="slots"]') as HTMLInputElement;
     slots.value = '4';
@@ -40,5 +41,47 @@ describe('ExecutionInfrastructureComponent', () => {
     expect(form.textContent).toContain('Saved');
     expect(form.textContent).toContain('1 of 5 reported host slots in use');
     http.verify();
+  });
+
+  const routeHost = (id: string, firstSeenAt: string, status: RemoteHost['status'] = 'online') => ({
+    id, name: id, status,
+    oneShotClaimRoute: { condition: 'claim-route-missing' as const, statusCode: 404, backoffSeconds: 300,
+      firstSeenAt, lastSeenAt: '2026-11-10T06:25:00Z', detail: null },
+  }) as unknown as RemoteHost;
+
+  it('keeps live reporting hosts only, oldest report first', () => {
+    const reports = oneShotRouteReports([
+      routeHost('review', '2026-11-10T06:10:00Z'),
+      { id: 'quiet', name: 'quiet', status: 'online' } as unknown as RemoteHost,
+      routeHost('old', '2026-11-09T06:00:00Z', 'retired'),
+      routeHost('coding', '2026-11-10T06:00:00Z'),
+    ]);
+    expect(reports.map(report => report.hostName)).toEqual(['coding', 'review']);
+  });
+
+  it('shows the reported condition once with host, since and the operator action', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(),
+      provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(ExecutionInfrastructureComponent);
+    fixture.componentRef.setInput('oneShotRouteReports', oneShotRouteReports([
+      routeHost('coding', '2026-11-10T06:00:00Z'), routeHost('review', '2026-11-10T06:10:00Z')]));
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne('/api/system/execution-infrastructure').flush({
+      gate: { host: null, busy: 0, total: 0, reachability: 'not-configured', lastReachedAt: null,
+        lastFailureAt: null, capacity: { slots: 1, processorsPerGate: 1, hostCores: null,
+          allowOversubscription: false }, capacitySource: 'configuration', workers: [] },
+      taskServer: 'local monolith', workstation: 'local',
+      engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const rows = fixture.nativeElement.querySelectorAll('[data-testid="one-shot-route-status"]') as NodeListOf<HTMLElement>;
+    expect(rows).toHaveLength(1);
+    const text = rows[0].textContent!.replace(/\s+/g, ' ');
+    expect(text).toContain('coding reports the claim route answers 404 since');
+    expect(rows[0].querySelector('time')?.getAttribute('datetime')).toBe('2026-11-10T06:00:00Z');
+    expect(text).toContain('1 more host reports it');
+    expect(text).toContain('retrying every 5 min');
+    expect(text).toContain('connect them to a standalone Task Server');
   });
 });

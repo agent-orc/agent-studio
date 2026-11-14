@@ -1176,7 +1176,7 @@ public sealed class RemoteTaskRunner
 
     internal static (string Outcome, string Detail) PrelaunchSalvageRelease(
         WorktreeSalvageException exception, string host)
-        => ("runner-salvage-failed",
+        => (RunnerDiskWriteFailure.IsDiskFull(exception) ? "host-disk-full" : "runner-salvage-failed",
             $"{OneLine(exception.InnerException?.Message ?? exception.Message)}; " +
             $"worktree={exception.WorktreePath}; host={host}");
 
@@ -2635,6 +2635,24 @@ public sealed class RemoteTaskRunner
         WorktreeSalvageException ex,
         DurableRunOutbox? outbox = null)
     {
+        if (RunnerDiskWriteFailure.IsDiskFull(ex))
+        {
+            var reason = $"Infrastructure disk full on {_options.Hostname}; worktree retained at {ex.WorktreePath}.";
+            _log($"worktree-salvage-infrastructure-disk-full task={taskKey} {reason}");
+            try
+            {
+                await _client.CompleteRunAsync(new RemoteRunCompletionRequest(
+                    taskKey, lease.LeaseId, lease.FencingToken, _options.RunnerId,
+                    RunOutcomeKind.EnvironmentFailure.ToString(), reason, _options.RunnerName,
+                    AttemptId: lease.AttemptId, AuthorityEpoch: lease.AuthorityEpoch,
+                    IdempotencyKey: $"completion:{lease.AttemptId}:host-disk-full"), CancellationToken.None);
+            }
+            catch (Exception reportError)
+            {
+                _log($"worktree-salvage-infrastructure-report-deferred task={taskKey} error={reportError.Message}");
+            }
+            return;
+        }
         var failure = ex.InnerException?.Message.Replace('\r', ' ').Replace('\n', ' ').Trim()
                       ?? ex.Message;
         var workflowScopeMissing = GitPushProbe.IsWorkflowScopeFailure(failure);

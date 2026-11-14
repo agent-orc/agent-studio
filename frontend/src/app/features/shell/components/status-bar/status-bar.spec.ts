@@ -171,6 +171,48 @@ describe('StatusBarComponent CLI repair note', () => {
   });
 });
 
+describe('StatusBarComponent quota fallback entry', () => {
+  const project = (projectName: string, model: string | null, reason: string | null) => ({
+    projectName, mode: 'auto', activeJobId: model ? `${projectName}-run` : null, activeExecution: null,
+    quotaFallbackModel: model, quotaFallbackReason: reason, queuedJobIds: [],
+  });
+
+  async function render() {
+    await TestBed.configureTestingModule({
+      imports: [StatusBarComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(StatusBarComponent);
+    return { fixture, service: TestBed.inject(TaskService) };
+  }
+
+  it('counts every project with an active fallback, not only the first', async () => {
+    const { fixture, service } = await render();
+    service.runnerStatus.set({ projects: {
+      beta: project('beta', 'gpt-6-sol', 'weekly window at 97%'),
+      alpha: project('alpha', 'claude-sonnet-5', 'session window at 99%'),
+      idle: project('idle', null, null),
+    } });
+    fixture.detectChanges();
+
+    const entry = fixture.nativeElement.querySelector('[data-testid="status-bar-quota-fallback"]');
+    expect(entry?.textContent).toContain('fallback: 2 projects');
+    expect(fixture.componentInstance.fallbackCount()).toBe(2);
+  });
+
+  it('counts one project on a fallback and uses no space without one', async () => {
+    const { fixture, service } = await render();
+    service.runnerStatus.set({ projects: { alpha: project('alpha', 'gpt-6-sol', 'weekly cap') } });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="status-bar-quota-fallback"]')?.textContent)
+      .toContain('fallback: 1 project');
+
+    service.runnerStatus.set({ projects: { alpha: project('alpha', null, null) } });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="status-bar-quota-fallback"]')).toBeNull();
+  });
+});
+
 // AGT-3589 (walkthrough F14): the footer read "review idle" while Post
 // Processing held ten cards, because it counted the auto-review queue.
 describe('StatusBarComponent review entry', () => {
@@ -188,7 +230,8 @@ describe('StatusBarComponent review entry', () => {
     const service = TestBed.inject(TaskService);
     const waiting = Array.from({ length: 10 }, (_, index) => ({
       id: `DEMO-${index + 1}`, taskKey: `DEMO-${index + 1}`, title: 'Demo', state: '4-auto-review',
-      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: null, latestEventAt: null },
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [],
+        queue: { kind: 'review', position: index + 1 }, latestEventAt: null },
     })) as unknown as TaskInfo[];
     service.grouped.update(grouped => ({ ...grouped, autoReview: waiting }));
 
@@ -200,6 +243,27 @@ describe('StatusBarComponent review entry', () => {
     expect(fixture.componentInstance.reviewAttention()).toBe(true);
     expect(fixture.componentInstance.reviewTooltip()).toContain(
       'Post Processing holds 10 cards: 10 waiting for review, 0 under review.');
+  });
+
+  it('keeps integration waits outside review attention', async () => {
+    await TestBed.configureTestingModule({
+      imports: [StatusBarComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(StatusBarComponent);
+    const service = TestBed.inject(TaskService);
+    const cards = Array.from({ length: 3 }, (_, index) => ({
+      id: `DEMO-${index + 1}`, taskKey: `DEMO-${index + 1}`, title: 'Demo', state: '4-auto-review',
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [],
+        queue: { kind: 'review', state: 'integration', reason: 'waiting for delivery integration' }, latestEventAt: null },
+    })) as unknown as TaskInfo[];
+    service.grouped.update(grouped => ({ ...grouped, autoReview: cards }));
+    fixture.detectChanges();
+
+    const review = fixture.nativeElement.querySelector('[data-testid="status-bar-review"]') as HTMLElement;
+    expect(review.textContent).toContain('review idle · 3 awaiting integration');
+    expect(fixture.componentInstance.reviewAttention()).toBe(false);
+    expect(fixture.componentInstance.reviewTooltip()).toContain('3 waiting for integration');
   });
 
   it('stays idle when Post Processing is empty', async () => {

@@ -117,6 +117,9 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Management/ManagementService.cs"] =
                 "Deletes isolated restore-verification staging outside the task store, never task folders.",
 
+            ["backend/Features/Pipeline/BatchGate/BatchGateStorageRoot.cs"] =
+                "Moves only local instance state below the application data root, never task folders.",
+
             // One-shot Claude removes only its GUID-named scratch folder under the system temp root, never a job folder.
             ["backend/Features/Cli/Routing/OneShot/HostOneShotIsolation.cs"] =
                 "Deletes only a temporary one-shot folder under the system temp root, never a job folder.",
@@ -218,6 +221,8 @@ public class TaskFolderAccessIsolationTest
             // developer checkout.
             ["backend/Features/Git/IntegrationWorktreeProvider.cs"] =
                 "Deletes only the derived, Studio-owned integration worktree slot, never task storage.",
+            ["backend/Features/Registry/NetworkedRepositoryCheckout.cs"] =
+                "Deletes only the server-owned Git checkout beside projects, never a task folder.",
 
             // Hosted wiki publication (AGT-2278): snapshot retention prunes
             // superseded SHA-addressed docs snapshots under the OS temp root.

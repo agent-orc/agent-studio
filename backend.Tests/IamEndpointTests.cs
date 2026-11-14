@@ -25,6 +25,37 @@ public sealed class IamEndpointTests : IDisposable
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
 
     [Fact]
+    public async Task Invitation_preview_names_inviter_scope_and_role_until_link_is_used()
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        store.Bootstrap(new BootstrapRequest("first.owner", Password, "Robert"));
+        using var owner = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = true });
+        var csrf = await LoginAsync(owner, "first.owner", Password);
+        var invite = await SendAsync<JsonElement>(owner, HttpMethod.Post, "/api/auth/invitations", csrf, new
+        {
+            username = "carla", displayName = "Carla", role = "", projects = (string[]?)null,
+            bindings = new[] { new { role = IamRoles.Contributor, scope = IamScope.ForProject("alpha") } },
+        });
+        var link = invite.GetProperty("signInLink").GetString()!;
+        var token = new Uri("https://studio.test" + link).Query.Split('=', 2)[1];
+        using var invitee = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        invitee.DefaultRequestHeaders.Add("Origin", "https://studio.test");
+        var previewPath = "/api/auth/invite/preview?token=" + Uri.EscapeDataString(token);
+        var preview = await invitee.GetFromJsonAsync<JsonElement>(previewPath);
+        Assert.Equal("Robert", preview.GetProperty("inviter").GetString());
+        Assert.Equal("Product", preview.GetProperty("role").GetString());
+        Assert.Equal("alpha", Assert.Single(preview.GetProperty("projects").EnumerateArray()).GetString());
+        Assert.False(preview.GetProperty("secondFactorRequired").GetBoolean());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await invitee.GetAsync(previewPath + "x")).StatusCode);
+        (await invitee.PostAsJsonAsync("/api/auth/invite/accept", new { token, newPassword = "new password phrase!" }))
+            .EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await invitee.GetAsync(previewPath)).StatusCode);
+    }
+
+    [Fact]
     public async Task Owner_manages_groups_bindings_and_service_accounts_over_http()
     {
         using var factory = BuildFactory();
@@ -232,6 +263,7 @@ public sealed class IamEndpointTests : IDisposable
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
+            ["Secrets:KeyFile"] = _workspace + ".kek",
             ["Security:Profile"] = profile,
             ["AllowedHosts"] = profile == SecurityProfiles.Networked ? "studio.test" : "*",
         }));
@@ -242,5 +274,6 @@ public sealed class IamEndpointTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_workspace)) Directory.Delete(_workspace, true);
+        File.Delete(_workspace + ".kek");
     }
 }

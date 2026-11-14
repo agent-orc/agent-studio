@@ -39,6 +39,7 @@ public enum BuildTestGateFailureKind
     /// Never a product failure; see CAC-18, WEB-19, and AGT-2872.
     /// </summary>
     Environment,
+    DiskFull,
 }
 
 public sealed record BuildTestGateRequest(
@@ -160,6 +161,7 @@ public sealed record BuildTestGateProcessEvidence
 
     /// <summary>Counts and failed names from the process's TRX report; null without a report.</summary>
     public GateTestReport? TestReport { get; init; }
+    public GateShardHangEvidence? ShardHang { get; init; }
     public long OriginalBudgetMs { get; init; }
 
     /// <summary>
@@ -402,6 +404,14 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         "\\b\\d+\\b", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex Whitespace = new(
         "\\s+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex BuildDiagnostic = new(
+        @"^(?:[^\r\n]{1,512}:[ \t]+)?error(?:[ \t]+[A-Z]{1,4}\d{3,6}|[ \t]+):[ \t]*\S",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase,
+        TimeSpan.FromMilliseconds(100));
+    private static readonly Regex PlainErrorLine = new(
+        @"^(?:[^\r\n]{1,512}:[ \t]+)?error:[ \t]*\S",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase,
+        TimeSpan.FromMilliseconds(100));
     private static readonly Regex MissingRelativeModuleFromNodeModules = new(
         "cannot find module\\s+['\"]\\.{1,2}[\\\\/][^'\"]+['\"][\\s\\S]{0,8192}" +
         "require stack:[\\s\\S]{0,8192}node_modules[\\\\/]",
@@ -428,6 +438,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     private static readonly AsyncLocal<int?> ActiveSlot = new();
     private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
     private readonly Func<CancellationToken, Task<bool>> _composeRenderHost = ComposeRenderHostProbe.IsAvailableAsync;
+    internal TimeSpan? ShardIdleBoundForTesting { get; set; }
+    internal TimeSpan? ShardCompletedGraceForTesting { get; set; }
 
     public BuildTestGateRunner(
         ILogger<BuildTestGateRunner> logger,
@@ -1088,6 +1100,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 ? DiagnosticFingerprint(clean, null, _preparationCacheRoot) : null,
             otherCards,
             prior));
+        // A completed, parsed test failure repeated on a clean candidate while
+        // the integration baseline passes is direct card evidence. History may
+        // be unavailable, leaving the generic fingerprint decision unclassified.
+        diagnosis = ConfirmParsedTestDiagnosis(diagnosis, original, baseline, clean);
         diagnosis = diagnosis with
         {
             Evidence = diagnosis.Evidence.Concat(
@@ -1132,6 +1148,14 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                      $" confidence={diagnosis.Confidence:0.00}; " + string.Join("; ", diagnosis.Evidence),
         };
     }
+
+    internal static DeliveryFailureDiagnosisResult ConfirmParsedTestDiagnosis(
+        DeliveryFailureDiagnosisResult diagnosis, BuildTestGateResult candidate,
+        BuildTestGateResult? baseline, BuildTestGateResult? cleanRepeat)
+        => BatchGateProbeClassifier.RepeatedCardTestRed(candidate, baseline, cleanRepeat)
+            ? new DeliveryFailureDiagnosisResult(DeliveryFailureDiagnosis.Product, 1,
+                diagnosis.Evidence.Concat(["completed parsed test failures repeated on clean candidate"]).ToArray())
+            : diagnosis;
 
     private sealed record GateBaselineCacheEntry(string Key, DateTimeOffset RecordedAtUtc);
 
@@ -1583,7 +1607,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     : process.ExitCode != 0 || process.TimedOut || process.Cancelled || process.LaunchError is not null)
             {
                 var kind = shardedKind ?? ClassifyFailure(process);
-                if (process.TimedOut && findings.Count > 0) kind = BuildTestGateFailureKind.Code;
+                if (process.TimedOut && process.ShardHang is null && findings.Count > 0)
+                    kind = BuildTestGateFailureKind.Code;
                 if (kind == BuildTestGateFailureKind.Code && !command.BlocksWorkPackage && !process.TimedOut)
                 {
                     findings.Add(new BuildTestGateFinding(
@@ -1811,6 +1836,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         BuildTestGateProcessEvidence process,
         string suffix = "")
     {
+        if (process.ShardHang is { } hang)
+            return hang.Summary();
         var excerpt = FailureOutputExcerpt(process);
         if (process.FailedTestsObserved && process.TimedOut) commandDescription += "; failed tests were observed before cutoff";
         if (process.ViolatedBudget is not null)
@@ -1856,6 +1883,21 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     internal static string FailureOutputExcerpt(BuildTestGateProcessEvidence process)
     {
         var parts = new List<string>();
+        // Prefer a compiler or MSBuild diagnostic to a generic tool error.
+        // Search only the beginning and end of each stream, and bound each
+        // regex input so malformed or very large output cannot stall the gate.
+        string? diagnostic = null;
+        string? plainError = null;
+        foreach (var stream in new[] { process.StandardError, process.StandardOutput })
+        {
+            const int windowChars = 64 * 1024;
+            Scan(stream[..Math.Min(stream.Length, windowChars)], skipFirstLine: false);
+            if (stream.Length > windowChars)
+                Scan(stream[^windowChars..], skipFirstLine: true);
+        }
+        var error = diagnostic ?? plainError;
+        if (error is not null)
+            parts.Add("error: " + (error.Length <= 900 ? error : error[..897] + "..."));
         Append("stderr", process.StandardError);
         Append("stdout", process.StandardOutput);
         Append("launch", process.LaunchError);
@@ -1872,6 +1914,30 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             if (normalized.Length > perStreamLimit)
                 normalized = "..." + normalized[^perStreamLimit..];
             parts.Add($"{label}: {normalized}");
+        }
+
+        void Scan(string window, bool skipFirstLine)
+        {
+            using var reader = new StringReader(window);
+            if (skipFirstLine) reader.ReadLine();
+            while (reader.ReadLine() is { } line)
+            {
+                line = line.TrimEnd('\r');
+                if (line.Length > 2048) line = line[..2048];
+                try
+                {
+                    if (diagnostic is null && BuildDiagnostic.IsMatch(line))
+                        diagnostic = Whitespace.Replace(line, " ").Trim();
+                    else if (plainError is null && PlainErrorLine.IsMatch(line))
+                        plainError = Whitespace.Replace(line, " ").Trim();
+                }
+                catch (RegexMatchTimeoutException ex)
+                {
+                    // The stream tail still appears in the ordinary excerpt.
+                    SilentCatch.Note(ex, "BuildTestGateRunner: build diagnostic match");
+                }
+                if (diagnostic is not null) return;
+            }
         }
     }
 
@@ -2281,7 +2347,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         RingOutput output,
         CancellationToken ct,
         string phase,
-        ProjectPreparationResult? projectPreparation)
+        ProjectPreparationResult? projectPreparation,
+        GateShardHangWatch? shardWatch = null)
     {
         var executableCommand = command;
         string? reportDirectory = null;
@@ -2294,6 +2361,13 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             reportDirectory = Path.GetTempPath();
             reportPrefix = "agentstudio-gate-" + Guid.NewGuid().ToString("N");
             executableCommand += $" --logger \"trx;LogFilePrefix={reportPrefix}\" --logger \"console;verbosity=normal\" --results-directory \"{reportDirectory.Replace('\\', '/')}\"";
+            if (shardWatch is not null)
+            {
+                // VSTest records the running test sequence before its per-test
+                // hang timeout ends the host. Our silence watchdog is the backstop.
+                var blameMs = Math.Max(1, (long)(shardWatch.IdleBound.TotalMilliseconds * 0.9));
+                executableCommand += $" --blame-hang-timeout {blameMs}ms --blame-hang-dump-type none";
+            }
         }
         // Windows: cmd.exe /c cannot carry the composed command intact (the
         // backslash-escaped inner quotes of the appended `--logger "trx;..."`
@@ -2306,7 +2380,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             BashExecutable.Path, File.Exists(BashExecutable.Path));
         return RunProcessAsync(
             workingDirectory, command, fileName, args,
-            budget, elapsedBefore, output, ct, phase, projectPreparation, reportDirectory, reportPrefix);
+            budget, elapsedBefore, output, ct, phase, projectPreparation, reportDirectory, reportPrefix, shardWatch);
     }
 
     private async Task<BuildTestGateProcessEvidence> RunProcessAsync(
@@ -2321,7 +2395,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         string phase,
         ProjectPreparationResult? projectPreparation,
         string? reportDirectory,
-        string? reportPrefix)
+        string? reportPrefix,
+        GateShardHangWatch? shardWatch = null)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var psi = new ProcessStartInfo
@@ -2391,16 +2466,23 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             var timings = new GateTestTiming();
             using var resources = _resourceFactory(process.Id);
             var processClock = Stopwatch.StartNew();
-            var stdoutTask = ReadTestOutputAsync(process.StandardOutput, timings);
-            var stderrTask = ReadTestOutputAsync(process.StandardError, timings);
+            var stdoutTask = ReadTestOutputAsync(process.StandardOutput, timings, shardWatch);
+            var stderrTask = ReadTestOutputAsync(process.StandardError, timings, shardWatch);
             var measurement = resources.Sample();
             var timedOut = false;
             var cancelled = false;
+            GateShardHangEvidence? shardHang = null;
             try
             {
                 var exit = process.WaitForExitAsync(bounded.Token);
                 while (!exit.IsCompleted)
                 {
+                    if (shardWatch?.Check(reportDirectory, reportPrefix) is { } hang)
+                    {
+                        shardHang = hang;
+                        bounded.Cancel();
+                        break;
+                    }
                     var remaining = budget.Limit - elapsedBefore - processClock.Elapsed;
                     if (remaining <= TimeSpan.Zero)
                     {
@@ -2414,7 +2496,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                         break;
                     }
                     using var sampleWait = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token);
-                    var delay = Task.Delay(remaining < TimeSpan.FromSeconds(5) ? remaining : TimeSpan.FromSeconds(5), sampleWait.Token);
+                    var poll = shardWatch is null ? TimeSpan.FromSeconds(5)
+                        : ShardCompletedGraceForTesting is null ? TimeSpan.FromSeconds(1)
+                        : TimeSpan.FromMilliseconds(250);
+                    var delay = Task.Delay(remaining < poll ? remaining : poll, sampleWait.Token);
                     await Task.WhenAny(exit, delay).ConfigureAwait(false);
                     await sampleWait.CancelAsync().ConfigureAwait(false);
                     measurement = resources.Sample();
@@ -2435,6 +2520,13 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
 
             var stdout = await stdoutTask.ConfigureAwait(false);
             var stderr = await stderrTask.ConfigureAwait(false);
+            if (shardHang is null && shardWatch is not null
+                && (stdout.Contains("specified inactivity time", StringComparison.OrdinalIgnoreCase)
+                    || stderr.Contains("specified inactivity time", StringComparison.OrdinalIgnoreCase)))
+                shardHang = shardWatch.BlameExit();
+            if (shardHang is not null
+                && GateShardHangWatch.BlameSequenceNames(stdout + "\n" + stderr, reportDirectory) is { Count: > 0 } names)
+                shardHang = shardHang with { Tests = names };
             measurement = resources.Sample();
             if (reportDirectory is not null && reportPrefix is not null)
             {
@@ -2458,12 +2550,19 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             BuildTestGateBudgetEvidence? violatedBudget = null;
             if (timedOut)
             {
-                var consumed = elapsedBefore + (completedAt - startedAt);
-                violatedBudget = NewBudgetEvidence("gate-run", budget.Limit, consumed, phase);
+                var consumed = shardHang is null ? elapsedBefore + (completedAt - startedAt)
+                    : TimeSpan.FromMilliseconds(shardHang.StallMs);
+                violatedBudget = shardHang is null
+                    ? NewBudgetEvidence("gate-run", budget.Limit, consumed, phase)
+                    : NewBudgetEvidence("test-shard-hang",
+                        shardHang.Kind == "completed report but host still alive"
+                            ? shardWatch!.CompletedGrace : shardWatch!.IdleBound, consumed, phase);
                 output.AppendLine(
-                    $"{fileName} violated gate-run budget " +
+                    $"{fileName} violated {violatedBudget.Name} budget " +
                     $"limit={violatedBudget.LimitMs}ms consumed={violatedBudget.ConsumedMs}ms phase={phase}");
             }
+            if (shardHang is not null)
+                output.AppendLine("# " + shardHang.Summary());
             if (cancelled) output.AppendLine($"{fileName} was cancelled");
             int? exitCode = process.HasExited ? process.ExitCode : null;
             var signal = ResolveTerminationSignal(exitCode, timedOut, cancelled);
@@ -2483,17 +2582,20 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 FailedTestsObserved = timings.Failed,
                 SlowTests = timings.Slowest,
                 TestReport = timings.Report,
+                ShardHang = shardHang,
             };
         }
     }
 
-    private static async Task<string> ReadTestOutputAsync(StreamReader reader, GateTestTiming timings)
+    private static async Task<string> ReadTestOutputAsync(StreamReader reader, GateTestTiming timings,
+        GateShardHangWatch? shardWatch = null)
     {
         var text = new StringBuilder();
         while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
         {
             text.AppendLine(line);
             timings.Observe(line);
+            shardWatch?.Observe(line);
         }
         return text.ToString();
     }
@@ -2531,6 +2633,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
 
     internal static BuildTestGateFailureKind ClassifyFailure(BuildTestGateProcessEvidence process)
     {
+        var evidence = process.StandardError + "\n" + process.StandardOutput;
+        if (process.ShardHang is not null) return BuildTestGateFailureKind.Environment;
+        if (ContainsAny(evidence, "no space left on device", "out of diskspace", "disk full"))
+            return BuildTestGateFailureKind.DiskFull;
         if (process.FailedTestsObserved || GateTestTiming.HasFailedTests(process.StandardOutput + "\n" + process.StandardError))
             return BuildTestGateFailureKind.Code;
         if (process.LaunchError is not null) return BuildTestGateFailureKind.ProcessLaunch;
@@ -2540,7 +2646,6 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             : BuildTestGateFailureKind.Timeout;
         if (process.ExitCode == 137 || string.Equals(process.TerminationSignal, "SIGKILL", StringComparison.Ordinal))
             return BuildTestGateFailureKind.OutOfMemory;
-        var evidence = process.StandardError + "\n" + process.StandardOutput;
         if (IsComposedLoggerArgumentFailure(process, evidence))
             return BuildTestGateFailureKind.Environment;
         var classified = ClassifyFailure(evidence);
@@ -2566,7 +2671,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         // the delivery, so the torn-cache signature is equally narrow.
         if (CompletedNormally(process)
             && !IsGenuineBuildOutputLock(evidence)
-            && classified != BuildTestGateFailureKind.Environment)
+            && classified is not (BuildTestGateFailureKind.Environment or BuildTestGateFailureKind.DiskFull))
             return BuildTestGateFailureKind.Code;
         return classified;
     }
@@ -2631,6 +2736,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     internal static BuildTestGateFailureKind ClassifyFailure(string? text)
     {
         var value = text ?? string.Empty;
+        if (ContainsAny(value, "no space left on device", "out of diskspace", "disk full"))
+            return BuildTestGateFailureKind.DiskFull;
         if (IsPreparationCacheNuGetFailure(value))
             return BuildTestGateFailureKind.Environment;
         if (IsGenuineToolchainStartupCrash(value))
@@ -2726,6 +2833,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
 
     private static bool ShouldRetryFromScratch(BuildTestGateResult result)
     {
+        if (result.TestShards.SelectMany(suite => suite.Shards).Any(shard => shard.Hang is not null))
+            return false;
         var failedVerification = result.Processes.LastOrDefault(process =>
             string.Equals(process.Phase, "verification", StringComparison.OrdinalIgnoreCase)
             && (process.ExitCode != 0

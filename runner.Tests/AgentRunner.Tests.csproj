@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <None Update="Fixtures\review-failures\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures\review-repeats\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Fixtures\needs-input\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Fixtures\visual-review\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

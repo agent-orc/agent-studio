@@ -297,6 +297,106 @@ public class TaskIndexCacheTests : IDisposable
             .Build();
 
     [Fact]
+    public void IncrementalRefresh_ReappliesInPlaceLifecycleChecks()
+    {
+        WriteJob(TaskStates.AutoReview, "lifecycle-card", "Review");
+        SettleWriteTime(TaskStates.AutoReview, "lifecycle-card");
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, "lifecycle-card");
+        var startedAt = new DateTime(2025, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        Assert.True(PostProcessingLifecycleStore.BeginPostProcessing(folder, startedAt,
+            "first-check", "Started", NullLogger.Instance, replaceChecks: false));
+        var cache = NewIncrementalCache();
+        Assert.Contains(Assert.Single(cache.GetSnapshot()).PostProcessingChecks,
+            check => check.Name == "first-check");
+        var folderWrite = Directory.GetLastWriteTimeUtc(folder);
+
+        Assert.True(PostProcessingLifecycleStore.BeginPostProcessing(folder, startedAt.AddMinutes(1),
+            "second-check", "Started", NullLogger.Instance, replaceChecks: false));
+        Directory.SetLastWriteTimeUtc(folder, folderWrite);
+        cache.ForceRefresh();
+
+        Assert.Contains(Assert.Single(cache.GetSnapshot()).PostProcessingChecks,
+            check => check.Name == "second-check");
+        Assert.Contains(_scanner.FindJob("lifecycle-card", _watchPath)!.PostProcessingChecks,
+            check => check.Name == "second-check");
+        Assert.Contains(cache.GetDetailFacts("lifecycle-card", _watchPath).Info!.PostProcessingChecks,
+            check => check.Name == "second-check");
+    }
+
+    [Fact]
+    public void IncrementalRefresh_ReappliesOverwrittenPendingIntent()
+    {
+        WriteJob(TaskStates.Ready, "intent-card", "Intent");
+        SettleWriteTime(TaskStates.Ready, "intent-card");
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, "intent-card");
+        var path = Path.Combine(folder, "pending-intent.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(new PendingIntent { Prompt = "first" }));
+        var cache = NewIncrementalCache();
+        Assert.Equal("first", Assert.Single(cache.GetSnapshot()).PendingIntent?.Prompt);
+        var folderWrite = Directory.GetLastWriteTimeUtc(folder);
+
+        File.WriteAllText(path, JsonSerializer.Serialize(new PendingIntent { Prompt = "second" }));
+        Directory.SetLastWriteTimeUtc(folder, folderWrite);
+        cache.ForceRefresh();
+
+        Assert.Equal("second", Assert.Single(cache.GetSnapshot()).PendingIntent?.Prompt);
+        Assert.Equal("second", _scanner.FindJob("intent-card", _watchPath)?.PendingIntent?.Prompt);
+        Assert.Equal("second", cache.GetDetailFacts("intent-card", _watchPath).Info?.PendingIntent?.Prompt);
+    }
+
+    [Fact]
+    public void IncrementalRefresh_ReappliesSteerMarker()
+    {
+        WriteJob(TaskStates.Progress, "steer-card", "Steer");
+        SettleWriteTime(TaskStates.Progress, "steer-card");
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, "steer-card");
+        var first = new DateTime(2025, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var second = first.AddHours(1);
+        SteerPendingMarker.Write(folder, new SteerPendingRecord { WaitStartedAt = first });
+        var cache = NewIncrementalCache();
+        Assert.Equal(first, Assert.Single(cache.GetSnapshot()).SteerPendingSince);
+        var folderWrite = Directory.GetLastWriteTimeUtc(folder);
+
+        SteerPendingMarker.Write(folder, new SteerPendingRecord { WaitStartedAt = second });
+        Directory.SetLastWriteTimeUtc(folder, folderWrite);
+        cache.ForceRefresh();
+
+        Assert.Equal(second, Assert.Single(cache.GetSnapshot()).SteerPendingSince);
+        Assert.Equal(second, _scanner.FindJob("steer-card", _watchPath)?.SteerPendingSince);
+        Assert.Equal(second, cache.GetDetailFacts("steer-card", _watchPath).Info?.SteerPendingSince);
+    }
+
+    [Fact]
+    public void IncrementalRefresh_DoesNotReplaceDirectCorePublicationWithOldFolderFact()
+    {
+        WriteJob(TaskStates.Ready, "core-card", "Before");
+        SettleWriteTime(TaskStates.Ready, "core-card");
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, "core-card");
+        var taskJson = Path.Combine(folder, "task.json");
+        var cache = NewIncrementalCache();
+        Assert.Equal("Before", Assert.Single(cache.GetSnapshot()).Title);
+        var taskWrite = File.GetLastWriteTimeUtc(taskJson);
+        var folderWrite = Directory.GetLastWriteTimeUtc(folder);
+
+        WriteJob(TaskStates.Ready, "core-card", "After!");
+        File.SetLastWriteTimeUtc(taskJson, taskWrite);
+        Directory.SetLastWriteTimeUtc(folder, folderWrite);
+        _scanner.PublishCoreFromKnownFolder(folder);
+        Assert.Equal("After!", cache.GetDetailFacts("core-card", _watchPath).Info?.Title);
+
+        cache.ForceRefresh();
+        Assert.Equal("After!", cache.GetDetailFacts("core-card", _watchPath).Info?.Title);
+        Assert.Equal("After!", _scanner.FindJob("core-card", _watchPath)?.Title);
+    }
+
+    private TaskIndexCache NewIncrementalCache()
+    {
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance, _config);
+        _scanner.SetIndexCache(cache);
+        return cache;
+    }
+
+    [Fact]
     public void FirstRead_LoadsFromDisk()
     {
         WriteJob("2-ready", "job-1", "First");

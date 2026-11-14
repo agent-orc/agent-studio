@@ -108,8 +108,15 @@ public sealed class UpdateOrchestrator
         return $"placement {_options.Placement} is owned by {owner}; the checkout update service does not apply it";
     }
 
-    public (string RunId, string Phase, string Message) StartTrigger(string trigger, bool force, CancellationToken ct)
+    /// <summary>
+    /// Starts an update run. <paramref name="force"/> overrides manual mode and
+    /// an in-flight run; it only arrives here from a token-authorized request,
+    /// and every forced trigger is logged with its <paramref name="caller"/>.
+    /// </summary>
+    public (string RunId, string Phase, string Message) StartTrigger(string trigger, bool force, string caller, CancellationToken ct)
     {
+        if (force)
+            _logger.LogWarning("Forced update trigger from {Caller} (trigger={Trigger})", caller, trigger);
         if (PlacementRefusal() is { } refusal)
             return ("(none)", _store.Get().Phase, refusal);
         var (_, behindBy) = RefreshGitStatus();

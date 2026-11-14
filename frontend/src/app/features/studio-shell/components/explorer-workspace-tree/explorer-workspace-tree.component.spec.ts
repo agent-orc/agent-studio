@@ -271,8 +271,9 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     const progress = root.querySelector<HTMLElement>('[data-testid="studio-explorer-project-board-count-progress-Alpha"]');
     const review = root.querySelector<HTMLElement>('[data-testid="studio-explorer-project-board-count-human-review-Alpha"]');
 
-    expect(board?.getAttribute('aria-label')).toBe('Board, 3 ready, 2 in progress, 5 human review');
-    expect(counts?.getAttribute('aria-label')).toBe('3 ready, 2 in progress, 5 human review');
+    expect(board?.getAttribute('aria-label')).toBe('Board, Active work: 3 ready, 2 in progress, 5 human review');
+    expect(fixture.componentInstance.boardActiveWorkTooltip).toContain('Excludes Backlog, Preparation');
+    expect(counts?.getAttribute('aria-label')).toBe('Active work: 3 ready, 2 in progress, 5 human review');
     expect(ready?.textContent?.trim()).toBe('3');
     expect(progress?.textContent?.trim()).toBe('2');
     expect(review?.textContent?.trim()).toBe('5');
@@ -315,7 +316,7 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     const dots = Array.from(dashboard?.querySelectorAll<HTMLElement>('[data-lane]') ?? []);
 
     expect(root.querySelector('[data-testid="studio-explorer-project-board-counts-Alpha"]')).toBeNull();
-    expect(dashboard?.getAttribute('aria-label')).toBe('4 ready, 3 in progress, 13 human review');
+    expect(dashboard?.getAttribute('aria-label')).toBe('Active work: 4 ready, 3 in progress, 13 human review');
     expect(dots).toHaveLength(15);
     expect(dots.map(dot => dot.dataset['lane'])).toEqual([
       ...Array(4).fill('ready'),
@@ -330,14 +331,15 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     const cmp = fixture.componentInstance;
     cmp.setCollapsed('workspace', false);
     fixture.componentRef.setInput('registryWorkspaces', [
-      workspace('ws-default', 'Default', 0, [project('Alpha', 'ws-default', '/repos/Alpha')]),
+      workspace('ws-default', 'Default', 0, [project('Alpha', 'ws-default', '/repos/Alpha'), project('Beta', 'ws-default', '/repos/Beta')]),
     ]);
-    fixture.componentRef.setInput('projectRows', [row('Alpha')]);
+    fixture.componentRef.setInput('projectRows', [row('Alpha'), row('Beta')]);
     const emitted: void[] = [];
     cmp.onboardWorkspaceRequest.subscribe(v => emitted.push(v));
     fixture.detectChanges();
 
     const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('[data-testid="studio-explorer-workspace-head"]')?.textContent).toContain('1');
     const add = root.querySelector<HTMLButtonElement>('[data-testid="studio-explorer-add-workspace"]');
     expect(add?.classList.contains('studio-sidebar-header__action')).toBe(true);
     expect(add?.querySelector('app-studio-icon')).toBeTruthy();

@@ -1,5 +1,5 @@
 @if (auth.networkedAuthenticated()) {
-  @defer (on immediate) { <app-session-manager [watchNotices]="true" /> }
+  @defer (on immediate) { <app-session-manager [watchNotices]="true" [recoveryMode]="auth.status()?.recoveryEnrollmentAllowed === true" /> }
   <button #trigger type="button" class="account-control__trigger" data-testid="studio-titlebar-account"
           aria-haspopup="menu" [attr.aria-expanded]="open()"
           (click)="open.update(value => !value)">{{ auth.status()?.user?.displayName || auth.status()?.user?.username || 'Account' }}</button>

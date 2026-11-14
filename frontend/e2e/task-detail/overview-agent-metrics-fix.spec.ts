@@ -432,6 +432,13 @@ async function installRoutes(
       }),
     }),
   );
+  await page.route('**/api/usage/cockpit**', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ workspaceId: null, clis: [], cost: null }),
+    }),
+  );
   await page.route('**/api/tasks', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );
@@ -881,6 +888,16 @@ test.describe('Overview agent-run metrics fix (tokens + cumulative duration)', (
       await expect(page.getByTestId('pane-tabs-overflow-panel')).toBeVisible();
       const docsOverflowItem = page.getByTestId('pane-tabs-overflow-item-description');
       await expect(docsOverflowItem).toContainText('Docs');
+      await docsOverflowItem.click();
+      await expect(page.getByTestId('docs-index')).toBeVisible();
+      const overviewTab = page.getByTestId('prompt-tab-overview');
+      if (await overviewTab.isVisible()) {
+        await overviewTab.click();
+      } else {
+        await promptOverflow.click();
+        await page.getByTestId('pane-tabs-overflow-item-overview').click();
+      }
+      await promptOverflow.click();
       await expect(docsOverflowItem.getByText('4', { exact: true })).toBeVisible();
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('pane-tabs-overflow-panel')).toBeHidden();
@@ -944,6 +961,32 @@ test.describe('Overview agent-run metrics fix (tokens + cumulative duration)', (
       await expectNoHorizontalOverflow(evidence);
       await expectNoHorizontalOverflow(page.getByTestId('review-evidence-panel'));
       expect(await verticalScrollOwners(promptBody)).toEqual(['pane-prompt-body']);
+    }
+  });
+
+  test('Timeline stays inline at 1280 px with three panes visible', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('taskboard.panesVisible',
+        JSON.stringify({ prompt: true, protocol: true, git: true }));
+      localStorage.setItem('taskboard.paneWeights',
+        JSON.stringify({ prompt: 1, protocol: 1, git: 1 }));
+    });
+    await installRoutes(page, '6-completed', multiRunTimeline());
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openDetail(page);
+    await expect(page.getByTestId('prompt-tab-timeline')).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      if (RESULTS_DIR) await page.screenshot({
+        path: path.join(RESULTS_DIR, `agt-3666-timeline-tabs-1280-${theme}--mocked.png`),
+      });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      if (RESULTS_DIR) await page.screenshot({
+        path: path.join(RESULTS_DIR, `agt-3666-timeline-tabs-390-${theme}--mocked.png`),
+      });
     }
   });
 });

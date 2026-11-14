@@ -171,7 +171,22 @@ public sealed record HostTelemetrySnapshotDto(
     long? StaleBuildNodesReaped = null,
     DateTime? BuildNodeSweepAt = null,
     IReadOnlyList<HostContainerSummaryDto>? Containers = null,
-    ClaimLoadGateDto? ClaimLoadGate = null);
+    ClaimLoadGateDto? ClaimLoadGate = null,
+    OneShotClaimRouteConditionDto? OneShotClaimRoute = null,
+    IReadOnlyList<HostFilesystemUsageDto>? Filesystems = null);
+
+/// <summary>
+/// The one-shot claim route as this runner observed it while it answered
+/// 404 or said networked one-shot execution needs the standalone Task Server.
+/// Absent once the route answers normally again.
+/// </summary>
+public sealed record OneShotClaimRouteConditionDto(
+    string Condition,
+    DateTime FirstSeenAt,
+    DateTime LastSeenAt,
+    int BackoffSeconds,
+    int StatusCode,
+    string? Detail);
 
 /// <summary>Current coding claim admission, observed by the runner process.</summary>
 public sealed record ClaimLoadGateDto(
@@ -417,7 +432,28 @@ public sealed record RunnerCapabilitySnapshotDto(
     RunnerReleaseIdentityDto? Release = null,
     int ActiveGateCount = 0,
     IReadOnlyList<ConfiguredModelRouteDto>? ConfiguredModelRoutes = null,
-    IReadOnlyList<HostContainerSummaryDto>? Containers = null);
+    IReadOnlyList<HostContainerSummaryDto>? Containers = null,
+    IReadOnlyList<ReviewDaemonRestartDto>? ReviewRestarts = null);
+
+/// <summary>
+/// AGT-3690: one review daemon restart of a runner identity, with the review
+/// attempts it lost. <see cref="RunnerCapabilitySnapshotDto.RestartedAt"/> and
+/// <see cref="RunnerCapabilitySnapshotDto.ReviewsLost"/> describe only the
+/// newest restart, so a later clean restart used to overwrite the one that
+/// lost a review; the history keeps both.
+/// </summary>
+public sealed record ReviewDaemonRestartDto(
+    DateTime RestartedAt,
+    string HostId,
+    string InstanceId,
+    int ReviewsLost,
+    IReadOnlyList<ReviewRestartLostAttemptDto> LostAttempts);
+
+/// <summary>A review attempt a daemon restart lost, and the card it reviewed.</summary>
+public sealed record ReviewRestartLostAttemptDto(
+    string AttemptId,
+    string TaskKey,
+    string Status);
 
 /// <summary>
 /// The latest non-ready model-acceptance entry a host advertised after the

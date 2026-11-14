@@ -23,6 +23,7 @@ def module(name):
 
 adapter = module("host_adapter")
 remote = module("remote_host")
+deploy = module("deploy")
 
 
 class HostAdapterTests(unittest.TestCase):
@@ -322,6 +323,84 @@ class HostAdapterTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "busy"):
                     remote.main(request)
             self.assertEqual(remote.env_read(env)["REVIEW_IMAGE_REF"], "old")
+
+    def test_review_build_stamps_the_release_identity_into_the_image(self):
+        commit = "3d61e8b0c4ab" + "0" * 28
+        agent_sha = "b" * 64
+        base = "registry.example/review-base@sha256:" + "c" * 64
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            release = root / "releases" / agent_sha
+            release.mkdir(parents=True)
+            (release / "COMMIT").write_text(commit + "\n")
+            (release / "agent-host").write_text("binary")
+            host = {"id": "review", "runnerReleaseRoot": str(root / "releases"), "reviewBaseImage": base,
+                    "reviewImageRepository": "registry.example/review"}
+            seen = {}
+
+            def fake_run(argv, cwd=None):
+                seen["dockerfile"] = (Path(cwd) / "Dockerfile").read_text()
+                (Path(cwd) / "metadata.json").write_text(json.dumps({"containerimage.digest": "sha256:" + "d" * 64}))
+                return ""
+
+            request = {"action": "review_build", "host": host, "settings": {},
+                       "fields": [commit, agent_sha, "2026-11-09T10:12:03.456789Z"]}
+            with patch.object(remote, "run", fake_run):
+                result = remote.main(request)
+        self.assertEqual(result["releaseId"], "20261109T101203Z-review-3d61e8b0c4ab")
+        self.assertEqual(result["builtAt"], "2026-11-09T10:12:03Z")
+        self.assertIn("RUNNER_RELEASE_ID=20261109T101203Z-review-3d61e8b0c4ab", seen["dockerfile"])
+        self.assertIn(f"RUNNER_RELEASE_COMMIT={commit}", seen["dockerfile"])
+        self.assertIn("RUNNER_RELEASE_BUILT_AT=2026-11-09T10:12:03Z", seen["dockerfile"])
+        self.assertIn(f"org.agent-studio.review-plan={result['planDigest']}", seen["dockerfile"])
+
+
+class QuietPointTests(unittest.TestCase):
+    """AGT-3647: the deploy waits for a quiet point before the window opens."""
+
+    NOW = deploy.dt.datetime(2026, 11, 9, 18, 0, tzinfo=deploy.dt.timezone.utc)
+    POLICY = dict(deploy.QUIET_DEFAULTS, batchExpectedMinutes=40)
+
+    def blockers(self, work=None, hosts=None):
+        work = work or {"formedBatches": [], "runningGates": [], "flights": [], "pendingPushes": []}
+        return deploy.quiet_blockers(work, hosts or {}, self.NOW, self.POLICY)
+
+    def flight(self, phase, minutes_ago):
+        started = (self.NOW - deploy.dt.timedelta(minutes=minutes_ago)).isoformat().replace("+00:00", "Z")
+        return {"formedBatches": ["P/b1"], "runningGates": ["P/T-1"], "pendingPushes": [],
+                "flights": [{"id": "P/b1", "phase": phase, "startedAtUtc": started}]}
+
+    def test_a_running_review_on_a_drained_host_blocks_and_coding_work_does_not(self):
+        hosts = {"kori": [{"running": [{"kind": "review", "taskKey": "AGT-3591"}]}],
+                 "runner-01": [{"running": [{"kind": "coding", "taskKey": "AGT-3600"}]}]}
+        self.assertEqual(self.blockers(hosts=hosts), ["review-running kori/AGT-3591"])
+
+    def test_a_batch_blocks_only_in_its_first_and_last_minutes(self):
+        self.assertEqual(self.blockers(self.flight("assembling", 0)), ["batch-starting P/b1"])
+        self.assertEqual(self.blockers(self.flight("running", 2)), ["batch-starting P/b1"])
+        self.assertEqual(self.blockers(self.flight("running", 20)), [])
+        self.assertEqual(self.blockers(self.flight("running", 38)), ["batch-finishing P/b1"])
+        self.assertEqual(self.blockers(self.flight("publishing", 20)), ["batch-finishing P/b1"])
+
+    def test_a_pending_push_blocks(self):
+        work = {"formedBatches": [], "runningGates": [], "flights": [],
+                "pendingPushes": [{"jobId": "P/AGT-3584"}]}
+        self.assertEqual(self.blockers(work), ["pending-push P/AGT-3584"])
+
+    def test_work_state_without_flight_facts_keeps_the_strict_rule(self):
+        work = {"formedBatches": ["P/b1"], "runningGates": []}
+        self.assertEqual(len(self.blockers(work)), 1)
+        self.assertIn("running gates block deployment", self.blockers(work)[0])
+
+    def test_adapter_reads_flight_start_and_pending_pushes_from_triage(self):
+        triage = {"projects": [{"project": "P", "flights": [{"batchId": "b1", "phase": "running", "state": {
+            "runs": [{"startedAtUtc": "2026-11-09T17:40:00Z", "finishedAtUtc": None}]}}],
+            "members": [{"taskKey": "T-1", "status": "in-batch"}],
+            "pendingPushes": [{"jobId": "T-2", "sinceUtc": "2026-11-09T17:59:00Z"}]}]}
+        work = adapter.work_state(triage)
+        self.assertEqual(work["flights"], [{"id": "P/b1", "phase": "running", "startedAtUtc": "2026-11-09T17:40:00Z"}])
+        self.assertEqual(work["runningGates"], ["P/T-1"])
+        self.assertEqual(work["pendingPushes"], [{"jobId": "P/T-2", "sinceUtc": "2026-11-09T17:59:00Z"}])
 
 
 if __name__ == "__main__":

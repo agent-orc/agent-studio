@@ -254,6 +254,89 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public void Varying_failed_tests_across_candidate_repeat_and_baseline_are_non_blocking()
+    {
+        string[] candidate = ["AgentStudio.Tests.IamHandlerAccessTests.Canonical_review_attempt_key_resolves_its_project_without_a_task_folder"];
+        string[] repeat = ["AgentStudio.Tests.IamHandlerAccessTests.Operator_override_completion_needs_admin_or_owner"];
+        string[] baseline = ["AgentStudio.Tests.IamHandlerAccessTests.Colliding_task_id_denies_scoped_reads_and_explicit_creation"];
+        var diagnosis = ReviewTestFailureAttribution.Diagnose(
+            candidate, repeat, baseline, baselineExitCode: 1,
+            backendTest: true, backendChanged: true);
+        var comparison = BaselineComparison.Create(new string('a', 40), baseline, candidate,
+            cacheHit: false, baselineExitCode: 1) with { Diagnosis = diagnosis };
+
+        var verdict = RemoteReviewWorkspace.BaselineVerdict(BaselineCommand("exit 1"), comparison);
+
+        Assert.Equal("concerns", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("failed different tests", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains(candidate[0], verdict.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Aborted_test_host_is_a_crash_not_new_failures_of_the_delivery()
+    {
+        string[] running = ["AgentStudio.Tests.IamHandlerAccessTests.Project_viewer_cannot_read_workspace_quota_auto_review_or_host_state"];
+        const string output = """
+            [UnobservedTaskException] System.ObjectDisposedException: Cannot access a disposed object.
+               at AgentStudio.Pipeline.BatchGatePilotService.ConfiguredGateSlots()
+            The active test run was aborted. Reason: Test host process crashed
+            Test Run Aborted. The active Test Run was aborted because the host process exited unexpectedly.
+            Total tests: Unknown
+            """;
+        Assert.True(ReviewTestFailureAttribution.TestHostAborted(output));
+        Assert.False(ReviewTestFailureAttribution.TestHostAborted("Failed!  - Failed: 1, Passed: 9"));
+        var diagnosis = ReviewTestFailureAttribution.Diagnose(
+            running, running, [], baselineExitCode: 0,
+            backendTest: true, backendChanged: true, runOutputs: ["Passed!", output]);
+        var comparison = BaselineComparison.Create(new string('a', 40), [], running,
+            cacheHit: false, baselineExitCode: 0) with { Diagnosis = diagnosis };
+
+        var verdict = RemoteReviewWorkspace.BaselineVerdict(BaselineCommand("exit 1"), comparison);
+
+        Assert.Equal("concerns", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("test-host crash", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains("System.ObjectDisposedException: Cannot access a disposed object.", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains("tests-running-at-abort=" + running[0], verdict.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("failed-tests=", verdict.Summary, StringComparison.Ordinal);
+        Assert.Equal("none", verdict.Missing);
+    }
+
+    [Fact]
+    public void Frontend_only_delivery_cannot_be_charged_for_a_red_backend_test()
+    {
+        string[] failure = ["AgentStudio.Tests.IamHandlerAccessTests.Change_project_requires_write_permission_and_a_non_product_role_in_the_destination"];
+        var command = new ReviewCommandDto("verify-4", "build-tests", "dotnet",
+            ["test", "backend.Tests/OrchestratorApi.Tests.csproj"],
+            CompareToBaseline: true, BaselineMode: ReviewBaselineModes.TestFailures);
+        Assert.True(ReviewTestFailureAttribution.IsTestCommand(command));
+        Assert.False(ReviewTestFailureAttribution.IsTestCommand(BaselineCommand("exit 1")));
+        Assert.True(ReviewTestFailureAttribution.IsBackendTestCommand(command));
+        var changedPaths = new[] { "frontend/src/app/features/board/task-card.component.ts" };
+        Assert.False(ReviewTestFailureAttribution.BackendChanged(changedPaths));
+        Assert.Null(ReviewTestFailureAttribution.Diagnose(
+            failure, failure, [], baselineExitCode: 0,
+            backendTest: true, backendChanged: true));
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence,
+            ReviewTestFailureAttribution.Diagnose(
+                failure, failure, [], baselineExitCode: 0,
+                backendTest: true, backendChanged: null)?.Classification);
+        var diagnosis = ReviewTestFailureAttribution.Diagnose(
+            failure, failure, [], baselineExitCode: 0,
+            backendTest: true,
+            backendChanged: ReviewTestFailureAttribution.BackendChanged(changedPaths));
+        var comparison = BaselineComparison.Create(new string('a', 40), [], failure,
+            cacheHit: false, baselineExitCode: 0) with { Diagnosis = diagnosis };
+
+        var verdict = RemoteReviewWorkspace.BaselineVerdict(command, comparison);
+
+        Assert.Equal("concerns", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("changes no file under backend/", verdict.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Exact_sha_workspace_records_head_tree_commands_environment_and_clean_after()
     {
         var sha = await SeedOriginAsync();
@@ -804,6 +887,64 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Package_without_lockfile_skips_install_and_verifies()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["frontend/package.json"] = """{"name":"no-lock","version":"1.0.0","scripts":{"build":"true"}}""",
+        });
+        var plan = GatePreparationPlanner.PlanWithSkips(Path.Combine(_root, "seed"), null,
+            [new VerifyCommand(VerifyEcosystem.Node, VerifyCommandKind.Build, "frontend", "npm run build")]);
+        Assert.Empty(plan.Commands);
+        var skip = Assert.Single(plan.Skips);
+        Assert.Equal("frontend", skip.WorkingSubdir);
+        Assert.Equal("no-tracked-lockfile", skip.Reason);
+
+        var command = new ReviewCommandDto("verify-no-lock", "build-tests", PosixShell.RequirePath(),
+            ["-c", "test -f frontend/package.json && test ! -e frontend/node_modules"]);
+        var (workspace, _) = Workspace("no-lock-package", sha, [command], 24035);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.DoesNotContain(evidence.Commands, item => item.Phase == "preparation");
+    }
+
+    [Fact]
+    public async Task Empty_lockfile_scope_is_prepared_without_node_modules()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["frontend/package.json"] = """{"name":"empty-lock","version":"1.0.0","scripts":{"build":"true"}}""",
+            ["frontend/package-lock.json"] = """{"name":"empty-lock","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"empty-lock","version":"1.0.0"}}}""",
+            [".gitignore"] = "frontend/.nm-state\nfrontend/node_modules/\n",
+        });
+        var preparation = new ReviewPreparationCommandDto("prepare-empty", PosixShell.RequirePath(),
+            ["-c", "true"], "frontend",
+            DependencyScopes: [new ReviewDependencyScopeDto("frontend", ["package-lock.json"])],
+            CoveredByDependencyScopes: true);
+        var commands = new[]
+        {
+            new ReviewCommandDto("verify-empty-1", "build-tests", PosixShell.RequirePath(),
+                ["-c", "test ! -e frontend/node_modules"]),
+            new ReviewCommandDto("verify-empty-2", "build-tests", PosixShell.RequirePath(),
+                ["-c", "test ! -e frontend/node_modules"]),
+        };
+        var (workspace, _) = Workspace("empty-lock-package", sha, commands, 24036,
+            preparation: [preparation]);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(2, evidence.Commands.Count(item => item.Phase == "verification"));
+        Assert.Single(evidence.Commands, item => item.StepId == "prepare-empty");
+    }
+
+    [Fact]
     public async Task Lost_dependency_that_cannot_be_reprepared_names_scope_and_removing_step()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -925,6 +1066,76 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.True(warm.Commands[0].DependencyCacheHit);
         Assert.Contains(changed.Commands[0].DependencyCache!, item => item.Reason == "lock-changed");
         Assert.Equal(2, (await File.ReadAllTextAsync(counter)).Length);
+    }
+
+    /// <summary>
+    /// AGT-3748: a review whose dependencies came from the cache fails with a
+    /// missing tool. The entry is quarantined once, the report names it, the
+    /// outcome stays infrastructure, and the next review prepares fresh.
+    /// </summary>
+    [Fact]
+    public async Task Missing_tool_from_a_restored_entry_quarantines_it_and_the_next_review_reinstalls()
+    {
+        var counter = Path.Combine(_root, "install-counter.txt");
+        var broken = Path.Combine(_root, "tool-broken.flag");
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["package-lock.json"] = "lock-v1",
+            [".gitignore"] = "node_modules/\n.nm-state\n",
+        });
+        var preparation = new ReviewPreparationCommandDto(
+            "prepare-1",
+            PosixShell.RequirePath(),
+            ["-c", $"mkdir -p node_modules/.bin node_modules/fixture-a && touch node_modules/.bin/fixture-tool && printf x >> '{counter}'"],
+            DependencyScopes:
+            [
+                new ReviewDependencyScopeDto("", ["package-lock.json"]),
+            ],
+            CoveredByDependencyScopes: true);
+        var verify = new ReviewCommandDto(
+            "verify-3",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", $"if [ -f '{broken}' ]; then echo 'Error [ERR_MODULE_NOT_FOUND]' >&2; exit 127; fi"]);
+
+        async Task<(RemoteReviewWorkspace Workspace, Func<Task<ReviewExecutionEvidence>> Run)> CreateAsync(string attempt)
+        {
+            var (workspace, _) = Workspace(
+                attempt,
+                sha,
+                [verify],
+                24021,
+                preparation: [preparation],
+                preserveGlobs: ["node_modules"]);
+            await workspace.PrepareAsync(null!, default);
+            return (workspace, () => workspace.ExecutePlanAsync(default));
+        }
+
+        var (cold, runCold) = await CreateAsync("quarantine-cold");
+        Assert.Equal("Pass", (await runCold()).Outcome);
+
+        await File.WriteAllTextAsync(broken, "1");
+        var (_, runWarm) = await CreateAsync("quarantine-warm");
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(() => runWarm());
+        var entryRoot = DependencyCacheSession.CachePath(
+            cold.DependencyCacheRoot, TaskServerClient.RepositoryIdentity(_origin)!, "candidate");
+        var quarantined = Assert.Single(Directory.EnumerateDirectories(
+            Path.Combine(entryRoot, DependencyCacheSession.QuarantineDirectoryName)));
+
+        Assert.Equal("ToolUnavailable", exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence!.Outcome);
+        Assert.Contains($"quarantinedCacheEntry={quarantined}", exception.Message, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(quarantined, "node_modules", ".bin", "fixture-tool")));
+        Assert.False(Directory.Exists(Path.Combine(entryRoot, "content")));
+
+        File.Delete(broken);
+        var (_, runNext) = await CreateAsync("quarantine-next");
+        var next = await runNext();
+        Assert.Equal("Pass", next.Outcome);
+        Assert.False(Assert.Single(next.Commands, item => item.Phase == "preparation").DependencyCacheHit);
+        Assert.Equal(2, (await File.ReadAllTextAsync(counter)).Length);
+        Assert.Single(Directory.EnumerateDirectories(
+            Path.Combine(entryRoot, DependencyCacheSession.QuarantineDirectoryName)));
     }
 
     /// <summary>
@@ -1243,7 +1454,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                 "verify-node",
                 "build-tests",
                 PosixShell.RequirePath(),
-                ["-c", "exit 127"])],
+                ["-c", "missing-review-fixture-binary"])],
             24014,
             preparation: [preparation],
             preserveGlobs: ["node_modules"]);
@@ -1258,6 +1469,58 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             127,
             Assert.Single(exception.Evidence.Commands, item => item.Phase == "verification").ExitCode);
         Assert.False(exception.Evidence.Workspace.DirtyAfter);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task New_plan_script_on_target_branch_sends_delivery_to_merge_without_running_commands()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (_, deliverySha) = await SeedSubjectBranchAsync();
+        var seed = Path.Combine(_root, "seed");
+        await GitAsync(seed, "checkout", "main");
+        Directory.CreateDirectory(Path.Combine(seed, "scripts"));
+        await File.WriteAllTextAsync(Path.Combine(seed, "scripts", "check-release-build.sh"),
+            "#!/bin/sh\nprintf 'plan script ran\\n'\n");
+        await GitAsync(seed, "add", "scripts/check-release-build.sh");
+        await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-m", "add target review script");
+        await GitAsync(seed, "push", "origin", "main");
+        var planSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+        var command = new ReviewCommandDto("verify-2", "build-tests", PosixShell.RequirePath(),
+            ["-lc", "bash scripts/check-release-build.sh"]);
+        var (workspace, _) = Workspace("plan-skew", deliverySha, [command], 26441,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main",
+            planCommitSha: planSha);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal(ReviewOutcomeKinds.DeliveryPredatesReviewPlan, evidence.Outcome);
+        Assert.Contains("scripts/check-release-build.sh", evidence.Summary, StringComparison.Ordinal);
+        Assert.Empty(evidence.Commands);
+        Assert.False(evidence.Workspace.DirtyAfter);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Delivery_with_declared_script_runs_review_as_before()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["scripts/check-release-build.sh"] = "#!/bin/sh\nprintf 'passed\\n'\n",
+        });
+        var command = new ReviewCommandDto("verify-2", "build-tests", PosixShell.RequirePath(),
+            ["-lc", "bash scripts/check-release-build.sh"]);
+        var (workspace, _) = Workspace("plan-present", sha, [command], 26442,
+            integrationRef: "refs/heads/main", planCommitSha: sha);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(0, Assert.Single(evidence.Commands, item => item.StepId == "verify-2").ExitCode);
     }
 
     /// <summary>
@@ -2126,7 +2389,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     {
         var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
             "task/new-spec", "frontend/src/new.spec.ts", "test('new', () => {})");
-        var command = BaselineCommand("printf 'Application bundle generation complete.\\n'", reportPassingTest: false);
+        var command = BaselineCommand(
+            "case \"$PWD\" in *baseline-*) printf 'Total tests: 1\\n';; " +
+            "*) printf '# tests 0\\n';; esac",
+            reportPassingTest: false);
         var (workspace, subject) = Workspace("attempt-candidate-new-spec-no-report", subjectSha, [command], 26223,
             resultRef: "refs/heads/task/new-spec", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
@@ -2135,6 +2401,49 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Contains("spec file list changed", Assert.Single(evidence.Verdicts).Summary, StringComparison.Ordinal);
         Assert.Equal("ProductFailure",
             ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan).Outcome);
+    }
+
+    [Fact]
+    public async Task Candidate_without_report_after_test_project_change_is_product_finding()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/disabled-tests", "backend.Tests.csproj", "<Project />");
+        var command = BaselineCommand("printf 'custom check passed\\n'", reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-disabled-tests-no-report", subjectSha, [command], 26227,
+            resultRef: "refs/heads/task/disabled-tests", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("block", verdict.Status);
+        Assert.Equal(ReviewTestReportPolicy.MissingReportClassification, verdict.Classification);
+        Assert.Contains("test configuration or runner changed: backend.Tests.csproj", verdict.Summary,
+            StringComparison.Ordinal);
+        Assert.Equal(2, evidence.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("candidate", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task Zero_test_baseline_retries_and_remains_unavailable()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; fi; " +
+            "printf 'No test is available in backend.Tests.dll\\n'",
+            reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-zero-test-baseline", subjectSha, [command], 26228,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("BaselineUnavailable", exception.Classification);
+        Assert.Equal(2, exception.Evidence!.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -2151,7 +2460,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "commit", "-m", "rename spec to helper");
         await GitAsync(seed, "push", "origin", "task/removed-spec");
         var subjectSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
-        var command = BaselineCommand("printf 'Application bundle generation complete.\\n'", reportPassingTest: false);
+        var command = BaselineCommand(
+            "case \"$PWD\" in *baseline-*) printf 'Total tests: 1\\n';; " +
+            "*) printf 'No tests found, exiting with code 0\\n';; esac",
+            reportPassingTest: false);
         var (workspace, subject) = Workspace("attempt-candidate-removed-spec-no-report", subjectSha,
             [command], 26225, resultRef: "refs/heads/task/removed-spec", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
@@ -2540,6 +2852,105 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var normalized = ReviewReportDiagnosisPolicy.Normalize(report, subject.Plan);
         Assert.Equal("ReviewInfra", normalized.Outcome);
         Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, normalized.FailureClassification);
+    }
+
+    private const string VitestFailure =
+        "|frontend| src/app/agt3650-flaky-fixture.spec.ts > ReviewFlakyFixture > nested group > fails only on the first run (AGT-3650)";
+
+    private static string RepeatFixture(string name)
+        => Path.Combine(AppContext.BaseDirectory, "Fixtures", "review-repeats", name);
+
+    /// <summary>
+    /// A Vitest step whose first run fails one test and whose clean repeat
+    /// prints <paramref name="repeat"/> (real Vitest output). The repeat
+    /// shell honours the reporter switch the way frontend/vitest.config.ts does.
+    /// </summary>
+    private async Task<(RemoteReviewWorkspace Workspace, ReviewCommandDto Command)> VitestFlakeAsync(
+        string attemptId, int portBase, string repeat)
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var marker = Path.Combine(_root, attemptId + "-first-run-seen");
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            $"if test ! -f '{marker}'; then touch '{marker}'; " +
+            $"cat '{RepeatFixture("vitest-default-failed.stdout.txt")}'; " +
+            $"cat '{RepeatFixture("vitest-default-failed.stderr.txt")}' >&2; exit 1; fi; " +
+            $"{repeat}; fi; exit 0");
+        var (workspace, _) = Workspace(attemptId, subjectSha, [command], portBase,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        return (workspace, command);
+    }
+
+    /// <summary>
+    /// AGT-3650 (AGT-3641 review, 2026-11-10): a clean repeat that passed was
+    /// review infrastructure because its output never named the failed test.
+    /// The repeat asks Vitest for its verbose reporter, sees the failed test
+    /// pass by name, and records test-name proof.
+    /// </summary>
+    [Fact]
+    public async Task Vitest_flake_whose_verbose_repeat_names_the_failed_test_is_not_review_infrastructure()
+    {
+        var (workspace, _) = await VitestFlakeAsync("attempt-vitest-verbose", 26650,
+            "if [ \"$AGENT_STUDIO_VITEST_REPORTER\" = verbose ]; " +
+            $"then cat '{RepeatFixture("vitest-verbose-passed.stdout.txt")}'; " +
+            $"else cat '{RepeatFixture("vitest-default-passed.stdout.txt")}'; fi");
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        var repeat = Assert.Single(evidence.Commands, item => item.Phase == "clean-repeat");
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal([VitestFailure], candidate.InitialFailures);
+        Assert.Empty(candidate.NewFailures!);
+        Assert.Equal(0, repeat.ExitCode);
+        Assert.Equal(ReviewRepeatObservation.TestNames, repeat.RepeatObservation);
+        Assert.Null(repeat.RepeatFilter);
+        Assert.False(candidate.Diagnosis!.ChargesCard);
+        Assert.Equal("pass", verdict.Status);
+        Assert.Contains($"failed-tests={VitestFailure}", verdict.Summary, StringComparison.Ordinal);
+        var report = Report(evidence, workspace);
+        Assert.True(ReviewRepeatFilterPolicy.IsValid(repeat, report.Commands));
+        Assert.True(ReviewFlakeEvidencePolicy.HasPassingRepeat(candidate, report));
+    }
+
+    /// <summary>
+    /// A repeat whose Vitest config ignores the reporter switch prints file
+    /// names only. Every failed test's file passed, so the review uses that
+    /// file-level evidence and records it as such.
+    /// </summary>
+    [Fact]
+    public async Task Vitest_flake_whose_default_repeat_passes_the_failed_file_records_file_level_proof()
+    {
+        var (workspace, _) = await VitestFlakeAsync("attempt-vitest-default", 26652,
+            $"cat '{RepeatFixture("vitest-default-passed.stdout.txt")}'");
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        var repeat = Assert.Single(evidence.Commands, item => item.Phase == "clean-repeat");
+        Assert.Equal([VitestFailure], candidate.InitialFailures);
+        Assert.Equal(ReviewRepeatObservation.TestFiles, repeat.RepeatObservation);
+        Assert.False(candidate.Diagnosis!.ChargesCard);
+        Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);
+        Assert.True(ReviewFlakeEvidencePolicy.HasPassingRepeat(candidate, Report(evidence, workspace)));
+    }
+
+    /// <summary>
+    /// A repeat that exits zero without running the failed test's file
+    /// proves nothing about it and stays review infrastructure.
+    /// </summary>
+    [Fact]
+    public async Task Vitest_repeat_that_does_not_run_the_failed_test_remains_review_infrastructure()
+    {
+        var (workspace, _) = await VitestFlakeAsync("attempt-vitest-unrun", 26654,
+            $"cat '{RepeatFixture("vitest-default-other-file.stdout.txt")}'");
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("CleanRepeatUnavailable", exception.Classification);
+        Assert.Contains(VitestFailure, exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -3406,7 +3817,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Action<string>? log = null,
         Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null,
         AgentRunner.SourceFacts.ISourceFactsClient? sourceFacts = null,
-        bool productionTempBase = false)
+        bool productionTempBase = false,
+        string? planCommitSha = null)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -3426,7 +3838,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                 commands.Select(command => command.Aspect).ToArray(),
                 IntegrationRef: integrationRef,
                 Preparation: preparation,
-                PreserveGlobs: preserveGlobs),
+                PreserveGlobs: preserveGlobs,
+                PlanCommitSha: planCommitSha),
             DateTime.UtcNow);
         var lease = new ReviewLeaseDto(
             "lease-" + attemptId,

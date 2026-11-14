@@ -25,7 +25,8 @@ public static class IntegrationVerificationProjection
         string? currentIntegrationSha,
         string currentIntegrationBranch,
         string? currentDeliverySha = null,
-        Func<string, bool>? branchCarries = null)
+        Func<string, bool>? branchCarries = null,
+        Func<string, string?>? netChangeSource = null)
     {
         if (string.IsNullOrWhiteSpace(currentIntegrationSha))
             return Unverified(null, "The current integration tree SHA is unavailable; gate evidence cannot be matched.");
@@ -94,7 +95,8 @@ public static class IntegrationVerificationProjection
 
         if (record is not null
             && string.Equals(record.Sha, currentIntegrationSha, StringComparison.OrdinalIgnoreCase)
-            && SameBranch(record.IntegrationBranch, currentIntegrationBranch))
+            && SameBranch(record.IntegrationBranch, currentIntegrationBranch)
+            && (record.State != IntegrationVerificationStates.Verified || HasPassingGate(record)))
         {
             return record.ToProjection();
         }
@@ -104,7 +106,7 @@ public static class IntegrationVerificationProjection
         // here would run a gate per completed card on every tip change and
         // let an unrelated red tip reopen them.
         if (record is not null
-            && CarriesVerifiedDelivery(record, currentIntegrationBranch, currentDeliverySha, branchCarries))
+            && CarriesVerifiedDelivery(record, currentIntegrationBranch, currentDeliverySha, branchCarries, netChangeSource))
         {
             return record.ToProjection() with
             {
@@ -148,6 +150,31 @@ public static class IntegrationVerificationProjection
             .OrderByDescending(record => record.RecordedAtUtc)
             .FirstOrDefault(record => branchCarries(record.TreeSha) && treeContainsDelivery(record.TreeSha));
 
+    /// <summary>A published batch base verdict proves a contained delivery on its exact tree.</summary>
+    public static BatchGateBaseVerdict? FindPublishedBatchBaseVerdict(
+        IEnumerable<BatchGateBaseVerdict> verdicts,
+        Func<string, bool> branchCarries,
+        Func<string, bool> treeContainsDelivery)
+        => verdicts
+            .Where(verdict => verdict.Source == BatchGateBaseCheckSources.PublishedBatch
+                && verdict.Outcome == "pass" && !verdict.Provisional
+                && ReviewSubjectStore.IsValidResultSha(verdict.VerifiedSha)
+                && string.Equals(verdict.BaseSha, verdict.VerifiedSha, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(verdict => verdict.RecordedAtUtc)
+            .FirstOrDefault(verdict => branchCarries(verdict.VerifiedSha!)
+                && treeContainsDelivery(verdict.VerifiedSha!));
+
+    public static TaskIntegrationVerification FromPublishedBatchBaseVerdict(
+        BatchGateBaseVerdict verdict, string branch, string? tip) => new()
+    {
+        State = IntegrationVerificationStates.Verified,
+        Sha = verdict.VerifiedSha,
+        Evidence = IntegrationVerificationEvidence.PublishedGate,
+        GateVerdict = nameof(BuildTestGateVerdict.Ok),
+        Reason = $"{verdict.Reason}; published batch gate passed on {branch} tree {verdict.VerifiedSha}. "
+            + $"That tree contains this delivery, and {branch} still carries it at {tip}.",
+    };
+
     /// <summary>The card's verdict when it relies on <paramref name="gate"/>.</summary>
     public static TaskIntegrationVerification FromPublishedGate(
         PublishedGateEvidence gate, string currentIntegrationBranch, string? currentIntegrationSha) => new()
@@ -184,10 +211,12 @@ public static class IntegrationVerificationProjection
         IntegrationVerificationRecord record,
         string currentIntegrationBranch,
         string? currentDeliverySha,
-        Func<string, bool>? branchCarries)
+        Func<string, bool>? branchCarries,
+        Func<string, string?>? netChangeSource = null)
     {
         if (branchCarries is null
             || !string.Equals(record.State, IntegrationVerificationStates.Verified, StringComparison.Ordinal)
+            || !HasPassingGate(record)
             || !SameBranch(record.IntegrationBranch, currentIntegrationBranch)
             || !ReviewSubjectStore.IsValidResultSha(record.Sha))
         {
@@ -196,9 +225,24 @@ public static class IntegrationVerificationProjection
 
         var delivery = currentDeliverySha?.Trim();
         if (string.IsNullOrEmpty(delivery) || delivery.Length < 7 || !delivery.All(Uri.IsHexDigit)) return false;
+        if (!branchCarries(record.Sha!)) return false;
         return record.DeliveryShas.Any(sha => ReviewSubjectStore.IsValidResultSha(sha)
                                               && sha.StartsWith(delivery, StringComparison.OrdinalIgnoreCase))
-               && branchCarries(record.Sha!);
+               || netChangeSource is not null
+                  && netChangeSource(record.Sha!) is { } source
+                  && ReviewSubjectStore.IsValidResultSha(source)
+                  && source.StartsWith(delivery, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasPassingGate(IntegrationVerificationRecord record)
+    {
+        if (record.GateFailed) return false;
+        if (record.Evidence is not (IntegrationVerificationEvidence.MergeGate
+            or IntegrationVerificationEvidence.GateRun
+            or IntegrationVerificationEvidence.GateReceipt)) return true;
+        return string.Equals(record.GateVerdict, nameof(BuildTestGateVerdict.Ok), StringComparison.Ordinal)
+            || record.Evidence == IntegrationVerificationEvidence.GateRun
+                && string.Equals(record.GateVerdict, nameof(BuildTestGateVerdict.NotApplicable), StringComparison.Ordinal);
     }
 
     /// <summary>Local and remote ref spellings of one branch carry the same gate scope.</summary>

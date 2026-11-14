@@ -7,6 +7,7 @@
       <strong data-testid="remote-host-name">{{ group.name }}</strong>
       <app-status-indicator [tone]="statusTone(group.machine.status)" [label]="statusLabel(group.machine.status)" [compact]="true" />
       @if (group.machine.releaseDrift?.state === 'behind') { <span title="Behind Stable">Update due</span> }
+      @if (differsLabel(group); as differs) { <span data-testid="remote-host-release-differs" [attr.title]="differs + '. ' + group.machine.releaseDrift?.reason">{{ differs }}</span> }
       @if (notEnrolled(group)) { <span data-testid="remote-host-not-enrolled" title="No Task Server host identity and daemon instance reported">Not enrolled</span> }
       @if (notClaiming(group)) { <span data-testid="remote-host-not-claiming" title="Claim gate closed: host load per core is above the claim threshold">Not claiming</span> }
       @if (group.machine.stats; as stats) { <span>{{ stats.cpuLoadPct }}%</span> }

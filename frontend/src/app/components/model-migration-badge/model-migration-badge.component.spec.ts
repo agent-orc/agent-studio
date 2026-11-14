@@ -23,7 +23,16 @@ describe('ModelMigrationBadgeComponent', () => {
     from: 'gpt-6-sol', to: 'gpt-6.1-sol', family: 'gpt', safeAuto: false,
     reason: 'Proposal only (TokenEconomy 0.3.7).',
   };
+  const retiredMigration: ModelMigrationEntry = {
+    from: 'gpt-5.5-sol', to: 'gpt-6-sol', family: 'gpt-sol', safeAuto: true,
+    reason: 'Superseded generation.',
+  };
+  const notOfferedNote = 'Not offered by the installed codex-cli 0.151.0.';
   const codexModels: CliModelInfo[] = [
+    { id: 'gpt-5.5-sol', label: 'GPT-5.5 Sol', multiplier: null, vendor: 'openai', isDefault: false,
+      available: false, availabilityNote: notOfferedNote },
+    { id: 'gpt-5.5-luna', label: 'GPT-5.5 Luna', multiplier: null, vendor: 'openai', isDefault: false,
+      available: false, availabilityNote: notOfferedNote },
     { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', multiplier: null, vendor: 'openai', isDefault: false,
       thinkingLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'], defaultThinkingLevel: 'xhigh' },
     { id: 'gpt-6-sol', label: 'GPT-6 Sol', multiplier: null, vendor: 'openai', isDefault: true, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
@@ -43,7 +52,7 @@ describe('ModelMigrationBadgeComponent', () => {
       providers: [
         provideZonelessChangeDetection(),
         { provide: ModelMigrationCatalogStore, useValue: {
-          proposalFor: (model: string | null) => [solMigration, lunaMigration, sol61Migration].find((m) => m.from === model) ?? null,
+          proposalFor: (model: string | null) => [solMigration, lunaMigration, sol61Migration, retiredMigration].find((m) => m.from === model) ?? null,
         } },
         { provide: CliCatalogStore, useValue: { modelsFor: () => codexModels } },
         { provide: TaskService, useValue: tasks },
@@ -134,6 +143,33 @@ describe('ModelMigrationBadgeComponent', () => {
     component.onApplyProject(event);
     expect(notifications.warning).toHaveBeenCalledWith('1 card updated to gpt-6-sol; 1 failed (AGT-3).');
     expect(notifications.success).not.toHaveBeenCalled();
+  });
+
+  it('flags a pin the installed CLI does not offer as not offered, not as an update', async () => {
+    const { fixture } = await create({
+      model: 'gpt-5.5-sol', explicit: true, jobId: 'job-3', project: 'Studio',
+      cliType: 'codex', thinkingLevel: 'high', testId: 'card-migration',
+    });
+    const root = fixture.nativeElement as HTMLElement;
+
+    const trigger = query(root, 'card-migration-dot') as HTMLButtonElement;
+    expect(query(root, 'card-migration-not-offered')?.textContent?.trim()).toBe('Not offered');
+    expect(trigger.getAttribute('aria-label')).toBe(`${notOfferedNote} Proposed model: gpt-6-sol`);
+    expect(trigger.getAttribute('aria-label')).not.toContain('update available');
+    trigger.click();
+    await fixture.whenStable();
+    expect(query(document.body, 'card-migration-not-offered-note')?.textContent?.trim()).toBe(notOfferedNote);
+    (fixture.componentInstance as ModelMigrationBadgeComponent).close();
+  });
+
+  it('flags a not-offered pin without a proposal as a plain status label', async () => {
+    const { fixture } = await create({
+      model: 'gpt-5.5-luna', explicit: true, cliType: 'codex', thinkingLevel: 'high', testId: 'card-migration',
+    });
+    const root = fixture.nativeElement as HTMLElement;
+
+    expect(query(root, 'card-migration-dot')).toBeNull();
+    expect(query(root, 'card-migration-not-offered')?.textContent?.trim()).toBe('Not offered');
   });
 
   it('renders nothing for a non-explicit card', async () => {

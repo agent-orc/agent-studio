@@ -1,13 +1,15 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
 public sealed record BatchCoordinatorLease(
     string LeaseId, BatchGateScope Scope, string Owner, long Fence,
-    DateTimeOffset ExpiresAtUtc, DateTimeOffset AcquiredAtUtc = default);
+    DateTimeOffset ExpiresAtUtc, DateTimeOffset AcquiredAtUtc = default,
+    string? Host = null, int? ProcessId = null, DateTimeOffset? ProcessStartedAtUtc = null);
 
 /// <summary>
 /// Persistent coordinator lease scoped to project, repository, branch and
@@ -19,7 +21,25 @@ public sealed class BatchGateLeaseService
 {
     private readonly string _root;
     private readonly Func<DateTimeOffset> _now;
-    private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan Ttl = TimeSpan.FromMinutes(2);
+
+    public string RecoveryBlocker(BatchGateScope scope)
+    {
+        FileStream guard;
+        try { guard = Guard(scope); }
+        catch (IOException) { return "lock busy"; }
+        using (guard)
+        {
+            try
+            {
+                var holder = Read(scope);
+                return holder is { } lease && lease.ExpiresAtUtc > _now()
+                    ? $"lease held by {lease.Owner}" : "lease record changed before retry";
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException
+                or JsonException) { return "lease record unreadable"; }
+        }
+    }
 
     public BatchGateLeaseService(string? root = null, Func<DateTimeOffset>? now = null)
     {
@@ -33,10 +53,13 @@ public sealed class BatchGateLeaseService
         using var guard = Guard(scope);
         var existing = Read(scope);
         var now = _now();
-        if (existing is { } current && current.ExpiresAtUtc > now)
+        if (existing is { } current && current.ExpiresAtUtc > now && !OwnerProcessExited(current))
             return null;
+        using var process = Process.GetCurrentProcess();
         var next = new BatchCoordinatorLease(Guid.NewGuid().ToString("N"), scope,
-            owner, (existing?.Fence ?? 0) + 1, now + Ttl, now);
+            owner, (existing?.Fence ?? 0) + 1, now + Ttl, now,
+            Environment.MachineName, Environment.ProcessId,
+            new DateTimeOffset(process.StartTime.ToUniversalTime()));
         Write(scope, next);
         return next;
     }
@@ -46,7 +69,8 @@ public sealed class BatchGateLeaseService
         try
         {
             using var guard = Guard(scope);
-            return Read(scope) is { } current && current.ExpiresAtUtc > _now();
+            return Read(scope) is { } current && current.ExpiresAtUtc > _now()
+                && !OwnerProcessExited(current);
         }
         catch (IOException) { return true; }
     }
@@ -139,4 +163,18 @@ public sealed class BatchGateLeaseService
         => current is not null && current.LeaseId == provided.LeaseId
            && current.Fence == provided.Fence && current.Owner == provided.Owner
            && current.Scope == provided.Scope;
+
+    private static bool OwnerProcessExited(BatchCoordinatorLease lease)
+    {
+        if (lease.Host != Environment.MachineName || lease.ProcessId is not > 0
+            || lease.ProcessStartedAtUtc is null) return false;
+        try
+        {
+            using var process = Process.GetProcessById(lease.ProcessId.Value);
+            return new DateTimeOffset(process.StartTime.ToUniversalTime()) != lease.ProcessStartedAtUtc.Value;
+        }
+        catch (ArgumentException) { return true; }
+        catch (System.ComponentModel.Win32Exception) { return false; }
+        catch (InvalidOperationException) { return true; }
+    }
 }

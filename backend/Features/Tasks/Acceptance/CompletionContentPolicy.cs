@@ -15,7 +15,8 @@ public sealed record CompletionContentFacts(
     string? ContentSummary = null,
     string? EvidenceChecked = null,
     string? Missing = null,
-    CompletionSettlementProblem? Settlement = null);
+    CompletionSettlementProblem? Settlement = null,
+    string? MissingReport = null);
 
 /// <summary>
 /// Why no settled remote review report backs the content check (AGT-3467):
@@ -29,10 +30,13 @@ public sealed record CompletionSettlementProblem(string? ReviewAttemptId, string
     public const string ReviewNotSettled = "review-not-settled";
     public const string JournalMissing = "settlement-missing";
     public const string JournalRepair = "settlement-repair";
+    /// <summary>A report card whose current run has no report review yet (AGT-3565).</summary>
+    public const string NoReportReview = "no-report-review";
 
     public string Describe() => Kind switch
     {
         NoReview => "the current run has no review",
+        NoReportReview => "the report of the current run has not been reviewed; run Review results",
         ReviewForOtherRun => $"the current review {ReviewAttemptId} belongs to another run",
         ReviewNotSettled => $"the current review {ReviewAttemptId} has not settled",
         JournalMissing => $"the settlement of review {ReviewAttemptId} is missing",
@@ -82,8 +86,17 @@ public static class CompletionContentPolicy
         else if (!Same(facts.ReviewBriefVersion, facts.CurrentBriefVersion))
             gaps.Add($"content verdict was for brief {Label(facts.ReviewBriefVersion)}, current {Label(facts.CurrentBriefVersion)}");
 
+        // AGT-3565: a research card delivers its report. A verdict, also a
+        // pass, never stands in for it, and neither does an operator override.
+        if (facts.MissingReport is { } report)
+            gaps.Insert(0, $"the required report is missing ({report})");
+
         if (gaps.Count == 0) return new(true, false, "Content review passed for the current brief.");
         var message = "Completion refused: " + string.Join("; ", gaps) + ".";
+        if (facts.MissingReport is not null)
+            return new(false, false, facts.OperatorOverride
+                ? message + " An override cannot replace the missing report."
+                : message);
         if (!facts.OperatorOverride) return new(false, false, message);
         if (!CompletionContractPolicy.IsUsableReason(facts.OverrideReason?.Trim()))
             return new(false, false, message + " An override needs a written reason of at least 8 characters.");

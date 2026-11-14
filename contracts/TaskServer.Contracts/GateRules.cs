@@ -195,6 +195,7 @@ public static class GateRules
             && report.FailureClassification is not (GateFailureClasses.ProductFailure
                 or GateFailureClasses.ExecutionTimeout or GateFailureClasses.LostLease
                 or GateFailureClasses.SnapshotUnavailable or GateFailureClasses.ToolFailure
+                or GateFailureClasses.DiskFull
                 or GateFailureClasses.CleanupFailure))
             return "Gate failure classification is unknown.";
         if (report.FailureClassification is null

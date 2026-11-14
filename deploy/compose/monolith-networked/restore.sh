@@ -88,6 +88,7 @@ done < <(printf '%s\n' "$manifest" | sed '1,/^--$/d')
 
 age --decrypt --identity "$identity" "$archive" \
   | apply -v "$data_dir/workspace:/data/workspace" -v "$data_dir/projects:/data/projects" \
+      -e "RESTORE_ARCHIVE_ID=$(basename "$archive")" -e "RESTORE_ARCHIVE_CREATED=$(manifest_value created)" \
       -v "$clones:/restore-clones:ro" --entrypoint /bin/bash "$image" /usr/local/bin/restore-apply.sh unpack \
   || fail 'unpacking the archive failed; the stack is back to the state setup.sh left, so fix the cause and run restore.sh again'
 

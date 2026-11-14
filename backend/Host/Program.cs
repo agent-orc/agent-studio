@@ -101,7 +101,7 @@ try
             .CreateLogger("AgentStudio.State.LocalStateStartup"));
 }
 catch (Exception exception) when (exception is AgentStudio.TaskServer.Contracts.LocalStateRootUnavailableException
-    or IOException or UnauthorizedAccessException)
+    or IOException or UnauthorizedAccessException or InvalidDataException)
 {
     Log.Fatal("local-state-startup-failed {Reason}", exception.Message);
     await Log.CloseAndFlushAsync();
@@ -139,6 +139,24 @@ builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
 builder.Services.AddSingleton<DecisionRuleVersionStore>();
+// Persona team PT-1: built-in catalogue and per-workspace activations.
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaCatalogue>(_ => new AgentStudio.Personas.PersonaCatalogue());
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaActivationStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaSchedulingService>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaItemStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaManagerService>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaProposalLifecycle>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaReportStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaReportRatingStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.OpsPostureSnapshotStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaOccurrenceService>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaSweepCoordinator>();
+builder.Services.AddSingleton<AgentStudio.Magazine.WeeklyIssueStore>();
+builder.Services.AddSingleton<AgentStudio.Magazine.WeeklyIssueEditor>();
+builder.Services.AddSingleton<AgentStudio.Magazine.WeeklyIssueService>();
+builder.Services.AddSingleton<AgentStudio.Magazine.PresenterDeckStore>();
+builder.Services.AddSingleton<AgentStudio.Magazine.PresenterDeckEditor>();
+builder.Services.AddSingleton<AgentStudio.Magazine.PresenterDeckService>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddSingleton<ReviewInputDecisionGateway>();
 builder.Services.AddSingleton<ActiveChoiceAdmissionAdapter>();
@@ -212,6 +230,21 @@ if (underTestHost)
         Directory.CreateDirectory(iso);
         builder.Configuration["TaskRepository"] = iso;
     }
+}
+
+try
+{
+    AgentStudio.Pipeline.BatchGateStorageRoot.Prepare(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"],
+        new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger)
+            .CreateLogger("AgentStudio.Pipeline.BatchGateStorageRoot"));
+}
+catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+{
+    Log.Fatal("batch-state-startup-failed {Reason}", exception.Message);
+    await Log.CloseAndFlushAsync();
+    Environment.ExitCode = 1;
+    return;
 }
 
 var startupSecurityProfile = SecurityProfiles.ActiveProfile(builder.Configuration);
@@ -480,6 +513,8 @@ builder.Services.AddSingleton<CodexSignInCoordinator>();
 builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
+builder.Services.AddSingleton<ApiHostDiskService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiHostDiskService>());
 builder.Services.AddSingleton<EnvironmentFlowService>();
 builder.Services.AddSingleton<AgentStudio.Persistence.IAtomicJsonFileWriter, AgentStudio.Persistence.AtomicJsonFileWriter>();
 builder.Services.AddSingleton<OrchestratorConfigService>();
@@ -572,6 +607,8 @@ builder.Services.AddSingleton<TaskSessionLog>();
 builder.Services.AddSingleton<TimelineLog>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.PublishedGateEvidenceBackfill>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.PublishedGateEvidenceBackfill>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateCapacitySettings(
@@ -710,6 +747,8 @@ builder.Services.AddSingleton<TestRunService>();
 // AGT-2717: canonical read-time merge of local + remote review attempts.
 builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
+// AGT-3564: Human Review acceptance readiness (a dry run of the completion checks).
+builder.Services.AddSingleton<AcceptanceReadinessService>();
 builder.Services.AddSingleton<DecisionCardService>();
 builder.Services.AddSingleton<DecisionRecordService>();
 // Decision cards, apply step and creation paths (Dossier decision-cards D3=C, D5=A).
@@ -1179,8 +1218,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.WikiLearningsPostStepRunner>(
 builder.Services.AddSingleton<AgentStudio.Pipeline.AgentsWikiSyncPostStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IManagedProjectArtifactCommitService,
     AgentStudio.Pipeline.ManagedProjectArtifactCommitService>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IConceptWorkbenchPublisher,
-    AgentStudio.Pipeline.ConceptWorkbenchPublisher>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ConceptDeliveryPostSteps>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ConceptPromotionService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.OnDemandPostStepService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.WikiTaskCrossReferenceService>();
@@ -1222,6 +1260,7 @@ if (!publicDemoExecutionProfile)
 // Forwarded into ProjectRunner via TaskRunnerService; default-OFF per project.
 builder.Services.AddSingleton<AgentStudio.Runner.PostAbortReviewStepService>();
 builder.Services.AddSingleton<AutoReviewStatusSnapshot>();
+builder.Services.AddSingleton<ReportContentReviewService>();
 builder.Services.AddSingleton<ReviewDecisionOrchestrator>();
 // Keep the review and delivery workers available for runtime profile rollback.
 if (!publicDemoExecutionProfile)
@@ -1407,6 +1446,8 @@ if (!publicDemoExecutionProfile)
 // orchestration-decisions.
 builder.Services.AddSingleton(sp => OperatorDecisionOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<OperatorCoordinationStore>();
+// MAG-1: magazine articles and their revisions under <TaskRepository>/.magazine.
+builder.Services.AddSingleton<AgentStudio.Magazine.MagazineStore>();
 builder.Services.AddSingleton(sp => new OperatorDecisionLog(
     OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
     sp.GetRequiredService<OperatorDecisionOptions>().Retention, sp.GetRequiredService<TimeProvider>(),
@@ -1423,7 +1464,8 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTas
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorWatcherCaseFactSource(
     sp.GetRequiredService<AgentStudio.Watcher.WatcherCaseStore>(), sp.GetRequiredService<IConfiguration>()["TaskRepository"]));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBatchGateFactSource(
-    sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>(),
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchGatePilotService>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPendingPushFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.BatchIntegrationReservationService>(),
     // The card key comes from the published board, like the task facts
@@ -1431,8 +1473,13 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPen
     jobId => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
         && TaskScannerService.FindMatches(live, jobId, null) is [var task, ..]
         ? OperatorDecisionFacts.CardKey(task) : null));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBlockedPublicationFactSource(
+    () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
+    task => sp.GetRequiredService<AgentStudio.Pipeline.PipelineExecutionLog>().Read(task.FolderPath)?.Steps
+        .LastOrDefault(step => step.StepId == AgentStudio.Pipeline.PipelineCatalogue.MergeIntoDevelopStepId)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
     sp.GetRequiredService<ProviderLimitRegistry>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
@@ -1486,7 +1533,8 @@ if (!publicDemoExecutionProfile)
 // was cleared is reported instead of sitting unnoticed (AGT-2220 lost four days
 // exactly that way). Report-only: it never re-queues a card.
 builder.Services.AddSingleton<AgentStudio.Tasks.IParkedBlockerProbe>(sp =>
-    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>()));
+    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>(),
+        sp.GetService<AgentStudio.Runner.AttemptAuthorityService>()));
 builder.Services.AddSingleton<AgentStudio.Tasks.ParkedCardRecallSweep>();
 builder.Services.AddHostedService<AgentStudio.Tasks.ParkedCardRecallSweepHostedService>();
 // AGT-2818: the pickup lanes get the same treatment the parked lane got. A card
@@ -1518,6 +1566,7 @@ builder.Services.AddSingleton<WorkbenchCatalogueService>();
 builder.Services.AddSingleton<DossierCardsService>();
 builder.Services.AddSingleton<DossierMaintenanceService>();
 builder.Services.AddSingleton<WorkbenchChangeNotifier>();
+builder.Services.AddSingleton<IWorkbenchSpawnedCardCleanup, WorkbenchSpawnedCardCleanup>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();
 builder.Services.AddSingleton<WorkbenchReviewService>();
 // AGT-2803: the classification vocabulary. The areas registry merges the
@@ -1798,6 +1847,7 @@ if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
         var studioDecisionPath = (HttpMethods.IsGet(context.Request.Method)
                 && path.StartsWithSegments("/api/orchestration/decision-receipts"))
             || path.StartsWithSegments("/api/runner/orchestrator-decisions")
+            || path.StartsWithSegments("/api/runner/personas")
             || segments is ["api", "workspaces", _, "decision-rules", ..];
         if (context.Request.Path.StartsWithSegments("/api")
             && !context.Request.Path.StartsWithSegments("/api/v1")
@@ -2067,6 +2117,19 @@ if (runRepairSweeps) try
 catch (Exception ex)
 {
     crashRecorder.Record("RemoteCompletionAttributionSweep", ex);
+}
+
+// AGT-3717: one-time re-attribution of deliveries whose own runner salvage
+// commit named a related card in its subject, which the attribution guard
+// rejected before it exempted that commit.
+if (runRepairSweeps) try
+{
+    hostTimeline.Sweep("SalvageSubjectAttributionRepair",
+        () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunSalvageSubjectRepairOnce());
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("SalvageSubjectAttributionRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

@@ -121,6 +121,14 @@
         testId="result-test-evidence" />
     }
 
+    @if (gradingReleaseNotices().length > 0) {
+      <section class="result__grading-release" data-testid="result-grading-release" aria-label="Grading release">
+        @for (notice of gradingReleaseNotices(); track notice) {
+          <p data-testid="result-grading-release-notice">Review {{ notice }}.</p>
+        }
+      </section>
+    }
+
     @if (latestAspectVerdicts().length > 0) {
       <section class="result__aspect-table" data-testid="result-aspect-verdicts">
         <h4>Aspect results</h4>

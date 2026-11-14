@@ -6,6 +6,7 @@
       <button type="button" class="dossier-cards__toggle" data-testid="dossier-cards-toggle" (click)="toggle()"
         [attr.aria-expanded]="expanded()" aria-controls="dossier-cards-items"><app-disclosure-marker [open]="expanded()" />
         <strong>Cards</strong>
+        <span data-testid="dossier-card-count">{{ view.cards.length }} card{{ view.cards.length === 1 ? '' : 's' }}</span>
         <span data-testid="dossier-slice-progress">{{ view.completedSlices }} / {{ view.implementationSlices }} implementation slices complete</span>
       </button>
       @if (expanded()) {

@@ -47,7 +47,8 @@ public class ContinueModeGuardPolicyTests
 
         Assert.Equal(ContinueModeGuardAction.Reject, decision.Action);
         Assert.Contains("'concept' mode", decision.Message);
-        Assert.Contains("/api/tasks/AGT-2795/promote-concept", decision.Message);
+        Assert.Contains("Keep the card in concept mode", decision.Message);
+        Assert.Contains("promote the card to implementation", decision.Message);
     }
 
     [Fact]
@@ -58,8 +59,70 @@ public class ContinueModeGuardPolicyTests
 
         Assert.Equal(ContinueModeGuardAction.Reject, decision.Action);
         Assert.Contains("'planning' mode", decision.Message);
-        Assert.Contains("/api/tasks/AGT-2795/promote-to-coding", decision.Message);
+        Assert.Contains("Keep the card in planning mode", decision.Message);
     }
+
+    // AGT-3700: the refusal is shown to the operator in the continue panel,
+    // which offers both choices as buttons; it never names an API route or a
+    // request field.
+    [Theory]
+    [InlineData(TaskModes.Concept)]
+    [InlineData(TaskModes.Planning)]
+    public void Refusal_NamesNoApiPathOrRequestField(string mode)
+    {
+        var decision = ContinueModeGuardPolicy.Decide(Facts(mode, "Fix the login bug."));
+
+        Assert.Equal(ContinueModeGuardAction.Reject, decision.Action);
+        Assert.DoesNotContain("/api/", decision.Message);
+        Assert.DoesNotContain("modeOverride", decision.Message);
+    }
+
+    /// <summary>
+    /// AGT-3700 corpus: ten realistic Dossier follow-ups on a concept card.
+    /// Each pairs a change verb (or "fix", "rewrite") with a word the guard
+    /// also reads as a code target, and each names a Dossier section,
+    /// decision, or option, so none of them is a code-change request. The
+    /// first is the AGT-3649 playthrough follow-up that was refused.
+    /// </summary>
+    public static TheoryData<string> DossierFollowUps => new()
+    {
+        "Please add one more section to the Dossier: D3 File naming. Compare the naming options for result files and recommend one.",
+        "Update section 4 so the config migration options compare cost and risk side by side.",
+        "Change the recommendation in D2 to Option B and record why the file watcher alternative lost.",
+        "Remove the open question about the API versioning field; the operator answered it in sight review.",
+        "Add a decision D5 on whether the schema change ships behind a feature flag.",
+        "Rename the heading 'Test strategy' to 'Verification plan' and move it after the evidence section.",
+        "Replace the rationale for D1: the route count grew from 81 to 83, so the measurement table needs the new number.",
+        "Adjust the appendix to list every endpoint the feature touches, with the owning component for each.",
+        "Rewrite the paragraph on bug triage so it reads as a decision, not a task list.",
+        "Fix the typo in Option C and add the missing test coverage risk to its cons.",
+    };
+
+    [Theory]
+    [MemberData(nameof(DossierFollowUps))]
+    public void ConceptMode_DossierFollowUp_Allowed(string prompt)
+    {
+        var decision = ContinueModeGuardPolicy.Decide(Facts(TaskModes.Concept, prompt));
+
+        Assert.Equal(ContinueModeGuardAction.Allow, decision.Action);
+        Assert.Null(decision.Message);
+    }
+
+    [Theory]
+    [InlineData("Add a section D3 on file naming.")]
+    [InlineData("Update the open questions with the new test numbers.")]
+    [InlineData("Change Option A so the config stays per project.")]
+    [InlineData("See § 2: update the api field list.")]
+    public void NamesDossierPart_TrueForSectionDecisionOrOptionReferences(string prompt)
+        => Assert.True(ContinueModeGuardPolicy.NamesDossierPart(prompt));
+
+    [Theory]
+    [InlineData("Update the endpoint to accept a second parameter.")]
+    [InlineData("Bump the route count from 81 to 83.")]
+    [InlineData("Add a d3 chart to the file.")] // decision ids are upper case
+    [InlineData("Change the options parser.")]
+    public void NamesDossierPart_FalseForCodeOnlyPrompts(string prompt)
+        => Assert.False(ContinueModeGuardPolicy.NamesDossierPart(prompt));
 
     [Theory]
     [InlineData(TaskModes.Concept)]

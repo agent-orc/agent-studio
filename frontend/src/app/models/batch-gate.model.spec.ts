@@ -1,11 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { isolatedRedState, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
 import {
-  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId,
+  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine,
   type BatchGateState,
 } from './batch-gate.model';
 
 const root = (state: BatchGateState) => state.batches.find(batch => batch.batchId === 'batch-14')!;
+
+it('formats the UTC start and elapsed gate time', () => {
+  expect(batchTimeLine('2026-11-09T21:11:00Z', null, Date.parse('2026-11-10T00:41:00Z')))
+    .toBe('since 21:11 UTC, 3 h 30 min');
+  expect(batchTimeLine('2026-11-09T21:11:00Z', '2026-11-09T21:14:00Z')).toBe('since 21:11 UTC, 3 min');
+});
+
+describe('batch waiting projection', () => {
+  it('excludes members of a formed or running batch from pending records', () => {
+    const pending = [1, 2].map(index => ({ taskKey: `AGT-${index}`, reviewAttemptId: `r-${index}`,
+      resultSha: 'a'.repeat(40), waitMinutes: 229.234388035, risk: 0.2 }));
+    const batch = { ...redHalvingState.batches[1], members: [{ taskKey: 'AGT-1', replay: 'applied', released: false }] };
+    for (const phase of ['formed', 'running']) {
+      const state = { ...redHalvingState, pending, batches: [{ ...batch, phase }], members: {} };
+      expect(batchWaitingCards(state).map(item => item.taskKey)).toEqual(['AGT-2']);
+    }
+  });
+});
 
 describe('batch isolation model (AGT-3577)', () => {
   it('lists every member of a bisected red batch as proven red or proven green', () => {
@@ -40,6 +58,9 @@ describe('batch isolation model (AGT-3577)', () => {
 
   it('reports isolating while a child of the red batch is active', () => {
     expect(batchAlert(redHalvingState)).toEqual({ state: 'isolating', batchId: 'batch-7', culprits: [] });
+    expect(batchAlert({ ...redHalvingState, batches: redHalvingState.batches.map(batch =>
+      batch.batchId === 'batch-7' ? { ...batch, isolationActive: false } : batch) }))
+      .toEqual({ state: 'red', batchId: 'batch-7', culprits: [] });
     expect(batchAlert({ ...redHalvingState, batches: [] })).toBeNull();
     expect(batchAlert(null)).toBeNull();
   });

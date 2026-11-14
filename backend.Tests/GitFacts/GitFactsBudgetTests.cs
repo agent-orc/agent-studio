@@ -131,6 +131,8 @@ public sealed class GitFactsBudgetTests(GitFactsBoardFixture board)
         await using var host = new GitReadCensusHost(board, keepGitStateIndex: true, runs);
         await IndexedAsync(host);
         var indexer = host.Services.GetRequiredService<GitStateIndexService>();
+        await Until(() => !indexer.IsRunning(GitFactsBoardFixture.ProjectName)
+            && !indexer.HasPendingCardFacts(GitFactsBoardFixture.ProjectName));
 
         var before = runs.Completed.Count;
         indexer.RequestRefresh(GitFactsBoardFixture.ProjectName, "task-event");

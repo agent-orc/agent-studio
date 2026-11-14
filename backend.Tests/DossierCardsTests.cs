@@ -1,5 +1,6 @@
 using AgentStudio.Docs;
 using AgentStudio.Pipeline;
+using AgentStudio.Tasks;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -7,6 +8,19 @@ namespace AgentStudio.Tests;
 public sealed class DossierCardsTests
 {
     private static readonly DateTime Epoch = new(2026, 10, 16, 0, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void ConceptDetailUsesThePrimaryDossierFromTheBoard()
+    {
+        var task = Task("AGT-1", "Concept") with
+        {
+            Mode = TaskModes.Concept,
+            Dossier = new TaskDossier { Path = "docs/operations/one/index.html" },
+        };
+        var summary = TaskEndpointHelpers.BuildConceptDossierSummary(task);
+        Assert.Equal(task.Dossier.Path, summary?.RepoRelativePath);
+        Assert.Equal("task.json.dossier", summary?.ReferenceSource);
+    }
 
     [Fact]
     public void ImplementationProvenance_UsesSectionFromPromptOrSliceId()
@@ -181,6 +195,34 @@ public sealed class DossierCardsTests
             [decision, first, second]).CompletedSlices);
         Assert.Equal(1, DossierCardsService.Project("Agent Studio", dossier,
             [decision, first, second with { State = TaskStates.Completed }]).CompletedSlices);
+    }
+
+    [Fact]
+    public void CardList_CountsSpawnedCardWithoutDeclaredImplementationSlice()
+    {
+        var dossier = Dossier("docs/operations/one/index.html") with
+        {
+            SourceTaskKeys = ["AGT-1"],
+            Decision = new WorkbenchDecisionProjection(
+                "feature-spawn", "succeeded", "operation-123", null, null,
+                Epoch.ToString("O"), "Operator", null, null, null, null, null,
+                ["AGT-2"], [], null, null, null, null, null, null),
+        };
+        var source = Task("AGT-1", "Concept") with
+        {
+            Mode = TaskModes.Concept, Dossier = new TaskDossier { Path = dossier.EntryPath },
+        };
+        var spawned = Task("AGT-2", "Implement") with
+        {
+            Dossier = new TaskDossier { Path = dossier.EntryPath },
+        };
+
+        var list = DossierCardsService.Project("Agent Studio", dossier, [source, spawned]);
+        Assert.Equal(2, list.Cards.Count);
+        Assert.Equal(1, list.ImplementationSlices);
+        Assert.Equal(0, list.CompletedSlices);
+        Assert.Equal(1, DossierCardsService.Project("Agent Studio", dossier,
+            [source, spawned with { State = TaskStates.Completed }]).CompletedSlices);
     }
 
     private static TaskInfo Task(string key, string title) => new()

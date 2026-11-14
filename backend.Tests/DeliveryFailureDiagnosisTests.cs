@@ -166,6 +166,40 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Equal(DeliveryFailureDiagnosis.Intermittent, normalized.FailureClassification);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void Unattributed_backend_test_failure_remains_a_non_blocking_review_concern(int baselineExit)
+    {
+        var failed = FailedCommand("verify-4", DeliveryFailureDiagnosis.Environment, false) with
+        {
+            BaselineSha = "base",
+            BaselineExitCode = baselineExit,
+            Diagnosis = new DeliveryFailureDiagnosisResult(
+                DeliveryFailureDiagnosis.Environment, 0.9,
+                [ReviewUnattributedTestFailurePolicy.EvidencePrefix + "failure names vary"]),
+        };
+        var report = EmptyReport("ReviewInfra") with
+        {
+            Commands =
+            [
+                failed,
+                failed with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat",
+                    Diagnosis = null },
+            ],
+            Verdicts = [new ReviewVerdictDto("build-tests", "concerns",
+                DeliveryFailureDiagnosis.Environment, "failure names vary")],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("Pass", normalized.Outcome);
+        Assert.Null(normalized.FailureClassification);
+        Assert.Equal("concerns", Assert.Single(normalized.Verdicts).Status);
+        Assert.Equal(ReviewFailureOwner.Tolerated,
+            ReviewFailureAttributionPolicy.Attribute(null, failed));
+    }
+
     [Fact]
     public void Product_diagnosis_on_a_run_the_clean_repeat_cleared_is_invalid_evidence()
     {
@@ -445,6 +479,33 @@ public sealed class DeliveryFailureDiagnosisTests
         var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
         Assert.Equal(observed ? DeliveryFailureDiagnosis.Intermittent : DeliveryFailureDiagnosis.FirstOccurrence,
             normalized.FailureClassification);
+    }
+
+    /// <summary>
+    /// AGT-3650: a passing clean repeat records how it showed the failed tests
+    /// ran. Only a known level on a passing repeat is admitted.
+    /// </summary>
+    [Theory]
+    [InlineData(ReviewRepeatObservation.TestNames, 0, true)]
+    [InlineData(ReviewRepeatObservation.TestFiles, 0, true)]
+    [InlineData("guessed", 0, false)]
+    [InlineData(ReviewRepeatObservation.TestFiles, 1, false)]
+    public void Repeat_observation_is_admitted_only_as_a_known_level_on_a_passing_repeat(
+        string observation, int exitCode, bool valid)
+    {
+        var failed = FailedCommand("tests", DeliveryFailureDiagnosis.Intermittent, false) with
+        {
+            RetryPerformed = true,
+            InitialFailures = ["src/lease.spec.ts > lease > renews"],
+        };
+        var repeat = failed with
+        {
+            Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = exitCode,
+            Diagnosis = null, RepeatObservation = observation,
+        };
+
+        Assert.Equal(valid, ReviewRepeatFilterPolicy.IsValid(repeat, [failed, repeat]));
+        Assert.False(ReviewRepeatFilterPolicy.IsValid(failed with { RepeatObservation = observation }, [failed]));
     }
 
     [Fact]

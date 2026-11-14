@@ -20,6 +20,13 @@ describe('buildComposerLocationContext', () => {
     )).toEqual({ project: 'Agent Studio', surface: 'Board' });
   });
 
+  it('gives a persona tab the chat context persona:<id> and the Team page none', () => {
+    expect(buildComposerLocationContext({ kind: 'team', personaId: 'warden-1' }, [])).toEqual({
+      project: null, surface: 'Team', detail: 'warden-1', referenceKey: 'persona:warden-1',
+    });
+    expect(buildComposerLocationContext({ kind: 'team', personaId: null }, [])).toEqual({ project: null, surface: 'Team' });
+  });
+
   it('maps a task tab with project and task identity', () => {
     expect(buildComposerLocationContext(
       { kind: 'task', taskKey: task.taskKey },

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import type { ContinueMode, ContinueRoundBase, ContinueTaskResponse, TaskInfo } from '../../../../models/task.model';
 import { TaskState } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
@@ -9,9 +9,13 @@ import {
   type SegmentedOption,
 } from '../../../../components/segmented-control/segmented-control.component';
 import { serverErrorMessage } from '../../../../utils/server-error-message';
+import { ContinueModeRefusalComponent } from './continue-mode-refusal/continue-mode-refusal.component';
 
 type RoundMode = Extract<ContinueMode, 'continue' | 'steer' | 'extend'>;
 type BaseRead = { state: 'loading' } | { state: 'ready'; base: ContinueRoundBase | null } | { state: 'error' };
+
+/** Error code of the concept and planning follow-up guard (backend ContinueModeGuardDecision.RefusalCode). */
+const MODE_GUARD_CODE = 'continue-mode-guard';
 
 const ROUND_LANES: ReadonlySet<string> = new Set([TaskState.HumanReview, TaskState.Completed]);
 
@@ -28,17 +32,24 @@ const BASE_SOURCES: Record<string, string> = {
  * `studio-op continue`, batch isolation included. The round starts from the
  * card's latest result ref, shown read only; the reason is required so the
  * run trigger and the timeline say why the round was sent.
+ *
+ * AGT-3700: when the guard refuses a concept or planning follow-up as
+ * code-shaped, the refusal offers "keep in this mode and send" and "promote
+ * to implementation" as buttons. Any refusal leaves Send round usable, and
+ * editing the follow-up clears a mode refusal that was about the old text.
  */
 @Component({
   selector: 'app-continue-round-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PendingButtonDirective, SegmentedControlComponent],
+  imports: [PendingButtonDirective, SegmentedControlComponent, ContinueModeRefusalComponent],
   templateUrl: './continue-round-panel.component.html',
   styleUrl: './continue-round-panel.component.scss',
 })
 export class ContinueRoundPanelComponent {
   readonly job = input.required<TaskInfo>();
+  /** A refused planning follow-up asked to promote the card; the title block owns that form. */
+  readonly promoteToCoding = output<void>();
 
   readonly modeOptions: readonly SegmentedOption<RoundMode>[] = [
     { value: 'continue', label: 'Continue', testid: 'continue-round-mode-continue', tooltip: 'Resume the work with this follow-up.' },
@@ -53,6 +64,8 @@ export class ContinueRoundPanelComponent {
   readonly reason = signal('');
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
+  /** The guard's message when it refused the follow-up as code-shaped. */
+  readonly modeRefusal = signal<string | null>(null);
   readonly baseRead = signal<BaseRead>({ state: 'loading' });
   readonly base = computed(() => {
     const read = this.baseRead();
@@ -85,19 +98,21 @@ export class ContinueRoundPanelComponent {
 
   onPromptInput(event: Event): void {
     this.prompt.set((event.target as HTMLTextAreaElement).value);
+    this.modeRefusal.set(null);
   }
 
   onReasonInput(event: Event): void {
     this.reason.set((event.target as HTMLInputElement).value);
   }
 
-  submit(): void {
+  /** Send the round; `modeOverride` confirms the card's concept or planning mode. */
+  submit(modeOverride?: string): void {
     if (!this.canSubmit()) return;
     const job = this.job();
     this.busy.set(true);
     this.error.set(null);
     this.tasks.continueJob(job.id, this.prompt().trim(), job.watchPath ?? undefined,
-      undefined, undefined, undefined, this.mode(), undefined, this.reason().trim()).subscribe({
+      undefined, undefined, undefined, this.mode(), modeOverride, this.reason().trim()).subscribe({
       next: (response) => {
         this.busy.set(false);
         this.notifications.success(roundOutcome(response));
@@ -107,10 +122,24 @@ export class ContinueRoundPanelComponent {
       error: (err: unknown) => {
         this.busy.set(false);
         const message = serverErrorMessage(err, 'The round was not sent.');
+        if (isModeGuardRefusal(err)) {
+          this.modeRefusal.set(message);
+          return;
+        }
+        this.modeRefusal.set(null);
         this.error.set(message);
         this.notifications.error(message, 'Continue refused');
       },
     });
+  }
+
+  keepModeAndSend(): void {
+    this.submit(this.job().mode ?? undefined);
+  }
+
+  onPromoted(): void {
+    this.reset();
+    this.tasks.refresh(true);
   }
 
   private reset(): void {
@@ -119,6 +148,7 @@ export class ContinueRoundPanelComponent {
     this.reason.set('');
     this.mode.set('continue');
     this.error.set(null);
+    this.modeRefusal.set(null);
   }
 
   private loadBase(): void {
@@ -129,6 +159,12 @@ export class ContinueRoundPanelComponent {
       error: () => this.baseRead.set({ state: 'error' }),
     });
   }
+}
+
+function isModeGuardRefusal(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const body = (err as { error?: unknown }).error;
+  return typeof body === 'object' && body !== null && (body as { error?: unknown }).error === MODE_GUARD_CODE;
 }
 
 function roundOutcome(response: ContinueTaskResponse): string {

@@ -26,7 +26,8 @@ function accessState() {
     permissions: [],
     iamVersion: 1,
     users: [
-      { id: 'usr_owner', username: 'robert', displayName: 'Robert', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
+      { id: 'usr_owner', username: 'robert', displayName: 'Robert', role: 'owner', projects: [], disabled: false, mustChangePassword: false,
+        hasFactor: true, factorChangedAt: created },
       { id: 'usr_product', username: 'product.lead', displayName: 'Product Lead', role: 'contributor', projects: ['PROJ-001'], disabled: false, mustChangePassword: false },
     ],
     groups: [{ id: 'grp_web', name: 'Team Website', description: 'Everyone on the website', members: ['usr_product'], createdAt: created }],
@@ -50,7 +51,7 @@ function accessState() {
 
 async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessState>> {
   const state = accessState();
-  const owner = { id: 'usr_owner', username: 'robert', displayName: 'Robert', role: 'owner', projects: [], disabled: false, mustChangePassword: false };
+  const owner = { id: 'usr_owner', username: 'robert', displayName: 'Robert', role: 'owner', projects: [], disabled: false, mustChangePassword: false, hasFactor: true };
   const status = { profile: 'networked', bootstrapRequired: false, authenticated: true, user: owner };
   await page.route('**/hubs/v1/studio/negotiate?*', route => json(route, {
     negotiateVersion: 1, connectionId: 'access-e2e', connectionToken: 'access-e2e',
@@ -71,8 +72,11 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     ])
     : route.continue());
   await page.route('**/api/auth/iam', route => json(route, state));
+  await page.route('**/api/auth/iam/operator-approvals', route => json(route, []));
+  await page.route('**/api/auth/users', route => json(route, state.users));
   // Operator agents and standing grants have their own spec (operator-agents.spec.ts); this server answers without them.
-  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/audit/')
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/iam/operator-approvals')
+    || url.pathname.startsWith('/api/auth/audit/')
     || url.pathname === '/api/auth/iam/operator-catalogue' || url.pathname.startsWith('/api/auth/iam/standing-grants'),
     route => json(route, { message: 'Not found' }, 404));
   await page.route('**/api/auth/runner-enrollments', route => route.request().method() === 'POST'
@@ -83,13 +87,15 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
   ]));
   await page.route('**/api/auth/invitations', async route => {
     const body = route.request().postDataJSON() as { username: string; displayName: string; bindings: Array<{ role: string; scope: object }> };
-    const user = { id: 'usr_new', username: body.username, displayName: body.displayName || body.username, role: 'operator', projects: ['PROJ-002'], disabled: false, mustChangePassword: true };
+    const legacyRole = body.bindings[0]?.role === 'admin' ? 'operator'
+      : body.bindings[0]?.role === 'contributor' ? 'contributor' : 'viewer';
+    const user = { id: 'usr_new', username: body.username, displayName: body.displayName || body.username, role: legacyRole, projects: ['PROJ-002'], disabled: false, mustChangePassword: true };
     state.users.push(user);
-    state.invitations.push({ id: 'inv_new', userId: user.id, expiresAt: '2026-10-21T09:00:00Z', used: false });
+    state.invitations.push({ id: 'inv_new', userId: user.id, expiresAt: '2026-11-12T09:00:00Z', used: false });
     body.bindings.forEach((grant, index) => state.bindings.push({
       id: `rb_new_${index}`, principalKind: 'user', principalId: user.id, role: grant.role, scope: grant.scope as never, source: 'role-assignment', createdAt: created,
     }));
-    await json(route, { user, signInLink: '/?invite=inv.e2e-invite', expiresAt: '2026-10-21T09:00:00Z' });
+    await json(route, { user, signInLink: '/?invite=inv.e2e-invite', expiresAt: '2026-11-12T09:00:00Z' });
   });
   await page.route('**/api/auth/iam/service-accounts/sa_deploy/tokens', route => {
     state.serviceAccounts[0].tokens = [{ id: 'tok_e2e', name: 'deploy-bot token', createdAt: created, expiresAt: '2027-01-18T09:00:00Z', lastUsedAt: null, revokedAt: null }] as never;
@@ -100,11 +106,84 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
 
 async function openAccess(page: Page) {
   await page.goto('/#/workspace/settings/access', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await expect(page.getByTestId('workspace-settings-rail-access')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('workspace-settings-rail-access')).toBeAttached({ timeout: 30_000 });
   const access = page.getByTestId('access-area');
   await expect(access.getByRole('heading', { name: 'Users' })).toBeVisible();
   return access;
 }
+
+test('Owner sees factor changes and verifies the current factor before replacement', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stubNetworkedOwner(page);
+  await page.route('**/api/auth/audit/factors', route => json(route, [{
+    sequence: 1, at: created, actor: 'human:usr_owner', session: 'session-1',
+    operation: 'factor.bound', target: 'user:usr_owner',
+  }]));
+  await page.route('**/api/auth/step-up', route => json(route, {}));
+  await page.route('**/api/auth/totp/start', route => json(route, { secret: 'TESTSECRET' }));
+  const access = await openAccess(page);
+  await expect(access.getByTestId('access-user-robert')).toContainText('Registered');
+  await expect(access.getByTestId('factor-activity')).toContainText('factor.bound');
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await access.getByTestId('access-user-robert').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `owner-factor-access-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await access.getByTestId('access-user-robert').scrollIntoViewIfNeeded();
+  await expect(access.getByTestId('access-user-robert').getByRole('cell', { name: 'Registered' })).toBeInViewport();
+  await expect(access.getByTestId('access-user-robert').getByRole('cell', { name: /Oct 20, 2026/ })).toBeInViewport();
+  await page.screenshot({ path: join(resultDir, 'owner-factor-access-390px.png') });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await access.getByTestId('session-manager-toggle').last().click();
+  await access.getByRole('button', { name: 'Add authenticator' }).click();
+  const challenge = access.getByTestId('enrollment-step-up');
+  await expect(challenge).toBeVisible();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await challenge.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `owner-factor-step-up-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await challenge.scrollIntoViewIfNeeded();
+  await expect(challenge.getByRole('button', { name: 'Verify', exact: true })).toBeInViewport();
+  await page.screenshot({ path: join(resultDir, 'owner-factor-step-up-390px.png') });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(access.getByTestId('session-totp-secret')).toHaveCount(0);
+  await challenge.getByLabel('Authenticator or recovery code').fill('123456');
+  await challenge.getByRole('button', { name: 'Verify', exact: true }).click();
+  await expect(access.getByTestId('session-totp-secret')).toHaveText('TESTSECRET');
+});
+
+test('disabling a user confirms that open sessions end', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const state = await stubNetworkedOwner(page);
+  let updates = 0;
+  await page.route('**/api/auth/users/usr_product', route => {
+    updates++;
+    state.users[1].disabled = true;
+    return json(route, state.users[1]);
+  });
+  const access = await openAccess(page);
+  await access.getByTestId('access-user-toggle-product.lead').click();
+  const dialog = page.getByTestId('confirm-dialog');
+  await expect(dialog).toContainText('Open sessions end immediately');
+  expect(updates).toBe(0);
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(resultDir, `access-disable-confirm-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: join(resultDir, 'access-disable-confirm-390.png') });
+  await page.getByTestId('confirm-dialog-cancel').click();
+  expect(updates).toBe(0);
+  await access.getByTestId('access-user-toggle-product.lead').click();
+  await page.getByTestId('confirm-dialog-confirm').click();
+  await expect(access.getByTestId('access-user-status-product.lead')).toContainText('Disabled');
+  expect(updates).toBe(1);
+});
 
 test('owner sees users, groups, service accounts with API tokens, runners, and role bindings per scope', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -128,6 +207,31 @@ test('owner sees users, groups, service accounts with API tokens, runners, and r
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}.png`) });
     await access.getByTestId('access-bindings').scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}-bindings.png`) });
+  }
+});
+
+test('users stack with status and actions visible at 390 px in both themes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await stubNetworkedOwner(page);
+  const access = await openAccess(page);
+  const users = access.getByTestId('access-users');
+  const product = access.getByTestId('access-user-product.lead');
+
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await users.scrollIntoViewIfNeeded();
+    await expect(product.getByTestId('access-user-status-product.lead')).toBeVisible();
+    for (const name of ['Sessions', 'Reset password', 'Disable']) {
+      const button = product.getByRole('button', { name });
+      await expect(button).toBeVisible();
+      const box = await button.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    }
+    expect(await users.evaluate(table => table.scrollWidth <= table.clientWidth + 1)).toBe(true);
+    await page.screenshot({ path: join(resultDir, `access-users-390-${theme}.png`) });
   }
 });
 
@@ -199,6 +303,21 @@ test('owner invites a developer through the invitation flow and issues a service
   await invite.getByTestId('access-grant-role').selectOption('developer');
   await invite.getByTestId('access-invite-submit').click();
   await expect(invite.getByTestId('access-invite-link')).toContainText('/?invite=inv.e2e-invite');
+  await expect(invite.getByTestId('access-invite-link')).toContainText('works once');
+  await expect(invite.getByTestId('access-invite-link')).toContainText('second factor is recommended');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await invite.getByTestId('access-invite-copy').click();
+  await expect(invite.getByTestId('access-invite-copy')).toHaveText('Copied');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('/?invite=inv.e2e-invite');
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await invite.getByTestId('access-invite-link').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: join(resultDir, `invite-result-${width}-${theme}.png`) });
+    }
+  }
+  await page.setViewportSize({ width: 1920, height: 1080 });
   await expect(access.getByTestId('access-user-new.developer')).toContainText('Developer · Mobile App');
   await expect(access.getByTestId('access-user-new.developer')).toContainText('Invited');
 
@@ -216,6 +335,41 @@ test('owner invites a developer through the invitation flow and issues a service
   await access.getByTestId('access-runners').scrollIntoViewIfNeeded();
   await setTheme(page, 'light');
   await page.screenshot({ path: join(resultDir, 'access-area-1920-light-runners.png'), fullPage: true });
+});
+
+test('invitee sees who invited them, their project and role, then a recommended factor', async ({ page }) => {
+  const token = ['inv', 'e2e-invite'].join('.');
+  const user = { id: 'usr_product', username: 'carla', displayName: 'Carla', role: 'contributor',
+    projects: ['PROJ-001'], disabled: false, mustChangePassword: false };
+  await page.route('**/api/auth/status', route => json(route, {
+    profile: 'networked', bootstrapRequired: false, authenticated: false, user: null,
+  }));
+  await page.route('**/api/v1/studio/auth/invite/preview?*', route => json(route, {
+    username: 'carla', displayName: 'Carla', inviter: 'Robert', role: 'Product',
+    projects: ['Website'], expiresAt: '2026-11-12T09:00:00Z', secondFactorRequired: false,
+  }));
+  await page.route('**/api/v1/studio/auth/invite/accept', route => json(route, {
+    profile: 'networked', bootstrapRequired: false, authenticated: true, user, secondFactorEnrollmentRequired: false,
+  }));
+  await page.goto(`/?invite=${encodeURIComponent(token)}`, { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('invitation-context')).toContainText('Robert invited Carla (carla) to Website as Product');
+  await expect(page.getByTestId('auth-gate')).toContainText('recommended second factor');
+  mkdirSync(resultDir, { recursive: true });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: join(resultDir, `invite-landing-${width}-${theme}.png`) });
+    }
+  }
+  await page.getByLabel('New password').fill('long enough password');
+  await page.getByRole('button', { name: 'Accept invitation' }).click();
+  await expect(page.getByTestId('factor-skip')).toBeVisible();
+  await expect(page.getByTestId('auth-gate')).toContainText('recommended to protect your account');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(resultDir, `invite-factor-prompt-${theme}.png`) });
+  }
 });
 
 test('a denied reload clears cached access data and the issued token', async ({ page }) => {

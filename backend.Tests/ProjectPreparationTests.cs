@@ -41,6 +41,34 @@ public sealed class ProjectPreparationTests : IDisposable
             .GetProperty("required").EnumerateArray().Select(item => item.GetString()));
     }
 
+    [Theory]
+    [InlineData("MODE", true)]
+    [InlineData("npm_token", false)]
+    [InlineData("NPM_TOKEN", false)]
+    [InlineData("api_Key", false)]
+    [InlineData("safePassword", false)]
+    [InlineData("TOKEN_HINT", true)]
+    public void Environment_secret_names_agree_between_schema_and_runtime(string name, bool accepted)
+    {
+        var yaml = $"schemaVersion: 2\nproject:\n  id: example-project\nstack: [node]\ncommands:\n  prepare: .agent-studio/prepare\nenvironment:\n  {name}: value\n";
+        var runtime = ProjectDefinitionReader.Parse(yaml).IsValid;
+        using var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepositoryRoot.Find(),
+            "docs", "app", "schemas", "project-execution.schema.json")));
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            schemaVersion = 2,
+            project = new { id = "example-project" },
+            stack = new[] { "node" },
+            commands = new { prepare = ".agent-studio/prepare" },
+            environment = new Dictionary<string, string> { [name] = "value" },
+        }));
+        var schemaAccepted = JsonSchemaSubsetValidator.Validate(
+            schema.RootElement.GetProperty("properties").GetProperty("environment"),
+            document.RootElement.GetProperty("environment")).Count == 0;
+        Assert.Equal(accepted, runtime);
+        Assert.Equal(runtime, schemaAccepted);
+    }
+
     [Fact]
     public void Generated_custom_stack_omits_empty_optional_sections()
     {

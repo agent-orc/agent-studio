@@ -156,15 +156,19 @@ test.describe('Research lightweight pipeline @billable', () => {
       expect(stepIds).toEqual([
         'pre-loop-guard',
         'pre-model-qualification',
+        'pre-prompt-enrichment',
         'pre-orchestrator-prep',
         'pre-reissue-open-items',
         'core-agent-run',
+        'post-summary-assessment',
+        'aspect-requirement-fit',
         'post-orchestrator-review',
         'post-orchestrator-decision',
       ]);
       expect(stepIds.some(step => step.includes('build'))).toBe(false);
       expect(stepIds.some(step => step.includes('lint'))).toBe(false);
-      expect(stepIds.some(step => step.startsWith('aspect-'))).toBe(false);
+      // AGT-3565: the report gets only its requirement-fit content verdict.
+      expect(stepIds.filter(step => step.startsWith('aspect-'))).toEqual(['aspect-requirement-fit']);
       expect(stepIds.some(step => step.includes('code-review'))).toBe(false);
 
       await page.addInitScript(() => {

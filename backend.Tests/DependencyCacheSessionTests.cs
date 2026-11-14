@@ -48,6 +48,43 @@ public sealed class DependencyCacheSessionTests : IDisposable
     }
 
     [Fact]
+    public void Evaluate_EmptyLockfileWithInstallMarker_IsHitWithoutNodeModules()
+    {
+        var installRoot = Path.Combine(_root, "empty-install");
+        Directory.CreateDirectory(installRoot);
+        const string lockfile = "package-lock.json";
+        File.WriteAllText(Path.Combine(installRoot, lockfile),
+            """{"lockfileVersion":3,"packages":{"":{"name":"empty"}}}""");
+        var scope = new ReviewDependencyScopeDto("", [lockfile]);
+        DependencyPreparationState.Stamp(installRoot,
+            DependencyPreparationState.ComputeLockHash(installRoot, scope.Lockfiles));
+
+        var evidence = DependencyPreparationState.Evaluate(installRoot, scope);
+
+        Assert.Equal("hit", evidence.State);
+        Assert.Equal("lock-unchanged", evidence.Reason);
+        Assert.False(Directory.Exists(Path.Combine(installRoot, "node_modules")));
+    }
+
+    [Fact]
+    public void Evaluate_PackagesInLockfile_RequireNodeModules()
+    {
+        var installRoot = Path.Combine(_root, "nonempty-install");
+        Directory.CreateDirectory(installRoot);
+        const string lockfile = "package-lock.json";
+        File.WriteAllText(Path.Combine(installRoot, lockfile),
+            """{"lockfileVersion":3,"packages":{"":{},"node_modules/example":{"version":"1.0.0"}}}""");
+        var scope = new ReviewDependencyScopeDto("", [lockfile]);
+        DependencyPreparationState.Stamp(installRoot,
+            DependencyPreparationState.ComputeLockHash(installRoot, scope.Lockfiles));
+
+        var evidence = DependencyPreparationState.Evaluate(installRoot, scope);
+
+        Assert.Equal("miss", evidence.State);
+        Assert.Equal("deps-dir-missing", evidence.Reason);
+    }
+
+    [Fact]
     public void Evaluate_MarkerHashMismatch_IsMiss()
     {
         var installRoot = Path.Combine(_root, "install-root");

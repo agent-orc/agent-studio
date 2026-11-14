@@ -1,6 +1,7 @@
 using System.Net;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
@@ -9,24 +10,28 @@ namespace AgentRunner.Tests;
 
 public sealed class OneShotJobClientTests
 {
+    private static RunnerOptions PollOptions() => new()
+    {
+        ServerUrl = "http://task-server/", RunnerId = "runner-a", RunnerName = "runner-a",
+        Hostname = "localhost", BackendName = "test", WorkDir = Path.GetTempPath(),
+        BaseBranch = "develop",
+    };
+
+    private static HttpResponseMessage EmptyClaim() => new(HttpStatusCode.OK)
+    { Content = new StringContent("null", Encoding.UTF8, "application/json") };
+
     [Fact]
     public async Task Missing_claim_route_logs_once_and_retries_after_five_minutes()
     {
         var attempts = 0;
         using var http = new HttpClient(new SequenceHandler(() =>
-            ++attempts < 3 ? new HttpResponseMessage(HttpStatusCode.NotFound)
-                : new HttpResponseMessage(HttpStatusCode.OK)
-                { Content = new StringContent("null", Encoding.UTF8, "application/json") }))
+            ++attempts < 3 ? new HttpResponseMessage(HttpStatusCode.NotFound) : EmptyClaim()))
         { BaseAddress = new Uri("http://task-server/") };
         using var client = new TaskServerClient(http, "runner-a", runnerInstanceId: "instance-a");
         using var stop = new CancellationTokenSource();
         var delays = new List<TimeSpan>();
         var logs = new List<string>();
-        var admission = new OneShotJobAdmission(new RunnerOptions {
-            ServerUrl = "http://task-server/", RunnerId = "runner-a", RunnerName = "runner-a",
-            Hostname = "localhost", BackendName = "test", WorkDir = Path.GetTempPath(),
-            BaseBranch = "develop",
-        },
+        var admission = new OneShotJobAdmission(PollOptions(),
             client, logs.Add, (interval, _) =>
             {
                 delays.Add(interval);
@@ -40,6 +45,94 @@ public sealed class OneShotJobClientTests
         Assert.Equal([TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(3)], delays);
         Assert.Single(logs, line => line.StartsWith("one-shot-job-poll-failed", StringComparison.Ordinal));
         Assert.Single(logs, line => line == "one-shot-job-poll-restored");
+    }
+
+    [Fact]
+    public async Task Missing_claim_route_is_recorded_with_first_and_last_seen_and_backoff()
+    {
+        // clock-independent: the poll reads this injected clock, never the wall clock.
+        var start = new DateTime(2026, 11, 10, 6, 0, 0, DateTimeKind.Utc);
+        var now = start;
+        var route = new OneShotClaimRouteObservation();
+        using var http = new HttpClient(new SequenceHandler(() => new HttpResponseMessage(HttpStatusCode.NotFound)))
+        { BaseAddress = new Uri("http://task-server/") };
+        using var client = new TaskServerClient(http, "runner-a", runnerInstanceId: "instance-a");
+        using var stop = new CancellationTokenSource();
+        var seen = new List<OneShotClaimRouteConditionDto?>();
+        var admission = new OneShotJobAdmission(PollOptions(), client, _ => { }, (interval, _) =>
+        {
+            seen.Add(route.Current);
+            now += interval;
+            if (seen.Count == 2) stop.Cancel();
+            return Task.CompletedTask;
+        }, route, () => now);
+
+        await admission.PollAsync(stop.Token);
+
+        var condition = Assert.IsType<OneShotClaimRouteConditionDto>(route.Current);
+        Assert.Equal(OneShotClaimRouteObservation.ClaimRouteMissing, condition.Condition);
+        Assert.Equal(404, condition.StatusCode);
+        Assert.Equal(300, condition.BackoffSeconds);
+        Assert.Equal(start, condition.FirstSeenAt);
+        Assert.Equal(start.AddMinutes(5), condition.LastSeenAt);
+        Assert.Equal(start, seen[0]!.LastSeenAt);
+    }
+
+    [Fact]
+    public async Task Recorded_condition_clears_when_the_claim_route_answers_again()
+    {
+        var attempts = 0;
+        var route = new OneShotClaimRouteObservation();
+        using var http = new HttpClient(new SequenceHandler(() =>
+            ++attempts == 1 ? new HttpResponseMessage(HttpStatusCode.NotFound) : EmptyClaim()))
+        { BaseAddress = new Uri("http://task-server/") };
+        using var client = new TaskServerClient(http, "runner-a", runnerInstanceId: "instance-a");
+        using var stop = new CancellationTokenSource();
+        var seen = new List<OneShotClaimRouteConditionDto?>();
+        var admission = new OneShotJobAdmission(PollOptions(), client, _ => { }, (_, _) =>
+        {
+            seen.Add(route.Current);
+            if (seen.Count == 2) stop.Cancel();
+            return Task.CompletedTask;
+        }, route);
+
+        await admission.PollAsync(stop.Token);
+
+        Assert.NotNull(seen[0]);
+        Assert.Null(seen[1]);
+        Assert.Null(route.Current);
+    }
+
+    [Fact]
+    public void Standalone_task_server_refusal_is_its_own_condition_and_other_failures_are_none()
+    {
+        Assert.Equal(OneShotClaimRouteObservation.StandaloneTaskServerRequired, OneShotClaimRouteObservation.Classify(
+            new TaskServerException(409, "Networked one-shot execution requires the standalone Task Server.")));
+        Assert.Equal(OneShotClaimRouteObservation.ClaimRouteMissing,
+            OneShotClaimRouteObservation.Classify(new TaskServerException(404, "not found")));
+        Assert.Null(OneShotClaimRouteObservation.Classify(new TaskServerException(401, "client-unknown")));
+        Assert.Null(OneShotClaimRouteObservation.Classify(new HttpRequestException("refused")));
+    }
+
+    [Fact]
+    public void Recorded_condition_travels_with_the_host_telemetry_report()
+    {
+        // clock-independent: these fixed instants are only serialized and compared to themselves.
+        var at = new DateTime(2026, 11, 10, 6, 0, 0, DateTimeKind.Utc);
+        var route = new OneShotClaimRouteObservation();
+        Assert.True(route.Observe(OneShotClaimRouteObservation.ClaimRouteMissing, 404, "not found",
+            TimeSpan.FromMinutes(5), at));
+        Assert.False(route.Observe(OneShotClaimRouteObservation.ClaimRouteMissing, 404, "not found",
+            TimeSpan.FromMinutes(5), at.AddMinutes(5)));
+        var sample = new HostTelemetrySample(at, 10, 0.5, null, null, null, null, null, null, null, null, 4, 0);
+
+        var json = JsonSerializer.Serialize(RunnerCapabilityProbe.Telemetry(sample, oneShotClaimRoute: route.Current));
+        var read = JsonSerializer.Deserialize<HostTelemetrySnapshotDto>(json);
+
+        Assert.Equal(new OneShotClaimRouteConditionDto(OneShotClaimRouteObservation.ClaimRouteMissing,
+            at, at.AddMinutes(5), 300, 404, "not found"), read?.OneShotClaimRoute);
+        Assert.True(route.Clear());
+        Assert.Null(RunnerCapabilityProbe.Telemetry(sample, oneShotClaimRoute: route.Current)?.OneShotClaimRoute);
     }
 
     [Fact]

@@ -104,4 +104,43 @@ describe('HostReleaseIdentityComponent', () => {
     expect(fixture.componentInstance.commit()).toBeNull();
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-release-commit"]')).toBeNull();
   });
+
+  /** AGT-3648 S4-F12: same version, older develop commit. */
+  it('marks a build that differs from Stable with the Stable commit', () => {
+    TestBed.configureTestingModule({ imports: [HostReleaseIdentityComponent], providers: [provideZonelessChangeDetection()] });
+    const fixture = TestBed.createComponent(HostReleaseIdentityComponent);
+    fixture.componentRef.setInput('host', {
+      ...HOST,
+      release: { releaseId: '20261105T090000Z-review-f947f2b1c3d4', version: '0.9.5', commit: 'f947f2b1c3d4' },
+      releaseDrift: { ...HOST.releaseDrift!, state: 'differs', behindByHours: null, behindForHours: 1, alarmDue: false,
+        reason: 'The host runs commit f947f2b while Stable runs 3d61e8b, both as version 0.9.5.' },
+    });
+    fixture.componentRef.setInput('stableRelease', { version: '0.9.5', commit: '3d61e8b0c4ab' });
+    fixture.componentRef.setInput('testIdPrefix', 'remote-host-release');
+    fixture.componentRef.setInput('now', Date.parse('2026-09-15T08:00:30Z'));
+    fixture.detectChanges();
+
+    const marker = fixture.nativeElement.querySelector('[data-testid="remote-host-release-drift"]');
+    expect(marker?.textContent).toContain('differs from Stable 3d61e8b');
+    expect(marker?.getAttribute('data-tone')).toBe('calm');
+    expect(fixture.componentInstance.tooltip()).toContain('Stable runs 0.9.5 (3d61e8b)');
+  });
+
+  it('reads a host without a comparable commit as release unknown', () => {
+    TestBed.configureTestingModule({ imports: [HostReleaseIdentityComponent], providers: [provideZonelessChangeDetection()] });
+    const fixture = TestBed.createComponent(HostReleaseIdentityComponent);
+    fixture.componentRef.setInput('host', {
+      ...HOST,
+      release: { releaseId: '0.9.5+sha.unknown', version: '0.9.5' },
+      releaseDrift: { ...HOST.releaseDrift!, state: 'unknown', behindByHours: null, behindForHours: null, alarmDue: false,
+        release: { releaseId: '0.9.5+sha.unknown', version: '0.9.5' },
+        reason: 'The host reported no commit, so its release cannot be confirmed as Stable.' },
+    });
+    fixture.componentRef.setInput('testIdPrefix', 'remote-host-release');
+    fixture.componentRef.setInput('now', Date.parse('2026-09-15T08:00:30Z'));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-release-drift"]')?.textContent)
+      .toContain('release unknown');
+  });
 });

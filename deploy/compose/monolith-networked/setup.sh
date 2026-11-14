@@ -151,6 +151,7 @@ EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
 printf 'Secret store key: %s\nCopy it to a safe place outside the data backups; a restore needs it.\n' "$key_file"
 printf 'Backup key: %s\nThe API backs up every 6 hours with it; escrow a copy apart from the backups and the secret store key.\n' "$backup_key_dir/backup.key"
+printf 'Host CA: %s\nEscrow the private key and its .pub file apart from the data backups. A restore needs this CA for enrolled hosts.\n' "$host_ca_dir/ca"
 echo 'Backups stay on this host until an off-host target (STUDIO_BACKUP_TARGET) is set; see docs/operations/setup/studio-backup-restore.md.'
 if [ "$edge" = cloudflare ]; then
   echo 'Cloudflare mode: create an A record only (no AAAA) and set SSL/TLS mode Full (strict).'

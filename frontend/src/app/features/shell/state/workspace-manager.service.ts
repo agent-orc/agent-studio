@@ -53,7 +53,6 @@ export class WorkspaceManagerService {
   }
 
   openProjectOnboard(workspaceId: string): void {
-    this.prime();
     this.onboardWorkspaceId.set(workspaceId);
     this.onboardProjectOpen.set(true);
   }

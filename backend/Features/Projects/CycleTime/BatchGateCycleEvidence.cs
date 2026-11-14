@@ -31,7 +31,11 @@ public sealed class BatchGateCycleEvidence
         foreach (var manifest in manifests)
         {
             runs[manifest.BatchId] = store.ListRuns(manifest.BatchId);
-            try { states[manifest.BatchId] = store.LatestState(manifest.BatchId); }
+            try
+            {
+                var state = store.LatestState(manifest.BatchId);
+                states[manifest.BatchId] = state.Phase == BatchPhase.Unknown ? null : state;
+            }
             catch (Exception ex) when (ex is DirectoryNotFoundException or InvalidOperationException)
             { states[manifest.BatchId] = null; }
         }

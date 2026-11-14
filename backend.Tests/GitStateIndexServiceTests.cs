@@ -1076,13 +1076,16 @@ public sealed class GitStateIndexServiceTests : IDisposable
             Interlocked.Increment(ref calls);
             throw new IOException("fake Git failure");
         }
+        // Keep the independent safety sweep outside this retry-only observation window.
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
             new TaskListGitProjectionCache(), Fail, _ => { }, NullLogger.Instance,
-            FastOptions() with { MaxRetries = 2 }, NewClock());
+            // This test covers immediate retries, not the independent safety sweep.
+            // A loaded host can delay the final assertion past the sweep cadence.
+            FastOptions() with { MaxRetries = 2, SweepInterval = TimeSpan.FromHours(1) }, NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
-            await WaitUntilAsync(() => Volatile.Read(ref calls) == 3);
+            await WaitUntilAsync(() => Volatile.Read(ref calls) >= 3);
             await Task.Delay(250);
             Assert.Equal(3, Volatile.Read(ref calls));
         }

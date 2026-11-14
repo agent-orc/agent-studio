@@ -163,9 +163,12 @@ public static class GateEnvironmentRetryFactsReader
     /// same delivery SHA rather than sent through a new review. A fetch whose
     /// credential was missing or refused (2 November 2026) is replayed too; a
     /// 403 reads like a transport fault but is retried like the rest.
+    /// AGT-3695: a publication the integration line lost (the approved merge
+    /// is not on the lane) is replayed too; the reviewed delivery is unchanged.
     /// </summary>
     public static bool IsGateEnvironmentFailure(TaskIntegrationStatus? integration)
-        => integration?.Failure?.Code == AcceptedIntegrationFailureCodes.GitCredentialUnavailable
+        => integration?.Failure is { Code: AcceptedIntegrationFailureCodes.IntegrationPushBlocked, ReplayAvailable: true }
+           || integration?.Failure?.Code == AcceptedIntegrationFailureCodes.GitCredentialUnavailable
            || (integration?.Failure?.Code is
                    AcceptedIntegrationFailureCodes.GateEnvironmentFailure
                    or AcceptedIntegrationFailureCodes.GateInterrupted

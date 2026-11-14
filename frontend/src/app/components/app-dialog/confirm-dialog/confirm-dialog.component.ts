@@ -63,8 +63,21 @@ export class ConfirmDialogComponent {
     return required.some(v => v.trim().toLowerCase() === typed);
   });
 
+  /** Live value of the written-reason input (empty when not required). */
+  readonly reasonDraft = signal('');
+
+  /** True when no reason is required, or the trimmed reason is long enough. */
+  readonly reasonSatisfied = computed(() => {
+    const gate = this.state()?.requireReason;
+    return !gate || this.reasonDraft().trim().length >= gate.minLength;
+  });
+
+  /** Both confirmation gates; drives the confirm button and Enter. */
+  readonly canConfirm = computed(() => this.typedConfirmSatisfied() && this.reasonSatisfied());
+
   @ViewChild('confirmBtn') private confirmBtnRef?: ElementRef<HTMLButtonElement>;
   @ViewChild('typedInput') private typedInputRef?: ElementRef<HTMLInputElement>;
+  @ViewChild('reasonInput') private reasonInputRef?: ElementRef<HTMLTextAreaElement>;
 
   /** Tracks the previously-focused element so we can restore focus on close. */
   private previousFocus = signal<HTMLElement | null>(null);
@@ -80,8 +93,9 @@ export class ConfirmDialogComponent {
         // it when present (so the operator can type immediately); otherwise
         // focus the confirm button as before.
         this.typedDraft.set('');
+        this.reasonDraft.set('');
         queueMicrotask(() => {
-          const input = this.typedInputRef?.nativeElement;
+          const input = this.typedInputRef?.nativeElement ?? this.reasonInputRef?.nativeElement;
           if (input) input.focus();
           else this.confirmBtnRef?.nativeElement.focus();
         });
@@ -109,8 +123,8 @@ export class ConfirmDialogComponent {
   }
 
   onAccept(): void {
-    if (!this.typedConfirmSatisfied()) return;
-    this.service.accept();
+    if (!this.canConfirm()) return;
+    this.service.accept(this.reasonDraft());
   }
 
   onCancel(): void {
@@ -147,7 +161,7 @@ export class ConfirmDialogComponent {
     event.stopPropagation();
     // A type-to-confirm gate must be satisfied before Enter completes the
     // prompt — otherwise the operator could blow past the safety input.
-    if (!this.typedConfirmSatisfied()) return;
-    this.service.accept();
+    if (!this.canConfirm()) return;
+    this.service.accept(this.reasonDraft());
   }
 }

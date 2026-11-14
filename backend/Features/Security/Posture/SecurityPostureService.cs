@@ -79,8 +79,8 @@ public sealed class SecurityPostureService(
             Integrity = auditMonitor.Integrity,
             Forwarding = auditMonitor.Forwarding,
             OpenAuditAlerts = OpenAlerts(),
-            RecentAudit = store.ControlPlaneAudit.ReadNewest(
-                entry => entry.At >= since && SecurityPostureProjection.IsAnomaly(entry), AuditScanLimit),
+            RecentAudit = store.ControlPlaneAudit.ReadNewestSince(
+                since, SecurityPostureProjection.IsAnomaly, AuditScanLimit),
             RecentSecretAudit = secretAudit.Read(null, AuditScanLimit),
             Kills = kills.Kills,
             Drills = kills.Drills,

@@ -131,6 +131,31 @@ def copy_release(host, path, digest, destination):
     run(["scp", "-q", "--", path, f"{target}:{destination}"])
 
 
+def work_state(response):
+    """Batch facts for the deploy quiet point, from the operator triage view."""
+    projects = response.get("projects")
+    if not isinstance(projects, list):
+        raise AdapterError("triage response has no projects")
+    result = {"formedBatches": [], "runningGates": [], "flights": [], "pendingPushes": []}
+    for project in projects:
+        for flight in project.get("flights", []):
+            name = f"{project['project']}/{flight['batchId']}"
+            result["formedBatches"].append(name)
+            runs = (flight.get("state") or {}).get("runs") or []
+            started = [item.get("startedAtUtc") for item in runs
+                       if isinstance(item, dict) and item.get("startedAtUtc") and not item.get("finishedAtUtc")]
+            result["flights"].append({"id": name, "phase": flight.get("phase"),
+                                      "startedAtUtc": started[-1] if started else None})
+        # A flight covers active gate work; the preflight also checks pending pushes.
+        result["runningGates"].extend(f"{project['project']}/{member['taskKey']}"
+                                      for member in project.get("members", [])
+                                      if member.get("status") == "in-batch")
+        result["pendingPushes"].extend({"jobId": f"{project['project']}/{push.get('jobId')}",
+                                        "sinceUtc": push.get("sinceUtc")}
+                                       for push in project.get("pendingPushes", []))
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
@@ -145,17 +170,19 @@ def main():
             result = build(config, args.action, args.args[0])
         elif args.action == "work-state":
             response = json.loads(run(["studio-op", "triage", "--json"]))
-            projects = response.get("projects")
-            if not isinstance(projects, list):
-                raise AdapterError("triage response has no projects")
-            result = {"formedBatches": [], "runningGates": []}
-            for project in projects:
-                result["formedBatches"].extend(f"{project['project']}/{flight['batchId']}"
-                                               for flight in project.get("flights", []))
-                # A flight covers active gate work; the preflight also checks pending pushes.
-                result["runningGates"].extend(f"{project['project']}/{member['taskKey']}"
-                                              for member in project.get("members", [])
-                                              if member.get("status") == "in-batch")
+            result = work_state(response)
+        elif args.action in ("host-drain", "host-status", "host-resume"):
+            # AGT-3647: the deploy drain of one runner identity the manifest names.
+            if len(args.args) != 2:
+                raise AdapterError(f"{args.action} needs host id and client id")
+            host = next((h for h in config["hosts"] if h["id"] == args.args[0]), None)
+            if host is None or args.args[1] not in host.get("drainClients", []):
+                raise AdapterError("client id is not a drain client of that host")
+            response = json.loads(run(["studio-op", "host", args.action.removeprefix("host-"),
+                                       args.args[1], "--json"]))
+            if response.get("ok") is not True:
+                raise AdapterError(f"studio-op host {args.action} refused {args.args[1]}")
+            result = response
         else:
             if not args.args:
                 raise AdapterError("host action needs host id")

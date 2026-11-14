@@ -194,7 +194,7 @@ test.describe('runner queue dependency precedence', () => {
     await expect(gatedCard.getByTestId('task-live-current')).not.toContainText('runner slot');
     await expect(gatedCard.getByTestId('task-live-current')).not.toContainText('position 4');
     await expect(gatedCard.getByTestId('task-card-waiting-on')).toHaveCount(0);
-    await expect(gatedCard.getByTestId('task-live-next')).toContainText('Agent execution → Requirement fit');
+    await expect(gatedCard.getByTestId('task-live-next')).toContainText('Dependency resolution → Runner pickup');
     await expect(firstCard.getByTestId('task-live-current')).toContainText('position 1');
     await expect(secondCard.getByTestId('task-live-current')).toContainText('position 2');
 
@@ -215,7 +215,7 @@ test.describe('runner queue dependency precedence', () => {
       .toContainText('Queued for runner · position 3');
     await expect(gatedCard.getByTestId('task-live-current')).not.toContainText('waits for completion');
     await expect(gatedCard.getByTestId('task-card-waiting-on')).toHaveCount(0);
-    await expect(gatedCard.getByTestId('task-live-next')).toContainText('Agent execution → Requirement fit');
+    await expect(gatedCard.getByTestId('task-live-next')).toContainText('Runner pickup → Agent execution → Requirement fit');
     await setTheme(page, 'light');
     await gatedCard.screenshot({
       path: join(RESULTS, 'runner-queue-dependency-fulfilled--light--mocked.png'),
