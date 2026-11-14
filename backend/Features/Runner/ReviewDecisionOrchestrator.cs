@@ -241,6 +241,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly MonolithOrchestrationStore? _orchestration;
     private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
     private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly ReportContentReviewService _reportReview;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -300,7 +301,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         MonolithOrchestrationStore? orchestration = null,
         TimeProvider? timeProvider = null,
         ReviewInputDecisionGateway? reviewInputDecisions = null,
-        QuotaAdmissionService? quotaAdmission = null)
+        QuotaAdmissionService? quotaAdmission = null,
+        ReportContentReviewService? reportReview = null)
     {
         _scanner = scanner;
         _stateMachine = stateMachine;
@@ -342,6 +344,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _orchestration = orchestration;
         _reviewInputDecisions = reviewInputDecisions;
         _quotaAdmission = quotaAdmission;
+        _reportReview = reportReview
+            ?? new ReportContentReviewService(aspectRunner, configuration, projectSettings, attemptAuthority);
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -1567,7 +1571,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             review = new ConceptWorkbenchReview(
                 false, null, null, null,
-                ["Dossier placement did not publish a source document."]);
+                ["Dossier placement has no record for this card. A concept Dossier is placed by the reviewed task-branch merge of a Remote delivery; local concept runs are not admitted."]);
         }
         else if (string.IsNullOrWhiteSpace(repositoryRoot) || !Directory.Exists(repositoryRoot))
         {
@@ -1590,18 +1594,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ProjectPipelineOrder.Apply(PipelineCatalogue.Concept, settings),
             entry.Name,
             current.Id);
-        var now = DateTime.UtcNow;
-        _pipelineLog?.RecordStep(current.FolderPath, new PipelineStepExecution
-        {
-            StepId = PipelineCatalogue.ConceptReviewStepId,
-            Kind = StepKind.Orchestrator,
-            Status = review.IsComplete ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
-            StartedAt = now,
-            CompletedAt = now,
-            Verdict = review.IsComplete ? "concept-complete" : "concept-incomplete",
-            VerdictSummary = review.Summary,
-            Reason = review.IsComplete ? null : review.Summary,
-        });
+        ConceptSightReviewHandoff.Record(_pipelineLog, _chatLog, _logger, current, review, stored);
+        if (review.IsComplete)
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(current.FolderPath));
 
         if (!review.IsComplete)
         {
@@ -1627,27 +1622,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return Task.CompletedTask;
         }
 
-        SteerPendingMarker.Write(current.FolderPath, new SteerPendingRecord
-        {
-            WaitStartedAt = now,
-            Kind = SteerPendingKinds.ConceptSightReview,
-            Question = "Review the concept Dossier, then promote its implementation cards or finish with no implementation.",
-            CliType = current.CliType,
-        }, _logger);
-        _pipelineLog?.RecordStep(current.FolderPath, new PipelineStepExecution
-        {
-            StepId = PipelineCatalogue.ConceptSightReviewGateStepId,
-            Kind = StepKind.Orchestrator,
-            Status = PipelineStepStatus.Running,
-            StartedAt = now,
-            Verdict = "awaiting-sight-review",
-            VerdictSummary = "Concept delivered successfully; awaiting human sight review.",
-        });
-        _chatLog.Append(
-            current,
-            OrchestratorMessageKind.Decision,
-            $"Concept delivered: `{stored!.RepoRelativeEntrypoint}`. Awaiting sight review; NeedsInput is expected and is not an escalation.");
-
         var move = GuardedMoveJob(
             current.Id, TaskStates.HumanReview, entry.Path,
             transitionCause: LaneChangeCauses.ReviewVerdict, transitionDetail: "concept-sight-review");
@@ -1662,7 +1636,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _statusSnapshot.RecordAccept();
             _logger.LogInformation(
                 "concept_delivered project={Project} job={JobId} path={Path} outcome=success-awaiting-sight-review",
-                entry.Name, current.Id, stored.RepoRelativeEntrypoint);
+                entry.Name, current.Id, stored!.RepoRelativeEntrypoint);
         }
         return Task.CompletedTask;
     }
@@ -2353,7 +2327,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
     /// <summary>
     /// Completes a planning or research report without entering the code-review
-    /// fan-out. Research has one strict primary artifact:
+    /// fan-out: only the requirement-fit aspect reviews the report, which gives
+    /// completion its content verdict (AGT-3565). Research has one strict primary artifact:
     /// <c>results/report.html</c>. Planning retains compatibility with existing
     /// result formats but still uses the same lightweight pipeline. A missing
     /// primary result enters the shared bounded completion-gate reissue path.
@@ -2379,34 +2354,45 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
+        var isResearch = TaskModes.Normalize(current.Mode) == TaskModes.Research;
+        var hasPrimaryResult = isResearch
+            ? ReportDeliverable.HasResearchReport(current.FolderPath)
+            : HasResultsArtifacts(current.FolderPath);
         var failedSummary = pipelineRecord?.Steps.FirstOrDefault(step =>
             step.StepId == PipelineCatalogue.SummaryAssessmentStepId
             && step.Status == PipelineStepStatus.Failed);
         if (failedSummary is not null)
         {
-            if (!SummaryGenerationService.TryRestoreAgentReportStatus(current, out var source))
+            if (SummaryGenerationService.TryRestoreAgentReportStatus(current, out var source))
+            {
+                EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.ResultSummaryPending,
+                    TimelineActors.System,
+                    "Summary assessment failed; review uses the agent's " + source + ".");
+            }
+            else if (hasPrimaryResult)
+            {
+                // AGT-3565: a degraded summary must not strand a delivered
+                // report. The report review reads results/ directly.
+                EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.ResultSummaryPending,
+                    TimelineActors.System,
+                    "Summary assessment failed and no agent status could be recovered; "
+                    + "the report review reads results/ directly.");
+            }
+            else
             {
                 await EscalatePostProcessingFailureAsync(workspace, entry, current,
                     "post-summary-assessment failed (" + (failedSummary.Reason ?? "no reason recorded")
                     + ") and no agent status or final message could be recovered.", ct);
                 return;
             }
-            EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.ResultSummaryPending,
-                TimelineActors.System,
-                "Summary assessment failed; review uses the agent's " + source + ".");
         }
-        var isResearch = TaskModes.Normalize(current.Mode) == TaskModes.Research;
-        var primaryReport = Path.Combine(current.FolderPath, "results", "report.html");
-        var hasPrimaryResult = isResearch
-            ? HasPrimaryResearchHtml(primaryReport)
-            : HasResultsArtifacts(current.FolderPath);
 
         if (!hasPrimaryResult)
         {
             var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
             var maxReissues = ConfiguredMaxReissues(entry.Name);
             var requiredArtifact = isResearch
-                ? "a valid HTML document at results/report.html"
+                ? ReportDeliverable.ResearchRequirement
                 : "a primary artifact under results/";
             var gate = new CompletionGate.Decision
             {
@@ -2423,7 +2409,17 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
 
         var resultRef = isResearch ? "results/report.html" : "results/";
-        var reason = $"Primary report is ready at {resultRef}; code gates are not applicable.";
+        // AGT-3565: the review step gives the report its content verdict, the
+        // requirement-fit aspect that completion reads. Human review decides
+        // on the report whatever the verdict; completion refuses without a pass.
+        _statusSnapshot.SetCurrentStep(
+            entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
+        var contentReview = await _reportReview.RunAsync(current, entry.Name, ct);
+        if (contentReview.QuotaDeferred) return;
+        var reason = $"Primary report is ready at {resultRef}; code gates are not applicable. "
+            + (contentReview.Ran
+                ? contentReview.Reason
+                : contentReview.Reason + " Completion needs a requirement-fit verdict; run Review results.");
         RecordOrchestratorReviewStep(
             current.FolderPath, PipelineStepStatus.Passed, ReviewVerdictComplete, reason);
         RecordOrchestratorDecisionStep(
@@ -2436,27 +2432,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             workspace,
             entry,
             pending,
-            "(deterministic lightweight report validation)",
+            "(lightweight report validation and requirement-fit review)",
             resultRef,
             new OrchestratorDecisionVerdict(OrchestratorDecisionAction.AcceptAsDone, reason),
             cliBinary);
         _statusSnapshot.RecordAccept();
-        await Task.CompletedTask;
-    }
-
-    private static bool HasPrimaryResearchHtml(string path)
-    {
-        if (!File.Exists(path)) return false;
-        try
-        {
-            var content = File.ReadAllText(path);
-            return content.Contains("<html", StringComparison.OrdinalIgnoreCase)
-                && content.Contains("</html>", StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private async Task ProcessDoneAsync(
@@ -7345,7 +7325,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return $"{concerns} of {report.Verdicts.Count} {noun} flagged";
     }
 
-    private static string LoadStatusSummary(string folderPath)
+    internal static string LoadStatusSummary(string folderPath)
     {
         var statusPath = Path.Combine(folderPath, "status.md");
         if (!File.Exists(statusPath)) return string.Empty;
@@ -8196,8 +8176,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     }
 
     private static (string TaskBody, string RecentLog) LoadTaskContext(PendingDecision pending)
+        => LoadTaskContext(pending.Job.FolderPath);
+
+    internal static (string TaskBody, string RecentLog) LoadTaskContext(string folder)
     {
-        var folder = pending.Job.FolderPath;
         var promptPath = Path.Combine(folder, "prompt.md");
         var task = File.Exists(promptPath)
             ? AgentStudio.Shared.BoundedFileRead.ReadAllTextOrNull(promptPath, 256 * 1024) ?? string.Empty

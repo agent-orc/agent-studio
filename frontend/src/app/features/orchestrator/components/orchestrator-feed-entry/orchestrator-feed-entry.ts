@@ -16,6 +16,7 @@ export class OrchestratorFeedEntryComponent {
   private readonly projectLookup = inject(ProjectLookupService);
 
   readonly entry = input.required<OrchestratorLogEntry>();
+  readonly summary = input('');
   readonly projectFallback = input('Workspace');
   readonly selected = input(false);
   readonly selectRequest = output<OrchestratorLogEntry>();
@@ -36,12 +37,19 @@ export class OrchestratorFeedEntryComponent {
     this.openTaskRequest.emit(this.entry());
   }
 
+  dossierHref(entry: OrchestratorLogEntry): string {
+    const project = entry.project || this.projectFallback();
+    const id = this.projectLookup.getProjectDisplay(project).id ?? project.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    return `#/projects/${encodeURIComponent(id)}/workbenches/${encodeURIComponent(entry.dossierId || '')}`;
+  }
+
   kindLabel(kind: string): string {
     return kind === 'alert' ? 'Alert'
       : kind === 'decision' ? 'Decision'
       : kind === 'action' ? 'Action'
       : kind === 'observation' ? 'Observation'
       : kind === 'intervention' ? 'Intervention'
+      : kind === 'owner_action' ? 'Owner'
       : kind;
   }
 

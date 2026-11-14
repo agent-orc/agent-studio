@@ -225,7 +225,9 @@ public sealed class WikiContentCacheTests : IDisposable
         File.WriteAllText(added, "# External\n");
         watcher.HandleWikiChange(ProjectName, added);
 
-        Assert.True(await rebuilt.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+        // The callback performs a full docs snapshot rebuild on a thread-pool
+        // timer. A loaded gate runner can delay that timer beyond two seconds.
+        Assert.True(await rebuilt.Task.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Equal(2, _cache.Fills);
         Assert.Equal(1, _cache.WatcherInvalidations);
         Assert.Contains(

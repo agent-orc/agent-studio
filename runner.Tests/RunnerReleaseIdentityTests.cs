@@ -128,6 +128,48 @@ public sealed class RunnerReleaseIdentityTests
     }
 
     /// <summary>
+    /// AGT-3689: the review image copied the release folder without a release
+    /// identity, so the host reported "0.9.5+sha.unknown" and no commit. The
+    /// folder's COMMIT marker is the deploy's own record of the source revision.
+    /// </summary>
+    [Fact]
+    public void Describe_reads_the_commit_marker_of_the_release_folder()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "release-marker-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, RunnerReleaseIdentity.CommitMarkerFile), "f947f2b1c3d4\n");
+            var identity = RunnerReleaseIdentity.Describe(
+                "0.9.5+sha.unknown",
+                informationalVersion: "0.9.5+sha.unknown",
+                configuredCommit: "",
+                configuredBuiltAt: "",
+                configuredImageRef: "",
+                releaseDirectory: folder);
+
+            Assert.Equal("f947f2b1c3d4", identity.Commit);
+            Assert.Equal("0.9.5", identity.Version);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Describe_reports_only_a_digest_pinned_review_image()
+    {
+        var digest = new string('a', 64);
+        Assert.Equal($"registry.example/review@sha256:{digest}", RunnerReleaseIdentity.Describe(
+            "local", configuredCommit: "", configuredBuiltAt: "",
+            configuredImageRef: $" registry.example/review@sha256:{digest} ").ImageRef);
+        Assert.Null(RunnerReleaseIdentity.Describe(
+            "local", configuredCommit: "", configuredBuiltAt: "",
+            configuredImageRef: "registry.example/review:latest").ImageRef);
+    }
+
+    /// <summary>
     /// A host built outside the release pipeline reports what it knows. An
     /// invented build stamp would be read as drift evidence, so the field stays
     /// null and the server falls back to a version ordering.

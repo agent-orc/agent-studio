@@ -35,7 +35,10 @@ public sealed record PersistedReviewSlot(
     string? WorkerBinaryPath = null,
     bool ReducedReportSubmitted = false,
     int ConsecutiveReportBadGateway = 0,
-    int ConsecutiveReducedReportFailures = 0)
+    int ConsecutiveReducedReportFailures = 0,
+    // AGT-3647: how often this attempt's worker was started again after it
+    // died without a result. Bounded by DurableReviewProcess.MaximumWorkerRelaunches.
+    int WorkerRelaunches = 0)
 {
     public string AttemptId => Claim.Attempt?.AttemptId
                                ?? throw new InvalidDataException("Persisted review claim has no attempt.");

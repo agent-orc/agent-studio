@@ -8,6 +8,37 @@ namespace AgentStudio.Tests;
 
 public sealed class BuildTestGateDiagnosisWorkflowTests : IDisposable
 {
+    [Fact]
+    public void Parsed_test_failure_overrides_unclassified_history_when_baseline_passes_and_clean_repeat_fails()
+    {
+        var first = new AgentStudio.TaskServer.Contracts.DeliveryFailureDiagnosisResult(
+            AgentStudio.TaskServer.Contracts.DeliveryFailureDiagnosis.FirstOccurrence, 0.2,
+            ["fingerprint=unavailable", "baseline=green", "clean-repeat=red"]);
+        var candidate = ParsedRed();
+        var green = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 1, "", "", false, false);
+
+        var diagnosis = BuildTestGateRunner.ConfirmParsedTestDiagnosis(first, candidate, green, ParsedRed());
+
+        Assert.Equal(AgentStudio.TaskServer.Contracts.DeliveryFailureDiagnosis.Product, diagnosis.Classification);
+        Assert.True(diagnosis.ChargesCard);
+        Assert.Equal(first, BuildTestGateRunner.ConfirmParsedTestDiagnosis(first, candidate, ParsedRed(), ParsedRed()));
+        Assert.Equal(first, BuildTestGateRunner.ConfirmParsedTestDiagnosis(first,
+            candidate with { Processes = [] }, green, ParsedRed()));
+    }
+
+    private static BuildTestGateResult ParsedRed()
+        => new(BuildTestGateVerdict.Fail, 1, 1, "", "dotnet test exit 1", false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Code,
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                Command = "dotnet test backend.Tests/OrchestratorApi.Tests.csproj",
+                ExitCode = 1,
+                TestReport = new GateTestReport(GateTestCounts.None,
+                    ["PersonaEndpointsTests.Activation_needs_a_step_up"]),
+            }],
+        };
+
     private readonly string _root = Path.Combine(Path.GetTempPath(),
         "gate-diagnosis-" + Guid.NewGuid().ToString("N"));
     private string Repository => Path.Combine(_root, "repo");

@@ -23,10 +23,12 @@ public static class BatchIsolationGuardPolicy
         string? owningBatchId,
         bool pendingActive,
         BatchPhase? latestPhase,
-        bool memberLeftIsolation)
+        bool memberLeftIsolation,
+        bool flightActive = false)
         => !string.IsNullOrWhiteSpace(owningBatchId)
            && pendingActive
            && latestPhase == BatchPhase.Red
+           && flightActive
            && !memberLeftIsolation;
 
     /// <summary>
@@ -61,7 +63,8 @@ public static class BatchIsolationGuardPolicy
 /// Collects the facts of <see cref="BatchIsolationGuardPolicy"/> for one card
 /// from its batch ownership marker and the batch gate store.
 /// </summary>
-public sealed class BatchIsolationGuard(BatchGateStore store)
+public sealed class BatchIsolationGuard(BatchGateStore store, BatchGatePilotService? pilot = null,
+    Func<string, bool>? activeFlight = null)
 {
     /// <summary>Statuses with which an isolation finding takes a member out of the running isolation.</summary>
     private static readonly HashSet<string> LeavingStatuses = new(StringComparer.Ordinal) { "proven-red", "superseded" };
@@ -96,7 +99,8 @@ public sealed class BatchIsolationGuard(BatchGateStore store)
             && finding.RunAttempt == subject.RunAttempt
             && LeavingStatuses.Contains(finding.Status));
 
-        return BatchIsolationGuardPolicy.IsIsolating(batchId, pendingActive, phase, left)
+        var active = activeFlight?.Invoke(batchId) ?? pilot?.IsIsolationFlightActive(batchId) ?? false;
+        return BatchIsolationGuardPolicy.IsIsolating(batchId, pendingActive, phase, left, active)
             ? new BatchIsolationMembership(subject.Project, subject.TaskKey, batchId)
             : null;
     }

@@ -296,9 +296,12 @@ public sealed partial class BuildTestGateRunner
         var shardOutput = new RingOutput(MaxOutputLines);
         shardOutput.AppendLine($"# shard {shard.Index + 1}/{plan.Count} of {planned.Suite.Id}: {shard.Classes.Count} class(es)" +
                                (shard.Index == plan.ComplementIndex ? " plus every class outside the other shards" : ""));
+        var watch = new GateShardHangWatch(planned.Suite.Id, shard.Index, plan.Count, shard.Classes,
+            ShardIdleBoundForTesting ?? GateShardHangPolicy.IdleBound(shard.EstimatedMs),
+            ShardCompletedGraceForTesting ?? GateShardHangPolicy.CompletedGrace);
         var process = await RunShellAsync(
             workingDirectory, GateShardCommand.ShardInvocation(planned.Command, settings), command.Shell,
-            budget, gateClock.Elapsed, shardOutput, ct, TestShardPhase, projectPreparation).ConfigureAwait(false);
+            budget, gateClock.Elapsed, shardOutput, ct, TestShardPhase, projectPreparation, watch).ConfigureAwait(false);
         var processes = new List<BuildTestGateProcessEvidence> { process };
         var report = process.TestReport;
         var processOutput = $"{process.StandardOutput}\n{process.StandardError}";
@@ -318,6 +321,7 @@ public sealed partial class BuildTestGateRunner
                 ClassDurationsMs = classDurations,
                 Rerun = rerun,
                 Detail = detail,
+                Hang = process.ShardHang,
             };
         ShardRun Infrastructure(BuildTestGateFailureKind failureKind, string detail, string message)
         {
@@ -326,6 +330,9 @@ public sealed partial class BuildTestGateRunner
                 processes, shardOutput, [], [], classDurations);
         }
 
+        if (process.ShardHang is { } hang)
+            return Infrastructure(BuildTestGateFailureKind.Environment, GateShardDetails.InfrastructureHang,
+                hang.Summary());
         var green = process.ExitCode == 0 && CompletedNormally(process);
         var kind = green ? BuildTestGateFailureKind.None : ClassifyFailure(process);
         if (kind is not (BuildTestGateFailureKind.None or BuildTestGateFailureKind.Code))
@@ -430,7 +437,8 @@ public sealed partial class BuildTestGateRunner
         BuildTestGateFailureKind kind,
         IReadOnlyList<ShardRun> runs)
     {
-        var lead = runs.FirstOrDefault(run => run.Evidence.Outcome == GateShardOutcomes.Failed)
+        var lead = runs.FirstOrDefault(run => run.Evidence.Hang is not null)
+            ?? runs.FirstOrDefault(run => run.Evidence.Outcome == GateShardOutcomes.Failed)
             ?? runs.FirstOrDefault(run => run.Evidence.Outcome == GateShardOutcomes.Infrastructure);
         var leadProcess = lead?.Processes.FirstOrDefault();
         var red = runs.Where(run => run.Evidence.Outcome is GateShardOutcomes.Failed or GateShardOutcomes.Infrastructure)
@@ -447,7 +455,8 @@ public sealed partial class BuildTestGateRunner
             StartedAtUtc = startedAt,
             CompletedAtUtc = DateTimeOffset.UtcNow,
             ExitCode = kind == BuildTestGateFailureKind.None ? 0 : leadProcess?.ExitCode,
-            TimedOut = kind == BuildTestGateFailureKind.Timeout && leadProcess?.TimedOut == true,
+            TimedOut = leadProcess?.ShardHang is not null
+                       || kind == BuildTestGateFailureKind.Timeout && leadProcess?.TimedOut == true,
             Cancelled = kind == BuildTestGateFailureKind.Cancellation && leadProcess?.Cancelled == true,
             LaunchError = kind == BuildTestGateFailureKind.ProcessLaunch ? leadProcess?.LaunchError : null,
             TerminationSignal = kind == BuildTestGateFailureKind.None ? null : leadProcess?.TerminationSignal,
@@ -462,6 +471,7 @@ public sealed partial class BuildTestGateRunner
             TestReport = new GateTestReport(
                 runs.Aggregate(GateTestCounts.None, (sum, run) => sum.Add(run.Evidence.Tests)),
                 runs.SelectMany(run => run.Evidence.FailedTests).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray()),
+            ShardHang = leadProcess?.ShardHang,
         };
     }
 }

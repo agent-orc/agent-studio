@@ -13,6 +13,8 @@ namespace AgentStudio.Pipeline;
 /// <param name="GateVerdict">The gate verdict; only <see cref="BuildTestGateVerdict.Ok"/> is recorded or read.</param>
 /// <param name="GateReason">The verdict line the source card recorded.</param>
 /// <param name="PublishedSha">The published branch tip that carried the tree when it was recorded.</param>
+/// <param name="Backfilled">AGT-3747: added later from the source card's own gate receipt, not by its push.</param>
+/// <param name="GateLog">For a backfilled entry, the source card's gate receipt the entry was read from.</param>
 public sealed record PublishedGateEvidence(
     string Project,
     string IntegrationBranch,
@@ -22,14 +24,17 @@ public sealed record PublishedGateEvidence(
     string GateVerdict,
     string GateReason,
     string PublishedSha,
-    DateTimeOffset RecordedAtUtc)
+    DateTimeOffset RecordedAtUtc,
+    bool Backfilled = false,
+    string? GateLog = null,
+    string? TestLevel = null)
 {
     public bool Passed => string.Equals(GateVerdict, nameof(BuildTestGateVerdict.Ok), StringComparison.Ordinal);
 
     /// <summary>The line a card that relies on this gate records as its evidence.</summary>
     public string Describe()
         => $"Gate {GateStep} of {SourceJobId} returned {GateVerdict} on {IntegrationBranch} tree {TreeSha}"
-           + $" (recorded {RecordedAtUtc:O}).";
+           + (Backfilled ? $" (backfilled {RecordedAtUtc:O} from {GateLog}, test level {TestLevel ?? "unknown"})." : $" (recorded {RecordedAtUtc:O}).");
 }
 
 /// <summary>
@@ -68,8 +73,10 @@ public static class PublishedGateEvidenceStore
     }
 
     /// <summary>
-    /// Appends a passed gate. A red gate and a tree already recorded for the
-    /// branch are refused. The newest entries per branch are kept.
+    /// Appends a passed gate. A red gate and a publication already recorded for
+    /// the branch and gate step are refused. AGT-3756: entries are keyed by
+    /// published SHA and gate step, not by tree or card, so each publication of
+    /// a card keeps its own entry. The newest entries per branch are kept.
     /// </summary>
     public static bool Append(string projectFolder, PublishedGateEvidence record)
     {
@@ -78,7 +85,7 @@ public static class PublishedGateEvidenceStore
         lock (Gate)
         {
             var records = Read(projectFolder);
-            if (records.Any(existing => SameTree(existing, record))) return false;
+            if (records.Any(existing => SamePublication(existing, record))) return false;
             var kept = Bound(records.Append(record));
             var path = Path.Combine(projectFolder, FileName);
             var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
@@ -105,7 +112,14 @@ public static class PublishedGateEvidenceStore
             .OrderBy(record => record.RecordedAtUtc)
             .ToList();
 
-    private static bool SameTree(PublishedGateEvidence left, PublishedGateEvidence right)
-        => string.Equals(left.TreeSha, right.TreeSha, StringComparison.OrdinalIgnoreCase)
+    /// <summary>
+    /// The store key: branch, published SHA, tree and gate step. An entry recorded
+    /// before AGT-3756 reads the same way; one whose tree differs from its
+    /// published SHA no longer blocks an exact entry for that tree.
+    /// </summary>
+    internal static bool SamePublication(PublishedGateEvidence left, PublishedGateEvidence right)
+        => string.Equals(left.PublishedSha, right.PublishedSha, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(left.TreeSha, right.TreeSha, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(left.GateStep, right.GateStep, StringComparison.Ordinal)
            && IntegrationVerificationProjection.SameBranch(left.IntegrationBranch, right.IntegrationBranch);
 }

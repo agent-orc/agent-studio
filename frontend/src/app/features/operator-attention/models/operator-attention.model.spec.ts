@@ -21,8 +21,12 @@ describe('operator attention model', () => {
     expect(attentionClassOf('escalation.opened')).toBe('escalation');
     expect(attentionClassOf('human-review.ready')).toBe('human-review');
     expect(attentionClassOf('batch.red')).toBe('batch');
+    expect(attentionClassOf('batch.running-without-gate')).toBe('batch');
     expect(attentionClassOf('batch.isolating')).toBe('batch');
+    expect(attentionClassOf('batch.record-unreadable')).toBe('batch-record');
+    expect(attentionClassOf('batch-gate.stuck')).toBe('batch');
     expect(attentionClassOf('push.pending-overdue')).toBe('push');
+    expect(attentionClassOf('push.blocked')).toBe('push-blocked');
     expect(attentionClassOf('quota.exhausted')).toBe('quota');
     expect(attentionClassOf('quota.fallback-active')).toBe('quota');
     expect(attentionClassOf('backend.stalled')).toBe('host');
@@ -48,10 +52,27 @@ describe('operator attention model', () => {
     expect(attentionActionLabel(review.items[0], review.spec)).toBe('Review');
     const [batch] = groupAttention([item('batch.red', { cardKey: null, cards: ['A', 'B'] })]);
     expect(attentionTarget(batch.items[0], batch.spec)).toBe('batch-gate');
+    const [stuck] = groupAttention([item('batch-gate.stuck', { cardKey: null, cards: ['A', 'B'] })]);
+    expect(attentionActionLabel(stuck.items[0], stuck.spec)).toBe('Open batch panel');
     const orphan = item('escalation.opened', { cardKey: null, cards: [] });
     const [escalation] = groupAttention([orphan]);
     expect(attentionTarget(orphan, escalation.spec)).toBe('activity');
     expect(attentionActionLabel(orphan, escalation.spec)).toBe('Open Activity');
+  });
+
+  it('opens the card of a blocked push (AGT-3695)', () => {
+    const [blocked] = groupAttention([item('push.blocked')]);
+    expect(blocked.spec.label).toBe('Push blocked');
+    expect(attentionTarget(blocked.items[0], blocked.spec)).toBe('card');
+    expect(attentionActionLabel(blocked.items[0], blocked.spec)).toBe('Open card');
+  });
+
+  it('opens the batch gate for an unreadable batch record, and Activity when it names no project', () => {
+    const [named] = groupAttention([item('batch.record-unreadable', { cardKey: null, cards: [] })]);
+    expect(named.spec.label).toBe('Batch record unreadable');
+    expect(attentionTarget(named.items[0], named.spec)).toBe('batch-gate');
+    const unnamed = item('batch.record-unreadable', { cardKey: null, cards: [], project: null });
+    expect(attentionTarget(unnamed, named.spec)).toBe('activity');
   });
 
   it('renders a compact age', () => {

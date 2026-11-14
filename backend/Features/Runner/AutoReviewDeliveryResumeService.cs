@@ -273,7 +273,7 @@ public sealed class AutoReviewDeliveryResumeService
         var resumeAttempts = retry?.Attempts ?? 0;
         var nextResumeAt = retry?.NextAtUtc;
         var resumeReason = retry?.Reason;
-        if (retry?.WaitingForIntegration == true)
+        if (retry?.WaitingForIntegration == true && nextResumeAt > now)
         {
             ShowResumeWait(task, resumeAttempts, nextResumeAt, resumeReason, integrationOwned: true);
             return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
@@ -413,7 +413,9 @@ public sealed class AutoReviewDeliveryResumeService
             Reason = reason,
             WaitingForIntegration = waitingForIntegration,
             Attempts = waitingForIntegration ? Math.Max(0, retry.Attempts - 1) : retry.Attempts,
-            NextAtUtc = waitingForIntegration ? null : retry.NextAtUtc,
+            NextAtUtc = waitingForIntegration
+                ? _time.GetUtcNow() + AutoReviewResumeRetryPolicy.Delay(1)
+                : retry.NextAtUtc,
         };
         AutoReviewResumeRetryStore.Write(task.FolderPath, recorded);
         ShowResumeWait(task, recorded.Attempts, recorded.NextAtUtc, reason, waitingForIntegration);
@@ -503,7 +505,12 @@ public sealed class AutoReviewDeliveryResumeService
             task.WatchPath,
             ct,
             cause: $"remote-review-resume:{review.AttemptId}",
-            reason: integrationDetail,
+            reason: RemoteDeliveryParkReason.NormalizeStoredDetail(integrationDetail)
+                ?? (integrationOutcome == AcceptedIntegrationFailureCodes.DeliveryGateFailed
+                    ? RemoteDeliveryParkReason.ForCode(integrationOutcome)
+                    : review.Outcome == ReviewTerminalOutcome.Pass
+                        ? RemoteDeliveryParkReason.CompletedReviewPark
+                        : RemoteDeliveryParkReason.ReviewDecisionPark),
             authorityWrite: new AttemptWriteReference(
                 review.AttemptId, review.LastFence, review.AuthorityEpoch,
                 $"lane:resume:{review.AttemptId}"),

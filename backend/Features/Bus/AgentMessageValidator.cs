@@ -41,7 +41,7 @@ public static class AgentMessageValidator
     public static readonly IReadOnlySet<string> ParticipantKinds = new HashSet<string>(StringComparer.Ordinal)
     {
         "User", "Orchestrator", "Supervisor", "CodingAgent",
-        "SupportingAgent", "SystemReview", "Runtime", "External",
+        "SupportingAgent", "SystemReview", "Runtime", "External", "Persona",
     };
 
     public static readonly IReadOnlySet<string> ArtifactKinds = new HashSet<string>(StringComparer.Ordinal)

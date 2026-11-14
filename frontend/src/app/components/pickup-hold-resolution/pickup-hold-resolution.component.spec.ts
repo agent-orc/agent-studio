@@ -1,7 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { TestBed } from '@angular/core/testing';
+import { provideZonelessChangeDetection } from '@angular/core';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { provideRouter } from '@angular/router';
+import { Subject } from 'rxjs';
 import type { PickupHoldResolution } from '../../models/task.model';
+import type { TaskInfo } from '../../models/task.model';
 import type { RemedyAction } from '../../models/remedy-action.model';
-import { controlFor } from './pickup-hold-resolution.component';
+import { TaskService } from '../../services/task.service';
+import { PickupHoldResolutionComponent, controlFor } from './pickup-hold-resolution.component';
 
 const navigation = { canOpen: (action: RemedyAction | null | undefined) => action?.target !== 'unknown-route' };
 const way = (kind: string, action: RemedyAction | null, patch: Partial<PickupHoldResolution> = {}): PickupHoldResolution =>
@@ -25,5 +33,34 @@ describe('controlFor', () => {
     expect(controlFor({ kind: 'api', target: 'format-disk' }, way('x', null), navigation)).toBe('none');
     expect(controlFor({ kind: 'route', target: 'unknown-route' }, way('x', null), navigation)).toBe('none');
     expect(controlFor({ kind: 'shell', target: 'PUT /api/x' }, way('x', null), navigation)).toBe('none');
+  });
+});
+
+describe('PickupHoldResolutionComponent intake verdict', () => {
+  it('reports a non-Pass verdict and preserves server errors', async () => {
+    const response = new Subject<{ outcome: string; reason: string; details: string }>();
+    await TestBed.configureTestingModule({
+      imports: [PickupHoldResolutionComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const runTaskIntake = vi.spyOn(TestBed.inject(TaskService), 'runTaskIntake')
+      .mockReturnValue(response.asObservable());
+    const fixture = TestBed.createComponent(PickupHoldResolutionComponent);
+    fixture.componentRef.setInput('resolution', way('pass-intake', { kind: 'api', target: 'run-intake' }));
+    fixture.componentRef.setInput('task', { id: 'task-1', watchPath: '/tmp/demo', projectName: 'demo' } as TaskInfo);
+    fixture.detectChanges();
+    fixture.componentInstance.apply();
+    response.next({ outcome: 'Hold', reason: 'Dependency is blocked.', details: '' });
+    expect(fixture.componentInstance.notice()).toBeNull();
+    expect(fixture.componentInstance.error()).toBe('Hold: Dependency is blocked.');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[role="alert"]')?.textContent)
+      .toContain('Hold: Dependency is blocked.');
+
+    const failed = new Subject<{ outcome: string; reason: string; details: string }>();
+    runTaskIntake.mockReturnValueOnce(failed.asObservable());
+    fixture.componentInstance.apply();
+    failed.error({ error: { error: 'Intake runner unavailable.' } });
+    expect(fixture.componentInstance.error()).toBe('Intake runner unavailable.');
   });
 });

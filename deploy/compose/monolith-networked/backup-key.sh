@@ -11,11 +11,11 @@
 #   backup-key.sh id <key-file>      print the key fingerprint shown on the Operations page
 #   backup-key.sh install <key-file> replace the key with a saved copy (after a restore)
 #
-# The key belongs to UID 10001, so file access runs in a one-shot container;
-# the operator account needs only Docker access.
+# The key belongs to UID 10001, so file access runs in a one-shot container of
+# the edge image, pinned by STUDIO_EDGE_DIGEST in .env; every command except
+# `id` needs an operator account with Docker access.
 set -euo pipefail
 
-helper_image="${STUDIO_HELPER_IMAGE:-caddy:2-alpine}"
 stack_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
@@ -24,6 +24,14 @@ usage() {
 }
 
 env_value() { sed -n "s/^$1=//p" "$stack_dir/.env" | tail -n 1; }
+
+# The edge image by digest, as setup.sh uses it, never a mutable tag.
+helper_image() {
+  local digest
+  digest="$(env_value STUDIO_EDGE_DIGEST)"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo 'STUDIO_EDGE_DIGEST in .env must be a 64-character image digest' >&2; exit 2; }
+  printf 'caddy@sha256:%s' "$digest"
+}
 
 key_dir() {
   [ -f "$stack_dir/.env" ] || { echo 'Run setup.sh before managing the backup key' >&2; exit 2; }
@@ -43,10 +51,14 @@ fingerprint() {
   { printf 'agent-studio/backup-key-id/v1|'; tr -d '\r\n' | base64 -d; } | sha256sum | cut -c1-16
 }
 
-validate_key_file() {
+is_key() {
   local size
-  size="$(tr -d '\r\n' < "$1" | base64 -d 2>/dev/null | wc -c)" || size=0
-  if [ "$size" -ne 32 ]; then
+  size="$(printf '%s' "$1" | tr -d '\r\n' | base64 -d 2>/dev/null | wc -c)" || size=0
+  [ "$size" -eq 32 ]
+}
+
+validate_key_file() {
+  if ! is_key "$(cat "$1")"; then
     echo "$1 is not a backup key: expected base64 of 32 bytes" >&2
     exit 1
   fi
@@ -59,11 +71,12 @@ case "$command" in
   create)
     [ "$#" -eq 0 ] || usage
     dir="$(key_dir)"
+    image="$(helper_image)"
     data_dir="$(env_value STUDIO_DATA_DIR)"
     mkdir -p "$dir" "$stack_dir/backup-target"
     # Also prepares the folders an installation from before AGT-3574 lacks.
     docker run --rm --user 0 --network none -v "$dir:/key" -v "$data_dir:/site" \
-      -v "$stack_dir/backup-target:/backup-target" --entrypoint /bin/sh "$helper_image" -c '
+      -v "$stack_dir/backup-target:/backup-target" --entrypoint /bin/sh "$image" -c '
       set -e
       umask 077
       mkdir -p /site/backups
@@ -79,7 +92,18 @@ case "$command" in
   print)
     [ "$#" -eq 0 ] || usage
     dir="$(key_dir)"
-    docker run --rm --user 10001:10001 --network none -v "$dir:/key:ro" --entrypoint cat "$helper_image" /key/backup.key
+    image="$(helper_image)"
+    # Read into a variable first: with `print > copy` the shell has already
+    # created the copy, so a failure must say so instead of leaving it silent.
+    if ! key="$(docker run --rm --user 10001:10001 --network none -v "$dir:/key:ro" --entrypoint cat "$image" /key/backup.key)"; then
+      echo 'Cannot read the backup key through Docker: run as an account with Docker access. Any output file is empty; delete it, it is no copy of the key.' >&2
+      exit 1
+    fi
+    if ! is_key "$key"; then
+      echo "$dir/backup.key is not a backup key: expected base64 of 32 bytes. Any output file is no copy of the key; delete it." >&2
+      exit 1
+    fi
+    printf '%s\n' "$key"
     ;;
   id)
     [ "$#" -eq 1 ] || usage
@@ -90,8 +114,9 @@ case "$command" in
     [ "$#" -eq 1 ] || usage
     validate_key_file "$1"
     dir="$(key_dir)"
+    image="$(helper_image)"
     mkdir -p "$dir"
-    docker run -i --rm --user 0 --network none -v "$dir:/key" --entrypoint /bin/sh "$helper_image" -c '
+    docker run -i --rm --user 0 --network none -v "$dir:/key" --entrypoint /bin/sh "$image" -c '
       set -e
       umask 077
       tr -d "\r\n" > /key/backup.key.new

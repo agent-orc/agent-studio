@@ -317,6 +317,9 @@ public sealed partial class MergeIntoDevelopRunner
                 return;
             }
 
+            var testLevel = PublishedGateEvidenceBackfill.PassedReceipts(jobFolderPath)
+                .LastOrDefault(receipt => string.Equals(receipt.Sha, own.Sha, StringComparison.OrdinalIgnoreCase))
+                ?.TestLevel;
             var appended = PublishedGateEvidenceStore.Append(watchPath, new PublishedGateEvidence(
                 project,
                 TaskIntegrationBranch.Name(branch, fallback: branch),
@@ -326,7 +329,8 @@ public sealed partial class MergeIntoDevelopRunner
                 own.GateVerdict!,
                 own.Reason,
                 publishedSha.ToLowerInvariant(),
-                DateTimeOffset.UtcNow));
+                DateTimeOffset.UtcNow,
+                TestLevel: testLevel));
             if (appended)
                 _logger.LogInformation(
                     "merge-into-develop recorded published gate project={Project} job={JobId} branch={Branch} tree={Tree}",
@@ -733,11 +737,14 @@ public sealed partial class MergeIntoDevelopRunner
         if (subjectSha is not null) candidates.Add(subjectSha);
         candidates.AddRange(evidenceShas ?? []);
         candidates.AddRange(DeliveryRefResolver.AttributedCommitShas(jobFolderPath));
+        var netChangeSource = _git.GetNetChangeSource(repoRoot, sha!);
+        if (netChangeSource is not null) candidates.Add(sha!);
         return candidates
             .Where(ReviewSubjectStore.IsValidResultSha)
             .Select(candidate => candidate.ToLowerInvariant())
             .Distinct(StringComparer.Ordinal)
-            .Where(candidate => _git.IsAncestor(repoRoot, candidate, sha!))
+            .Where(candidate => _git.IsAncestor(repoRoot, candidate, sha!)
+                || string.Equals(candidate, netChangeSource, StringComparison.OrdinalIgnoreCase))
             .ToList();
     }
 

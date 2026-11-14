@@ -51,6 +51,7 @@ export class RetentionRulesTableComponent implements OnInit {
   readonly saving = signal(false);
   readonly message = signal<string | null>(null);
   readonly error = signal<string | null>(null);
+  readonly unavailable = signal(false);
   readonly editingRow = signal<RuleStage | null>(null);
   readonly draft = signal<RetentionRule | null>(null);
   readonly rows = ROWS;
@@ -63,6 +64,7 @@ export class RetentionRulesTableComponent implements OnInit {
   async reload(conflict = false): Promise<void> {
     this.loading.set(true);
     this.error.set(null);
+    this.unavailable.set(false);
     try {
       const workspace = await firstValueFrom(this.retention.getWorkspacePolicy());
       this.workspacePolicy.set(workspace);
@@ -73,7 +75,11 @@ export class RetentionRulesTableComponent implements OnInit {
       }
       if (conflict) this.message.set('The policy changed elsewhere. The newer version is loaded; review it before editing again.');
     } catch (error: unknown) {
-      this.error.set(this.errorMessage(error, 'Retention rules could not be loaded.'));
+      if (error instanceof HttpErrorResponse && error.status === 404) {
+        this.unavailable.set(true);
+      } else {
+        this.error.set(this.errorMessage(error, 'Retention rules could not be loaded.'));
+      }
     } finally {
       this.loading.set(false);
     }

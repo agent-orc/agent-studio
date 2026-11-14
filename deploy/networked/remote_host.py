@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Remote half of host_adapter.py. Sent over SSH, never installed on a host."""
 
+import datetime as dt
 import hashlib
 import json
 import os
@@ -124,6 +125,37 @@ def install_archive(archive, expected, release_root, commit):
             os.chmod(staged, destination.parent.stat().st_mode & 0o777)
             os.replace(staged, destination)
     return destination
+
+
+def review_built_at(value):
+    """The deploy's build instant as second-precision UTC; the image build instant when absent."""
+    if value:
+        try:
+            parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            fail("review build instant must be an ISO-8601 UTC timestamp")
+        if parsed.tzinfo is None:
+            fail("review build instant must carry a UTC offset")
+    else:
+        parsed = dt.datetime.now(dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def review_release_id(commit, built_at):
+    """Stamped like a pipeline release id, so the runner and the server read both the instant and the commit."""
+    stamp = built_at.replace("-", "").replace(":", "")
+    return f"{stamp}-review-{commit[:12]}"
+
+
+def review_dockerfile(base, commit, plan, release_id, built_at):
+    # Without these the copied agent host reported only its assembly version,
+    # "0.9.5+sha.unknown", and Execution Hosts called an old build current (AGT-3689).
+    return (f"FROM {base}\n"
+            "COPY publish/ /opt/agent-host/\n"
+            f"ENV RUNNER_RELEASE_ID={release_id} RUNNER_RELEASE_COMMIT={commit} "
+            f"RUNNER_RELEASE_BUILT_AT={built_at}\n"
+            f"LABEL org.opencontainers.image.revision={commit}\n"
+            f"LABEL org.agent-studio.review-plan={plan}\n")
 
 
 def replace_link(link, destination):
@@ -324,19 +356,23 @@ def main(request):
         install_archive(archive, expected, host["runnerReleaseRoot"], commit)
         return {"sha256": expected}
     if action == "review_build":
-        expected_commit, agent_sha = fields
+        expected_commit, agent_sha, *rest = fields
         release = Path(host["runnerReleaseRoot"]) / agent_sha
         if installed_commit(release) != expected_commit:
             fail("review release commit mismatch")
         base = host["reviewBaseImage"]
         if not re.fullmatch(r"[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}", base):
             fail("review base image must be pinned")
-        recipe = "review-copy-v1:FROM base;COPY publish /opt/agent-host;labels revision and plan"
-        plan = hashlib.sha256(f"{recipe}\n{base}\n{agent_sha}\n{expected_commit}\n".encode()).hexdigest()
+        built_at = review_built_at(rest[0] if rest else "")
+        release_id = review_release_id(expected_commit, built_at)
+        recipe = ("review-copy-v2:FROM base;COPY publish /opt/agent-host;"
+                  "ENV release identity;labels revision and plan")
+        plan = hashlib.sha256(
+            f"{recipe}\n{base}\n{agent_sha}\n{expected_commit}\n{release_id}\n{built_at}\n".encode()).hexdigest()
         image = host["reviewImageRepository"]
         with tempfile.TemporaryDirectory(prefix="networked-review-") as scratch:
             root = Path(scratch)
-            (root / "Dockerfile").write_text(f"FROM {base}\nCOPY publish/ /opt/agent-host/\nLABEL org.opencontainers.image.revision={expected_commit}\nLABEL org.agent-studio.review-plan={plan}\n")
+            (root / "Dockerfile").write_text(review_dockerfile(base, expected_commit, plan, release_id, built_at))
             shutil.copytree(release, root / "publish")
             metadata = root / "metadata.json"
             run(["docker", "buildx", "build", "--push", "--metadata-file", str(metadata),
@@ -345,7 +381,8 @@ def main(request):
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest_value):
             fail("review build did not return image digest")
         return {"commit": expected_commit, "agentHostSha256": agent_sha,
-                "planDigest": plan, "imageRef": f"{image}@{digest_value}"}
+                "planDigest": plan, "imageRef": f"{image}@{digest_value}",
+                "releaseId": release_id, "builtAt": built_at}
     if action == "review_idle":
         require_idle(host)
         return {"idle": True}

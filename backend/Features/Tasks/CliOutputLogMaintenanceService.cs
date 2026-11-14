@@ -82,6 +82,7 @@ internal sealed class CliOutputLogMaintenanceService
             "/.metadata/attempt-authority*",
             "/.runtime/",
             AgentStudio.Git.SecurityStorePathPolicy.IgnorePattern,
+            AgentStudio.Magazine.MagazineStorePathPolicy.IgnorePattern,
         }.Where(rule => !lines.Contains(rule)).ToList();
         if (rules.Count == 0) return false;
 

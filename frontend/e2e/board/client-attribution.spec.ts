@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { api, BACKEND } from '../helpers/api';
 import { cleanupE2eClients, registerE2eClient, type ClientSummary } from '../helpers/e2e-clients';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 /**
  * Client identity + per-task attribution.
@@ -122,8 +125,18 @@ test.describe('Client identity + attribution', () => {
     await expect(chipA).toHaveAttribute('data-owner-id', ownerA.id);
     await expect(chipB).toHaveAttribute('data-owner-id', ownerB.id);
 
-    // Screenshot evidence: two cards owned by different clients.
-    await page.screenshot({ path: 'test-results/client-attribution-two-owners.png', fullPage: true });
+    // Screenshot evidence: both display names remain readable across themes and at phone width.
+    const resultDir = process.env.JOB_RESULTS_DIR ?? 'test-results';
+    mkdirSync(resultDir, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: join(resultDir, `client-attribution-two-owners-${theme}.png`), fullPage: true });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('combobox', { name: 'Board lane' }).selectOption('1-preparation');
+    await cardA.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, 'client-attribution-two-owners-390.png'), fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 800 });
 
     // Filter narrows the board to the chosen client. In the shipping
     // studio-shell layout the owner filter is a radio list inside the

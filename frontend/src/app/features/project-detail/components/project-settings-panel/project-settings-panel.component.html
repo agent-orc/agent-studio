@@ -170,7 +170,7 @@
         defaults above.
       </p>
     </header>
-    @if (projectId(); as id) {
+    @if (auth.status()?.profile === 'networked' ? projectId() : null; as id) {
       <div data-testid="project-retention-rules">
         <app-retention-rules-table scope="project" [projectId]="id" />
       </div>

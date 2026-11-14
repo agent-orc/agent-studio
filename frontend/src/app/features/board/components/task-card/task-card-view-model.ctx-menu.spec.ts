@@ -69,6 +69,14 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
     expect(rows.find(item => item.id === DELETE_ID)?.disabled).toBe(true);
   });
 
+  it('keeps only copy and filter rows for a Reviewer (AGT-3670)', () => {
+    for (const state of [TaskState.HumanReview, TaskState.Ready, TaskState.AutoReview]) {
+      const items = buildCardCtxMenuItems(makeJob({ state }), false, undefined, null, { reviewsOnly: true });
+      expect(items.filter(isRow).map(item => item.id)).toEqual(['copy-name', 'copy-id', 'copy-key', 'filter-dependents']);
+      expect(items.some(item => item.kind === 'separator')).toBe(false);
+    }
+  });
+
   it('offers Review first and Normal review order on auto-review cards', () => {
     const normal = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview })).filter(isRow);
     expect(normal.find(item => item.id === REVIEW_FIRST_ID)?.disabled).not.toBe(true);
@@ -124,6 +132,27 @@ describe('card move rows (AGT-3588)', () => {
   it('disables every move when blocked', () => {
     expect(moves(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
   });
+
+  it('shows only Product-permitted moves for each lane', () => {
+    const productMoves = (state: string) => buildCardCtxMenuItems(
+      makeJob({ state }), false, undefined, null, { productSession: true },
+    ).filter(isRow).filter((row) => row.id.startsWith(MOVE_PREFIX)).map((row) => row.label);
+    expect(productMoves(TaskState.Backlog)).toEqual(['Move to Ready']);
+    expect(productMoves(TaskState.Ready)).toEqual(['Move to Backlog']);
+    expect(productMoves(TaskState.HumanReview)).toEqual(['Move to Accepted']);
+    for (const state of [TaskState.Preparation, TaskState.Progress, TaskState.Completed, '2-ready-intake']) {
+      expect(productMoves(state)).toEqual([]);
+    }
+    const rows = buildCardCtxMenuItems(makeJob({ state: TaskState.HumanReview }), false, undefined, null,
+      { productSession: true }).filter(isRow);
+    expect(rows.some((row) => row.id === DELETE_ID || row.id === REVIEW_FIRST_ID)).toBe(false);
+  });
+
+  it('shows no moves for a read-only viewer', () => {
+    const rows = buildCardCtxMenuItems(makeJob({ state: TaskState.HumanReview }), false, undefined, null,
+      { readOnlySession: true }).filter(isRow);
+    expect(rows.some((row) => row.id.startsWith(MOVE_PREFIX) || row.id === DELETE_ID)).toBe(false);
+  });
 });
 
 describe('Ready queue position rows (AGT-3588)', () => {
@@ -143,5 +172,47 @@ describe('Ready queue position rows (AGT-3588)', () => {
     expect(queueRows(TaskState.Ready, false, { first: false, last: true }).map((row) => !!row.disabled))
       .toEqual([false, true]);
     expect(queueRows(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
+  });
+
+  it('disables queue moves with a Manual hint under an automatic sort', () => {
+    const rows = buildCardCtxMenuItems(makeJob(), false, undefined, null, { canReorder: false })
+      .filter(isRow).filter(row => row.id === MOVE_TOP_ID || row.id === MOVE_BOTTOM_ID);
+    expect(rows).toHaveLength(2);
+    expect(rows.every(row => row.disabled && row.hint === 'Switch this lane to Manual')).toBe(true);
+  });
+});
+
+describe('card move rows follow the lane guard (AGT-3624)', () => {
+  const pending = {
+    status: 'pending' as const, deliveryRef: 'runner/host/ATP-1', sha: null, integrationBranch: 'develop', detail: null,
+  };
+  const row = (job: TaskInfo, target: string) => buildCardCtxMenuItems(job)
+    .filter(isRow).find((item) => item.id === MOVE_PREFIX + target);
+
+  it('disables a refused move and names the reason as a tooltip', () => {
+    const job = makeJob({ state: TaskState.HumanReview, integration: pending });
+    for (const target of [TaskState.Completed, TaskState.Archive]) {
+      const item = row(job, target);
+      expect(item?.disabled, target).toBe(true);
+      expect(item?.tooltip, target).toMatch(/^This card's work is not in develop yet\. /);
+    }
+    expect(row(job, TaskState.Ready)?.disabled).toBe(false);
+    expect(row(job, TaskState.Ready)?.tooltip).toBeUndefined();
+  });
+
+  it('keeps an admitted move enabled without a tooltip', () => {
+    const job = makeJob({ state: TaskState.HumanReview, integration: { ...pending, status: 'integrated' } });
+    expect(row(job, TaskState.Completed)?.disabled).toBe(false);
+    expect(row(job, TaskState.Completed)?.tooltip).toBeUndefined();
+  });
+
+  it('disables Archive on an unrun card whose work must integrate', () => {
+    expect(row(makeJob(), TaskState.Archive)?.disabled).toBe(true);
+    expect(row(makeJob({ requiresIntegration: false }), TaskState.Archive)?.disabled).toBe(false);
+  });
+
+  it('keeps Delete available on every card', () => {
+    const job = makeJob({ state: TaskState.HumanReview, integration: pending });
+    expect(buildCardCtxMenuItems(job).filter(isRow).find((item) => item.id === DELETE_ID)?.disabled).toBe(false);
   });
 });

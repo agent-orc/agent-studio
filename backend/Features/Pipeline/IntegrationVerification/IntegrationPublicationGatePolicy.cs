@@ -1,14 +1,16 @@
 namespace AgentStudio.Pipeline;
 
-/// <summary>Checks that each publication after a verified tree has its own passed gate.</summary>
+/// <summary>Checks later publications against passed gates on the first-parent line.</summary>
 public static class IntegrationPublicationGatePolicy
 {
     public const int MaxFirstParentSteps = 4096;
 
     public sealed record FirstParentCommit(string Sha, string ParentSha);
-    public sealed record Publication(string TreeSha, string BaseSha, string Gate);
+    public sealed record Publication(string TreeSha, string BaseSha, string Gate,
+        bool CoversPriorPublications = false);
 
-    public sealed record Decision(bool Verified, string? MissingTree = null, bool MissingAncestry = false);
+    public sealed record Decision(bool Verified, string? MissingTree = null, bool MissingAncestry = false,
+        Publication? CoveringPublication = null);
 
     /// <summary>
     /// The range is newest first. Its parent links must reach the recorded
@@ -38,7 +40,9 @@ public static class IntegrationPublicationGatePolicy
             .ToDictionary(item => item.Sha, item => item.index, StringComparer.OrdinalIgnoreCase);
         var byTree = publications
             .GroupBy(item => item.TreeSha, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(group => group.Key,
+                group => group.FirstOrDefault(item => item.CoversPriorPublications) ?? group.Last(),
+                StringComparer.OrdinalIgnoreCase);
         for (var index = 0; index < laterCommits.Count;)
         {
             var sha = laterCommits[index].Sha;
@@ -49,6 +53,10 @@ public static class IntegrationPublicationGatePolicy
             }
             if (!byTree.TryGetValue(sha, out var publication))
                 return new Decision(false, sha);
+            // A full suite on this exact published tree verifies every earlier
+            // commit it contains, including a publication with no own receipt.
+            if (publication.CoversPriorPublications)
+                return new Decision(true, CoveringPublication: publication);
             if (string.Equals(publication.BaseSha, verifiedTree, StringComparison.OrdinalIgnoreCase))
                 return new Decision(true);
             if (!positions.TryGetValue(publication.BaseSha, out var baseIndex) || baseIndex <= index)

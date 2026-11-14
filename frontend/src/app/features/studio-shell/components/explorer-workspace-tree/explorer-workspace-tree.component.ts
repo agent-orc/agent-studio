@@ -29,7 +29,7 @@ import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../
 import { ProjectDragDropService } from '../../../shell';
 import { ExplorerSectionsService } from '../../services/explorer-sections.service';
 import { ExplorerProjectActionsService } from '../../services/explorer-project-actions.service';
-import { boardLaneCountsLabel, laneCountsFor } from '../../studio-shell.project-rows';
+import { BOARD_ACTIVE_WORK_TOOLTIP, boardLaneCountsLabel, laneCountsFor } from '../../studio-shell.project-rows';
 import { ExplorerLaneDashboardComponent, type ExplorerTreeMetricView } from '../explorer-lane-dashboard/explorer-lane-dashboard.component';
 import {
   aggregateAutoPickup,
@@ -77,6 +77,7 @@ export interface ActiveExplorerWorkbench {
   styleUrl: './explorer-workspace-tree.component.scss',
 })
 export class ExplorerWorkspaceTreeComponent {
+  readonly workspaceMagazineRequest = output<{ id: string; label: string }>();
   readonly projectRows = input<readonly ExplorerProjectRow[]>([]);
   readonly registryWorkspaces = input<readonly RegistryWorkspaceListItem[]>([]);
   /** Flat registry list also contains records whose workspaceId is empty or
@@ -192,9 +193,6 @@ export class ExplorerWorkspaceTreeComponent {
     });
   }
 
-  readonly totalProjectCount = computed(() => this.projectRows().length);
-
-
   readonly groups = computed<ExplorerWorkspaceGroup[]>(() =>
     buildExplorerWorkspaceGroups(
       this.projectRows(),
@@ -272,6 +270,7 @@ export class ExplorerWorkspaceTreeComponent {
   }
   readonly laneCountsFor = laneCountsFor;
   readonly boardLaneCountsLabel = boardLaneCountsLabel;
+  readonly boardActiveWorkTooltip = BOARD_ACTIVE_WORK_TOOLTIP;
 
   autoPickupFor(name: string): ProjectAutoPickupIndicator {
     return this.projectAutoPickupByName().get(name) ?? {

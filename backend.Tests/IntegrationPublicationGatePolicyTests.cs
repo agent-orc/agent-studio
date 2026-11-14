@@ -33,6 +33,36 @@ public sealed class IntegrationPublicationGatePolicyTests
     }
 
     [Fact]
+    public void LaterFullSuiteGateCoversEarlierHoleOnItsFirstParentLine()
+    {
+        var decision = IntegrationPublicationGatePolicy.Check(Verified, Later, FirstParentLine,
+            [new(Later, Batch, "full gate", CoversPriorPublications: true)]);
+
+        Assert.True(decision.Verified);
+        Assert.Equal(Later, decision.CoveringPublication?.TreeSha);
+    }
+
+    [Fact]
+    public void PartialLaterGateDoesNotCoverEarlierHole()
+    {
+        var decision = IntegrationPublicationGatePolicy.Check(Verified, Later, FirstParentLine,
+            [new(Later, Batch, "partial gate")]);
+
+        Assert.False(decision.Verified);
+        Assert.Equal(Batch, decision.MissingTree);
+    }
+
+    [Fact]
+    public void FullSuiteGateOnRewrittenLineDoesNotCoverHole()
+    {
+        var decision = IntegrationPublicationGatePolicy.Check(Outside, Later, FirstParentLine,
+            [new(Later, Batch, "full gate", CoversPriorPublications: true)]);
+
+        Assert.False(decision.Verified);
+        Assert.True(decision.MissingAncestry);
+    }
+
+    [Fact]
     public void GateNeutralKeyCommitAfterBatchGate_DoesNotRequireAnotherGate()
     {
         var decision = IntegrationPublicationGatePolicy.Check(Verified, Later,

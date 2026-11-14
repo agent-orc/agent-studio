@@ -35,6 +35,21 @@ describe('PendingButtonDirective', () => {
     expect(button.getAttribute('data-pending-label')).toBe('Saving…');
   });
 
+  it('follows a disabled binding that changed while the work was pending (AGT-3700)', () => {
+    // The panel shape: the button binds [disabled]="!canSubmit()" and canSubmit
+    // itself includes the pending flag, so the binding flips with the work.
+    host.pending.set(true);
+    host.disabled.set(true);
+    fixture.detectChanges();
+    expect(button.disabled).toBe(true);
+
+    host.pending.set(false);
+    host.disabled.set(false);
+    fixture.detectChanges();
+
+    expect(button.disabled).toBe(false);
+  });
+
   it('restores the button disabled state that preceded pending work', () => {
     host.disabled.set(true);
     fixture.detectChanges();

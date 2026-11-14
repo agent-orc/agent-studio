@@ -24,6 +24,8 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
     private readonly AgentStudio.Runner.AutoReviewStrandingWatchdog? _stranding;
     private readonly AgentStudio.Runner.HumanReviewEscalation? _escalation;
     private readonly TimelineLog? _timeline;
+    private readonly object _staleRecoveryGate = new();
+    private readonly HashSet<string> _staleRecoveries = new(StringComparer.Ordinal);
 
     public DeliveryChainReconciler(TaskScannerService scanner,
         TaskIntegrationStatusService statuses, TaskTransitionService transitions,
@@ -59,9 +61,14 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         var cards = _scanner.ScanAllAutomationJobs()
             .Where(card => card.State is TaskStates.AutoReview or TaskStates.HumanReview or TaskStates.Completed)
             .ToArray();
+        var recovering = cards.Where(NeedsStaleVerdictRecovery).ToArray();
+        foreach (var card in recovering)
+            QueueStaleVerdictRecovery(card);
+        var recoveryKeys = recovering.Select(card => card.TaskKey).ToHashSet(StringComparer.Ordinal);
         var statuses = _statuses.BuildLookup(cards);
         var candidates = cards
-            .Where(AcceptanceIntegrationPolicy.IsIntegrationRequired)
+            .Where(card => !recoveryKeys.Contains(card.TaskKey)
+                && AcceptanceIntegrationPolicy.IsIntegrationRequired(card))
             .Select(card =>
             {
                 statuses.TryGetValue(card.TaskKey, out var status);
@@ -125,6 +132,11 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             string.Equals(item.Name, application.ProjectId, StringComparison.Ordinal));
         var card = entry is null ? null : _scanner.FindJob(application.TaskId, entry.Path);
         if (card is null || card.State != application.ExpectedSourceState) return;
+        if (NeedsStaleVerdictRecovery(card))
+        {
+            QueueStaleVerdictRecovery(card);
+            return;
+        }
         _statuses.BuildLookup([card]).TryGetValue(card.TaskKey, out var status);
         if (SubjectKey(card, Facts(card, status, frozen.CompletedReopenLimitReached))
             != application.Payload.SubjectKey) return;
@@ -168,6 +180,82 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
 
     private static string SubjectKey(TaskInfo card, DeliveryChainOperatorFacts facts)
         => AiOperatorDecisionGateway.FactsSubjectKey("delivery", card.Id, facts);
+
+    private bool NeedsStaleVerdictRecovery(TaskInfo card)
+    {
+        if (card.State != TaskStates.AutoReview || _timeline is null || _stranding is null)
+            return false;
+        var events = _timeline.ReadAll(card.FolderPath).ToArray();
+        var lastMove = Array.FindLastIndex(events, entry => entry.Kind == TimelineEventKinds.LaneChanged);
+        return lastMove >= 0
+            && events[lastMove].Details?.GetValueOrDefault(LaneChangeCauses.DetailQualifierKey)
+                == StaleVerdictCategory
+            && !events.Skip(lastMove + 1).Any(entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+    }
+
+    private void QueueStaleVerdictRecovery(TaskInfo card)
+    {
+        if (_stranding is null || card.PendingIntent is not null) return;
+        var key = $"{card.TaskKey}:{card.EnteredLaneAt.Ticks}";
+        lock (_staleRecoveryGate)
+        {
+            if (!_staleRecoveries.Add(key)) return;
+        }
+        _ = Task.Run(async () =>
+        {
+            try { await CompleteStaleVerdictRecoveryAsync(card); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "delivery-chain-stale-recovery-failed task={TaskKey}", card.TaskKey);
+            }
+            finally
+            {
+                lock (_staleRecoveryGate) _staleRecoveries.Remove(key);
+            }
+        });
+    }
+
+    private async Task CompleteStaleVerdictRecoveryAsync(TaskInfo card)
+    {
+        var integration = await _stranding!.IntegrateCurrentDeliveryAsync(card);
+        var current = _scanner.FindJob(card.Id, card.WatchPath);
+        if (current is null || current.State != TaskStates.AutoReview
+            || current.EnteredLaneAt != card.EnteredLaneAt
+            || current.PendingIntent is not null
+            || !NeedsStaleVerdictRecovery(current)) return;
+        if (integration?.Outcome is MergeIntoIntegrationOutcome.Conflict
+            or MergeIntoIntegrationOutcome.AgentRoundRequired)
+        {
+            // The coordinator normally starts the round. Persist the fallback
+            // when its handoff left this delivery in Auto Review.
+            if (current.PendingIntent is null)
+            {
+                var queued = _recovery is not null
+                    && _statuses.BuildLookup([current]).TryGetValue(current.TaskKey, out var freshStatus)
+                    && freshStatus is not null
+                    && _recovery.Queue(current, freshStatus, DeliveryChainReasons.MergeRoundQueued,
+                        TaskIntegrationRecoveryService.AcceptanceRailSource).Queued;
+                if (!queued)
+                    await EscalateRecoveryFailureAsync(current,
+                        "The current delivery conflicts with develop, but a merge round could not be queued.",
+                        DeliveryChainReasons.MergeRoundQueued, CancellationToken.None);
+            }
+            return;
+        }
+        if (integration?.Outcome.IsSuccessfulIntegration() != true
+            || !_stranding.RequestFreshReview(current))
+        {
+            await EscalateRecoveryFailureAsync(current,
+                "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: "
+                    + (integration?.Error ?? integration?.Outcome.ToString() ?? "integration unavailable"),
+                DeliveryChainReasons.VerdictStale, CancellationToken.None);
+            return;
+        }
+        _timeline?.Append(current.FolderPath,
+            TimelineEventKinds.DeliveryReviewRequested, TimelineActors.System,
+            "The current delivery was integrated after the stale verdict; a fresh review was requested.",
+            details: new Dictionary<string, string> { ["reason"] = StaleVerdictCategory });
+    }
 
     private async Task<Applied> ApplyDecisionAsync(TaskInfo card, TaskIntegrationStatus? status,
         AiOperatorDecision decision, CancellationToken ct)
@@ -252,50 +340,22 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
                 if (decision.ReasonCode is DeliveryChainReasons.VerdictStale
                     or DeliveryChainReasons.AcceptedDeliveryStale)
                 {
-                    var integration = _stranding is null
-                        ? null : await _stranding.IntegrateCurrentDeliveryAsync(returned);
-                    if (integration?.Outcome is MergeIntoIntegrationOutcome.Conflict
-                        or MergeIntoIntegrationOutcome.AgentRoundRequired)
-                    {
-                        // The coordinator starts a merge round for conflicts. If
-                        // that handoff did not move the card, persist the same
-                        // recovery through the acceptance route.
-                        var current = _scanner.FindJob(returned.Id, returned.WatchPath);
-                        if (current?.State == TaskStates.AutoReview
-                            && current.PendingIntent is null)
-                        {
-                            var queued = _recovery is not null
-                                && _statuses.BuildLookup([current]).TryGetValue(current.TaskKey, out var freshStatus)
-                                && freshStatus is not null
-                                && _recovery.Queue(current, freshStatus, DeliveryChainReasons.MergeRoundQueued,
-                                    TaskIntegrationRecoveryService.AcceptanceRailSource).Queued;
-                            if (!queued)
-                            {
-                                var parked = await EscalateRecoveryFailureAsync(current,
-                                    "The current delivery conflicts with develop, but a merge round could not be queued.",
-                                    DeliveryChainReasons.MergeRoundQueued, ct);
-                                return parked.Status == MoveJobStatus.Success ? Applied.Moved : Applied.Failed;
-                            }
-                        }
-                        return Applied.Moved;
-                    }
-                    if (integration?.Outcome.IsSuccessfulIntegration() != true
-                        || !_stranding!.RequestFreshReview(returned))
+                    if (_stranding is null)
                     {
                         var parked = await EscalateRecoveryFailureAsync(returned,
-                            "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: "
-                                + (integration?.Error ?? integration?.Outcome.ToString() ?? "integration unavailable"),
+                            "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: integration unavailable",
                             DeliveryChainReasons.VerdictStale, ct);
                         return parked.Status == MoveJobStatus.Success ? Applied.Moved : Applied.Failed;
                     }
-                    else
-                        _timeline?.Append(returned.FolderPath,
-                            TimelineEventKinds.DeliveryReviewRequested, TimelineActors.System,
-                            "The current delivery was integrated after the stale verdict; a fresh review was requested.",
-                            details: new Dictionary<string, string>
-                            {
-                                ["reason"] = decision.ReasonCode,
-                            });
+                    TaskJsonFile.UpdateField(returned.FolderPath, "phase",
+                        LifecyclePhases.Integrating, _logger);
+                    _scanner.InvalidateCache();
+                    _scanner.PublishCoreFromKnownFolder(returned.FolderPath);
+                    _timeline?.Append(returned.FolderPath,
+                        TimelineEventKinds.DeliveryIntegrationRequested, TimelineActors.System,
+                        "The stale verdict returned to Auto Review; integration of the current delivery was queued.",
+                        details: new Dictionary<string, string> { ["reason"] = decision.ReasonCode });
+                    QueueStaleVerdictRecovery(returned);
                 }
                 else
                 {

@@ -59,7 +59,7 @@ const grouped = (r: HttpRequest<unknown>) => r.url === '/api/v1/studio/board';
 const anyCore = (r: HttpRequest<unknown>) => r.url.endsWith('/core');
 const core = (project: string, id: string) => (r: HttpRequest<unknown>) =>
   r.url === `/api/tasks/${id}/core` && r.params.get('project') === project;
-const legacyDetail = (r: HttpRequest<unknown>) => /\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+$/.test(r.url);
+const freshDetail = (r: HttpRequest<unknown>) => /^\/api\/tasks\/[^/]+$/.test(r.url);
 const anyResource = (r: HttpRequest<unknown>) => r.url.includes('/details/');
 
 function task(project: 'Alpha' | 'Beta', id: string, order: number): TaskInfo {
@@ -73,10 +73,9 @@ function task(project: 'Alpha' | 'Beta', id: string, order: number): TaskInfo {
 
 /**
  * AGT-2956 navigation contract on the AGT-2955 core-first selection: a task
- * switch reads only missing cores through the shared cache, warms the next
- * two pager cores, never asks for the grouped board or the legacy full
- * detail, and revalidates the painted core when the board store says it
- * changed.
+ * switch reads missing cores through the shared cache, warms the next
+ * two pager cores, reads fresh acceptance detail for Human Review, and
+ * revalidates the painted core when the board store says it changed.
  */
 describe('TaskSelectionService · board record reuse', () => {
   let selection: TaskSelectionService;
@@ -127,7 +126,8 @@ describe('TaskSelectionService · board record reuse', () => {
       // Enrichment of the selected task is covered by task-selection-url.service.spec.ts.
       http.match(anyResource).filter(r => !r.cancelled)
         .forEach(r => r.flush(null, { status: 503, statusText: 'Unavailable' }));
-      http.expectNone(legacyDetail);
+      http.match(freshDetail).filter(r => !r.cancelled)
+        .forEach(r => r.flush(null, { status: 503, statusText: 'Unavailable' }));
       http.verify();
     } finally {
       vi.unstubAllGlobals();
@@ -143,6 +143,42 @@ describe('TaskSelectionService · board record reuse', () => {
     selection.openDetail(info);
     TestBed.tick();
   }
+
+  it('holds stale board integration until fresh detail arrives and ignores cached Git integration', async () => {
+    open({ ...lane[0], integration: { status: 'pending', integrationBranch: 'develop' } } as TaskInfo);
+    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    expect(selection.detailPreview()?.integration).toBeNull();
+
+    const detailRequest = http.expectOne(freshDetail);
+    expect(detailRequest.request.params.get('project')).toBe('PROJ-A');
+    detailRequest.flush({ info: { ...lane[0], integration: {
+      status: 'not-applicable', integrationBranch: 'develop', deliveryRef: null,
+      sha: null, detail: 'Nothing to integrate',
+    } } });
+    expect(selection.detailPreview()?.integration?.status).toBe('not-applicable');
+
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'));
+    const documents = http.match(anyResource);
+    expect(documents).toHaveLength(2);
+    for (const request of documents) request.flush({
+      id: 'a', taskKey: lane[0].taskKey, projectId: 'PROJ-A', attemptId: null,
+      coreVersion: '1', resource: 'documents', version: '1', computedAt: null,
+      state: 'ready', reason: null,
+      data: { name: request.request.params.get('name'), markdown: '', summaryState: null },
+    });
+    expect(selection.selected()?.info.integration?.status).toBe('not-applicable');
+
+    selection.loadResource('git');
+    http.expectOne(r => r.url.endsWith('/a/details/git')).flush({
+      id: 'a', taskKey: lane[0].taskKey, projectId: 'PROJ-A', attemptId: null,
+      coreVersion: '1', resource: 'git', version: '1', computedAt: null,
+      state: 'ready', reason: null,
+      data: { integration: { status: 'pending', integrationBranch: 'develop' },
+        mergeSignal: null, publishSignal: null, testEvidence: null, commit: null,
+        commits: [], provenance: null },
+    });
+    expect(selection.selected()?.info.integration?.status).toBe('not-applicable');
+  });
 
   /** Answer every live lookahead core; aborted lookahead is dropped. */
   function answerLookahead(): string[] {

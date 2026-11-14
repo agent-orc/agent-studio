@@ -23,6 +23,44 @@ public sealed class HostCertificateAuthority(IConfiguration configuration, IHttp
     private string StateDirectory => configuration["HostCertificates:StateDirectory"]
         ?? throw new InvalidOperationException("Host certificate state is not configured.");
 
+    public static string PublicKeyFingerprint(string publicKey)
+    {
+        var parts = publicKey.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || parts[0] != "ssh-ed25519")
+            throw new InvalidDataException("Host CA public key is invalid.");
+        return "SHA256:" + Convert.ToBase64String(SHA256.HashData(Convert.FromBase64String(parts[1]))).TrimEnd('=');
+    }
+
+    public static string? FingerprintWarning(IConfiguration configuration)
+    {
+        var ca = configuration["HostCertificates:CaPrivateKeyFile"];
+        var state = configuration["HostCertificates:StateDirectory"];
+        if (string.IsNullOrWhiteSpace(ca) || string.IsNullOrWhiteSpace(state)) return null;
+        var recorded = Path.Combine(state, "ca-fingerprint");
+        if (!File.Exists(recorded))
+            return File.Exists(Path.Combine(state, "issued.jsonl"))
+                ? "The restored host certificate state has no CA fingerprint. Verify the escrowed host CA before issuing certificates."
+                : null;
+        try
+        {
+            var current = PublicKeyFingerprint(File.ReadAllText(ca + ".pub"));
+            return string.Equals(File.ReadAllText(recorded).Trim(), current, StringComparison.Ordinal)
+                ? null : "The configured host CA does not match the restored host certificate state. Install the escrowed CA before issuing certificates.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or InvalidDataException)
+        {
+            return "The configured host CA public key cannot be read. Restore the escrowed host CA before issuing certificates.";
+        }
+    }
+
+    private void CheckFingerprint()
+    {
+        if (FingerprintWarning(configuration) is { } warning) throw new InvalidOperationException(warning);
+        var recorded = Path.Combine(StateDirectory, "ca-fingerprint");
+        if (!File.Exists(recorded))
+            File.WriteAllText(recorded, PublicKeyFingerprint(File.ReadAllText(CaFile + ".pub")) + "\n");
+    }
+
     public async Task<HostCertificateReceipt> IssueAsync(string hostId, string actor, string publicKey, CancellationToken ct,
         DateTimeOffset? notAfter = null)
     {
@@ -34,6 +72,7 @@ public sealed class HostCertificateAuthority(IConfiguration configuration, IHttp
             Directory.CreateDirectory(StateDirectory);
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(StateDirectory,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            CheckFingerprint();
             if (ReadVersion() == 0) await InitializeRevocationsAsync(ct);
             var id = Guid.NewGuid().ToString("N");
             var issued = clock.GetUtcNow();
@@ -70,6 +109,7 @@ public sealed class HostCertificateAuthority(IConfiguration configuration, IHttp
         await gate.WaitAsync(ct);
         try
         {
+            CheckFingerprint();
             var receipts = ReadReceipts();
             if (!receipts.Any(item => item.Id == id && item.HostId == hostId))
                 throw new FileNotFoundException("Host certificate was not issued for this host.");

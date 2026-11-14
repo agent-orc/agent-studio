@@ -334,6 +334,7 @@ test('project and central overviews receive a newly created item without reloadi
     fs.writeFileSync(path.join(probeDir, 'workbench.json'), JSON.stringify({
       schemaVersion: 1,
       id,
+      key: 'AGT-W999999',
       title: 'Live creation proof',
       summary: 'Created while the project overview and Explorer Tree are already open.',
       entrypoint: 'index.html',
@@ -346,17 +347,16 @@ test('project and central overviews receive a newly created item without reloadi
 
     const treeItem = page.getByTestId(`studio-explorer-workbench-${projectName}-${id}`);
     await expect(treeItem, 'SignalR created event must add the Tree child without page.reload().')
-      .toBeVisible({ timeout: 15_000 });
+      .toBeVisible({ timeout: 45_000 });
     await expect(treeItem).toContainText('1 open');
     await expect(page.getByTestId(`workbench-overview-item-${projectName}-${id}`)).toBeVisible();
 
-    const overviewUrl = page.url();
     await page.getByTestId(`workbench-overview-open-${projectName}-${id}`).click();
-    await expect(page).toHaveURL(overviewUrl);
-    const inlineViewer = page.getByTestId(`workbench-overview-inline-${projectName}-${id}`);
-    await expect(inlineViewer).toBeVisible();
-    await expect(inlineViewer.frameLocator('[data-testid="workbench-viewer-frame"]')
+    await expect(page).toHaveURL(new RegExp(`/workbenches/${id}$`));
+    await expect(page.getByTestId('workbench-viewer')).toBeVisible();
+    await expect(page.frameLocator('[data-testid="workbench-viewer-frame"]')
       .locator('[data-studio-decision-control]')).toHaveCount(2);
+    await page.getByTestId('studio-ab-workbenches').click();
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);

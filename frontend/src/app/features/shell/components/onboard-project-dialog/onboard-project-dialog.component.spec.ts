@@ -8,7 +8,7 @@ import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import { CliCatalogStore } from '../../../cli';
-import { RemoteHostsService } from '../../../remote-hosts';
+import { RemoteHostsService, seedRemoteHosts, type RemoteHost } from '../../../remote-hosts';
 import type { CreateRegistryProjectRequest } from '../../../../models/task.model';
 
 describe('OnboardProjectDialogComponent', () => {
@@ -18,7 +18,7 @@ describe('OnboardProjectDialogComponent', () => {
       onboardProjectOpen: signal(false), onboardWorkspaceId: signal<string | null>(null),
       closeProjectOnboard: vi.fn(), refreshAfterProjectCreate: vi.fn(),
     };
-    const hosts = signal([]);
+    const hosts = signal<RemoteHost[]>([]);
     const ensureLoaded = vi.fn(() => hosts.set([...hosts()]));
     const getCapability = vi.fn(() => of({ localCodingAdmitted: true }));
     await TestBed.configureTestingModule({
@@ -83,7 +83,9 @@ describe('OnboardProjectDialogComponent', () => {
   });
 
   it('requires a runner for a checkout when local coding is disabled', async () => {
-    const { component, submitted } = await setup();
+    const { component, submitted, hosts } = await setup();
+    hosts.set([{ ...seedRemoteHosts(0)[0], id: 'agent-runner-01', name: 'Coding runner',
+      role: 'remote', serviceRole: 'coding', status: 'online' }]);
     component.repositoryPath.set('/work/fresh-site');
     component.localCodingAdmitted.set(false);
     component.executionRunner.set('local');
@@ -92,6 +94,23 @@ describe('OnboardProjectDialogComponent', () => {
     component.onSubmit();
     expect(submitted()).toBeUndefined();
     component.executionRunner.set('agent-runner-01');
+    expect(component.canSubmit()).toBe(true);
+  });
+
+  it('rejects review and unavailable coding runners', async () => {
+    const { component, hosts } = await setup();
+    component.localCodingAdmitted.set(false);
+    hosts.set([
+      { ...seedRemoteHosts(0)[0], id: 'review', name: 'Review runner', role: 'remote', serviceRole: 'review', status: 'online' },
+      { ...seedRemoteHosts(0)[0], id: 'offline', name: 'Offline runner', role: 'remote', serviceRole: 'coding', status: 'offline' },
+      { ...seedRemoteHosts(0)[0], id: 'coding', name: 'Coding runner', role: 'remote', serviceRole: 'coding', status: 'online' },
+    ]);
+    component.executionRunner.set('review');
+    expect(component.canSubmit()).toBe(false);
+    expect(component.runnerUnavailableReason(hosts()[0])).toBe('Review-only runner');
+    component.executionRunner.set('offline');
+    expect(component.canSubmit()).toBe(false);
+    component.executionRunner.set('coding');
     expect(component.canSubmit()).toBe(true);
   });
 

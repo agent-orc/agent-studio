@@ -7,6 +7,7 @@ commands:
   prepare: .agent-studio/prepare
   build:
     - dotnet build agent-taskboard.sln --no-restore
+    - bash scripts/check-release-build.sh
     - bash scripts/npm-frontend.sh run build
   test:
     - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound

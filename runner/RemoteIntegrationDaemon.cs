@@ -30,10 +30,18 @@ public sealed class RemoteIntegrationDaemon
     {
         await _client.RegisterAsync(_options.RunnerName, IntegrationCapabilities.Executor, shutdown);
         var root = Path.Combine(_options.StateDir, "integration");
+        var diskAdmission = new RunnerDiskAdmission(_options);
         while (!shutdown.IsCancellationRequested)
         {
             try
             {
+                var disk = diskAdmission.Observe();
+                if (disk.Level == HostDiskPressureLevel.Critical)
+                {
+                    _log($"integration claim paused on {_options.Hostname}: {disk.Reason}");
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
+                    continue;
+                }
                 var claim = await _client.ClaimIntegrationAsync(new IntegrationClaimRequest(
                     _options.RunnerId, _client.RunnerInstanceId), shutdown);
                 if (claim is { Status: "claimed", Command: { } command, Lease: { } lease })

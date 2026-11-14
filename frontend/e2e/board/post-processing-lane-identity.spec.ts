@@ -53,7 +53,7 @@ interface JobInfoStub {
   phase: string | null;
   phaseEnteredAt?: string | null;
   postProcessingChecks?: { name: string; status: string; startedAt?: string | null }[];
-  causeWait?: { causeKey: string; fingerprint: string; failureClass: string; since: string; reason: string };
+  causeWait?: { causeKey: string; fingerprint: string; failureClass: string; since: string; reason: string; summary?: string };
   steerPendingSince?: string | null;
   tags: string[];
   taskType: string;
@@ -168,6 +168,24 @@ async function installRoutes(
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname;
+    // The networked auth probe comes first; a null body never finished loading.
+    if (p === '/api/auth/status') {
+      return route.fulfill({ status: 404, contentType: 'application/json', body: 'null' });
+    }
+    // A workspace with no project opens the first-run checklist over the board.
+    if (p === '/api/v1/projects') {
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify([{ id: PROJECT, displayName: PROJECT, shortCode: 'PP', workspaceId: 'default', color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: WATCH_PATH, archived: false, createdAt: '2026-06-09T08:00:00Z' }]) });
+    }
+    // Deployment badges map the list; a null body raises the error dialog over the board.
+    if (p === '/api/deploy/cards') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    }
+    // Quota admission reads the workspace verdict; a null body raises the same dialog.
+    if (p.endsWith('/quota/admission')) {
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ workspaceId: 'default', workspace: { projectId: null, project: null, status: 'ok', message: null, overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false }, projects: [] }) });
+    }
     if (p === '/api/v1/studio/auth/status') {
       return route.fulfill({
         status: 200,
@@ -246,6 +264,11 @@ async function installRoutes(
           }],
         }]),
       });
+    }
+    // Host telemetry reads its points; the client list below is the wrong shape for it.
+    if (/^\/api\/clients\/[^/]+\/telemetry$/.test(p)) {
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ points: [], findings: [], window: '14d' }) });
     }
     if (p.startsWith('/api/clients')) {
       return route.fulfill({
@@ -361,6 +384,7 @@ test.describe('Post Processing lane identity', () => {
         failureClass: 'ReviewInfra/ToolUnavailable',
         since: '2026-09-09T18:06:00.000Z',
         reason: 'waiting for AGT-2801: review model unavailable',
+        summary: 'a review tool is unavailable',
       },
     });
     await seedBoardTab(page);
@@ -368,8 +392,10 @@ test.describe('Post Processing lane identity', () => {
     await page.goto('/', { waitUntil: 'commit' });
 
     const card = page.getByTestId('task-card').filter({ hasText: job.title });
-    const wait = card.getByTestId('task-card-cause-wait');
-    await expect(wait).toHaveText(/Waiting for AGT-2801/, { timeout: 45_000 });
+    // AGT-3617: the CURRENT line names the hold and links the cause card.
+    const wait = card.getByTestId('task-live-hold');
+    await expect(wait).toHaveText(/Held behind AGT-2801: a review tool is unavailable/, { timeout: 45_000 });
+    await expect(wait.getByTestId('task-live-hold-link')).toHaveText('AGT-2801');
     await expect(card).not.toContainText('Escalated');
     await dismissRuntimeErrorOverlay(page);
     mkdirSync(SHOTS, { recursive: true });

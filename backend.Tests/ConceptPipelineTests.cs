@@ -1,4 +1,6 @@
 using System.Text.Json;
+using AgentStudio.Git;
+using AgentStudio.Docs;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -131,11 +133,21 @@ public sealed class ConceptPipelineTests : IDisposable
             Id = "concept-card",
             Mode = TaskModes.Concept,
             FolderPath = taskFolder,
+            Dossier = new TaskDossier { Path = dossierPath },
         });
         Assert.NotNull(summary);
         Assert.True(summary.ContractSatisfied);
         Assert.Equal(dossierPath, summary.RepoRelativePath);
-        Assert.Equal("results/deliverables.md", summary.ReferenceSource);
+        Assert.Equal("task.json.dossier", summary.ReferenceSource);
+        var legacyOnly = TaskEndpointHelpers.BuildConceptDossierSummary(new TaskInfo
+        {
+            Id = "older-concept", Mode = TaskModes.Concept, FolderPath = taskFolder,
+        });
+        Assert.False(legacyOnly!.ContractSatisfied);
+        Assert.True(ConceptDossierClosureStore.Write(taskFolder, "Concept discarded."));
+        var closed = ConceptDossierContract.Read(taskFolder);
+        Assert.True(closed.NoDossierNeeded);
+        Assert.Null(closed.RepoRelativePath);
         Assert.Contains(dossierPath, File.ReadAllText(Path.Combine(taskFolder, "status.md")));
         Assert.Contains(dossierPath, File.ReadAllText(Path.Combine(taskFolder, "results", "deliverables.md")));
         Assert.Null(ConceptDossierContract.NormalizePath("/docs/sidesheet-concept/index.html"));
@@ -193,7 +205,7 @@ public sealed class ConceptPipelineTests : IDisposable
         var taskStore = Path.Combine(_root, "tasks");
         Directory.CreateDirectory(repository);
         Directory.CreateDirectory(taskStore);
-        var (_, scanner, _, mutations) = BuildServices(repository, taskStore);
+        var (config, scanner, _, mutations) = BuildServices(repository, taskStore);
         var sourceId = mutations.CreateJob(new CreateTaskRequest
         {
             Id = "concept-source",
@@ -257,8 +269,15 @@ public sealed class ConceptPipelineTests : IDisposable
         var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore);
         Assert.NotNull(plan);
         Assert.Equal(2, plan!.Items.Count);
+        var notifier = new WorkbenchChangeNotifier(NullLogger<WorkbenchChangeNotifier>.Instance);
+        var updates = new List<WorkbenchDecisionRecordedEvent>();
+        notifier.DecisionRecorded += updates.Add;
         var service = new ConceptPromotionService(
-            scanner, mutations, NullLogger<ConceptPromotionService>.Instance);
+            scanner, mutations,
+            new ManagedRepositoryMutationService(
+                new GitService(NullLogger<GitService>.Instance, scanner, config)),
+            notifier,
+            NullLogger<ConceptPromotionService>.Instance);
 
         var first = service.Promote(source, plan, new PromoteConceptRequest());
         var repeated = service.Promote(source, plan, new PromoteConceptRequest());
@@ -287,6 +306,10 @@ public sealed class ConceptPipelineTests : IDisposable
         Assert.Equal("§4", apiCard?.Dossier?.Section);
         Assert.Equal("delivery-mode", apiCard?.Dossier?.Decision);
         Assert.Equal(0, apiCard?.Dossier?.ImplementationIndex);
+        using var accepted = JsonDocument.Parse(File.ReadAllText(descriptorPath));
+        Assert.Equal("decided", accepted.RootElement.GetProperty("status").GetString());
+        Assert.Equal(2, scanner.BuildPromoteConceptPlan(source.Id, taskStore)?.Items.Count);
+        Assert.Equal("decided", Assert.Single(updates).CurrentStatus);
     }
 
     [Fact]
@@ -336,7 +359,7 @@ public sealed class ConceptPipelineTests : IDisposable
         var taskStore = Path.Combine(_root, "tasks");
         Directory.CreateDirectory(repository);
         Directory.CreateDirectory(taskStore);
-        var (_, scanner, _, mutations) = BuildServices(repository, taskStore);
+        var (config, scanner, _, mutations) = BuildServices(repository, taskStore);
         var source = CreateConceptSource(scanner, mutations, taskStore);
         var directory = ConceptWorkbenchContract.CreateScaffold(
             repository, "sliced-flow", "Sliced flow", "Three dependent slices.", source.Key ?? source.Id);
@@ -350,7 +373,11 @@ public sealed class ConceptPipelineTests : IDisposable
         var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore);
         Assert.NotNull(plan);
         var service = new ConceptPromotionService(
-            scanner, mutations, NullLogger<ConceptPromotionService>.Instance);
+            scanner, mutations,
+            new ManagedRepositoryMutationService(
+                new GitService(NullLogger<GitService>.Instance, scanner, config)),
+            new WorkbenchChangeNotifier(NullLogger<WorkbenchChangeNotifier>.Instance),
+            NullLogger<ConceptPromotionService>.Instance);
 
         // Selecting only the last slice still creates its predecessors, first.
         var result = service.Promote(source, plan!, new PromoteConceptRequest { ItemIndexes = [2] });
@@ -375,9 +402,13 @@ public sealed class ConceptPipelineTests : IDisposable
         Assert.Equal([0, 1, 2], cards.Select(card => card.Dossier?.ImplementationIndex ?? -1));
         Assert.True(cards[0].Order < cards[1].Order && cards[1].Order < cards[2].Order);
 
-        // A repeated request reuses the ledger and creates no second set.
+        // A repeated request repairs an earlier card whose edges were absent.
+        Assert.True(mutations.SetTaskReferences(cards[2].Id,
+            cards[2].References with { DependsOn = [] }, taskStore));
         var repeated = service.Promote(source, plan!, new PromoteConceptRequest());
         Assert.Equal(result.Created.Select(card => card.JobId), repeated.Created.Select(card => card.JobId));
+        Assert.Equal([keys[0], keys[1]], scanner.FindJob(cards[2].Id, taskStore)!
+            .References.DependsOn.Select(edge => edge.Key));
     }
 
     [Fact]
@@ -387,7 +418,7 @@ public sealed class ConceptPipelineTests : IDisposable
         var taskStore = Path.Combine(_root, "tasks");
         Directory.CreateDirectory(repository);
         Directory.CreateDirectory(taskStore);
-        var (_, scanner, _, mutations) = BuildServices(repository, taskStore);
+        var (config, scanner, _, mutations) = BuildServices(repository, taskStore);
         var source = CreateConceptSource(scanner, mutations, taskStore);
         var directory = ConceptWorkbenchContract.CreateScaffold(
             repository, "two-step", "Two step", "Two dependent slices.", source.Key ?? source.Id);
@@ -395,7 +426,11 @@ public sealed class ConceptPipelineTests : IDisposable
         PublishDossier(source, "docs/two-step");
         var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore)!;
         var service = new ConceptPromotionService(
-            scanner, mutations, NullLogger<ConceptPromotionService>.Instance);
+            scanner, mutations,
+            new ManagedRepositoryMutationService(
+                new GitService(NullLogger<GitService>.Instance, scanner, config)),
+            new WorkbenchChangeNotifier(NullLogger<WorkbenchChangeNotifier>.Instance),
+            NullLogger<ConceptPromotionService>.Instance);
 
         var first = service.Promote(source, plan, new PromoteConceptRequest { ItemIndexes = [0] });
         var second = service.Promote(source, plan, new PromoteConceptRequest { ItemIndexes = [1] });

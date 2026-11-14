@@ -2,6 +2,7 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { api } from '../helpers/api';
+import { setTheme } from '../helpers/theme';
 
 /**
  * Project-level Knowledge surface. Verifies that the root tree renders grouped
@@ -97,6 +98,26 @@ test.describe('Project detail - Knowledge section', () => {
 
   test.beforeEach(async ({ page }) => {
     await resetWikiStorage(page);
+  });
+
+  test('missing Dossier deep link explains the missing page in English', async ({ page }) => {
+    const output = process.env.JOB_RESULTS_DIR?.trim() || SCREENSHOT_DIR;
+    fs.mkdirSync(output, { recursive: true });
+    const missingPath = 'notes-export/index.html';
+    for (const theme of ['light', 'dark'] as const) {
+      await page.goto(`/#/projects/${slugFor(projectName)}/wiki?page=${encodeURIComponent(missingPath)}`);
+      await setTheme(page, theme);
+      const notice = page.getByTestId('project-wiki-deeplink-missing');
+      await expect(notice).toContainText(`The linked page ${missingPath} was not found.`);
+      await expect(notice.getByRole('button', { name: 'Dismiss notice' })).toBeVisible();
+      await notice.screenshot({ path: path.join(output, `wiki-missing-dossier-${theme}.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/#/projects/${slugFor(projectName)}/wiki?page=${encodeURIComponent(missingPath)}`);
+    await setTheme(page, 'light');
+    const notice = page.getByTestId('project-wiki-deeplink-missing');
+    await expect(notice).toContainText(`The linked page ${missingPath} was not found.`);
+    await notice.screenshot({ path: path.join(output, 'wiki-missing-dossier-390px.png') });
   });
 
   test('wiki search choice renders in both themes', async ({ page }) => {

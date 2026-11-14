@@ -163,3 +163,7 @@
 }
 
 @media (max-width: 650px) { .host-detail__facts { grid-template-columns: 1fr; } .detail__facts > div { grid-template-columns: 7rem minmax(0, 1fr); } }
+
+/* AGT-3689: running and expected review image digests side by side. */
+.host__image { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-1) var(--studio-spacing-3); }
+.host__image code { font-family: var(--font-mono, monospace); font-size: var(--studio-font-size-sm); font-variant-numeric: tabular-nums; }

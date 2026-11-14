@@ -39,6 +39,23 @@ public sealed class RemoteEnvironmentPreparationRetryTests
     }
 
     [Fact]
+    public void Disk_full_salvage_release_has_infrastructure_cause()
+    {
+        var failure = new WorktreeSalvageException("/work/task", "salvage/run-1",
+            new IOException("index.lock write error. Out of diskspace"));
+        var result = RemoteTaskRunner.PrelaunchSalvageRelease(failure, "runner-01");
+        Assert.Equal("host-disk-full", result.Outcome);
+        Assert.Contains("Out of diskspace", result.Detail);
+    }
+
+    [Fact]
+    public void Disk_full_gate_write_has_a_distinct_infrastructure_class()
+    {
+        Assert.True(RunnerDiskWriteFailure.IsDiskFull(new IOException("No space left on device")));
+        Assert.Equal("DiskFull", AgentStudio.TaskServer.Contracts.GateFailureClasses.DiskFull);
+    }
+
+    [Fact]
     public async Task Clone_or_worktree_failure_retries_three_times_then_escalates()
     {
         var attempts = 0;

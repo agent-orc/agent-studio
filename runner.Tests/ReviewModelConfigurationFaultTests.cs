@@ -33,6 +33,17 @@ public sealed class ReviewModelConfigurationFaultTests
     }
 
     [Fact]
+    public void Unknown_model_remains_a_configuration_fault_when_cli_also_reports_a_refused_turn()
+    {
+        var failed = new ProcessResult(1, string.Empty,
+            "turn/start failed: unknown model claude-typo");
+        var command = Aspect("claude", "claude-typo");
+
+        Assert.True(RemoteReviewWorkspace.AgentModelUnknownToCli(command, failed));
+        Assert.Equal(ReviewCliRefusalPolicy.TurnRefused, ReviewCliRefusalPolicy.Classify(command, failed));
+    }
+
+    [Fact]
     public void Missing_cli_binary_and_unrelated_failures_stay_tool_unavailable()
     {
         Assert.False(RemoteReviewWorkspace.AgentModelUnknownToCli(

@@ -44,12 +44,20 @@ export class LayoutPanesService {
   readonly panesVisible = signal<PanesVisible>(loadVisible());
   readonly paneWeights = signal<PaneWeights>(loadWeights());
   readonly maximizedPane = signal<PaneName | null>(null);
+  readonly mobilePane = signal<PaneName>(
+    this.panesVisible().prompt ? 'prompt' : this.panesVisible().protocol ? 'protocol' : 'git',
+  );
   readonly detailPanePercent = signal<number>(loadDetailPercent());
   // True while the user is dragging the prompt|protocol or
   // protocol|git pane splitter. Template binds the
   // `pane__splitter--dragging` modifier off this so the visible line
   // stays highlighted for the duration of the drag, not just on hover.
   readonly paneSplitterDragging = signal(false);
+
+  constructor() {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 599px)').matches &&
+        !Object.values(this.panesVisible()).some(Boolean)) this.selectMobilePane('prompt');
+  }
 
   /**
    * Cross-pane navigation intent: a prompt-pane tab id another pane wants to
@@ -74,6 +82,7 @@ export class LayoutPanesService {
       this.requestedPromptAnchor.set({ kind: artifactKind, fileName, requestId: ++this.promptAnchorRequestId });
     }
     if (!this.panesVisible().prompt) this.togglePane('prompt');
+    this.mobilePane.set('prompt');
     this.requestedPromptTab.set(tab);
   }
 
@@ -102,6 +111,12 @@ export class LayoutPanesService {
     safeWrite(LS_VISIBLE, JSON.stringify(next));
     if (this.maximizedPane() === name && !next[name]) this.maximizedPane.set(null);
     return next;
+  }
+
+  selectMobilePane(name: PaneName): void {
+    if (!this.panesVisible()[name]) this.togglePane(name);
+    this.maximizedPane.set(null);
+    this.mobilePane.set(name);
   }
 
   toggleMaximize(name: PaneName): void {

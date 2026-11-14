@@ -5,6 +5,8 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 using Xunit;
 
@@ -213,6 +215,133 @@ public sealed class TaskPipelineEndpointTests : IDisposable
             "results",
             "post-steps",
             $"{PipelineCatalogue.AgentsWikiSyncStepId}-attempt-001.md")));
+    }
+
+    /// <summary>
+    /// AGT-3565: a research card whose run finished without a report review
+    /// lists the missing requirement-fit step, and Review results runs only
+    /// that step: the card stays in human review and the step is no longer
+    /// offered once the verdict exists.
+    /// </summary>
+    [Fact]
+    public async Task ReviewResults_RunsOnlyTheMissingReportReview()
+    {
+        var job = WriteResearchCardWithoutReview(withReport: true);
+        var aspectCalls = new List<string>();
+        await using var factory = ReviewResultsFactory(aspectCalls);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var query = $"?watchPath={Uri.EscapeDataString(_watchPath)}";
+
+        Assert.Equal([PipelineCatalogue.RequirementFitStepId], await RunnableSteps(client, query));
+        var refused = await client.PostAsync(
+            $"/api/tasks/pipeline-capabilities/review-results{query}", JsonContent.Create(new { }));
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, refused.StatusCode);
+
+        var response = await client.PostAsync(
+            $"/api/tasks/research-without-review/review-results{query}", JsonContent.Create(new { }));
+
+        response.EnsureSuccessStatusCode();
+        using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        Assert.True(body.RootElement.GetProperty("ran").GetBoolean());
+        Assert.Equal("pass", body.RootElement.GetProperty("status").GetString());
+        Assert.Equal(["requirement-fit"], aspectCalls);
+        Assert.True(Directory.Exists(job));
+        Assert.Empty(await RunnableSteps(client, query));
+        var again = await client.PostAsync(
+            $"/api/tasks/research-without-review/review-results{query}", JsonContent.Create(new { }));
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, again.StatusCode);
+        Assert.Single(aspectCalls);
+    }
+
+    /// <summary>
+    /// AGT-3565 review: a research card that delivered other files but not its
+    /// report is not offered Review results, and the route refuses it, so a
+    /// late pass verdict can never back the completion of a card without its
+    /// report.
+    /// </summary>
+    [Fact]
+    public async Task ReviewResults_RefusesAResearchCardWithoutItsReport()
+    {
+        WriteResearchCardWithoutReview(withReport: false);
+        var aspectCalls = new List<string>();
+        await using var factory = ReviewResultsFactory(aspectCalls);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var query = $"?watchPath={Uri.EscapeDataString(_watchPath)}";
+
+        Assert.Empty(await RunnableSteps(client, query));
+        var refused = await client.PostAsync(
+            $"/api/tasks/research-without-review/review-results{query}", JsonContent.Create(new { }));
+
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, refused.StatusCode);
+        using var body = await JsonDocument.ParseAsync(await refused.Content.ReadAsStreamAsync());
+        Assert.Contains("a valid HTML document at results/report.html",
+            body.RootElement.GetProperty("error").GetString());
+        Assert.Empty(aspectCalls);
+    }
+
+    private string WriteResearchCardWithoutReview(bool withReport)
+    {
+        var job = Path.Combine(_watchPath, TaskStates.HumanReview, "research-without-review");
+        Directory.CreateDirectory(Path.Combine(job, "results"));
+        File.WriteAllText(Path.Combine(job, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "research-without-review",
+            title = "Research without review",
+            state = TaskStates.HumanReview,
+            order = 2,
+            agent = "codex",
+            mode = TaskModes.Research,
+        }));
+        File.WriteAllText(Path.Combine(job, "prompt.md"), "# Research\n\nName the renewal interval.\n");
+        if (withReport)
+            File.WriteAllText(Path.Combine(job, "results", "report.html"),
+                "<html><body><p>The renewal interval is 30 seconds.</p></body></html>");
+        else
+            File.WriteAllText(Path.Combine(job, "results", "notes.md"), "Draft notes without the report.\n");
+        BriefVersionStore.ReadOrCreate(job);
+        CompletionContentEvidence.StampLocalRun(job);
+        return job;
+    }
+
+    private WebApplicationFactory<Program> ReviewResultsFactory(List<string> aspectCalls)
+        => new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["WatchPaths:0:Name"] = "pipeline-capabilities",
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _repositoryPath,
+                    ["WatchPaths:0:RepositoryPath"] = _repositoryPath,
+                    ["TaskRepository"] = _watchPath,
+                }));
+            builder.ConfigureServices(services => services.AddSingleton(provider =>
+            {
+                // No one-shot registry: the stub below answers every aspect call.
+                var aspects = new AspectRunnerService(
+                    provider.GetRequiredService<AgentStudio.Prompts.RuntimePromptService>(),
+                    provider.GetRequiredService<ILogger<AspectRunnerService>>(),
+                    pipelineLog: provider.GetService<PipelineExecutionLog>());
+                aspects.CliRunner = (aspect, _, _, _, _, _) =>
+                {
+                    lock (aspectCalls) aspectCalls.Add(aspect);
+                    return Task.FromResult("[[ASPECT_VERDICT: status=pass; summary=The report names the interval; "
+                        + "evidence_checked=results/report.html; missing=none]]\n[[TASK_DONE]]");
+                };
+                return aspects;
+            }));
+        });
+
+    private static async Task<string[]> RunnableSteps(HttpClient client, string query)
+    {
+        var response = await client.GetAsync($"/api/tasks/research-without-review/pipeline{query}");
+        response.EnsureSuccessStatusCode();
+        using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        return body.RootElement.GetProperty("onDemand").GetProperty("runnableStepIds")
+            .EnumerateArray().Select(item => item.GetString()!).ToArray();
     }
 
     private static void RunGit(string cwd, params string[] args)

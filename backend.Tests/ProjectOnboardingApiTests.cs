@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -179,6 +180,59 @@ public sealed class ProjectOnboardingApiTests
             var deleted = await client.DeleteAsync($"/api/projects/{created.Id}");
             Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
             Assert.False(Directory.Exists(Path.Combine(root, "projects", created.Id)));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeleteProject_UrlRegisteredProject_SucceedsWithAndWithoutServerCheckout(bool withCheckout)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "project-delete-checkout-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>()
+                .WithWebHostBuilder(builder =>
+                {
+                    builder.UseEnvironment("Test");
+                    builder.ConfigureAppConfiguration((_, config) =>
+                        config.AddInMemoryCollection(new Dictionary<string, string?>
+                        {
+                            ["TaskRepository"] = root,
+                            ["Logging:BackendFile:LogDirectory"] = Path.Combine(root, "logs"),
+                        }));
+                });
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+            var createdResponse = await client.PostAsJsonAsync("/api/projects", new
+            {
+                displayName = "Checkout Delete Project",
+                shortCode = withCheckout ? "CDW" : "CDN",
+                workspaceId = DefaultWorkspace.Id,
+                repositoryUrl = "https://github.com/example/checkout-delete-project",
+            });
+            Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
+            var created = (await createdResponse.Content.ReadFromJsonAsync<ProjectSummary>())!;
+
+            var checkout = Path.Combine(root, "repository-checkouts", created.Id);
+            if (withCheckout)
+            {
+                Directory.CreateDirectory(Path.Combine(checkout, ".git"));
+                factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+                    .SetRepositoryPath(created.Id, checkout);
+            }
+
+            var deleted = await client.DeleteAsync($"/api/projects/{created.Id}");
+
+            Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+            Assert.False(Directory.Exists(checkout));
+            var listed = await client.GetFromJsonAsync<List<ProjectSummary>>("/api/projects");
+            Assert.DoesNotContain(listed!, project => project.Id == created.Id);
         }
         finally
         {

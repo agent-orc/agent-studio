@@ -20,6 +20,21 @@ function rect(init: Partial<DOMRect>): DOMRect {
 }
 
 describe('OverlayPortalService', () => {
+  it('mounts the overlay root before an existing tooltip host so the tooltip paints on top (AGT-3624)', () => {
+    const tooltip = document.createElement('div');
+    tooltip.className = 'cac-tooltip';
+    document.body.appendChild(tooltip);
+    const service = new OverlayPortalService();
+    const ref = service.attachPanel(document.createElement('section'));
+    const root = document.body.querySelector('.studio-overlay-root')!;
+
+    expect(root.compareDocumentPosition(tooltip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    ref.dispose();
+    root.remove();
+    tooltip.remove();
+  });
+
   it('creates one body-level overlay root for every portaled layer', () => {
     const service = new OverlayPortalService();
     const first = document.createElement('section');

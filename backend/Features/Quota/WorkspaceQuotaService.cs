@@ -436,6 +436,16 @@ public sealed class WorkspaceQuotaService
         }
     }
 
+    /// <summary>Completed deployment facts for the decision stream's persona trigger.</summary>
+    public IReadOnlyList<QuotaDeployExecution> CompletedDeploys(DateTime sinceUtc)
+    {
+        lock (_gate)
+        {
+            Reload();
+            return (_state.Deploys ?? []).Where(item => item.CompletedAt >= sinceUtc).ToArray();
+        }
+    }
+
     public QuotaAdmission Admit(string projectName, bool hosting = false)
     {
         if (!HasLimits()) return new(true, null);

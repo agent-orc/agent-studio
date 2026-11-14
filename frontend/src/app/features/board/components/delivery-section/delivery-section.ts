@@ -47,6 +47,7 @@ export class DeliverySectionComponent {
   readonly projects = input<readonly string[]>([]);
   /** The filtered board feed; the section renders only cards it carries. */
   readonly tasks = input<readonly TaskInfo[]>([]);
+  readonly mobileColumnId = input<string | null>(null);
   readonly mutationsBlocked = input(false);
   readonly jobClick = output<TaskInfo>();
 

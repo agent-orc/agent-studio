@@ -117,6 +117,8 @@ internal static class GitNetworkProcessRunner
             // compete with parallel xUnit/Kestrel work for ThreadPool threads.
             // Dedicated readers preserve concurrent pipe draining without any
             // ThreadPool continuation dependency in the synchronous boundary.
+            // They come from GitPipeDrainThreads, which reuses idle threads
+            // instead of starting two per child (AGT-3567).
             stdout = startOutputRead(process);
             stderr = StartDedicatedRead(process.StandardError);
             if (stdin is not null)
@@ -283,16 +285,12 @@ internal static class GitNetworkProcessRunner
     private const int WaitSliceMilliseconds = 25;
 
     private static Task<string> StartDedicatedRead(StreamReader reader)
-        => Task.Factory.StartNew(
-            reader.ReadToEnd,
-            CancellationToken.None,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
+        => GitPipeDrainThreads.Run(reader.ReadToEnd);
 
     private static Task<(byte[] Bytes, bool Truncated)> StartDedicatedBinaryRead(
         Stream stream,
         long maxBytes)
-        => Task.Factory.StartNew(
+        => GitPipeDrainThreads.Run(
             () =>
             {
                 using var kept = new MemoryStream();
@@ -306,21 +304,15 @@ internal static class GitNetworkProcessRunner
                     if (room < read) truncated = true;
                 }
                 return (kept.ToArray(), truncated);
-            },
-            CancellationToken.None,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
+            });
 
     private static Task StartDedicatedWrite(StreamWriter writer, string value)
-        => Task.Factory.StartNew(
+        => GitPipeDrainThreads.Run(
             () =>
             {
                 writer.Write(value);
                 writer.Close();
-            },
-            CancellationToken.None,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
+            });
 
     private static bool WaitForIo(
         IEnumerable<Task?> tasks,

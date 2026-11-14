@@ -47,6 +47,10 @@ export async function startFakeStudio({ cards = {}, preflightBlockers = [] } = {
   let leaseCounter = 0;
   let revision = 1;
   const log = [];
+  // Magazine articles by "scope/slug": the same revision rules as Studio.
+  const articles = new Map();
+  // Keys whose next read is followed by another writer's revision.
+  const articleRaces = new Set();
 
   const server = http.createServer((req, res) => {
     let body = '';
@@ -109,8 +113,16 @@ export async function startFakeStudio({ cards = {}, preflightBlockers = [] } = {
       return send(200, { state: 'failing', running: false, lastGoodAgeHours: 13,
         lastGood: { id: 'studio-backup-20261105T000000Z-abc123', createdAt: '2026-11-05T00:00:00+00:00', sizeBytes: 1024 },
         lastVerification: { at: '2026-11-05T00:05:00+00:00', outcome: 'verified' },
-        offHost: { kind: 'sftp', state: 'current' },
+        offHost: { kind: 'sftp', state: 'current', listing: { state: 'not-listable', archiveCount: 0, notInCatalog: [] } },
+        lastRestore: { backupId: 'studio-backup-20261104T000000Z-def456', archiveCreatedAt: '2026-11-04T00:00:00+00:00',
+          restoredAt: '2026-11-04T09:00:00+00:00', restoredBy: 'owner@host-b' },
         warnings: [{ code: 'backup-stale', severity: 'danger', message: 'The newest good backup is 13 hours old.' }] });
+    if (method === 'POST' && /^\/api\/clients\/[^/]+\/(drain|resume)$/.test(path))
+      return send(200, { id: decodeURIComponent(path.split('/')[3]) });
+    if (method === 'GET' && /^\/api\/clients\/[^/]+\/drain-status$/.test(path))
+      return send(200, { clientId: decodeURIComponent(path.split('/')[3]), draining: true, drained: false,
+        reportedActiveSlots: 1, running: [{ kind: 'review', attemptId: 'review-1', taskKey: 'DEMO-4',
+          acquiredAt: '2026-11-05T10:00:00Z' }] });
     if (method === 'GET' && path === '/api/operator/capacity')
       return send(200, { quota: [], activeFallbacks: [], waitingCards: [], modelRoutingPins: [] });
     if (method === 'GET' && path === '/api/security/posture')
@@ -142,6 +154,8 @@ export async function startFakeStudio({ cards = {}, preflightBlockers = [] } = {
     }
     if (method === 'GET' && path === '/api/operator/log')
       return send(200, { entries: log, cursor: log.length });
+    const article = path.match(/^\/api\/magazine\/([^/]+)\/([^/]+)$/);
+    if (article) return magazine(req, method, decodeURIComponent(article[1]), decodeURIComponent(article[2]), body, send);
     if (method === 'POST' && /^\/api\/projects\/[^/]+\/batch-gate\/members\/[^/]+\/eject$/.test(path))
       return send(202, { accepted: true });
     if (method === 'POST' && (path === '/api/tasks' || path === '/api/tasks/'))
@@ -170,6 +184,32 @@ export async function startFakeStudio({ cards = {}, preflightBlockers = [] } = {
     return send(404, { error: 'not-found' });
   }
 
+  function magazine(req, method, scope, slug, body, send) {
+    if (!/^(installation|(workspace|project):[A-Za-z0-9._-]+)$/.test(scope))
+      return send(400, { error: 'magazine-scope-invalid' });
+    if (scope === 'project:FOREIGN') return send(403, { error: 'project-scope-denied' });
+    const key = `${scope}/${slug}`;
+    const existing = articles.get(key);
+    if (method === 'GET') {
+      if (!existing) return send(404, { error: 'magazine-article-not-found' });
+      const latest = existing.at(-1);
+      send(200, { ...latest, currentRevision: latest.revision });
+      if (articleRaces.delete(key)) existing.push({ ...latest, revision: latest.revision + 1 });
+      return;
+    }
+    if (method !== 'PUT') return send(405, { error: 'method-not-allowed' });
+    if (Buffer.byteLength(body?.body ?? '', 'utf8') > 256 * 1024) return send(413, { error: 'magazine-body-too-large' });
+    const header = req.headers['if-match'];
+    const expected = header === undefined ? null : Number(String(header).replace(/^W\//, '').replace(/"/g, ''));
+    const current = existing?.at(-1).revision ?? 0;
+    if (existing && expected === null) return send(428, { error: 'if-match-required', currentRevision: current });
+    if (expected !== null && expected !== current)
+      return send(409, { error: 'revision-conflict', message: `Revision ${expected} is stale; the current revision is ${current}.`, currentRevision: current });
+    const next = { scope, slug, revision: current + 1, ...body };
+    articles.set(key, [...(existing ?? []), next]);
+    return send(existing ? 200 : 201, { ...next, currentRevision: next.revision });
+  }
+
   function writeEvent(res, event) {
     res.write(`id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
   }
@@ -178,6 +218,8 @@ export async function startFakeStudio({ cards = {}, preflightBlockers = [] } = {
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     requests,
+    articles,
+    articleRaces,
     get lease() { return lease; },
     publish(type, overrides = {}) {
       const event = { id: `evt-${events.length + 1}`, cursor: String(events.length + 1), type,

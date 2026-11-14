@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  acceptanceHoldReason,
+  acceptanceRequiresIntegration,
   archiveIntegrationVerdict,
   deliveryClaimVerdict,
   isDeliveredArchiveMove,
@@ -191,7 +193,7 @@ describe('primaryActionFor — Enter-bound primary per source lane', () => {
     const primary = primaryActionFor('5e-escalated');
     expect(primary?.label).toBe('Continue (reissue)');
     expect(overflowActionsFor('5e-escalated').map(action => action.label)).toEqual(
-      expect.arrayContaining(['Accept as-is', 'Abort']),
+      expect.arrayContaining(['Accept with reason', 'Abort']),
     );
   });
 
@@ -269,6 +271,23 @@ describe('overflowActionsFor — Move to Completed / Move to Archive', () => {
 });
 
 describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary', () => {
+  it('allows a concept to be accepted when a stale delivery status says pending', () => {
+    const concept = reviewJob(null, {
+      mode: 'concept', requiresIntegration: false,
+      integration: integrated({ status: 'pending' }),
+    });
+    const view = mergeAcceptViewFor(concept);
+    expect(acceptanceRequiresIntegration(concept)).toBe(false);
+    expect(view.acceptLabel).toBe('Accept');
+    expect(view.statusLabel).toBeNull();
+  });
+
+  it('explains a held action in owner words', () => {
+    expect(acceptanceHoldReason(reviewJob())).toBe('Checking whether this delivery needs integration.');
+    expect(acceptanceHoldReason(reviewJob(null, { integration: integrated({ status: 'pending' }) })))
+      .toBe('Waiting for the delivery to reach develop.');
+  });
+
   it('waits for integration when nothing has landed yet', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null)));
     expect(view.landed).toBe(false);
@@ -286,6 +305,13 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
   it('allows a code-free delivery with a not-applicable verdict', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null), {
       commit: null, commits: [], integration: integrated({ status: 'not-applicable' }),
+    }));
+    expect(view.acceptLabel).toBe('Accept');
+  });
+
+  it('trusts a not-applicable verdict even when the detail lists a task commit', () => {
+    const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null), {
+      integration: integrated({ status: 'not-applicable' }),
     }));
     expect(view.acceptLabel).toBe('Accept');
   });

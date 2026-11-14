@@ -35,6 +35,7 @@ public sealed class OperatorApprovalTests : IDisposable
         _config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _root,
+            ["Secrets:KeyFile"] = _root + ".kek",
             ["Security:Profile"] = "networked",
         }).Build();
         _store = new AccessSecurityStore(_config, NullLogger<AccessSecurityStore>.Instance, _clock);
@@ -118,7 +119,7 @@ public sealed class OperatorApprovalTests : IDisposable
             _store.DecideOperatorApproval(approval.Id, false, new DecideOperatorApprovalRequest(null), SteppedUpOwner())).Code);
 
         // Still usable after the request's own 15 minutes, because the approval's clock starts at the decision.
-        _clock.Advance(TimeSpan.FromMinutes(14));
+        _clock.Advance(TimeSpan.FromMinutes(13));
         var admitted = Redeem(approval.Id);
         Assert.True(admitted.Admitted);
         Assert.Equal(approval.Id, admitted.ApprovalId);
@@ -290,8 +291,10 @@ public sealed class OperatorApprovalTests : IDisposable
     /// <summary>A fresh Owner session right after a second-factor step-up.</summary>
     private HumanPrincipal SteppedUpOwner()
     {
+        _clock.Advance(TimeSpan.FromSeconds(30));
         var session = _store.Login("first.owner", Password, "operator-approval-tests", SecondFactorCodes.CurrentTotp(_totpSecret, Now)).SessionToken;
         var owner = _store.AuthenticateSession(session)!;
+        _clock.Advance(TimeSpan.FromSeconds(30));
         _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_totpSecret, Now));
         return owner;
     }
@@ -301,5 +304,6 @@ public sealed class OperatorApprovalTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
+        File.Delete(_root + ".kek");
     }
 }

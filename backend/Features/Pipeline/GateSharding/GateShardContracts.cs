@@ -146,6 +146,7 @@ public sealed record GateShardEvidence(
 
     /// <summary>A <see cref="GateShardDetails"/> value for an infrastructure shard; null otherwise.</summary>
     public string? Detail { get; init; }
+    public GateShardHangEvidence? Hang { get; init; }
 }
 
 /// <summary>

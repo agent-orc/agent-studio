@@ -26,7 +26,7 @@ export const USAGE_PHONE_QUERY = '(max-width: 767px)';
 export const USAGE_TRIGGER_ATTR = 'data-usage-trigger';
 
 export function usageTriggerKey(focus: UsageDetailFocus): string {
-  return focus.kind === 'cost' ? 'cost' : `cli:${focus.cliId.toLowerCase()}`;
+  return focus.kind === 'cli' ? `cli:${focus.cliId.toLowerCase()}` : focus.kind;
 }
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -85,7 +85,7 @@ export class UsageDetailSurfaceComponent {
   readonly mode = computed(() => (this.phone() ? 'sheet' : 'popover'));
   readonly title = computed(() => {
     const focus = this.focus();
-    return !focus || focus.kind === 'cost' ? 'Cost and usage' : `${cliDisplayName(focus.cliId)} usage`;
+    return focus?.kind === 'cli' ? `${cliDisplayName(focus.cliId)} usage` : 'Cost and usage';
   });
 
   /** Last focus that was open, for restoring focus after the dialog closes. */

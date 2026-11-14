@@ -56,7 +56,6 @@ public class TaskRunnerService : BackgroundService
     private readonly AgentStudio.Pipeline.ModelQualificationService? _modelQualification;
     private readonly AgentStudio.Pipeline.ModelMigrationCatalogRegistry? _modelMigrationCatalog;
     private readonly AgentStudio.Pipeline.IntegrationPushQueue? _integrationPushQueue;
-    private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
     private readonly IVisualQaService? _visualQa;
@@ -168,7 +167,6 @@ public class TaskRunnerService : BackgroundService
         AgentStudio.Pipeline.IntegrationPushQueue? integrationPushQueue = null,
         AgentStudio.Clients.ClientIdentityStore? clients = null,
         CliQuotaWaitPolicyService? quotaWaitPolicy = null,
-        AgentStudio.Pipeline.IConceptWorkbenchPublisher? conceptWorkbenchPublisher = null,
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
         IVisualQaService? visualQa = null,
@@ -227,7 +225,6 @@ public class TaskRunnerService : BackgroundService
         _modelQualification = modelQualification;
         _modelMigrationCatalog = modelMigrationCatalog;
         _integrationPushQueue = integrationPushQueue;
-        _conceptWorkbenchPublisher = conceptWorkbenchPublisher;
         _promptEnrichment = promptEnrichment;
         _dossierMaintenance = dossierMaintenance;
         _visualQa = visualQa;
@@ -452,7 +449,6 @@ public class TaskRunnerService : BackgroundService
                 modelQualification: _modelQualification,
                 modelMigrationCatalog: _modelMigrationCatalog,
                 integrationPushQueue: _integrationPushQueue,
-                conceptWorkbenchPublisher: _conceptWorkbenchPublisher,
                 promptEnrichment: _promptEnrichment,
                 dossierMaintenance: _dossierMaintenance,
                 visualQa: _visualQa,
@@ -788,7 +784,7 @@ public class TaskRunnerService : BackgroundService
         // refused here, before the follow-up is ever written to disk below.
         var guard = ContinueModeGuardPolicy.Decide(new ContinueModeGuardFacts(jobId, info.Mode, followupPrompt, modeOverride));
         if (guard.Action == ContinueModeGuardAction.Reject)
-            throw new TaskOperationException(guard.Message!, 409);
+            throw new TaskOperationException(guard.Message!, 409, ContinueModeGuardDecision.RefusalCode);
 
         var runner = _runners.Values.FirstOrDefault(r => r.Entry.Name == info.ProjectName);
         if (runner == null) throw new TaskOperationException($"No runner configured for project '{info.ProjectName}'", 400);
@@ -1944,7 +1940,6 @@ public class TaskRunnerService : BackgroundService
             dependencyGitProjection: _dependencyGitProjection,
             loadThrottle: _loadThrottle,
             modelMigrationCatalog: _modelMigrationCatalog,
-            conceptWorkbenchPublisher: _conceptWorkbenchPublisher,
             promptEnrichment: _promptEnrichment,
             dossierMaintenance: _dossierMaintenance,
             visualQa: _visualQa,

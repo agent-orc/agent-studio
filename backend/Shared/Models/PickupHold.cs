@@ -186,6 +186,11 @@ public readonly record struct PickupHoldFacts(
 /// </summary>
 public static class PickupHoldPolicy
 {
+    /// <summary>
+    /// AGT-3709: a host that reports the model unavailable is the same wait as
+    /// one that has not accepted it yet; both name the host-capability hold.
+    /// </summary>
+    private const string HostModelUnavailableCode = "host-model-unavailable";
     public static readonly TimeSpan DefaultStalledThreshold = TimeSpan.FromMinutes(30);
     /// <summary>
     /// The lanes a card can claim to be queued in. <c>3-progress</c> is
@@ -279,7 +284,7 @@ public static class PickupHoldPolicy
         // card stopped being pickable, and it is the number the operator needs.
         if (facts.Rejection is { } rejection)
             return Hold(
-                rejection.Code == PickupHoldMechanisms.HostCapabilityMissing
+                rejection.Code is PickupHoldMechanisms.HostCapabilityMissing or HostModelUnavailableCode
                     ? PickupHoldMechanisms.HostCapabilityMissing
                     : PickupHoldMechanisms.DispatchRejection,
                 $"Runner {Describe(rejection.RunnerName, rejection.RunnerId)} refused this card ({rejection.Code}): {rejection.Reason}",

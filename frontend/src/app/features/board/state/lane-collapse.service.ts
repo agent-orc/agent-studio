@@ -5,6 +5,7 @@ import { Injectable, signal } from '@angular/core';
  * time. 720 px is the phone breakpoint the studio shell and header share.
  */
 export const BOARD_SINGLE_GROUP_QUERY = '(width < 720px)';
+export const BOARD_SINGLE_LANE_QUERY = '(width <= 480px)';
 
 /**
  * Board feature service for per-lane collapse state and container focus.
@@ -22,6 +23,7 @@ export class LaneCollapseService {
 
   /** True below tablet width, where the board shows one container at a time. */
   readonly singleGroupLayout = signal(false);
+  readonly singleLaneLayout = signal(false);
 
   /**
    * Container picked in the narrow-board switcher. Kept apart from
@@ -35,6 +37,11 @@ export class LaneCollapseService {
     this.singleGroupLayout.set(media.matches);
     // Root service: the listener lives as long as the application.
     media.addEventListener('change', (event) => this.singleGroupLayout.set(event.matches));
+    const phone = typeof matchMedia === 'function' ? matchMedia(BOARD_SINGLE_LANE_QUERY) : null;
+    if (phone) {
+      this.singleLaneLayout.set(phone.matches);
+      phone.addEventListener('change', (event) => this.singleLaneLayout.set(event.matches));
+    }
   }
 
   // ---------- per-lane collapse ----------

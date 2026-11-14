@@ -16,7 +16,7 @@ case "$ID" in
       openssh-client passwd python3 procps sed tar util-linux >/dev/null
     ;;
   fedora)
-    dnf install -y -q bash ca-certificates coreutils curl findutils gawk git gzip hostname iproute \
+    dnf install -y -q bash ca-certificates coreutils curl findutils gawk git git-daemon gzip hostname iproute \
       libicu openssh-clients python3 procps sed shadow-utils tar util-linux >/dev/null
     ;;
   *) echo "Unsupported container distribution: $ID" >&2; exit 2 ;;

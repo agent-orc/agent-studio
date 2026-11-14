@@ -4,6 +4,7 @@ import { StudioIconComponent } from '../../../../components/studio-icon/studio-i
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
+import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { BatchPanelComponent } from '../../../batch-gate/batch-panel/batch-panel';
 import {
   OperatorAttentionService,
@@ -35,6 +36,7 @@ import { StudioTabStateService } from '../../services/studio-tab-state.service';
 export class AttentionControlComponent {
   readonly attention = inject(OperatorAttentionService);
   private readonly references = inject(TaskReferenceNavigationService);
+  private readonly projects = inject(ProjectLookupService);
   private readonly overlays = inject(WorkspaceOverlaysService);
   private readonly tabs = inject(StudioTabStateService);
   private readonly panels = inject(StudioPanelStateService);
@@ -108,6 +110,22 @@ export class AttentionControlComponent {
     switch (target) {
       case 'card':
         this.references.openReferenceOrNotify(attentionCard(item)!);
+        return;
+      case 'dossiers':
+        if (item.project && item.dossierId) {
+          this.tabs.open({ kind: 'workbench', projectName: item.project, workbenchId: item.dossierId,
+            title: item.title || 'Dossier', key: item.cardKey || undefined });
+        } else this.tabs.open({ kind: 'workbenches', projectName: item.project });
+        this.panels.noteEditorActivation();
+        return;
+      case 'backups':
+        if (this.projects.allProjects()[0]?.displayName) {
+          this.tabs.open({ kind: 'hub', projectName: this.projects.allProjects()[0].displayName, section: 'operations' });
+          this.panels.noteEditorActivation();
+        } else this.openActivity();
+        return;
+      case 'credentials':
+        this.openSettings('credentials');
         return;
       case 'batch-gate':
         this.batchProject.set(item.project);

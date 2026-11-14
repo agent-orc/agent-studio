@@ -149,7 +149,9 @@ public class CliInvocationCentralizationGuardTests
             + "AGT-3214 starts `codex login --device-auth` and, since AGT-3225 merged the AGT-3156 "
             + "launcher into it, `claude setup-token` for an operator-initiated provider sign-in on the "
             + "host. It is the only device-login launcher, holds the host provider login lock, is bounded "
-            + "to 15 minutes, logs no child output and never starts an agent run or reads a card. AGT-2373 "
+            + "to 15 minutes, logs no child output and never starts an agent run or reads a card. Since "
+            + "AGT-3243 runner/DeviceLoginChild.cs drives the pipes or the pseudo-terminal of the "
+            + "process, but the launch spec (binary, arguments, environment) stays here. AGT-2373 "
             + "keeps such bounded login processes outside the execution layer as a permanent non-run "
             + "process boundary."),
 

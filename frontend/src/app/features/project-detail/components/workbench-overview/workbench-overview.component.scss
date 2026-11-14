@@ -118,13 +118,6 @@
     display: flex;
     flex-direction: column;
   }
-  &__inline-viewer {
-    grid-column: 1 / -1;
-    width: 100%;
-    height: min(44rem, 70vh);
-    min-height: 24rem;
-    padding-top: var(--studio-spacing-3);
-  }
   &__history {
     padding-top: var(--studio-spacing-2);
   }

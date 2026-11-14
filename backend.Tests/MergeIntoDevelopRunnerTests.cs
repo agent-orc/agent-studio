@@ -3692,12 +3692,14 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     {
         var repo = Path.Combine(_tempDir, name);
         var remote = Path.Combine(_tempDir, name + "-origin.git");
-        GitRepositoryTemplate.CopyTo("merge-into-develop:seed-with-origin:v1", root =>
+        GitRepositoryTemplate.CopyTo("merge-into-develop:seed-with-origin:v2", root =>
         {
             var seed = Path.Combine(root, "repo");
             var origin = Path.Combine(root, "origin.git");
             SeedInto(seed);
             RunGit(root, $"init --bare -q --initial-branch=main \"{origin}\"");
+            // A push ends without the receiving side's gc --auto child (AGT-3567).
+            RunGit(root, $"--git-dir=\"{origin}\" config receive.autoGc false");
             RunGit(seed, $"remote add origin \"{origin}\"");
             RunGit(seed, "push -q -u origin main");
         }, ("repo", repo), ("origin.git", remote));
@@ -3800,7 +3802,7 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     private string SeedRepo(string name)
     {
         var repo = Path.Combine(_tempDir, name);
-        GitRepositoryTemplate.CopyTo("merge-into-develop:seed:v1", repo, SeedInto);
+        GitRepositoryTemplate.CopyTo("merge-into-develop:seed:v2", repo, SeedInto);
         return repo;
     }
 
@@ -3810,6 +3812,9 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         RunGit(repo, "init -q -b main");
         RunGit(repo, "config user.email test@example.com");
         RunGit(repo, "config user.name test");
+        // Commit, merge and fetch in these repositories, the product's included,
+        // start no automatic maintenance child (AGT-3567: one per call).
+        RunGit(repo, "config maintenance.auto false");
         File.WriteAllText(Path.Combine(repo, "README.md"), "seed");
         RunGit(repo, "add -A");
         RunGit(repo, "commit -q -m seed");

@@ -1,4 +1,5 @@
 using AgentStudio.Runner;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Tasks;
 
@@ -57,6 +58,11 @@ public static class ParkedBlockerCatalog
     /// </summary>
     public static ParkedBlockerCondition ConditionFor(string? blockerType) => blockerType switch
     {
+        HumanReviewEscalationCategories.AutoReviewStranded => new ParkedBlockerCondition
+        {
+            Kind = ParkedBlockerConditionKinds.ReviewRetryAvailable,
+            Description = "A completed immutable delivery is still current and can receive a fresh review attempt.",
+        },
         // AGT-2220: a baseline-comparison review cannot materialize its subject
         // while the card branch predates the integration branch. The documented
         // fix is to merge the card branch fresh onto the integration branch, so
@@ -140,10 +146,13 @@ public static class ParkedBlockerCatalog
     {
         if (!IsParkedLane(lane)) return null;
         var blockerType = ReadBlockerType(reason);
+        var conditionType = blockerType == HumanReviewEscalationCategories.Environmental
+            && transitionDetail == HumanReviewEscalationCategories.AutoReviewStranded
+            ? HumanReviewEscalationCategories.AutoReviewStranded : blockerType;
         return new ParkedBlockerRecord
         {
             BlockerType = blockerType,
-            Condition = ConditionFor(blockerType),
+            Condition = ConditionFor(conditionType),
             Lane = lane!,
             ParkedAt = parkedAt,
             Reason = ResolveReason(reason, transitionCause, transitionDetail),
@@ -168,6 +177,12 @@ public static class ParkedBlockerCatalog
 
         var cause = (transitionCause ?? string.Empty).Trim();
         var detail = (transitionDetail ?? string.Empty).Trim();
+        if (cause == LaneChangeCauses.ReviewVerdict)
+        {
+            if (detail is "Merged" or "MergedAfterRebase" or "AlreadyMerged" or "AlreadyOnIntegrationBranch")
+                return "Remote Review passed and delivery integration completed. Human Review is waiting for a decision; review the task and accept or requeue it.";
+            return "Remote Review finished, but the delivery or review result needs a Human Review decision. Inspect the review and integration evidence, then accept, retry, or requeue the task.";
+        }
         if (cause.Length > 0 && detail.Length > 0) return $"{cause}: {detail}";
         if (detail.Length > 0) return detail;
         if (cause.Length > 0) return cause;

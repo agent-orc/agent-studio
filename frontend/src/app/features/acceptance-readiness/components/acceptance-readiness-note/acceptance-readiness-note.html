@@ -1,0 +1,18 @@
+@if (item(); as item) {
+  <div class="readiness-note" data-testid="acceptance-readiness-note" [attr.data-readiness]="item.readiness"
+       [attr.data-tone]="tone()">
+    <app-status-indicator [tone]="tone()" [label]="item.headline" [compact]="true" testId="acceptance-readiness-status" />
+    <p class="readiness-note__reason" data-testid="acceptance-readiness-reason">{{ item.reason }}</p>
+    @if (item.missing && item.readiness === 'review-concerns') {
+      <p class="readiness-note__missing" data-testid="acceptance-readiness-missing">Missing: {{ item.missing }}</p>
+    }
+    <div class="readiness-note__actions">
+      <a class="readiness-note__link" data-testid="acceptance-review-report" [href]="reportHref()"
+         (click)="stop($event)" (keydown.enter)="stop($event)">Review report</a>
+      @if (item.round) {
+        <button type="button" class="readiness-note__round" data-testid="acceptance-send-round"
+                (click)="openRound($event)" (keydown.enter)="stop($event)">Send a round to close the gap</button>
+      }
+    </div>
+  </div>
+}
