@@ -502,6 +502,9 @@ test.describe('Status indicator surfaces (mocked)', () => {
     }
     await expect(pipeline).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('overview-pipeline-run-switcher')).toBeVisible();
+    const liveHeadline = page.getByTestId('task-live-headline');
+    await expect(liveHeadline).toContainText('Waiting for owner review');
+    expect(await liveHeadline.evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(100);
     await expect(page.locator('[data-testid="status-indicator"], [data-tone]').first()).toBeVisible();
     await hideDevOverlays(page);
 
