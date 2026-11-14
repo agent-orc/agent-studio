@@ -33,6 +33,77 @@ public sealed class PersonaSchedulingTests : IDisposable
     }
 
     [Fact]
+    public void Scout_event_and_daily_schedule_share_one_due_window_after_restart()
+    {
+        var descriptor = new PersonaCatalogue().Find("improvement-scout")!.Descriptor;
+        var activation = Warden() with { PersonaId = "prs_scout", RoleId = descriptor.Id,
+            Descriptor = descriptor, DescriptorRevision = descriptor.Revision,
+            ActivatedAt = Now.AddDays(-1), Attributes = descriptor.Attributes with { Thoroughness = 3 },
+            Allowance = descriptor.Budget };
+        var first = new PersonaSchedulingService(_root);
+        var events = new Dictionary<string, IReadOnlyList<PersonaTrigger>>
+        {
+            [activation.PersonaId] = [new(Now.Date.AddHours(5), "watcher.material-case", "case:a"),
+                new(Now.Date.AddHours(6), "watcher.material-case", "case:b")],
+        };
+        first.Sweep("main", Now, null, [activation], events, _ => Open);
+        var restarted = new PersonaSchedulingService(_root);
+        restarted.Sweep("main", Now.AddMinutes(5), null, [activation], events, _ => Open);
+        var receipt = Assert.Single(restarted.Receipts("main"));
+        Assert.Equal(Now.Date.AddHours(7).AddMinutes(30), receipt.WindowEndUtc);
+        Assert.Contains("cadence", receipt.TriggerRefs);
+        Assert.Contains("case:a", receipt.TriggerRefs);
+        Assert.Contains("case:b", receipt.TriggerRefs);
+    }
+
+    [Fact]
+    public void Activated_starter_personas_fit_pool_per_instance_and_all_defaults_are_refused()
+    {
+        var descriptors = new PersonaCatalogue().Entries.Select(e => e.Descriptor).ToArray();
+        PersonaActivationV1 Activate(PersonaDescriptorV1 d) => Warden() with
+        {
+            PersonaId = "prs_" + d.Id, RoleId = d.Id, Descriptor = d,
+            DescriptorRevision = d.Revision, Attributes = d.Attributes,
+            Allowance = d.Budget, ActivatedAt = Now.AddMinutes(-1),
+        };
+        var selected = descriptors.Where(d => d.Id is "operations-warden" or "cost-controller" or "improvement-scout")
+            .Select(Activate).ToArray();
+        var store = new PersonaSchedulingService(_root);
+        var allowed = store.Budget("main", Now, null, selected);
+        Assert.Equal(310_000, allowed.Personas.Values.Sum(p => p.AllowanceTokens));
+        Assert.True(allowed.Personas.Values.Sum(p => p.AllowanceTokens) <= allowed.PoolTokens);
+
+        var all = descriptors.Select(Activate).ToArray();
+        var triggers = all.ToDictionary(a => a.PersonaId,
+            a => (IReadOnlyList<PersonaTrigger>)[new(Now, PersonaSchedulingService.ManualRunTrigger,
+                "manual:" + a.PersonaId)]);
+        var refused = store.Sweep("main", Now, null, all, triggers, _ => Open);
+        Assert.Equal(all.Length, refused.Count);
+        Assert.All(refused, r => Assert.Equal("allowances-exceed-pool", r.Reason));
+    }
+
+    [Fact]
+    public void Scout_weekly_review_has_one_separate_ninety_day_window()
+    {
+        var descriptor = new PersonaCatalogue().Find("improvement-scout")!.Descriptor;
+        var activation = Warden() with { PersonaId = "prs_scout", RoleId = descriptor.Id,
+            Descriptor = descriptor, DescriptorRevision = descriptor.Revision,
+            ActivatedAt = Now.AddDays(-7), Attributes = descriptor.Attributes,
+            Allowance = descriptor.Budget };
+        var store = new PersonaSchedulingService(_root);
+        store.Sweep("main", Now, null, [activation], new Dictionary<string, IReadOnlyList<PersonaTrigger>>(),
+            _ => Open);
+        var replay = new PersonaSchedulingService(_root);
+        replay.Sweep("main", Now.AddMinutes(5), null, [activation],
+            new Dictionary<string, IReadOnlyList<PersonaTrigger>>(), _ => Open);
+        var receipts = replay.Receipts("main");
+        Assert.Equal(2, receipts.Count);
+        Assert.Single(receipts, r => r.TriggerRefs.Contains("cadence"));
+        Assert.Single(receipts, r => r.TriggerRefs.Contains("investigation"));
+        Assert.Equal("P90D", descriptor.Cadence.Review);
+    }
+
+    [Fact]
     public void Workspace_warning_refuses_persona_with_no_call_receipt_while_cards_still_pass_quota()
     {
         var activation = Warden();

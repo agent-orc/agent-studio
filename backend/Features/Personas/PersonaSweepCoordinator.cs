@@ -8,6 +8,7 @@ using AgentStudio.Tasks;
 using AgentStudio.Cli;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Management;
+using AgentStudio.Magazine;
 
 namespace AgentStudio.Personas;
 
@@ -29,13 +30,15 @@ public sealed class PersonaSweepCoordinator
     private readonly ControlPlaneAuditMonitor _audit;
     private readonly ILogger<PersonaSweepCoordinator> _logger;
     private readonly IModelSelectionService _selection;
+    private readonly WeeklyIssueStore _issues;
 
     public PersonaSweepCoordinator(PersonaActivationStore activations, PersonaSchedulingService scheduling,
         WorkspaceRegistry workspaces, ProjectRegistry projects, WorkspaceQuotaService quotas,
         OperatorDecisionLog decisions, AccessSecurityStore security, ClientIdentityStore clients,
         TaskScannerService scanner, IModelSelectionService selection,
         WorkspaceSettingsService workspaceSettings, StudioBackupService backups,
-        ControlPlaneAuditMonitor audit, ILogger<PersonaSweepCoordinator> logger)
+        ControlPlaneAuditMonitor audit, WeeklyIssueStore issues,
+        ILogger<PersonaSweepCoordinator> logger)
     {
         _activations = activations;
         _scheduling = scheduling;
@@ -50,6 +53,7 @@ public sealed class PersonaSweepCoordinator
         _workspaceSettings = workspaceSettings;
         _backups = backups;
         _audit = audit;
+        _issues = issues;
         _logger = logger;
     }
 
@@ -98,6 +102,9 @@ public sealed class PersonaSweepCoordinator
                 var rows = events.Where(e => e.Time >= now.AddHours(-24)
                     && (e.Project is null || projectNames.Contains(e.Project)))
                     .Select(e => new PersonaTrigger(e.Time, e.Type, e.Id)).ToList();
+                if ((a.RoleId ?? a.Descriptor.Id) == "presenter")
+                    rows.AddRange(_issues.List(workspace.Id).Where(i => i.PublishedAtUtc >= now.AddDays(-31))
+                        .Select(i => new PersonaTrigger(i.PublishedAtUtc, "magazine.issue-published", i.Id)));
                 // Warden fact probes identify the exact fact in personaFact; they
                 // remain model-free and do not turn arbitrary card text into a trigger.
                 if (a.Descriptor.Aspect == "operations")
@@ -109,6 +116,11 @@ public sealed class PersonaSweepCoordinator
                             o.Details["personaFact"], AgentStudio.Watcher.WatcherFingerprint.Compute(o),
                             o.Severity is "Critical" ? 90 : 0)));
                 }
+                if ((a.RoleId ?? a.Descriptor.Id) == "improvement-scout")
+                    rows.AddRange(observations.Where(o => projectNames.Contains(o.Project)
+                        && (o.Severity is "High" or "Critical"))
+                        .Select(o => new PersonaTrigger(o.ObservedAtUtc, "watcher.material-case",
+                            AgentStudio.Watcher.WatcherFingerprint.Compute(o))));
                 if (_manualRuns.TryGetValue(workspace.Id + ":" + a.PersonaId, out var manual)) rows.Add(manual);
                 return (IReadOnlyList<PersonaTrigger>)rows;
             }, StringComparer.Ordinal);

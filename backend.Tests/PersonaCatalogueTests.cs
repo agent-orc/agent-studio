@@ -17,7 +17,7 @@ public sealed class PersonaCatalogueTests
 {
     private static readonly string[] StarterIds =
     [
-        "budget-steward", "chief-of-staff", "cost-controller", "design-lead", "documentation-editor", "operations-warden",
+        "budget-steward", "chief-of-staff", "cost-controller", "design-lead", "documentation-editor", "improvement-scout", "operations-warden",
         "presenter", "product-manager", "quality-lead", "reliability-engineer", "security-officer",
     ];
 
@@ -55,12 +55,14 @@ public sealed class PersonaCatalogueTests
     {
         var entries = new PersonaCatalogue().Entries.Select(entry => entry.Descriptor).ToList();
 
-        // Eleven defaults sum to 1,110,000 tokens, leaving 90,000 of the 1.2 million default pool unallocated.
-        Assert.Equal(1_110_000, entries.Sum(descriptor => descriptor.Budget.TokensPerWeek));
+        // The scout joins the catalogue with its former 110,000-token Watcher subceiling.
+        Assert.Equal(1_220_000, entries.Sum(descriptor => descriptor.Budget.TokensPerWeek));
         Assert.Equal(["cost-controller", "operations-warden"],
             entries.Where(descriptor => descriptor.StartsActive == true).Select(descriptor => descriptor.Id));
-        Assert.Equal((8, 1, 2), (entries.Count(d => d.Kind == PersonaKinds.Persona), entries.Count(d => d.Kind == PersonaKinds.Presenter),
+        Assert.Equal((9, 1, 2), (entries.Count(d => d.Kind == PersonaKinds.Persona), entries.Count(d => d.Kind == PersonaKinds.Presenter),
             entries.Count(d => d.Kind == PersonaKinds.Manager)));
+        Assert.All(entries.Where(d => (d.Kind is PersonaKinds.Persona or PersonaKinds.Presenter) &&
+            d.Id != "operations-warden"), d => Assert.NotNull(PersonaReportTemplates.Find(d.Report.Template)));
         Assert.All(entries.Where(d => d.Kind == PersonaKinds.Manager), d => Assert.Equal(PersonaAutonomy.Decide, d.Attributes.Autonomy));
 
         var warden = entries.Single(descriptor => descriptor.Id == "operations-warden");

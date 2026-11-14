@@ -9,12 +9,17 @@ using AgentStudio.Security;
 using AgentStudio.Management;
 using AgentStudio.Tasks;
 using AgentStudio.Watcher;
+using AgentStudio.Magazine;
+using AgentStudio.Quota;
 
 namespace AgentStudio.Personas;
 
 public sealed record PersonaGroundsSourceV1(string Ref, string Kind, string? Project,
     int FocusWeight, string Summary, bool Measured, int Floor = 0,
-    DateTime? ObservedAtUtc = null, string? Fingerprint = null);
+    DateTime? ObservedAtUtc = null, string? Fingerprint = null)
+{
+    public string? Area { get; init; }
+}
 public sealed record PersonaGroundsV1(int SchemaVersion, string OccurrenceKey, string PersonaId,
     string RoleId, string WorkspaceId, string DescriptorRevision, string DescriptorDigest,
     IReadOnlyList<PersonaGroundsSourceV1> Sources, IReadOnlyList<string> TriggerRefs,
@@ -50,6 +55,10 @@ public static class PersonaOutputValidator
         if (response.Items is null || response.Items.Count > activation.Descriptor.Report.MaxItems)
             return "item-count-exceeded";
         var refs = grounds.Sources.Select(s => s.Ref).ToHashSet(StringComparer.Ordinal);
+        if (grounds.Sources.Any(s => s.Area is not null &&
+                (!activation.Scope.Areas.Contains(s.Area, StringComparer.Ordinal) ||
+                 !activation.Descriptor.Scope.Areas.Contains(s.Area, StringComparer.Ordinal))))
+            return "grounds-out-of-scope";
         var projects = grounds.Sources.Where(s => s.Project is not null)
             .Select(s => s.Project!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         projects.UnionWith(grounds.AllowedProjects);
@@ -176,6 +185,8 @@ public sealed class PersonaOccurrenceService
     private readonly StudioBackupService _backups;
     private readonly SecurityPostureService _posture;
     private readonly OpsPostureSnapshotStore _opsSnapshots;
+    private readonly WeeklyIssueStore _issues;
+    private readonly WorkspaceQuotaService _quota;
     private readonly HashSet<string> _wardenDays = new(StringComparer.Ordinal);
     private readonly string? _root;
 
@@ -186,7 +197,7 @@ public sealed class PersonaOccurrenceService
         TaskScannerService cards,
         WatcherCaseStore cases, WatcherProposalStore proposals, AgentMessageBusStore bus,
         AccessSecurityStore security, StudioBackupService backups, SecurityPostureService posture,
-        OpsPostureSnapshotStore opsSnapshots,
+        OpsPostureSnapshotStore opsSnapshots, WeeklyIssueStore issues, WorkspaceQuotaService quota,
         IConfiguration configuration)
     {
         _managers = managers;
@@ -195,7 +206,7 @@ public sealed class PersonaOccurrenceService
         _workspaces = workspaces;
         _cards = cards; _cases = cases; _proposals = proposals; _bus = bus;
         _security = security;
-        _backups = backups; _posture = posture; _opsSnapshots = opsSnapshots;
+        _backups = backups; _posture = posture; _opsSnapshots = opsSnapshots; _issues = issues; _quota = quota;
         _root = configuration["TaskRepository"];
     }
 
@@ -287,8 +298,10 @@ public sealed class PersonaOccurrenceService
                     continue;
                 var grounds = BuildGrounds(receipt, activation);
                 var investigation = activation.Descriptor.Kind != "manager"
-                    && receipt.TriggerRefs.Contains("investigation", StringComparer.Ordinal);
-                if (investigation && activation.Attributes.Thoroughness < 4) continue;
+                    && receipt.TriggerRefs.Contains("investigation", StringComparer.Ordinal)
+                    && PersonaGroundsPolicy.CanCloneRepository(activation);
+                if (investigation && activation.Attributes.Thoroughness < 4 &&
+                    (activation.RoleId ?? activation.Descriptor.Id) != "improvement-scout") continue;
                 var json = JsonSerializer.Serialize(grounds, StrictJson);
                 var digest = "sha256:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
                 var model = activation.Descriptor.Model.CapabilityClass == "frontier" ? "claude-opus-5" : "claude-sonnet-4-5";
@@ -332,7 +345,9 @@ public sealed class PersonaOccurrenceService
                 return new PersonaLeaseV1(receipt.Key, claimed.ClaimToken!, workspace, activation.PersonaId,
                     activation.RoleId ?? activation.Descriptor.Id, prompt, model,
                     activation.Descriptor.Model.Thinking, investigation ? 900 : 300,
-                    12_000, 2_500, Investigation: investigation, SessionId: sessionId,
+                    (activation.RoleId ?? activation.Descriptor.Id) == "improvement-scout" && !investigation ? 8_000 : 12_000,
+                    2_500,
+                    Investigation: investigation, SessionId: sessionId,
                     RepositoryPaths: investigation ? _projects.List().Where(p => p.WorkspaceId == workspace
                         && !p.Archived && p.RepositoryPath is not null
                         && (activation.Scope.Projects.Contains("*") ||
@@ -404,6 +419,9 @@ public sealed class PersonaOccurrenceService
                 grounds);
             await PublishAsync(item, completion.Key, ct, receipt.SessionId);
         }
+        var report = _reports.SaveCompleted(completion.WorkspaceId, finished, activation, grounds,
+            _items.List(completion.WorkspaceId).Where(i => i.PersonaId == activation.PersonaId).ToArray(), now);
+        await PublishReportAsync(report, ct);
         return (true, null);
 
         (bool, string?) Fail(string reason)
@@ -546,7 +564,8 @@ public sealed class PersonaOccurrenceService
             Id = Guid.CreateVersion7().ToString("N"), CreatedAt = DateTime.UtcNow,
             ParticipantId = "persona:" + report.PersonaId, Role = "actor", Kind = "advisory",
             Severity = report.OpenItems.Any(i => i.Importance >= 70) ? "High" : "Info",
-            Summary = "Persona stub report", CorrelationId = report.OccurrenceKey,
+            Summary = report.State == "stub" ? "Persona stub report" : "Persona " + report.State + " report",
+            CorrelationId = report.OccurrenceKey,
             Payload = JsonSerializer.SerializeToElement(report, StrictJson),
         }, ct);
     }
@@ -573,9 +592,10 @@ public sealed class PersonaOccurrenceService
                 fact.Value));
         foreach (var project in allowed)
         {
-            sources.Add(new("project:" + project.Id, "project", project.DisplayName, 0,
-                project.DisplayName, false));
             if (project.RepositoryPath is not { } repository) continue;
+            if ((activation.RoleId ?? activation.Descriptor.Id) is not
+                ("product-manager" or "documentation-editor" or "improvement-scout" or
+                 "security-officer" or "reliability-engineer" or "quality-lead" or "design-lead")) continue;
             var docsRoot = Path.Combine(repository, "docs");
             if (!Directory.Exists(docsRoot)) continue;
             string[] folders;
@@ -585,6 +605,7 @@ public sealed class PersonaOccurrenceService
             foreach (var folder in folders)
             {
                 var manifest = Path.Combine(folder, "workbench.json");
+                if (!PersonaGroundsPolicy.PathAllowed(activation, Path.GetRelativePath(repository, manifest))) continue;
                 if (!File.Exists(manifest)) continue;
                 try
                 {
@@ -593,30 +614,91 @@ public sealed class PersonaOccurrenceService
                     var key = root.TryGetProperty("key", out var keyValue) ? keyValue.GetString() : null;
                     if (string.IsNullOrWhiteSpace(key)) continue;
                     var title = root.TryGetProperty("title", out var titleValue) ? titleValue.GetString() : key;
+                    var area = PersonaGroundsPolicy.Area(activation, title ?? key);
+                    if (area is null) continue;
                     sources.Add(new("dossier:" + key, "dossier", project.DisplayName,
-                        0, Truncate(title ?? key, 160), false));
+                        0, Truncate(title ?? key, 160), false) { Area = area });
                 }
                 catch (JsonException ex) { SilentCatch.Note(ex, "persona Dossier manifest is invalid"); }
                 catch (IOException ex) { SilentCatch.Note(ex, "persona Dossier manifest could not be read"); }
                 catch (UnauthorizedAccessException ex) { SilentCatch.Warn(ex, "persona Dossier manifest access denied"); }
             }
         }
-        foreach (var item in _cases.All(_root!).Where(c => names.Contains(c.Project))
-                     .OrderByDescending(c => focus.Where(pair => c.LastSummary.Contains(pair.Key,
-                         StringComparison.OrdinalIgnoreCase)).Sum(pair => pair.Value))
-                     .ThenByDescending(c => c.LastSeenUtc).Take(60))
-            sources.Add(new("case:" + item.Id, "watcher-case", item.Project,
-                focus.Where(pair => item.LastSummary.Contains(pair.Key,
-                    StringComparison.OrdinalIgnoreCase)).Sum(pair => pair.Value),
-                item.LastSummary[..Math.Min(280, item.LastSummary.Length)] +
-                " (observed " + item.OccurrenceCount + " times)",
-                item.OccurrenceCount > 0, ObservedAtUtc: item.LastSeenUtc,
-                Fingerprint: item.Fingerprint));
-        foreach (var card in _cards.GetResidentIdentityFacts().Where(c => names.Contains(c.ProjectName))
-                     .Take(60))
-            sources.Add(new("card:" + card.Id, "card", card.ProjectName, 0,
-                (card.Title + " (" + card.State + ")")[..Math.Min(320, card.Title.Length + card.State.Length + 3)], false));
-        foreach (var prior in _items.List(receipt.WorkspaceId).Where(i => i.PersonaId == receipt.PersonaId)
+        if ((activation.RoleId ?? activation.Descriptor.Id) is "security-officer" or "reliability-engineer"
+            or "quality-lead" or "design-lead" or "product-manager" or "documentation-editor"
+            or "improvement-scout")
+        {
+            var scoutLookback = (activation.RoleId ?? activation.Descriptor.Id) == "improvement-scout"
+                ? receipt.TriggerRefs.Contains("investigation", StringComparer.Ordinal) ? 90 : 14
+                : 3650;
+            foreach (var item in _cases.All(_root!).Where(c => names.Contains(c.Project)
+                         && c.LastSeenUtc >= receipt.CreatedAtUtc.AddDays(-scoutLookback))
+                         .OrderByDescending(c => focus.Where(pair => c.LastSummary.Contains(pair.Key,
+                             StringComparison.OrdinalIgnoreCase)).Sum(pair => pair.Value))
+                         .ThenByDescending(c => c.LastSeenUtc).Take(60))
+            {
+                var area = PersonaGroundsPolicy.Area(activation, item.LastSummary);
+                if (area is null) continue;
+                sources.Add(new("case:" + item.Id, "watcher-case", item.Project,
+                    focus.Where(pair => item.LastSummary.Contains(pair.Key,
+                        StringComparison.OrdinalIgnoreCase)).Sum(pair => pair.Value),
+                    item.LastSummary[..Math.Min(280, item.LastSummary.Length)] +
+                    " (observed " + item.OccurrenceCount + " times)",
+                    item.OccurrenceCount > 0, ObservedAtUtc: item.LastSeenUtc,
+                    Fingerprint: item.Fingerprint) { Area = area });
+            }
+            foreach (var card in _cards.GetResidentIdentityFacts().Where(c => names.Contains(c.ProjectName))
+                         .Take(60))
+            {
+                var area = PersonaGroundsPolicy.Area(activation, card.Title);
+                if (area is null) continue;
+                sources.Add(new("card:" + card.Id, "card", card.ProjectName, 0,
+                    Truncate(card.Title + " (" + card.State + ")", 320), false) { Area = area });
+            }
+        }
+        if ((activation.RoleId ?? activation.Descriptor.Id) == "cost-controller")
+        {
+            if (activation.Scope.Areas.Contains("personas.budget", StringComparer.Ordinal))
+            {
+                var budget = _scheduling.Budget(receipt.WorkspaceId, receipt.CreatedAtUtc, null,
+                    _activations.List(receipt.WorkspaceId).Personas.Select(p => p.Activation)
+                        .OfType<PersonaActivationV1>().ToArray());
+                sources.Add(new("persona-budget:" + budget.StartUtc.ToString("yyyyMMdd"), "persona-budget", null, 100,
+                    "Personas budget: " + budget.UsedTokens + " used of " + budget.PoolTokens + " pool tokens", true)
+                    { Area = "personas.budget" });
+            }
+            if (activation.Scope.Areas.Contains("quota.workspace", StringComparer.Ordinal))
+            {
+                var scopes = PersonaGroundsPolicy.QuotaScopes(activation,
+                    allowed.Select(p => (p.Id, p.DisplayName)).ToArray());
+                foreach (var (projectId, projectName) in scopes)
+                {
+                    var quota = _quota.Snapshot(receipt.WorkspaceId, projectId);
+                    sources.Add(new("quota:" + (projectId ?? "workspace") + ":" +
+                        quota.WeekStartUtc.ToString("yyyyMMdd"), "workspace-quota", projectName, 100,
+                        "Quota: " + quota.Usage.ModelTokens + " model tokens used; status " + quota.Status,
+                        quota.MeterComplete) { Area = "quota.workspace" });
+                    if (activation.Scope.Areas.Contains("cost.cards", StringComparer.Ordinal))
+                        foreach (var consumer in quota.BiggestConsumers.Where(c => projectName is null ||
+                                     string.Equals(c.Project, projectName, StringComparison.OrdinalIgnoreCase)).Take(10))
+                            sources.Add(new("cost-card:" + (consumer.CardId ?? consumer.ProjectId), "card-cost",
+                                consumer.Project, 50, "Cost per card tokens: " + consumer.ModelTokens, true)
+                                { Area = "cost.cards" });
+                }
+            }
+        }
+        if ((activation.RoleId ?? activation.Descriptor.Id) == "presenter" &&
+            PersonaGroundsPolicy.CanReadWorkspaceIssue(activation))
+        {
+            foreach (var issue in _issues.List(receipt.WorkspaceId).Take(2))
+                sources.Add(new("magazine-issue:" + issue.Id, "magazine-issue", null, 100,
+                    Truncate(issue.Masthead + "; " + issue.CoverageLine + "; lead " +
+                        (issue.Lead?.Id ?? "none"), 320), true, ObservedAtUtc: issue.PublishedAtUtc)
+                    { Area = "magazine.issues" });
+        }
+        foreach (var prior in _items.List(receipt.WorkspaceId).Where(i => i.PersonaId == receipt.PersonaId
+                     && (i.Project is null || names.Contains(i.Project))
+                     && (i.Area is null || activation.Scope.Areas.Contains(i.Area, StringComparer.Ordinal)))
                      .OrderByDescending(i => i.UpdatedAtUtc).Take(40))
             sources.Add(new("item:" + prior.Id, "prior-outcome", prior.Project, 0,
                 prior.Title + " (" + prior.State + ", importance " + prior.Importance + ")",
@@ -624,10 +706,13 @@ public sealed class PersonaOccurrenceService
         // A dense JSON envelope can tokenize close to one token per character.
         // Reserve framing room and truncate by serialized UTF-8 bytes.
         var selected = new List<PersonaGroundsSourceV1>();
-        foreach (var source in sources.OrderByDescending(s => s.FocusWeight))
+        var sourceByteLimit = (activation.RoleId ?? activation.Descriptor.Id) == "improvement-scout"
+            ? 9_000 : 18_000;
+        foreach (var source in PersonaGroundsPolicy.Filter(activation, sources)
+                     .OrderByDescending(s => s.FocusWeight))
         {
             if (Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(selected, StrictJson)) +
-                Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(source, StrictJson)) > 18_000) break;
+                Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(source, StrictJson)) > sourceByteLimit) break;
             selected.Add(source);
         }
         return new(1, receipt.Key, receipt.PersonaId, receipt.RoleId, receipt.WorkspaceId,
