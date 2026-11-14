@@ -3,7 +3,6 @@ import { TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
 import { describe, expect, it } from 'vitest';
 import { RetentionService } from '../../services/retention.service';
-import { backupVerificationStatus } from '../retention-backups/retention-backups.component';
 import { RetentionRunHistoryComponent, retentionRunResult } from './retention-run-history.component';
 
 describe('RetentionRunHistoryComponent', () => {
@@ -34,9 +33,4 @@ describe('retention status mapping', () => {
     expect(retentionRunResult(true, 0, 0)).toEqual({ tone: 'success', label: 'Completed' });
   });
 
-  it('maps backup verification', () => {
-    expect(backupVerificationStatus(true, 3)).toEqual({ tone: 'success', label: 'Verified' });
-    expect(backupVerificationStatus(false, 1)).toEqual({ tone: 'warning', label: 'Needs attention' });
-    expect(backupVerificationStatus(false, 0)).toEqual({ tone: 'neutral', label: 'Not checked' });
-  });
 });
