@@ -75,10 +75,24 @@ public sealed partial class RemoteRunnerEndToEndTests
         Assert.True(promoted.StatusCode == HttpStatusCode.OK, promotedBody);
         using var created = JsonDocument.Parse(promotedBody);
         Assert.Equal(1, created.RootElement.GetProperty("created").GetArrayLength());
-        Assert.Equal(TaskStates.Completed, scanner.FindJob(flow.TaskKey, _watchPath)!.State);
-        using var acceptedCopy = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+        Assert.Equal(TaskStates.HumanReview, scanner.FindJob(flow.TaskKey, _watchPath)!.State);
+        var descriptorPath = Path.Combine(
             ConceptWorkbenchStore.SnapshotRoot(card.FolderPath),
-            "docs", ConceptTopic, "workbench.json")));
+            "docs", ConceptTopic, "workbench.json");
+        using (var awaitingAcceptance = JsonDocument.Parse(File.ReadAllText(descriptorPath)))
+            Assert.NotEqual("decided", awaitingAcceptance.RootElement.GetProperty("status").GetString());
+
+        using var acceptance = await http.PostAsJsonAsync(
+            $"/api/tasks/{flow.TaskKey}/move?project={ProjectName}",
+            new MoveJobRequest { TargetState = TaskStates.Completed }, ct);
+        Assert.True(acceptance.StatusCode == HttpStatusCode.OK,
+            await acceptance.Content.ReadAsStringAsync(ct));
+        var completed = scanner.FindJob(flow.TaskKey, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, completed.State);
+        var acceptedDescriptorPath = Path.Combine(
+            ConceptWorkbenchStore.SnapshotRoot(completed.FolderPath),
+            "docs", ConceptTopic, "workbench.json");
+        using var acceptedCopy = JsonDocument.Parse(File.ReadAllText(acceptedDescriptorPath));
         Assert.Equal("decided", acceptedCopy.RootElement.GetProperty("status").GetString());
     }
 

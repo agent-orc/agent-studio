@@ -242,7 +242,8 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   index. It never moves the concept card, so a refused acceptance cannot hide
   created cards behind an error status. `GET` returns the slices plus
   `promoted`, the slices that already have a card. Accepting the concept later
-  keeps that step passed; it is marked skipped only when no slice was promoted.
+  marks the Dossier accepted and keeps that step passed; it is marked skipped
+  only when no slice was promoted. Promotion leaves the Dossier lifecycle alone.
   The Studio offers this as **Create implementation cards** on the Dossier view
   (through the Dossier's source concept card) and on the concept card's
   Overview. The Dossier's **Start one combined task** stays the single-card path.

@@ -3,6 +3,7 @@ using AgentStudio.Git;
 using AgentStudio.Docs;
 
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -396,22 +397,38 @@ public sealed class ConceptPipelineTests : IDisposable
         Assert.Equal("Implement delivery UI", created.Title);
         Assert.Equal(TaskStates.Preparation, created.State);
         Assert.Equal(TaskStates.HumanReview, scanner.FindJob(source.Id, taskStore)!.State);
+        var descriptorPath = Path.Combine(_root, "repository", "docs", "delivery-flow", "workbench.json");
+        using (var beforeAcceptance = JsonDocument.Parse(File.ReadAllText(descriptorPath)))
+            Assert.NotEqual("decided", beforeAcceptance.RootElement.GetProperty("status").GetString());
         var promoted = Assert.Single(service.WithPromotedSlices(source, plan).Promoted);
         Assert.Equal(created.JobId, promoted.JobId);
         Assert.Equal(1, promoted.ItemIndex);
         Assert.Equal(PipelineStepStatus.Passed, PromotionStep(source.FolderPath).Status);
 
+        // A refused acceptance is a separate request and cannot erase the
+        // successful promotion response or its ledger-backed card list.
+        var refused = await Transitions(config, scanner, states, mutations, pipelineLog)
+            .MoveAsync(source.Id, TaskStates.Completed, taskStore,
+                expectedSourceState: TaskStates.Ready);
+        Assert.NotEqual(MoveJobStatus.Success, refused.Status);
+        Assert.Equal(TaskStates.HumanReview, scanner.FindJob(source.Id, taskStore)!.State);
+        Assert.Equal(created.JobId,
+            Assert.Single(service.WithPromotedSlices(source, plan).Promoted).JobId);
+
         Directory.CreateDirectory(TaskPaths.ResultsDir(source.FolderPath));
         File.WriteAllText(Path.Combine(TaskPaths.ResultsDir(source.FolderPath), "deliverables.md"),
             "# Approved concept\n\nThe sight review approved this no-code deliverable.\n");
         CompletionContentFixture.RecordPassedReview(source.FolderPath, "concept-fit");
-        var outcome = await Transitions(config, scanner, states, mutations, pipelineLog)
+        using var services = new ServiceCollection().AddSingleton(service).BuildServiceProvider();
+        var outcome = await Transitions(config, scanner, states, mutations, pipelineLog, services)
             .MoveAsync(source.Id, TaskStates.Completed, taskStore);
 
         Assert.Equal(MoveJobStatus.Success, outcome.Status);
         var accepted = scanner.FindJob(source.Id, taskStore)!;
         Assert.Equal(TaskStates.Completed, accepted.State);
         Assert.Equal(PipelineStepStatus.Passed, PromotionStep(accepted.FolderPath).Status);
+        using (var afterAcceptance = JsonDocument.Parse(File.ReadAllText(descriptorPath)))
+            Assert.Equal("decided", afterAcceptance.RootElement.GetProperty("status").GetString());
         var repeated = service.Promote(accepted, plan, new PromoteConceptRequest { ItemIndexes = [1] });
         Assert.Equal(created.JobId, Assert.Single(repeated.Created).JobId);
     }
@@ -426,7 +443,8 @@ public sealed class ConceptPipelineTests : IDisposable
 
     private static TaskTransitionService Transitions(
         IConfiguration config, TaskScannerService scanner, TaskStateMachine states,
-        TaskMutationService mutations, PipelineExecutionLog pipelineLog)
+        TaskMutationService mutations, PipelineExecutionLog pipelineLog,
+        IServiceProvider? services = null)
     {
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         return new TaskTransitionService(
@@ -436,7 +454,8 @@ public sealed class ConceptPipelineTests : IDisposable
             new GitService(NullLogger<GitService>.Instance, scanner, config, prompts),
             new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config),
             NullLogger<TaskTransitionService>.Instance,
-            pipelineLog: pipelineLog);
+            pipelineLog: pipelineLog,
+            services: services);
     }
 
     private (string TaskStore, IConfiguration Config, TaskScannerService Scanner, TaskStateMachine States,
