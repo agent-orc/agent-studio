@@ -256,19 +256,11 @@ export class EscalationSummaryComponent {
       : this.watchdogPark() ? 'Review recovery'
       : this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
   );
-
-  /** Header state behind {@link headTitle}, for the shared status tone (AGT-3403). */
-  readonly headKind = computed<EscalationHeadKind>(() => {
-    if (this.detail().info.needsInput) return this.hasQueuedAnswer() ? 'answer-queued' : 'needs-input';
-    return this.view().escalation?.kind === 'gave-up' ? 'gave-up' : 'needs-review';
-  });
-
-  readonly headTone = computed<StatusTone>(() => ESCALATION_HEAD_TONES[this.headKind()] ?? 'neutral');
-
-  recommendationTone(tone: EscalationRecommendation['tone']): StatusTone {
-    return ESCALATION_RECOMMENDATION_TONES[tone] ?? 'neutral';
-  }
-
+  readonly headKind = computed<EscalationHeadKind>(() => this.detail().info.needsInput
+    ? (this.hasQueuedAnswer() ? 'answer-queued' : 'needs-input')
+    : (this.view().escalation?.kind === 'gave-up' ? 'gave-up' : 'needs-review'));
+  readonly headTone = computed(() => ESCALATION_HEAD_TONES[this.headKind()]);
+  readonly recommendationTone = (tone: EscalationRecommendation['tone']) => ESCALATION_RECOMMENDATION_TONES[tone];
   readonly hasQueuedAnswer = computed(() =>
     this.detail().info.pendingIntent?.mode === 'steer'
       && !!this.detail().info.pendingIntent?.prompt?.trim(),
