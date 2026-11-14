@@ -122,9 +122,17 @@ lifecycle values are:
 | Field | Values | Meaning |
 |---|---|---|
 | `lifecycleState` | `in-progress`, `review-requested`, `decided`, `done` | The durable state shared with lifecycle-aware Wiki pages. |
-| `phase` | `shaping`, `testing`, `decision-ready` | Optional progress within `active`. |
+| `phase` | `shaping`, `testing`, `decision-ready` | Optional progress within `active`. It reports progress only; it does not gate decisions (see below). |
 | `decision.outcome` | `feature-spawn`, `archive` | The explicit terminal decision. |
 | `decision.state` | `pending`, `failed`, `succeeded` | Recoverable mutation state for a feature decision. |
+
+The Studio decision panel accepts a decision when the Dossier is
+`decision-pending` (schema 2: `lifecycleState: review-requested`) or its phase
+is `decision-ready`. A concept delivery writes `status: "decision-pending"` and
+sets `phase: "decision-ready"` when it carries open decision points, otherwise
+`shaping` or `testing`; the status alone already opens the decision, so no
+manual phase edit is needed. Only an `active` Dossier outside both states shows
+the notice that decisions open once its descriptor reaches one of them.
 
 A feature decision records `decidedAt`, the source revision, an operation id,
 mutation state, the inline `responses`, and one or more `spawnedTaskKeys`. The
@@ -197,17 +205,22 @@ so unrelated commits do not invalidate an unchanged Dossier.
 | Topic appears | No Dossier yet | A user, task result, proposal, or chat identifies a question worth seeing. |
 | Shape | `active / shaping` | Create the folder, descriptor, and initial HTML representation. |
 | Iterate | `active / testing` | Change the files through normal Git-aware editing; use the project orchestrator with the Dossier pinned as context. |
-| Decide | `active / decision-ready` | The operator answers decision points inside the document, then opens the compact feature-card preview or enters an archive reason. Nothing is created yet. |
+| Decide | `active / decision-ready` or `decision-pending` | The operator answers decision points inside the document, then opens the compact feature-card preview or enters an archive reason. Nothing is created yet. |
 | Build pending | `decision-pending / feature-spawn` | Confirmation records an operation id and expected revision; failure remains visible and retryable. |
 | Build settled | `decided / feature-spawn` | The card exists and the Dossier records its task receipt. |
 | Stop | `archived / archive` | Explicit confirmation records why no feature follows. |
 
 The feature action creates the Ready card and confirms the Dossier receipt in
-one owner action. If confirmation fails, Studio removes the newly created card
-and keeps the Dossier available for retry. If removal also fails, the owner sees
-the card key and is directed to an operator for cleanup before retrying. Studio
-uses its own author and committer identity for the Dossier commit; the service
-user does not need a global Git identity for this write.
+one owner action. The confirm request names the card by its job id
+(`spawnedTaskIds`). If the decision cannot be recorded, the server removes that
+card while no run has picked it up and reports `removedTaskIds`; a card it could
+not remove is reported in `retainedTaskIds` and named in the message, so the
+owner removes it before retrying. A draft card restored without its job id is
+looked up first; a card that cannot be found is never removed by its display
+key. A confirm request that gets no answer keeps the card for the retry, which
+links it under the same operation id. Dossier commits use the configured
+`Git:StudioCommitIdentity` as author and committer, so the service user does
+not need a Git identity of its own.
 
 The closing invariant mirrors the intent of the
 [planning-task spawn contract](planning-task-lifecycle.md) without pretending a
@@ -243,9 +256,11 @@ The remaining repository-write classes have explicit durability ownership:
 
 - Interactive Wiki CRUD, curation, order, and classification endpoints commit
   their source and content-metadata companion paths before returning success.
-- Pipeline Wiki maintenance, learnings, designated-topic sync, and Concept
-  Dossier placement run inside `ManagedProjectArtifactCommitService`, which
-  commits, stamps, and queues their task-attributed changes.
+- Pipeline Wiki maintenance, learnings, and designated-topic sync run inside
+  `ManagedProjectArtifactCommitService`, which commits, stamps, and queues
+  their task-attributed changes. A concept Dossier is not written here: it
+  reaches the integration branch through the reviewed task-branch merge of its
+  Remote delivery (AGT-3696).
 - Package publishing commits the bounded version file and performs its atomic
   commit-and-tag push as the publish transaction.
 - Observational `agentReads` telemetry is not document metadata. It writes only

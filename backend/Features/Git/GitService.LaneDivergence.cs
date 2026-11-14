@@ -187,6 +187,10 @@ public partial class GitService
         return resolveCode == 0 && ReviewSubjectStore.IsValidResultSha(full) ? full : null;
     }
 
+    /// <summary>The source delivery named by a net-change publication.</summary>
+    public string? GetNetChangeSource(string repoRoot, string commit)
+        => NetChangeSource(repoRoot, commit);
+
     private static bool CommitExists(string repoRoot, string sha)
     {
         var (_, _, code) = RunGitArgs(repoRoot, "cat-file", "-e", sha + "^{commit}");

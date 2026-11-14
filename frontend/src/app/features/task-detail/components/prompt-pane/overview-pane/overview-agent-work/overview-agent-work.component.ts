@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { TaskInfo } from '../../../../../../models/task.model';
 import { AgentWorkSummaryPollService } from '../../../../../polling/services/agent-work-summary-poll.service';
+import { TaskSectionAccessService } from '../../../../../../services/task-section-access.service';
 import { AgentWorkDetailComponent } from '../../agent-work-detail/agent-work-detail.component';
 import { formatAbsoluteTime, formatRelativeTime } from '../overview-pane-formatters';
 
@@ -33,6 +34,10 @@ export class OverviewAgentWorkComponent {
   private readonly agentWorkPoll = inject(AgentWorkSummaryPollService);
 
   readonly agentWork = this.agentWorkPoll.summary;
+
+  private readonly sectionAccess = inject(TaskSectionAccessService);
+  /** The per-call breakdown is refused to a Product session; the summary rows stay. */
+  readonly showCallDetail = computed(() => this.sectionAccess.canRead('agent-work-detail'));
 
   /** Top N tool counts to render as compact chips. */
   readonly topToolCounts = computed(() => {

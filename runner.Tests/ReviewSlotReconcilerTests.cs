@@ -89,8 +89,10 @@ public sealed class ReviewSlotReconcilerTests : IDisposable
     }
 
     [Fact]
-    public async Task Unexpired_matching_server_lease_is_settled_without_a_live_worker()
+    public async Task Unexpired_matching_server_lease_relaunches_without_a_live_worker()
     {
+        // AGT-3647: a daemon or container restart ended the worker, not the
+        // review. The attempt continues on this host instead of ExecutorRestarted.
         var now = DateTime.UtcNow;
         var state = new ReviewStateStore(_root);
         var slot = state.Save(state.Create(
@@ -110,8 +112,18 @@ public sealed class ReviewSlotReconcilerTests : IDisposable
             CancellationToken.None);
 
         var continuation = Assert.Single(result.Continuations);
-        Assert.Equal(ReviewSlotContinuationKind.SettleNonAdoptable, continuation.Kind);
+        Assert.Equal(ReviewSlotContinuationKind.Relaunch, continuation.Kind);
         Assert.Equal(0, result.Purged);
+        Assert.Single(state.LoadAll());
+
+        // A worker that already died after its relaunches is settled as lost.
+        state.Save(slot with { WorkerRelaunches = DurableReviewProcess.MaximumWorkerRelaunches });
+        var spent = await reconciler.ReconcileAsync(
+            new HashSet<string>(StringComparer.Ordinal),
+            now,
+            CancellationToken.None);
+
+        Assert.Equal(ReviewSlotContinuationKind.SettleNonAdoptable, Assert.Single(spent.Continuations).Kind);
         Assert.Single(state.LoadAll());
     }
 
@@ -173,6 +185,24 @@ public sealed class ReviewSlotReconcilerTests : IDisposable
                 hasDurableResult,
                 aged,
                 leaseValid));
+    }
+
+    [Theory]
+    [InlineData(false, false, true, true, ReviewSlotRecoveryAction.Relaunch)]
+    [InlineData(false, false, true, false, ReviewSlotRecoveryAction.SettleNonAdoptable)]
+    [InlineData(false, true, true, true, ReviewSlotRecoveryAction.Reattach)]
+    [InlineData(false, false, false, true, ReviewSlotRecoveryAction.PurgeInvalidAuthority)]
+    [InlineData(true, false, true, true, ReviewSlotRecoveryAction.Reattach)]
+    internal void Dead_worker_under_a_valid_lease_relaunches_while_its_budget_lasts(
+        bool processLive,
+        bool hasDurableResult,
+        bool leaseValid,
+        bool relaunchable,
+        ReviewSlotRecoveryAction expected)
+    {
+        Assert.Equal(
+            expected,
+            ReviewSlotRecoveryPolicy.Decide(processLive, hasDurableResult, false, leaseValid, relaunchable));
     }
 
     [Theory]

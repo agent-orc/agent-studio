@@ -16,7 +16,8 @@ public sealed record StagePayload(
     bool InfrastructureRetryAvailable = false, int MaximumReissues = 2,
     int? ReissuesUsed = null,
     ReviewRoundBudgetLedger? DeliveredRounds = null,
-    int MaximumDeliveredRounds = 4);
+    int MaximumDeliveredRounds = 4,
+    string? ReviewSummary = null);
 
 public sealed record StagePolicyDecision(OrchestrationAction Action, TransitionDecision? Transition = null);
 
@@ -40,7 +41,7 @@ public static class StageDecisionPolicy
                 payload.ResultRef is { Length: > 0 } resultRef && payload.ResultSha is { Length: > 0 } sha
                     ? new(resultRef, sha, payload.ReviewAttemptId ?? string.Empty) : null),
             new(payload.ReviewOutcome ?? ReviewOutcomeKinds.Pass, findings, payload.ReviewPlan, verdicts,
-                payload.FailureClassification),
+                payload.FailureClassification, payload.ReviewSummary),
             new(payload.MaximumCardRounds, payload.MaximumConcernRounds,
                 payload.MaximumDeliveredRounds, MaximumReissues: payload.MaximumReissues),
             new(payload.AutomaticRoundsUsed ?? reissuesUsed, payload.ConcernRoundsUsed, reissuesUsed),

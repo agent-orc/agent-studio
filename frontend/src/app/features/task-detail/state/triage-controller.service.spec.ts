@@ -272,12 +272,14 @@ describe('TriageController · optimistic navigation on Accept', () => {
     const errorDialog = TestBed.inject(ErrorDialogService);
     vi.spyOn(errorDialog, 'show').mockImplementation(noop);
 
-    const openSpy = vi.spyOn(selection, 'openDetail').mockImplementation(noop);
+    const beforePager = TestBed.inject(LanePagerService).snapshot();
 
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
     expect(revertSpy).toHaveBeenCalled();
-    expect(openSpy).toHaveBeenCalledWith(taskA);
+    expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
+    expect(TestBed.inject(LanePagerService).snapshot()).toEqual(beforePager);
+    expect(ctrl.moveRefusal()?.taskKey).toBe(taskA.taskKey);
   });
 
   /**
@@ -304,14 +306,35 @@ describe('TriageController · optimistic navigation on Accept', () => {
     const refresh = vi.spyOn(jobService, 'refresh').mockImplementation(noop);
     const errorDialog = vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
     const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
-    const openSpy = vi.spyOn(selection, 'openDetail').mockImplementation(noop);
 
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
-    expect(openSpy).toHaveBeenCalledWith(taskA);
+    expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
     expect(warning).toHaveBeenCalledWith(refusal, 'Acceptance needs an operator override');
     expect(refresh).not.toHaveBeenCalled();
     expect(errorDialog).not.toHaveBeenCalled();
+  });
+
+  it('shows a completion-content-gap refusal inline and keeps the task in review', () => {
+    const taskA = makeJob('task-a', '5-human-review');
+    selection.selected.set(makeDetail('task-a', '5-human-review'));
+    TestBed.inject(LanePagerService).capture('5-human-review', [taskA], taskA.taskKey);
+    selection.triageLaneState = '5-human-review';
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+    vi.spyOn(jobService, 'revertOptimisticMove').mockImplementation(noop);
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(throwError(() => ({
+      status: 409, error: { code: 'completion-content-gap', error: 'Completion refused: no content verdict for the current brief.' },
+    })));
+    const dialog = vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
+    selection.showTriageToast('Lane cleared.');
+
+    ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
+
+    expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
+    expect(TestBed.inject(LanePagerService).snapshot()?.jobs[0].taskKey).toBe(taskA.taskKey);
+    expect(ctrl.moveRefusal()?.message).toContain('Complete the required review for the current brief, or use a written operator override');
+    expect(selection.triageToast()).toBeNull();
+    expect(dialog).not.toHaveBeenCalled();
   });
 });
 
@@ -441,7 +464,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     ctrl.move(job, { targetState: '6-completed', actionId: 'mark-done' });
     await flush();
 
-    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined);
+    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined, false, 'revoke', false, undefined);
   });
 
   it('moves a contract-satisfied planning task straight through with no warning', async () => {
@@ -452,7 +475,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     await flush();
 
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined);
+    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined, false, 'revoke', false, undefined);
   });
 
   it('never gates a coding task', async () => {
@@ -508,7 +531,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
 
     expect(jobService.getDeliveryClaim).toHaveBeenCalledWith('done-a', wp);
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined);
+    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined, false, 'revoke', false, undefined);
   });
 
   it('archives an integrated Delivered task without a warning or a lookup', async () => {
@@ -520,7 +543,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
 
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(jobService.getDeliveryClaim).not.toHaveBeenCalled();
-    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined);
+    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined, false, 'revoke', false, undefined);
   });
 
   it('does not dialog when the card has nothing to integrate', async () => {

@@ -11,6 +11,7 @@
       <app-pane-tabs variant="header"
                      ariaLabel="Prompt pane tabs"
                      panelId="pane-prompt-panel"
+                     [minimumTabWidth]="64"
                      [tabs]="promptTabs()"
                      [activeTabId]="activeTab()"
                      (tabChange)="onPromptTabChange($event)" />

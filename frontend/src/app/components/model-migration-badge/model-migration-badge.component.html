@@ -5,18 +5,31 @@
         [attr.aria-label]="levelMappingNote()"
         [cacTooltip]="levelMappingNote()">{{ mapping.mappedFrom }}→{{ mapping.level }}</span>
 }
+@if (notOffered(); as note) {
+  @if (!proposal()) {
+    <span class="model-migration">
+      <app-status-indicator tone="warning" label="Not offered" [detail]="note" [compact]="true"
+                            [testId]="testId() + '-not-offered'" />
+    </span>
+  }
+}
 @if (proposal(); as p) {
   <span class="model-migration" [attr.data-testid]="testId()">
     <button #trigger type="button"
             class="model-migration__dot"
             [class.model-migration__dot--open]="open()"
+            [class.model-migration__dot--label]="!!notOffered()"
             [attr.data-testid]="testId() + '-dot'"
             aria-haspopup="dialog"
             [attr.aria-expanded]="open()"
-            [attr.aria-label]="'Model update available: ' + p.to"
-            [cacTooltip]="'Model update available: ' + p.from + ' -> ' + p.to"
+            [attr.aria-label]="triggerLabel()"
+            [cacTooltip]="triggerLabel()"
             (click)="toggle($event)">
-      <span class="model-migration__dot-glyph" aria-hidden="true">↑</span>
+      @if (notOffered()) {
+        <app-status-indicator tone="warning" label="Not offered" [compact]="true" [testId]="testId() + '-not-offered'" />
+      } @else {
+        <span class="model-migration__dot-glyph" aria-hidden="true">↑</span>
+      }
     </button>
     @if (open()) {
       <div #panel
@@ -39,6 +52,9 @@
               Keeps level {{ target.level }}.
             }
           </p>
+        }
+        @if (notOffered(); as note) {
+          <p class="model-migration__reason" [attr.data-testid]="testId() + '-not-offered-note'">{{ note }}</p>
         }
         <p class="model-migration__reason">{{ p.reason }}</p>
         <button type="button"

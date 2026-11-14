@@ -193,14 +193,19 @@ public static class TimelineActors
     public static string Human(string email) => string.IsNullOrWhiteSpace(email) ? "human"
         // A caller that passes the request's client id for an operator session
         // already holds the session actor; it never becomes a person.
-        : IsOperatorAgent(email) ? email.Trim()
+        : IsOperatorAgent(email) || IsPersona(email) ? email.Trim()
         : $"human:{email}";
 
     /// <summary>
     /// A service account or API token acting through the Studio API. It is
     /// never a human actor, so guards that need a person do not accept it.
     /// </summary>
-    public static string ServiceAccount(string accountId) => $"service-account:{accountId}";
+    public static string ServiceAccount(string accountId) => $"{ServiceAccountPrefix}{accountId}";
+
+    public const string ServiceAccountPrefix = "service-account:";
+
+    public static bool IsServiceAccount(string? actor)
+        => actor?.Trim().StartsWith(ServiceAccountPrefix, StringComparison.Ordinal) == true;
 
     /// <summary>
     /// One session of an operator agent (security model SM-1). The Owner who
@@ -214,6 +219,11 @@ public static class TimelineActors
 
     public static bool IsOperatorAgent(string? actor)
         => actor?.Trim().StartsWith(OperatorAgentPrefix, StringComparison.Ordinal) == true;
+
+    public const string PersonaPrefix = "persona:";
+    public static string Persona(string personaId, string sessionId) => $"{PersonaPrefix}{personaId}/session:{sessionId}";
+    public static bool IsPersona(string? actor)
+        => actor?.Trim().StartsWith(PersonaPrefix, StringComparison.Ordinal) == true;
 
     /// <summary>
     /// True when an actor or lane-change cause names a person rather than an

@@ -59,6 +59,11 @@ public sealed partial class TaskServerStore
                 source_generation INTEGER NOT NULL,
                 imported_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS board_workspace_generation(
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                generation INTEGER NOT NULL,
+                recorded_at TEXT NOT NULL
+            );
             CREATE TRIGGER IF NOT EXISTS trg_tasks_board_insert AFTER INSERT ON tasks
             BEGIN
                 INSERT INTO board_changes(project_id, task_id, task_key, change, state)
@@ -134,19 +139,16 @@ public sealed partial class TaskServerStore
             cards);
     }
 
-    /// <summary>The board and workspace source generations for a conditional read without card rows.</summary>
-    public async Task<(long Board, long? WorkspaceSource)> GetBoardVersionsAsync(
+    /// <summary>The project board generation for a conditional read without card rows.</summary>
+    public async Task<long> GetBoardVersionAsync(
         string projectIdentity, CancellationToken ct)
     {
         await using var connection = await OpenReadyAsync(ct);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct);
         var (projectId, _) = await RequireBoardProjectAsync(connection, transaction, projectIdentity, ct);
         var board = await ReadBoardGenerationAsync(connection, transaction, projectId, ct);
-        var source = await ScalarAsync(connection,
-            "SELECT source_generation FROM board_workspace_imports WHERE project_id = $project;",
-            ct, transaction, ("$project", projectId));
         await transaction.CommitAsync(ct);
-        return (board, source is null or DBNull ? null : Convert.ToInt64(source, CultureInfo.InvariantCulture));
+        return board;
     }
 
     public async Task<BoardChangeFeedResponse> GetBoardChangesAsync(
@@ -294,6 +296,31 @@ public sealed partial class TaskServerStore
                 projectId, generation, request.SourceGeneration, inserted, updated, unchanged, removed, rejected);
         }, ct);
         return result!;
+    }
+
+    /// <summary>Records one completed mirror cycle independently of project board versions.</summary>
+    public async Task<long> RecordBoardWorkspaceGenerationAsync(long generation, CancellationToken ct)
+    {
+        RequireWritable();
+        if (generation < 0) throw new ArgumentException("The source generation cannot be negative.");
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            await ExecuteAsync(connection, """
+                INSERT INTO board_workspace_generation(id, generation, recorded_at)
+                VALUES (1, $generation, $now)
+                ON CONFLICT(id) DO UPDATE
+                   SET generation = excluded.generation, recorded_at = excluded.recorded_at;
+                """, ct, transaction, ("$generation", generation), ("$now", Iso(UtcNow)));
+        }, ct);
+        return generation;
+    }
+
+    public async Task<long?> GetBoardWorkspaceGenerationAsync(CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        var source = await ScalarAsync(connection,
+            "SELECT generation FROM board_workspace_generation WHERE id = 1;", ct);
+        return source is null or DBNull ? null : Convert.ToInt64(source, CultureInfo.InvariantCulture);
     }
 
     private static async Task<(string ProjectId, string ProjectName)> RequireBoardProjectAsync(

@@ -11,6 +11,7 @@ public sealed class RemoteReviewDaemon
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
     private readonly Action<string> _log;
+    private readonly OneShotClaimRouteObservation _oneShotClaimRoute = new();
     private readonly Func<int, TaskServerConnectivitySnapshot?, HostTelemetrySample?>? _telemetryProbe;
     private readonly ReviewPlaneBudgetProbe? _planeBudgetProbe;
 
@@ -57,6 +58,9 @@ public sealed class RemoteReviewDaemon
 
     public async Task RunAsync(CancellationToken shutdown)
     {
+        // Refuse claims before any background work starts if this host cannot
+        // provide an absolute, writable source cache directory.
+        HostSourceObjectCache.EnsureRoot();
         await using var idleWatchdog = new DaemonIdleWatchdog(
             _log,
             TimeSpan.FromMinutes(_options.IdleWatchdogMinutes));
@@ -95,7 +99,7 @@ public sealed class RemoteReviewDaemon
         idleWatchdog.RecordActiveSlots(persistedAtStartup.Count(slot =>
             ReviewRestartGuardPolicy.IsBusyPhase(slot.Phase)));
         var connectivity = new TaskServerConnectivityMonitor(_log);
-        var telemetry = new HostTelemetrySampler();
+        var telemetry = new HostTelemetrySampler(_options);
         var planeBudgetProbe = _planeBudgetProbe ?? new ReviewPlaneBudgetProbe();
         HostTelemetrySample? latestTelemetry = null;
         var nextSlotHygieneLog = DateTime.MinValue;
@@ -186,11 +190,15 @@ public sealed class RemoteReviewDaemon
             {
                 var slot = continuation.Slot;
                 var executor = new RemoteReviewExecutor(_options, _client, state, _log);
-                if (continuation.Kind == ReviewSlotContinuationKind.Reattach)
+                if (continuation.Kind is ReviewSlotContinuationKind.Reattach
+                    or ReviewSlotContinuationKind.Relaunch)
                 {
-                    _log(
-                        $"persisted review accepted attempt={slot.AttemptId} " +
-                        $"fence={slot.Claim.Lease!.Fence} verification={continuation.Reason}");
+                    _log(continuation.Kind == ReviewSlotContinuationKind.Reattach
+                        ? $"persisted review accepted attempt={slot.AttemptId} " +
+                          $"fence={slot.Claim.Lease!.Fence} verification={continuation.Reason}"
+                        : $"persisted review has valid lease but no live worker " +
+                          $"attempt={slot.AttemptId} fence={slot.Claim.Lease!.Fence}; " +
+                          $"relaunching within the same attempt: {continuation.Reason}");
                     NoteWorkerRelease(slot);
                     active.Add((
                         executor.ReattachAsync(slot, shutdown),
@@ -355,7 +363,8 @@ public sealed class RemoteReviewDaemon
                             connectivity: connectivity.Snapshot),
                         RunnerCapabilityProbe.Telemetry(
                             TakeTelemetry(force: true),
-                            planeBudget),
+                            planeBudget,
+                            oneShotClaimRoute: _oneShotClaimRoute.Current),
                         generation,
                         operationToken);
                 },
@@ -403,7 +412,7 @@ public sealed class RemoteReviewDaemon
                 () => Math.Max(active.Count, persistedAtStartup.Count),
                 shutdown,
                 HonorControlBeforeClaimsAsync);
-            oneShotPoll = new OneShotJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
+            oneShotPoll = new OneShotJobAdmission(_options, _client, _log, route: _oneShotClaimRoute).PollAsync(auxiliaryStop.Token);
 
             var startupReconciliation = await reconciler.ReconcileAsync(
                 new HashSet<string>(StringComparer.Ordinal),
@@ -445,6 +454,7 @@ public sealed class RemoteReviewDaemon
             var emptyClaimWarning = new ReviewClaimEmptyWarning();
             int? announcedSlotCeiling = null;
             var nextRetentionSweep = DateTime.MinValue;
+            var diskAdmission = new RunnerDiskAdmission(_options);
             var consecutiveFaults = 0;
             string? announcedControlRequestId = null;
             while (!shutdown.IsCancellationRequested)
@@ -485,6 +495,13 @@ public sealed class RemoteReviewDaemon
                     var occupied = Math.Max(active.Count, persisted.Busy + persisted.Unreadable);
                     HostRoleDrainControl.Acknowledge(_options.StateDir, "review", hostDrain, occupied);
                     idleWatchdog.RecordPollStarted();
+                    var disk = diskAdmission.Observe();
+                    if (disk.Level == HostDiskPressureLevel.Critical)
+                    {
+                        _log($"review claim paused on {_options.Hostname}: {disk.Reason}");
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
+                        continue;
+                    }
                     if (occupied == 0)
                     {
                         drainedToStop = true;
@@ -690,7 +707,26 @@ public sealed class RemoteReviewDaemon
                                 var stale = state.Find(claim.Attempt.AttemptId);
                                 if (stale is not null
                                     && !DurableReviewProcess.HasCompleted(stale)
-                                    && !DurableReviewProcess.VerifyLive(stale, out var adoptionReason))
+                                    && !DurableReviewProcess.VerifyLive(stale, out var adoptionReason)
+                                    && DurableReviewProcess.CanRelaunch(stale))
+                                {
+                                    // AGT-3647: the old lease expired with the worker
+                                    // gone. The new fence runs the same attempt again
+                                    // from a fresh workspace; nothing is settled as lost.
+                                    active.Add((
+                                        executor.RunReclaimedAsync(
+                                            stale,
+                                            claim,
+                                            adoptionReason,
+                                            shutdown),
+                                        claim.Attempt.AttemptId,
+                                        claim.Lease!.ResourceNamespace));
+                                    reviewStartedAt[claim.Attempt.AttemptId] = DateTime.UtcNow;
+                                    idleWatchdog.RecordActiveSlots(active.Count);
+                                }
+                                else if (stale is not null
+                                    && !DurableReviewProcess.HasCompleted(stale)
+                                    && !DurableReviewProcess.VerifyLive(stale, out adoptionReason))
                                 {
                                     // A previous lease can expire before its loss
                                     // report is accepted. Rebind only that terminal

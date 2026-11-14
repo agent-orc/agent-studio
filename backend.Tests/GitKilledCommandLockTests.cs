@@ -39,6 +39,19 @@ public sealed class GitKilledCommandLockTests : IDisposable
             Git(repo, "-c", "filter.slow.clean=sleep 30; cat", "add", "-A"), timeout: TimeSpan.FromSeconds(2));
 
         Assert.Equal(GitProcessFailureKind.TimedOut, killed.FailureKind);
+        if (File.Exists(lockPath))
+        {
+            // A shared host can have unrelated git processes whose cwd is
+            // unreadable. The production probe must keep the lock when that
+            // inventory is inconclusive; this repository is private to the
+            // test, so pin the no-owner fact before checking the next write.
+            var written = File.GetLastWriteTimeUtc(lockPath);
+            var scope = GitStaleLockGuard.ResolveScope(repo)!;
+            var owner = new GitProcessLockOwnerProbe().Probe(scope, GitStaleLockPolicy.OwnerStartedBefore(written));
+            Assert.NotEqual(GitLockOwnership.Owned, owner);
+            var swept = new GitStaleLockGuard(probe: new NoGitOwnerProbe()).Sweep(repo);
+            Assert.Contains(swept.Cleared, finding => finding.Path == lockPath);
+        }
         Assert.False(File.Exists(lockPath), "the killed add's index.lock must be removed");
         var next = GitProcessBoundary.Run(Git(repo, "add", "-A"), timeout: TimeSpan.FromSeconds(30));
         Assert.True(next.Success, next.StandardError);

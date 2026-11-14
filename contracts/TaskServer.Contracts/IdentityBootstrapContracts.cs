@@ -38,6 +38,8 @@ public sealed record StudioCreateUserRequest(
 public sealed record StudioInviteUserRequest(string Username, string Role, IReadOnlyList<string> ProjectIds, string? DisplayName = null);
 public sealed record StudioAcceptInvitationRequest(string Token, string NewPassword);
 public sealed record StudioInviteResult(StudioAuthUserDto User, string SignInLink, DateTime ExpiresAt);
+public sealed record StudioInvitationPreview(string Username, string DisplayName, string Inviter,
+    string Role, IReadOnlyList<string> Projects, DateTime ExpiresAt, bool SecondFactorRequired);
 public sealed record StudioProductionApprovalRequest(bool Approved);
 
 /// <summary>

@@ -69,6 +69,8 @@ test.describe('F46: Explorer two-level workspace -> project tree', () => {
   });
 
   test('Workspaces header plus opens the create-workspace dialog without collapsing the tree', async ({ page }) => {
+    const updateRequests: string[] = [];
+    page.on('request', request => { if (request.url().includes(':5039/')) updateRequests.push(request.url()); });
     await gotoStudio(page);
 
     const panel = page.getByTestId('studio-explorer-workspace-head');
@@ -79,8 +81,17 @@ test.describe('F46: Explorer two-level workspace -> project tree', () => {
     await expect(dialog).toBeVisible();
     await expect(panel).toHaveAttribute('aria-expanded', 'true');
 
+    fs.mkdirSync(dest, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: path.join(dest, `explorer-create-${theme}.png`), fullPage: true });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: path.join(dest, 'explorer-create-390.png'), fullPage: true });
+
     await page.getByTestId('workspace-create-cancel').click();
     await expect(dialog).not.toBeVisible();
+    expect(updateRequests).toEqual([]);
   });
 
   test('workspace-row plus opens project onboarding for that workspace without adding a tree row', async ({ page }) => {
@@ -152,8 +163,8 @@ test.describe('F46: Explorer two-level workspace -> project tree', () => {
 
     // Visual result: the project row's chevron sits to the right of the
     // workspace header's chevron, so the hierarchy reads at a glance.
-    const wsChev = groups.first().locator('.tree-row__chev').first();
-    const projChev = page.locator(ROW).first().locator('.tree-row__chev').first();
+    const wsChev = page.locator('[data-testid^="studio-explorer-ws-chevron-"]').first();
+    const projChev = page.locator('[data-testid^="studio-explorer-project-chevron-"]').first();
     const wsBox = await wsChev.boundingBox();
     const projBox = await projChev.boundingBox();
     expect(wsBox).toBeTruthy();

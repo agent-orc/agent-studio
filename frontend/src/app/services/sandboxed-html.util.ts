@@ -43,6 +43,7 @@ export function buildIsolatedHtmlSrcdoc(
   options: {
     workbenchDecisions?: boolean;
     documentPattern?: 'ui' | 'concept';
+    colorScheme?: 'light' | 'dark';
     /**
      * Rewrites an artifact-authored `<img src>` (relative to the dossier/wiki
      * doc's own folder, e.g. `assets/foo.png`) to a loadable URL, typically
@@ -95,6 +96,17 @@ export function buildIsolatedHtmlSrcdoc(
     wrapper.head.append(wrapper.importNode(node, true));
   for (const node of Array.from(artifact.body.childNodes))
     wrapper.body.append(wrapper.importNode(node, true));
+
+  if (options.colorScheme) {
+    wrapper.documentElement.style.colorScheme = options.colorScheme;
+    for (const style of Array.from(wrapper.querySelectorAll('style'))) {
+      style.textContent = (style.textContent ?? '').replace(
+        /prefers-color-scheme\s*:\s*(light|dark)/gi,
+        (_match, scheme: string) => options.colorScheme === scheme.toLowerCase()
+          ? 'min-width: 0' : 'min-width: 999999px',
+      );
+    }
+  }
 
   // `base=about:blank` also disables in-page anchors. Restore scrolling inside
   // the frame and delegate every other link to the trusted host. The host

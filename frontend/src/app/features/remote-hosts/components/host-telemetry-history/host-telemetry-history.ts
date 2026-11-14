@@ -156,9 +156,9 @@ export class HostTelemetryHistoryComponent {
 
   findingTooltip(finding: HostTelemetryFinding): string {
     const range = `${finding.since} to ${finding.until}`;
-    return finding.isActive === false
+    return finding.detail ?? (finding.isActive === false
       ? `${finding.occurrences ?? 1} completed phase(s), ${range}`
-      : range;
+      : range);
   }
 }
 

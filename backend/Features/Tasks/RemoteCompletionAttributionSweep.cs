@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Git;
 using AgentStudio.Pipeline;
 
 namespace AgentStudio.Tasks;
@@ -12,6 +13,7 @@ namespace AgentStudio.Tasks;
 public sealed class RemoteCompletionAttributionSweep
 {
     public const string ReportFileName = "remote-completion-attribution-v1.json";
+    public const string SalvageSubjectReportFileName = "salvage-subject-attribution-v1.json";
     private static readonly TimeSpan Lookback = TimeSpan.FromDays(8);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -124,13 +126,75 @@ public sealed class RemoteCompletionAttributionSweep
             RepairedTokenTasks: rows.Count(row => row.TokenCalls > 0),
             UnresolvedTasks: rows.Count(row => !string.IsNullOrWhiteSpace(row.Warning)),
             Tasks: rows);
-        WriteReport(report);
+        WriteReport(report, _reportPath);
         _logger.LogInformation(
             "remote-completion-attribution-sweep completed commitTasks={CommitTasks} tokenTasks={TokenTasks} unresolved={Unresolved} report={Report}",
             report.RepairedCommitTasks,
             report.RepairedTokenTasks,
             report.UnresolvedTasks,
             _reportPath);
+        return report;
+    }
+
+    /// <summary>
+    /// AGT-3717: one-time repair for deliveries of the Deploy 38 runner. Its
+    /// salvage commit subject carried the card title, and a title naming a
+    /// related card made the guard reject the whole range. Only a current
+    /// generation without attributed commits, whose verified range attributes
+    /// solely because the guard now exempts this card's own salvage commit,
+    /// is written. Any other rejection stays rejected.
+    /// </summary>
+    public RemoteCompletionAttributionSweepReport RunSalvageSubjectRepairOnce()
+    {
+        var reportPath = Path.Combine(Path.GetDirectoryName(_reportPath)!, SalvageSubjectReportFileName);
+        if (File.Exists(reportPath))
+        {
+            var prior = JsonSerializer.Deserialize<RemoteCompletionAttributionSweepReport>(
+                File.ReadAllText(reportPath),
+                Json);
+            return prior is null
+                ? RemoteCompletionAttributionSweepReport.CompletedEarlier()
+                : prior with { AlreadyCompleted = true };
+        }
+
+        var rows = new List<RemoteCompletionAttributionSweepTaskReport>();
+        foreach (var task in _scanner.ScanAllJobsWithArchive()
+                     .Where(task => TaskIntegrationStatusService.DeliveredLanes.Contains(task.State)))
+        {
+            var subject = ReviewSubjectStore.Read(task.FolderPath);
+            if (subject is null || subject.CompletedAtUtc < _now - Lookback) continue;
+            if (task.Commits.Any(commit => string.Equals(
+                    commit.RunAttemptId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            var key = task.Key ?? task.Id;
+            var repair = RepairCommits(task, subject, range => range.Any(commit =>
+                RunnerSalvageCommit.IsTeardownFor(commit.Body, key)
+                && RemoteCommitAttributionGuard.ForeignKeyInSubject(commit.Subject, key) is not null));
+            if (repair.Commits == 0 && repair.Warning is null) continue;
+            rows.Add(new RemoteCompletionAttributionSweepTaskReport(
+                task.ProjectName,
+                key,
+                subject.ResultSha,
+                repair.Commits,
+                0,
+                repair.Warning));
+        }
+
+        var report = new RemoteCompletionAttributionSweepReport(
+            Version: 1,
+            CompletedAtUtc: _now,
+            AlreadyCompleted: false,
+            RepairedCommitTasks: rows.Count(row => row.Commits > 0),
+            RepairedTokenTasks: 0,
+            UnresolvedTasks: rows.Count(row => !string.IsNullOrWhiteSpace(row.Warning)),
+            Tasks: rows);
+        WriteReport(report, reportPath);
+        _logger.LogInformation(
+            "salvage-subject-attribution-repair completed commitTasks={CommitTasks} unresolved={Unresolved} report={Report}",
+            report.RepairedCommitTasks,
+            report.UnresolvedTasks,
+            reportPath);
         return report;
     }
 
@@ -153,7 +217,8 @@ public sealed class RemoteCompletionAttributionSweep
 
     private (int Commits, string? Warning) RepairCommits(
         TaskInfo task,
-        ReviewSubjectRecord subject)
+        ReviewSubjectRecord subject,
+        Func<IReadOnlyList<GitCommitInfo>, bool>? rangeQualifies = null)
     {
         var repository = _git.ResolveRepoRootForWatchPath(task.WatchPath);
         var deliveryRef = subject.ImmutableResultRef ?? subject.ResultRef;
@@ -179,6 +244,10 @@ public sealed class RemoteCompletionAttributionSweep
                 warnings.Add($"Base {baseSha[..8]} produced an empty delivery range.");
                 continue;
             }
+
+            // A range the narrower pass does not own is left as it is.
+            if (rangeQualifies is not null && !rangeQualifies(range.Commits))
+                return (0, null);
 
             var attribution = RemoteCommitAttributionGuard.Attribute(
                 task.Key ?? task.Id,
@@ -227,16 +296,16 @@ public sealed class RemoteCompletionAttributionSweep
             : string.IsNullOrWhiteSpace(right) ? left
             : left + " " + right;
 
-    private void WriteReport(RemoteCompletionAttributionSweepReport report)
+    private static void WriteReport(RemoteCompletionAttributionSweepReport report, string reportPath)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_reportPath)!);
-        var temporary = _reportPath + ".tmp";
+        Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
+        var temporary = reportPath + ".tmp";
         using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
         {
             JsonSerializer.Serialize(stream, report, Json);
             stream.Flush(flushToDisk: true);
         }
-        File.Move(temporary, _reportPath, overwrite: true);
+        File.Move(temporary, reportPath, overwrite: true);
     }
 }
 

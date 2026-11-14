@@ -1,18 +1,22 @@
-<div class="surface surface--prompt"
-     appDetailKeyboardSurface
-     [detailKeyboardInitialFocus]="initialFocus"
-     detailKeyboardScrollTarget="[data-scroll-owner]"
-     data-testid="pane-prompt-body"
-     data-active-tab="overview">
-  <div data-scroll-owner>
-    <button type="button">Action</button>
-    <textarea></textarea>
-    <div role="listbox" tabindex="0">Options</div>
+<div class="detail__panes">
+  <div class="surface surface--prompt"
+       appDetailKeyboardSurface
+       [detailKeyboardInitialFocus]="initialFocus"
+       detailKeyboardScrollTarget="[data-scroll-owner]"
+       data-testid="pane-prompt-body"
+       data-active-tab="overview">
+    <div data-scroll-owner>
+      <button type="button">Action</button>
+      <textarea></textarea>
+      <div role="listbox" tabindex="0">Options</div>
+    </div>
+  </div>
+  <div data-testid="protocol-shell" [style.display]="hideProtocol ? 'none' : null">
+    <div class="surface surface--protocol"
+         appDetailKeyboardSurface
+         [detailKeyboardInitialFocus]="initialFocus"
+         data-testid="pane-protocol-body"
+         data-active-tab="activity"></div>
   </div>
 </div>
-<div class="surface surface--protocol"
-     appDetailKeyboardSurface
-     [detailKeyboardInitialFocus]="initialFocus"
-     data-testid="pane-protocol-body"
-     data-active-tab="activity"></div>
 <button class="board" type="button">Board</button>

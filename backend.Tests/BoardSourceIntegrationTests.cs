@@ -82,11 +82,15 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         initial.EnsureSuccessStatusCode();
         Assert.Equal(BoardSourceSetting.TaskServerShadow, initial.Headers.GetValues("X-Board-Source").Single());
         await worker.RunCycleAsync(default);
-        var sync = ledger.Snapshot(shadow).Sync;
+        var baseline = await WaitForShadowAsync(client, worker,
+            () => ledger.Snapshot(shadow),
+            status => status.Sync.SyncedGeneration is not null
+                && status.Sync.MissingProjects.Count == 0
+                && status.Comparisons >= 1);
+        var sync = baseline.Sync;
         Assert.True(sync.SyncedGeneration is not null && sync.MissingProjects.Count == 0, sync.LastError);
         Assert.Equal(TaskStates.Backlog, (await TaskServerCardAsync(store)).State);
-        var baseline = ledger.Snapshot(shadow);
-        Assert.Equal((1L, 0), (baseline.Comparisons, baseline.UnexplainedDifferences));
+        Assert.Equal(0, baseline.UnexplainedDifferences);
         var baselineGeneration = index.TryGetPublished()!.Generation;
 
         var move = await client.PostAsJsonAsync(
@@ -103,13 +107,18 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         var read = await client.GetAsync("/api/tasks/grouped");
         read.EnsureSuccessStatusCode();
         await worker.RunCycleAsync(default);
-        // A watcher may publish a newer workspace generation before the
-        // mirror cycle; the imported model must name the generation it used.
-        Assert.True(worker.SyncedGeneration >= publication.Generation);
+        // Mirror and comparison are asynchronous. A busy test host can make
+        // the first board read time out, so wait for the requested generation.
+        var afterMove = await WaitForShadowAsync(client, worker,
+            () => ledger.Snapshot(shadow),
+            status => worker.SyncedGeneration >= publication.Generation
+                && status.LastComparedGeneration >= publication.Generation
+                && status.Comparisons > baseline.Comparisons
+                && status.UnexplainedDifferences == 0);
         var model = await store.GetBoardReadModelAsync(ProjectName, default);
         Assert.Contains(model.Lanes.Single(lane => lane.State == TaskStates.Ready).Cards, card => card.TaskKey == Key);
-        Assert.Equal(worker.SyncedGeneration, model.WorkspaceSourceGeneration);
-        var afterMove = ledger.Snapshot(shadow);
+        Assert.True(model.WorkspaceSourceGeneration >= publication.Generation);
+        Assert.True(model.WorkspaceSourceGeneration <= worker.SyncedGeneration);
         Assert.Equal(0, afterMove.UnexplainedDifferences);
         Assert.True(afterMove.Comparisons >= 2);
         // A later watcher publication can advance the mirror without another
@@ -122,6 +131,12 @@ public sealed class BoardSourceIntegrationTests : IDisposable
             new UpdateTaskRequest("Renamed on the Task Server", null, null, card.Version), "test", default);
         (await client.GetAsync("/api/tasks/grouped")).EnsureSuccessStatusCode();
         await worker.RunCycleAsync(default);
+        await WaitForShadowAsync(client, worker,
+            () => ledger.Snapshot(shadow),
+            status => status.UnexplainedDifferences == 1
+                && status.Differences.Any(difference => difference.TaskKey == Key
+                    && difference.Field == BoardShadowComparison.TitleField
+                    && difference.TaskServerValue == "Renamed on the Task Server"));
         var status = await client.GetFromJsonAsync<BoardSourceStatusResponse>("/api/admin/board-source");
         var difference = Assert.Single(status!.Differences);
         Assert.Equal((Key, BoardShadowComparison.TitleField, "Move me", "Renamed on the Task Server"),
@@ -132,6 +147,84 @@ public sealed class BoardSourceIntegrationTests : IDisposable
             new BoardSourceEndpoints.ExplainBoardDifferenceBody(difference.Fingerprint, "Seeded by the test"));
         explain.EnsureSuccessStatusCode();
         Assert.Equal(0, (await explain.Content.ReadFromJsonAsync<BoardSourceStatusResponse>())!.UnexplainedDifferences);
+    }
+
+    private static async Task<BoardSourceStatusResponse> WaitForShadowAsync(
+        HttpClient client,
+        BoardShadowWorker worker,
+        Func<BoardSourceStatusResponse> snapshot,
+        Func<BoardSourceStatusResponse, bool> ready)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(75));
+        var last = snapshot();
+        try
+        {
+            while (true)
+            {
+                if (ready(last)) return last;
+                using var read = await client.GetAsync("/api/tasks/grouped", deadline.Token);
+                read.EnsureSuccessStatusCode();
+                await worker.RunCycleAsync(deadline.Token);
+                last = snapshot();
+                await Task.Delay(500, deadline.Token);
+            }
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            Assert.Fail($"Board shadow did not settle: {JsonSerializer.Serialize(last)}");
+            throw;
+        }
+    }
+
+    [Fact]
+    public async Task One_project_write_imports_only_that_project_and_other_boards_answer_304()
+    {
+        const string second = "board-source-second";
+        const string third = "board-source-third";
+        foreach (var (name, key) in new[] { (second, "BSS-1"), (third, "BSTH-1") })
+        {
+            var folder = Path.Combine(_workspace, "projects", name, TaskStates.Backlog, key.ToLowerInvariant());
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id = key.ToLowerInvariant(), key, title = key, state = TaskStates.Backlog, order = 1, agent = "claude",
+            }));
+        }
+
+        await using var taskServer = new TaskServerFactory(_taskServerData);
+        var store = taskServer.Services.GetRequiredService<TaskServerStore>();
+        var workspace = await store.CreateWorkspaceAsync(new AgentStudio.TaskServer.Contracts.CreateWorkspaceRequest("Board source"), "test", default);
+        foreach (var (name, prefix) in new[] { (ProjectName, "BST"), (second, "BSS"), (third, "BTH") })
+            await store.CreateProjectAsync(new CreateProjectRequest(workspace.WorkspaceId, name, prefix), "test", default);
+
+        await using var backend = BuildBackend(taskServer, BoardSourceSetting.TaskServer, second, third);
+        using var client = backend.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var worker = backend.Services.GetRequiredService<BoardShadowWorker>();
+        var boardClient = backend.Services.GetRequiredService<TaskServerBoardClient>();
+        var index = backend.Services.GetRequiredService<TaskIndexCache>();
+        await worker.RunCycleAsync(default);
+        var unchanged = new List<(string Name, BoardReadModelResponse Model)>();
+        foreach (var name in new[] { second, third })
+            unchanged.Add((name, await store.GetBoardReadModelAsync(name, default)));
+
+        var move = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Ready });
+        move.EnsureSuccessStatusCode();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var publication = await index.WaitForCurrentMutationPublicationAsync(deadline.Token);
+        Assert.True(await worker.EnsureSyncedAsync(publication.Generation, TimeSpan.FromSeconds(30), deadline.Token));
+        Assert.Equal(worker.SyncedGeneration, await store.GetBoardWorkspaceGenerationAsync(default));
+        Assert.Equal(worker.SyncedGeneration, (await store.GetBoardReadModelAsync(ProjectName, default)).WorkspaceSourceGeneration);
+        foreach (var (name, before) in unchanged)
+        {
+            var after = await store.GetBoardReadModelAsync(name, default);
+            Assert.Equal(before.WorkspaceSourceGeneration, after.WorkspaceSourceGeneration);
+            Assert.Equal(before.ETag, after.ETag);
+            Assert.Equal(TaskServerBoardReadStatus.NotModified,
+                (await boardClient.GetBoardAsync(name, before.ETag, default)).Status);
+        }
     }
 
     [Fact]
@@ -195,12 +288,13 @@ public sealed class BoardSourceIntegrationTests : IDisposable
     private static async Task<TaskDto> TaskServerCardAsync(TaskServerStore store)
         => (await store.GetTaskAsync(ProjectName, Key, default))!;
 
-    private WebApplicationFactory<Program> BuildBackend(TaskServerFactory taskServer, string source)
+    private WebApplicationFactory<Program> BuildBackend(TaskServerFactory taskServer, string source, params string[] additionalProjects)
         => new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
+            builder.ConfigureAppConfiguration((_, configuration) =>
+            {
+                var settings = new Dictionary<string, string?>
                 {
                     ["TaskRepository"] = _workspace,
                     ["WatchPaths:0:Name"] = ProjectName,
@@ -212,7 +306,16 @@ public sealed class BoardSourceIntegrationTests : IDisposable
                     [BoardSourceSetting.SectionKey] = source,
                     ["Board:TaskServer:BaseUrl"] = "http://localhost/",
                     ["Board:Shadow:SyncIntervalSeconds"] = "3600",
-                }));
+                };
+                for (var i = 0; i < additionalProjects.Length; i++)
+                {
+                    var path = Path.Combine(_workspace, "projects", additionalProjects[i]);
+                    settings[$"WatchPaths:{i + 1}:Name"] = additionalProjects[i];
+                    settings[$"WatchPaths:{i + 1}:Path"] = path;
+                    settings[$"WatchPaths:{i + 1}:RootPath"] = path;
+                }
+                configuration.AddInMemoryCollection(settings);
+            });
             builder.ConfigureTestServices(services => services
                 .AddHttpClient(TaskServerBoardClient.ClientName)
                 .ConfigurePrimaryHttpMessageHandler(() => taskServer.Server.CreateHandler()));

@@ -38,6 +38,7 @@ internal sealed class SalvageRetentionSweeper
     private readonly Action<string> _log;
     private readonly Func<DateTime> _utcNow;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly Func<CancellationToken, Task>? _worktreeSweep;
     private SalvageSweepDto? _lastSweep;
     private SalvageStoreDto? _current;
 
@@ -49,7 +50,8 @@ internal sealed class SalvageRetentionSweeper
         Action<string> log,
         Func<DateTime>? utcNow = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
-        SemaphoreSlim? runAdmissionGate = null)
+        SemaphoreSlim? runAdmissionGate = null,
+        Func<CancellationToken, Task>? worktreeSweep = null)
     {
         _salvageDir = Path.GetFullPath(options.SalvageDir);
         _mode = options.SalvageRetentionMode;
@@ -65,6 +67,7 @@ internal sealed class SalvageRetentionSweeper
         _log = log;
         _utcNow = utcNow ?? (() => DateTime.UtcNow);
         _delay = delay ?? Task.Delay;
+        _worktreeSweep = worktreeSweep;
         _lastSweep = LoadLastSweep();
     }
 
@@ -94,6 +97,8 @@ internal sealed class SalvageRetentionSweeper
                     try
                     {
                         await SweepOnceAsync(shutdown);
+                        if (_mode == ModeApply && _worktreeSweep is not null)
+                            await _worktreeSweep(shutdown);
                     }
                     catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
                     {

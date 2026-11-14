@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { ClientSummary } from '../models/task.model';
+import { AuthService } from './auth.service';
 
 /**
  * Reads the registry of client identities (`/api/clients`) and keeps a
@@ -11,7 +12,10 @@ import { ClientSummary } from '../models/task.model';
 @Injectable({ providedIn: 'root' })
 export class ClientService {
   private readonly http = inject(HttpClient);
+  private readonly auth = inject(AuthService);
   readonly clients = signal<ClientSummary[]>([]);
+  readonly humanNames = signal<Readonly<Record<string, string>>>({});
+  private humanNamesRequested = false;
   readonly loaded = signal(false);
 
   /** Map id -> ClientSummary for cheap lookups in the card render path. */
@@ -22,6 +26,8 @@ export class ClientService {
   });
 
   refresh(): void {
+    this.humanNamesRequested = false;
+    this.humanNames.set({});
     this.http.get<ClientSummary[]>('/api/clients/').subscribe({
       next: list => {
         // Corrupt-file diagnostics share the registry response so operator
@@ -37,6 +43,19 @@ export class ClientService {
     });
   }
 
+  /** Resolve human task owners only when a card needs one. */
+  loadHumanNames(): void {
+    if (this.humanNamesRequested || this.auth.status()?.profile !== 'networked' || !this.auth.status()?.authenticated) return;
+    this.humanNamesRequested = true;
+    this.http.get<{ id: string; displayName: string }[]>('/api/auth/directory').subscribe({
+      next: users => {
+        if (this.auth.status()?.authenticated)
+          this.humanNames.set(Object.fromEntries(users.map(user => [user.id, user.displayName])));
+      },
+      error: () => { this.humanNamesRequested = false; },
+    });
+  }
+
   /**
    * Lookup helper safe to call from templates. Falls back to a synthetic
    * placeholder summary so the chip can still render an id when the
@@ -45,6 +64,13 @@ export class ClientService {
   resolve(clientId: string | null | undefined): ClientSummary {
     if (!clientId) return { id: 'unknown', displayName: 'unknown', emoji: '·', colour: null, kind: 'service', registeredAt: '', lastSeenAt: null, tokenBudgetMonthly: null, notes: null, defaultCliType: null, defaultModel: null };
     const found = this.byId().get(clientId);
+    const signedIn = this.auth.status()?.user;
+    const humanName = this.humanNames()[clientId] ?? (signedIn?.id === clientId ? signedIn.displayName : null);
+    if (humanName) return {
+      ...(found ?? { id: clientId, emoji: '·', colour: null, registeredAt: '', lastSeenAt: null,
+        tokenBudgetMonthly: null, notes: null, defaultCliType: null, defaultModel: null }),
+      displayName: humanName, kind: 'human',
+    };
     if (found) return found;
     return { id: clientId, displayName: clientId, emoji: '·', colour: null, kind: 'service', registeredAt: '', lastSeenAt: null, tokenBudgetMonthly: null, notes: null, defaultCliType: null, defaultModel: null };
   }

@@ -97,6 +97,9 @@ internal static class TaskEndpointHelpers
                     AcceptanceAttemptLineagePolicy.MissingRunAttemptRefusal, StringComparison.Ordinal) == true
                     ? "run-attempt-missing" : "integration-dead-end",
         }),
+        MoveJobStatus.ActiveBatchMember when outcome.ActiveBatch is { } batch => Results.Json(
+            AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.Body(batch),
+            statusCode: StatusCodes.Status409Conflict),
         MoveJobStatus.PendingIntentSupersedeFailed => Results.Json(
             new
             {
@@ -321,16 +324,22 @@ internal static class TaskEndpointHelpers
     }
 
     /// <summary>
-    /// Interim read-time dossier link for concept cards. This deliberately reads
-    /// the two result documents instead of creating a second structured
-    /// workbench-reference carrier before <c>references.workbenches</c> lands.
+    /// The primary task Dossier is the same membership used by the board and
+    /// Dossier card list. Legacy result paths are migrated by catalogue backfill.
     /// </summary>
     internal static ConceptDossierSummary? BuildConceptDossierSummary(TaskInfo job)
     {
         if (!TaskModes.IsConcept(job.Mode)) return null;
-        return string.IsNullOrWhiteSpace(job.FolderPath)
+        var legacy = string.IsNullOrWhiteSpace(job.FolderPath)
             ? new ConceptDossierSummary()
             : ConceptDossierContract.Read(job.FolderPath);
+        return legacy with
+        {
+            RepoRelativePath = job.Dossier?.Path,
+            ReferenceSource = job.Dossier is null ? null : "task.json.dossier",
+            NoDossierNeeded = job.Dossier is null && legacy.NoDossierNeeded,
+            NoDossierReason = job.Dossier is null ? legacy.NoDossierReason : null,
+        };
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 @use '../../../../styles/mixins' as m;
 :host { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .structure-view { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; container-type: inline-size; color: var(--studio-fg); background: var(--studio-bg-editor); }
+.structure-empty { margin: var(--studio-spacing-5); color: var(--studio-fg-muted); }
 .structure-header { display: flex; justify-content: space-between; align-items: center; gap: var(--studio-spacing-4); padding: var(--studio-spacing-5); border-bottom: 1px solid var(--studio-border); }
 .structure-header h1 { margin: 0; color: var(--studio-fg-strong); font-size: 22px; }
 .structure-header p { margin: 0; color: var(--studio-fg-muted); }

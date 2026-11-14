@@ -1,4 +1,5 @@
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
+import { MagazineViewComponent } from '../../../magazine/magazine-view/magazine-view';
 import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
 import { StructureViewComponent } from '../../../structure/structure-view/structure-view.component';
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
@@ -13,7 +14,6 @@ import {
   ProjectObservabilityPanelComponent,
   ProjectProductRuntimePanelComponent,
   ApiStallPanelComponent,
-  OperationsSecurityComponent,
   ProjectSteeringDocsSectionComponent,
   ProjectWikiSectionComponent,
   ProjectUrlsPanelComponent,
@@ -46,6 +46,7 @@ import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 
 /** Rails whose content panel is real (not the project-shell placeholder). */
 const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRailKey>([
+  'magazine',
   'overview',
   'project-urls',
   'git',
@@ -92,6 +93,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   selector: 'app-project-hub-view',
   standalone: true,
   imports: [
+    MagazineViewComponent,
     StructureViewComponent,
     ProjectShellComponent,
     ProjectEnvironmentOverviewComponent,
@@ -108,7 +110,6 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     ProjectObservabilityPanelComponent,
     ProjectProductRuntimePanelComponent,
     ApiStallPanelComponent,
-    OperationsSecurityComponent,
     ProjectSteeringDocsSectionComponent,
     ProjectWikiSectionComponent,
     ProjectUrlsPanelComponent,

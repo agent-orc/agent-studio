@@ -162,6 +162,7 @@ internal static class TaskScopedTestEvidenceReader
         var verifyReuse = frontmatter.GetValueOrDefault("verifyReuse");
         var workerRelease = frontmatter.GetValueOrDefault("workerReleaseId");
         var daemonRelease = frontmatter.GetValueOrDefault("daemonReleaseId");
+        var stableNotice = frontmatter.GetValueOrDefault("workerReleaseStable");
         return new RemoteReviewAttemptFacts(
             AttemptId: attemptId,
             ReportRef: reportRef,
@@ -176,7 +177,8 @@ internal static class TaskScopedTestEvidenceReader
             BaselineReuse: string.IsNullOrWhiteSpace(baselineReuse) ? null : baselineReuse,
             WorkerReleaseId: string.IsNullOrWhiteSpace(workerRelease) ? null : workerRelease,
             DaemonReleaseId: string.IsNullOrWhiteSpace(daemonRelease) ? null : daemonRelease,
-            VerifyReuse: string.IsNullOrWhiteSpace(verifyReuse) ? null : verifyReuse);
+            VerifyReuse: string.IsNullOrWhiteSpace(verifyReuse) ? null : verifyReuse,
+            WorkerReleaseStable: string.IsNullOrWhiteSpace(stableNotice) ? null : stableNotice);
     }
 
     private static IReadOnlyList<TaskTestEvidenceSource> ReadRemoteReview(string path)
@@ -479,4 +481,9 @@ internal sealed record RemoteReviewAttemptFacts(
     /// carried passed verify results over from the failed attempt instead of
     /// executing them; null when every command ran in this attempt (AGT-2841).
     /// </summary>
-    string? VerifyReuse = null);
+    string? VerifyReuse = null,
+    /// <summary>
+    /// The report's <c>workerReleaseStable</c> sentence when the grading release
+    /// was not the Stable build at the time the report arrived (AGT-3689).
+    /// </summary>
+    string? WorkerReleaseStable = null);

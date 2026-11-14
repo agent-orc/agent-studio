@@ -61,6 +61,23 @@ export class ServerReadinessPanelComponent implements OnInit, OnDestroy {
     return this.remedies.canOpen(check.action) ? remedyLinkLabel(check.action!) : null;
   }
 
+  hostAccessReason(check: ReadinessCheck): string {
+    switch (check.id) {
+      case 'integration-branch':
+        if (check.command?.includes('git clone')) return 'Host access is needed to create or repair the project checkout at its configured path.';
+        if (check.command?.includes('for-each-ref')) return 'Host access is needed to diagnose Git in the project checkout.';
+        return 'Host access is needed to fetch or change Git refs in the project checkout. The project setting can change the target branch, but it cannot create or fetch a missing ref.';
+      case 'integration-lane': return 'Host access is needed to change Git refs in the project checkout. The project setting can change the target branch, but it cannot create or fetch a missing ref.';
+      case 'git-locks': return 'Host access is needed to confirm no Git process owns these locks before removing files from the checkout.';
+      case 'git-identity':
+      case 'committer-identity': return 'Host access is needed to change or diagnose the API service user’s Git configuration.';
+      case 'data-volume':
+      case 'state-writable': return 'Host access is needed to change the data mount or file ownership outside the API process.';
+      case 'gate-worker': return 'Host access is needed to configure or diagnose the gate worker and its SSH connection.';
+      default: return 'Host access is needed because this operation changes the service host or a repository checkout outside Studio settings.';
+    }
+  }
+
   openAction(check: ReadinessCheck): void {
     if (this.remedies.open(check.action)) this.navigated.emit();
   }

@@ -110,6 +110,9 @@ test('the environment view lists each readiness check with state, meaning and re
   await expect(home.getByTestId('readiness-config-location')).toHaveText('compose.override.yaml › services.api.volumes');
   await expect(home.getByTestId('readiness-config-text')).toHaveText('- ${STUDIO_DATA_DIR}/home:/data/home');
   await expect(home.getByTestId('readiness-command-text')).toHaveText('docker compose up -d');
+  await expect(home.getByTestId('readiness-host-access')).toContainText('Host access is needed');
+  await expect(panel.getByTestId('readiness-project:integration-lane:Demo').getByTestId('readiness-host-access'))
+    .toContainText('change Git refs');
   await expect(panel.getByTestId('readiness-project:app-coverage:Demo')).toContainText('Install the App on this repository');
   await expect(panel.getByTestId('readiness-host:execution-host:agent-runner-02')).toContainText('not seen for 5 h');
   await expect(panel.getByTestId('readiness-server:git-identity:')).toHaveCount(0);

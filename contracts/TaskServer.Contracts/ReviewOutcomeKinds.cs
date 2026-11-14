@@ -8,6 +8,7 @@ public static class ReviewOutcomeKinds
     public const string Pass = nameof(ReviewTerminalOutcome.Pass);
     public const string ProductFailure = nameof(ReviewTerminalOutcome.ProductFailure);
     public const string IntegrationBranchDefect = nameof(ReviewTerminalOutcome.IntegrationBranchDefect);
+    public const string DeliveryPredatesReviewPlan = nameof(ReviewTerminalOutcome.DeliveryPredatesReviewPlan);
     public const string ReviewInfra = "ReviewInfra";
 }
 

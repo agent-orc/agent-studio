@@ -14,6 +14,7 @@
 .batch-detail__head { @include m.deck-panel-head; align-items: center; }
 .batch-detail p { margin: 0; }
 .batch-detail__summary { font-variant-numeric: tabular-nums; }
+.batch-detail__time { font-variant-numeric: tabular-nums; color: var(--studio-fg-muted); }
 .batch-detail code { overflow-wrap: anywhere; }
 .batch-detail .studio-button { margin: 0; }
 .batch-detail__proven-red {

@@ -138,7 +138,8 @@ public sealed class ParkedCardRecallSweep
         return new ParkedBlockerContext(
             repositoryRoot,
             string.IsNullOrWhiteSpace(taskBranch) ? null : taskBranch,
-            TaskIntegrationBranch.Name(task.IntegrationBranch));
+            TaskIntegrationBranch.Name(task.IntegrationBranch),
+            !string.IsNullOrWhiteSpace(task.Key) ? task.Key : task.TaskKey);
     }
 
     private static ParkedCardCandidate ToCandidate(TaskInfo task)

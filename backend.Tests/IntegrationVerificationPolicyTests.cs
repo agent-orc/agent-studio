@@ -341,6 +341,49 @@ public sealed class IntegrationVerificationPolicyTests
         Assert.True(IntegrationVerificationStates.PermitsCompletion(projected));
     }
 
+    [Fact]
+    public void Projection_NetChangeRecordCoversItsSourceAfterTheTipMoves()
+    {
+        var record = VerifiedOnTreeA(Sha, Delivery);
+        var projected = IntegrationVerificationProjection.Resolve(record, null, [], LaterTip,
+            "develop", Delivery, sha => sha == Sha);
+        var other = IntegrationVerificationProjection.Resolve(record, null, [], LaterTip,
+            "develop", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", sha => sha == Sha);
+
+        Assert.Equal(IntegrationVerificationStates.Verified, projected.State);
+        Assert.Equal(IntegrationVerificationStates.Unverified, other.State);
+    }
+
+    [Fact]
+    public void Projection_LegacyNetChangeRecordReadsSourceFromTrailer()
+    {
+        var record = VerifiedOnTreeA(Sha);
+        var projected = IntegrationVerificationProjection.Resolve(record, null, [], LaterTip,
+            "develop", Delivery, sha => sha == Sha,
+            sha => sha == Sha ? Delivery : null);
+        var unrelated = IntegrationVerificationProjection.Resolve(record, null, [], LaterTip,
+            "develop", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", sha => sha == Sha,
+            sha => sha == Sha ? Delivery : null);
+
+        Assert.Equal(IntegrationVerificationStates.Verified, projected.State);
+        Assert.Equal(IntegrationVerificationStates.Unverified, unrelated.State);
+    }
+
+    [Fact]
+    public void Projection_NetChangeRecordWithRedGateCannotBeCarried()
+    {
+        var record = VerifiedOnTreeA(Sha, Delivery) with
+        {
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Fail),
+        };
+
+        var projected = IntegrationVerificationProjection.Resolve(record, null, [], LaterTip,
+            "develop", Delivery, sha => sha == Sha);
+
+        Assert.Equal(IntegrationVerificationStates.Unverified, projected.State);
+    }
+
     private const string Replayed = "cccccccccccccccccccccccccccccccccccccccc";
 
     private static TaskIntegrationRecord BatchMapping(string sourceSha = Delivery, string branch = "develop") => new()

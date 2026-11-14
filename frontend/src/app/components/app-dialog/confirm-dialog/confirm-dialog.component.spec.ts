@@ -69,3 +69,52 @@ describe('ConfirmDialogComponent typed confirmation', () => {
     expect(resolved).toBe(true);
   });
 });
+
+describe('ConfirmDialogComponent written reason (AGT-3624)', () => {
+  async function mount() {
+    await TestBed.configureTestingModule({
+      imports: [ConfirmDialogComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ConfirmDialogComponent);
+    const service = TestBed.inject(ConfirmDialogService);
+    return { fixture, component: fixture.componentInstance, service };
+  }
+
+  it('keeps confirm disabled until the reason is long enough, then resolves with it', async () => {
+    const { fixture, component, service } = await mount();
+    const result = service.confirmWithReason({
+      title: 'Delete this task and its unintegrated work?',
+      message: 'Work is lost.',
+      requireReason: { prompt: 'Why?', minLength: 8 },
+    });
+    fixture.detectChanges();
+    // The dialog renders into the document-level overlay portal.
+    const button = () => document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLButtonElement;
+    expect(document.querySelector('[data-testid="confirm-dialog-reason-input"]')).toBeTruthy();
+    expect(button().disabled).toBe(true);
+
+    component.reasonDraft.set('  short ');
+    fixture.detectChanges();
+    expect(button().disabled).toBe(true);
+    component.onAccept();
+    expect(service.active()).not.toBeNull();
+
+    component.reasonDraft.set('  Superseded by DEMO-2 ');
+    fixture.detectChanges();
+    expect(button().disabled).toBe(false);
+    component.onAccept();
+    await expect(result).resolves.toBe('Superseded by DEMO-2');
+  });
+
+  it('resolves null when cancelled', async () => {
+    const { fixture, component, service } = await mount();
+    const result = service.confirmWithReason({
+      title: 'Delete?', message: 'Work is lost.', requireReason: { prompt: 'Why?', minLength: 8 },
+    });
+    fixture.detectChanges();
+    component.reasonDraft.set('A long enough reason');
+    component.onCancel();
+    await expect(result).resolves.toBeNull();
+  });
+});

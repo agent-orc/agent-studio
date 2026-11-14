@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 /**
  * F47 / ADR-0042 — Workspaces management section.
@@ -59,6 +62,19 @@ test.describe('Settings — Workspaces section (F47)', () => {
 
     // Create button + show-archived toggle are present and reachable.
     await expect(page.getByTestId('settings-workspace-create')).toBeEnabled();
+    await page.getByTestId('settings-workspace-create').click();
+    await expect(page.getByTestId('workspace-create-dialog')).toBeVisible();
+    await expect(page.getByTestId('settings-workspaces')).toBeVisible();
+    await expect(page.getByTestId('workspace-settings-rail-workspaces')).toHaveAttribute('aria-current', 'page');
+    const resultDir = process.env.JOB_RESULTS_DIR ?? 'test-results';
+    mkdirSync(resultDir, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: join(resultDir, `create-workspace-${theme}.png`), fullPage: true });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: join(resultDir, 'create-workspace-390.png'), fullPage: true });
+    await page.getByTestId('workspace-create-cancel').click();
     await expect(page.getByTestId('settings-workspace-show-archived')).toBeVisible();
 
     const note = page.getByTestId('settings-workspaces-note');

@@ -184,7 +184,7 @@ public sealed class OperatorDecisionPolicyTests
     [Theory]
     [InlineData("host-offline", OperatorDecisionTypes.BackendStalled)]
     [InlineData("claim-refusal", OperatorDecisionTypes.BackendStalled)]
-    [InlineData("batch-gate-stuck", OperatorDecisionTypes.BackendStalled)]
+    [InlineData("batch-gate-stuck", OperatorDecisionTypes.BatchGateStuck)]
     [InlineData("idle-capacity", OperatorDecisionTypes.ProgressIdleWithReady)]
     [InlineData("fleet-claim-stall", OperatorDecisionTypes.ProgressIdleWithReady)]
     [InlineData("lane-stall", null)]

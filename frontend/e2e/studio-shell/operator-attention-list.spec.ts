@@ -234,7 +234,9 @@ test.describe('Operator attention list', () => {
       row('3', 'human-review.ready', 'AGT-9003', 'AGT-9003 is ready for human review.'),
       row('4', 'batch.red', null, 'Batch b-17 is red: 3 tests failed.'),
       row('5', 'batch.isolating', null, 'Batch b-17 isolates its red members in 2 diagnostic batches.'),
+      row('10', 'batch-gate.stuck', null, 'Batch b-18 is running for 151 min with 4 pending members. No automatic next step is recorded.'),
       row('6', 'push.pending-overdue', 'AGT-9004', 'Push of AGT-9004 has been pending for 14 minutes: remote rejected.'),
+      row('10', 'push.blocked', 'AGT-9006', 'Push of AGT-9006 is blocked: Publication stopped: the approved merge result c58e247a1 is not on the local develop integration line, so nothing was pushed to origin/develop.'),
       row('7', 'quota.exhausted', null, 'claude reached its provider limit until 12:00: rate limited', null),
       row('8', 'quota.fallback-active', 'AGT-9005', 'AGT-9005 runs on the codex fallback.'),
       row('9', 'backend.stalled', null, 'agent-runner-01 refuses claims. Check the host admission.', null),
@@ -255,19 +257,34 @@ test.describe('Operator attention list', () => {
           nodes.map(node => node.getAttribute('data-testid')));
         expect(groups).toEqual([
           'attention-group-decision', 'attention-group-escalation', 'attention-group-human-review',
-          'attention-group-batch', 'attention-group-push', 'attention-group-quota', 'attention-group-host',
+          'attention-group-push-blocked', 'attention-group-batch', 'attention-group-push', 'attention-group-quota', 'attention-group-host',
         ]);
         for (const reason of await list.getByTestId('attention-row-reason').allTextContents())
           expect(reason.trim().length).toBeGreaterThan(0);
+        await expect(list.locator('[data-attention-type="batch-gate.stuck"] [data-testid="attention-row-action"]'))
+          .toHaveText('Open batch panel');
         await expect(list.getByTestId('attention-row-action')).toHaveCount(items.length);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         await screenshot(page, `attention-classes-${viewport.width}-${theme}`);
+        if (viewport.width === 390) {
+          const stuck = list.locator('[data-attention-type="batch-gate.stuck"]');
+          await stuck.scrollIntoViewIfNeeded();
+          expect(await stuck.getByTestId('attention-row-reason').evaluate(element =>
+            element.scrollHeight <= element.clientHeight + 1)).toBe(true);
+          await screenshot(page, `attention-batch-stuck-390-${theme}`);
+        }
         await page.keyboard.press('Escape');
         await expect(list).toBeHidden();
       }
     }
 
     await page.setViewportSize({ width: 1280, height: 800 });
+    await openAndReconcile(page);
+    await page.locator('[data-attention-type="batch-gate.stuck"] [data-testid="attention-row-action"]').click();
+    await expect(page.getByTestId('studio-attention-list')).toBeHidden();
+    await expect(page.getByTestId('batch-panel')).toBeVisible();
+    await expect(page.getByTestId('batch-panel').getByText('alpha', { exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
     await openAndReconcile(page);
     await page.getByTestId('attention-group-host').getByTestId('attention-row-action').click();
     // The hosts section lives in the Environment settings surface.

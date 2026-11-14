@@ -223,9 +223,10 @@ export class WorkbenchOverviewComponent {
     const seen = new Set<string>();
     for (const item of overview.items) {
       if (!['decision-pending', 'active', 'decided'].includes(item.workbench.status)) continue;
-      const keys = uniqueKeys([
+      const keys = uniqueKeys(item.workbench.linkedTaskKeys ?? [
         ...(item.workbench.documentation?.references.map(reference => reference.key) ?? []),
         ...(item.workbench.relatedTaskKeys ?? []),
+        ...item.workbench.sourceTaskKeys,
       ]);
       keysByItem.set(this.itemKey(item), keys);
       for (const key of keys) {

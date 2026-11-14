@@ -45,6 +45,7 @@ const AUTH_GATE_ACTIONS = [
   'invite/accept',
   'recover',
   'recovery-code',
+  'restore-notice/acknowledge',
 ];
 export const AUTH_GATE_POST_URLS: ReadonlySet<string> = new Set(
   AUTH_ROOTS.flatMap(root => AUTH_GATE_ACTIONS.map(action => `${root}/${action}`)),

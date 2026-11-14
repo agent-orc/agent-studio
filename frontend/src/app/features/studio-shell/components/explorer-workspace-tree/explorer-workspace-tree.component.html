@@ -3,7 +3,7 @@
     [collapsible]="true"
     [collapsed]="isCollapsed('workspace')"
     title="Workspaces"
-    [count]="totalProjectCount()"
+    [count]="registryWorkspaces().length"
     testid="studio-explorer-workspace-head"
     (collapsedChange)="setCollapsed('workspace', $event)">
     @if (isCollapsed('workspace') && allAutoPickupAggregate().state !== 'off') {
@@ -58,19 +58,15 @@
                  (blur)="commitRename()" />
         </div>
       } @else {
-        <!-- F-studio-sidebar: a single workspace is a tree node, NOT a
-             panel header. It renders as a tree-row (folder glyph + name +
-             count) under the "Workspaces" panel header. Click/​chevron
-             toggle collapse, double-click opens inline rename, right-click
-             opens the rename menu. The `studio-explorer-ws-group-<id>`
-             testid + aria-expanded contract is preserved for the F46
-             specs. -->
+        <!-- Workspace rows toggle on click or chevron, rename on double-click
+             or right-click, and preserve the F46 test ID and expanded state. -->
         <div class="studio-explorer-tree__ws-head">
           @let wsAgg = wsAutoPickupAggregate(g);
           <app-tree-row
             level="root"
             glyph="folder"
             [chevron]="isCollapsed('ws:' + g.id) ? 'collapsed' : 'expanded'"
+            [chevronTestid]="'studio-explorer-ws-chevron-' + g.id"
             [label]="g.displayName"
             [count]="g.projects.length"
             [testid]="'studio-explorer-ws-group-' + g.id"
@@ -88,6 +84,9 @@
             }
           </app-tree-row>
           @if (g.id !== '__all__' && g.id !== '__unassigned__') {
+            <button type="button" class="studio-explorer-tree__row-action studio-explorer-tree__row-action--magazine" [attr.data-testid]="'studio-workspace-' + g.id + '-magazine'"
+                    [attr.aria-label]="'Open ' + g.displayName + ' magazine'" cacTooltip="Open workspace magazine"
+                    (click)="workspaceMagazineRequest.emit({ id: g.id, label: g.displayName }); $event.stopPropagation()"><app-studio-icon name="book" [size]="11" /></button>
             <button type="button"
                     class="studio-explorer-tree__row-action"
                     [attr.data-testid]="'studio-workspace-' + g.id + '-add-project'"
@@ -131,6 +130,7 @@
               <app-tree-row class="studio-project-row" level="root"
                             [hasActions]="true"
                             [chevron]="isExpanded(p.name) ? 'expanded' : 'collapsed'"
+                            [chevronTestid]="'studio-explorer-project-chevron-' + p.name"
                             [glyphChar]="p.initial"
                             [glyphColor]="p.color"
                             [label]="p.displayLabel"
@@ -170,7 +170,7 @@
               <!-- Project destinations stay nested below the project row. -->
               <div class="studio-tree-children">
                 <app-tree-row level="child" glyph="grid"
-                              label="Board"
+                              label="Board · active work" [tooltip]="boardActiveWorkTooltip"
                               [ariaLabel]="'Board, ' + boardLaneCountsLabel(p)"
                               [active]="p.isActive && activeProjectSurface() === 'board'"
                               [ariaCurrent]="p.isActive && activeProjectSurface() === 'board' ? 'page' : null"

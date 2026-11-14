@@ -1,5 +1,15 @@
 [
   {
+    "file": "src/app/models/parked-blocker-presentation.ts",
+    "literal": "Auto Review",
+    "reason": "Auto Review watchdog is the named recovery service, not the lane; the lane's display name is Post Processing."
+  },
+  {
+    "file": "src/app/features/task-detail/components/parked-blocker/parked-blocker.component.ts",
+    "literal": "Auto Review",
+    "reason": "The park statement names the Auto Review watchdog service that moved the card, not the lane."
+  },
+  {
     "file": "src/app/features/orchestrator/components/chat-sessions-panel/chat-sessions-panel.component.html",
     "literal": "Archive",
     "reason": "Row action verb for archiving a chat session in the sidebar Chats panel. Not the 7-archive lane."

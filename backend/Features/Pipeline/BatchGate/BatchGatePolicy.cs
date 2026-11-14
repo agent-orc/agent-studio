@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Git;
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 
@@ -69,6 +70,24 @@ public sealed record BatchGateSubject(
 
 public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason,
     string? Detail = null);
+
+/// <summary>
+/// A settled review the batch queue refused, with the operator text that
+/// names the card's route (AGT-3740). Callers catch any exception and report
+/// its message, so the message is the operator text.
+/// </summary>
+public sealed class BatchAdmissionRefusedException(BatchExclusionReason reason, string message)
+    : InvalidOperationException(message)
+{
+    public BatchExclusionReason Reason { get; } = reason;
+}
+
+/// <summary>Where a card goes when the batch gate is not its route (AGT-3740).</summary>
+public static class BatchAdmissionRoutes
+{
+    public const string PerTaskIntegration = "per-task integration";
+    public const string ReplannedReview = "a re-planned review";
+}
 
 public sealed record BatchGateFormationOptions(
     bool Enabled = false, int CloseSize = 4, int MaximumSize = 8,
@@ -154,10 +173,11 @@ public static class BatchGatePolicy
             if (reason is null) eligible[subject.TaskKey] = subject;
             else exclusions.Add(new(subject.TaskKey, reason.Value));
         }
-        var selected = proposedKeys.Distinct(StringComparer.Ordinal)
-            .Where(eligible.ContainsKey).Take(options.MaximumSize)
-            .Select(key => eligible[key]).ToArray();
-        if (selected.Length < options.MinimumSize)
+        // AGT-3568: the planner's close rule chooses the members; this builds the manifest.
+        var selection = AgentStudio.Runner.MonolithTransitionAdapter.BatchCloseSelection(eligible.Keys, proposedKeys,
+            options.MinimumSize, options.MaximumSize);
+        var selected = selection.SelectedKeys.Select(key => eligible[key]).ToArray();
+        if (selection.BelowMinimum)
             return new(null, exclusions, selected.Select(item => item.TaskKey).ToArray(),
                 selected.Length > 0, "close requested below minimum batch size");
         exclusions.AddRange(eligible.Keys.Except(selected.Select(item => item.TaskKey), StringComparer.Ordinal)
@@ -303,6 +323,26 @@ public static class BatchGatePolicy
         return null;
     }
 
+    /// <summary>
+    /// AGT-3740: the operator text for a refused admission. A review that ran
+    /// its own build and tests names the plan rule that kept them in the
+    /// review and the route the card takes instead of an empty
+    /// <c>BuildTestNotDeferred</c>.
+    /// </summary>
+    public static string AdmissionRefusal(BatchExclusionReason reason, string? deferralRule,
+        string route = BatchAdmissionRoutes.PerTaskIntegration)
+        => reason == BatchExclusionReason.BuildTestNotDeferred
+            ? ReviewRanBuildTests(deferralRule, route)
+            : $"Batch admission failed: {reason}.";
+
+    /// <summary>"Review ran its own build and tests (rule); this card goes to route."</summary>
+    public static string ReviewRanBuildTests(string? deferralRule, string route)
+        => "Review ran its own build and tests ("
+           + (string.IsNullOrWhiteSpace(deferralRule)
+               ? "the review plan recorded no batch deferral rule"
+               : deferralRule.Trim().TrimEnd('.'))
+           + $"); this card goes to {route}.";
+
     public static string MembershipDigest(
         string baseSha, BatchGateScope scope, IReadOnlyList<BatchGateSubject> orderedMembers)
     {
@@ -342,17 +382,20 @@ public static class BatchGatePolicy
     /// failure is infrastructure and pauses the batch.
     /// </summary>
     public static BatchReplayDisposition ReplayDisposition(BatchReplayResult replay)
-    {
-        if (replay.Success)
-            return replay.TipSha is not null && replay.Replacements.Count > 0
-                   && replay.Replacements.All(x => !string.IsNullOrWhiteSpace(x.OriginalSha)
-                                                  && !string.IsNullOrWhiteSpace(x.RebasedSha))
-                ? BatchReplayDisposition.Admit
-                : BatchReplayDisposition.EjectUnattributable;
-        return replay.Failure == BatchReplayFailure.Unattributable
-            ? BatchReplayDisposition.EjectUnattributable
-            : BatchReplayDisposition.Pause;
-    }
+        => AdmissionReplay(replay with { ConflictedFiles = [] }) switch
+        {
+            BatchAdmissionReplay.Admit => BatchReplayDisposition.Admit,
+            BatchAdmissionReplay.EjectUnattributable => BatchReplayDisposition.EjectUnattributable,
+            _ => BatchReplayDisposition.Pause,
+        };
+
+    /// <summary>The planner's admission verdict of one member replay, a conflict included (AGT-3568).</summary>
+    public static BatchAdmissionReplay AdmissionReplay(BatchReplayResult replay)
+        => AgentStudio.Runner.MonolithTransitionAdapter.BatchAdmitReplay(replay.ConflictedFiles.Count,
+            replay.Success, replay.TipSha is not null,
+            replay.Replacements.Count > 0 && replay.Replacements.All(x => !string.IsNullOrWhiteSpace(x.OriginalSha)
+                                                                    && !string.IsNullOrWhiteSpace(x.RebasedSha)),
+            replay.Failure == BatchReplayFailure.Unattributable);
 
     public static int DiagnosticRunsPerCycle(int memberCount)
         => memberCount <= 1 ? 0 : (int)Math.Ceiling(Math.Log2(memberCount));
@@ -371,5 +414,3 @@ public static class BatchGatePolicy
     private static bool IsSha(string value)
         => value is { Length: 40 or 64 } && value.All(Uri.IsHexDigit);
 }
-
-public enum BatchPhase { Formed, Assembling, Assembled, Running, Green, Publishing, Published, Red, Paused, Abandoned, Unknown }

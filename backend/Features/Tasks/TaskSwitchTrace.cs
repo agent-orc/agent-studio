@@ -19,6 +19,8 @@ internal sealed class TaskSwitchTrace
         "snapshot", "filter", "git-freshness", "compose", "compose.review-queue",
         "compose.runtime", "compose.runner-status", "compose.cards", "compose.lease", "compose.identity", "body",
         "mutation.lookup", "mutation.read-current", "mutation.write", "mutation.publish", "mutation.lock", "mutation.key",
+        // AGT-3709: the two costs inside "mutation.key".
+        "mutation.key.floor", "mutation.key.registry",
         "mutation.index", "mutation.timeline"
     ];
     private readonly long _started = Stopwatch.GetTimestamp();

@@ -307,7 +307,11 @@ public sealed class OperatorApprovalFlowTests : IDisposable
     private async Task StepUpAsync(WebApplicationFactory<Program> factory, HttpClient owner)
         => await ReadOk(owner.PostAsJsonAsync("/api/auth/step-up", new { code = CurrentCode() }));
 
-    private string CurrentCode() => SecondFactorCodes.CurrentTotp(_ownerTotpSecret, _clock.GetUtcNow().UtcDateTime);
+    private string CurrentCode()
+    {
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        return SecondFactorCodes.CurrentTotp(_ownerTotpSecret, _clock.GetUtcNow().UtcDateTime);
+    }
 
     private async Task<HttpClient> OwnerClientAsync(WebApplicationFactory<Program> factory)
     {

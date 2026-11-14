@@ -26,7 +26,9 @@ public sealed record GateRunLedgerPage(IReadOnlyList<GateRunLedgerRow> Rows, int
 public sealed record GateRunDailySummary(DateOnly Day,
     IReadOnlyDictionary<string, double> GateMinutesByType, int CardsPublished,
     double CardsPublishedPerHour, double? MedianBatchGateMinutes,
-    double? P90BatchGateMinutes, double? HostMinutes, double? ReconciliationPercent);
+    double? P90BatchGateMinutes, double? HostMinutes, double? ReconciliationPercent,
+    IReadOnlyDictionary<string, BatchPhasePercentiles>? PhaseMinutes = null,
+    double? DiagnosticRerunShare = null, BatchPreCheckYield? PreCheckYield = null);
 
 /// <summary>Instance-local records outside the workspace repository. Ninety days are retained.</summary>
 public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null,
@@ -90,12 +92,37 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
             rows.Length, page, pageSize);
     }
 
-    public GateRunDailySummary Summary(BatchGateStore store, string project, DateOnly day)
+    public IReadOnlyList<GateRunLedgerRow> ReadAll(string project, DateOnly? day = null)
     {
-        var first = Read(project, day, null, 1, 200);
-        var rows = first.Rows.ToList();
-        for (var page = 2; rows.Count < first.Total; page++)
-            rows.AddRange(Read(project, day, null, page, 200).Rows);
+        var directories = day is { } date
+            ? [Path.Combine(root, date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))]
+            : Directory.Exists(root) ? Directory.GetDirectories(root) : [];
+        return directories.Where(Directory.Exists)
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.json"))
+            .Select(path => JsonSerializer.Deserialize<GateRunLedgerRow>(File.ReadAllText(path), Json))
+            .OfType<GateRunLedgerRow>()
+            .Where(row => string.Equals(row.Project, project, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    }
+
+    public GateRunDailySummary Summary(BatchGateStore store, string project, DateOnly day,
+        IReadOnlyList<GateRunLedgerRow>? allRows = null)
+    {
+        var checks = store.ListPreChecks(project);
+        var todayManifests = store.ListManifests().Where(manifest =>
+            string.Equals(manifest.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
+            && store.ReadPublication(manifest.BatchId) is { } publication
+            && DateOnly.FromDateTime(publication.VerifiedAtUtc.UtcDateTime) == day).ToArray();
+        allRows ??= BatchMemberTimelineProjection.Rows(this, project,
+            new[] { day, day.AddDays(-1) }
+                .Concat(todayManifests.SelectMany(manifest => BatchMemberTimelineProjection.Days(
+                    manifest.Members.Min(member => member.ReviewCompletedAtUtc),
+                    store.ReadPublication(manifest.BatchId)!.VerifiedAtUtc)))
+                .Concat(checks.Where(check => todayManifests.Any(manifest => manifest.Members.Any(member =>
+                    member.TaskKey == check.TaskKey && member.ResultSha == check.ResultSha)))
+                    .SelectMany(check => new[] { DateOnly.FromDateTime(check.StartedAtUtc.UtcDateTime),
+                        DateOnly.FromDateTime(check.StartedAtUtc.UtcDateTime).AddDays(-1) })));
+        var rows = allRows.Where(row => DateOnly.FromDateTime(row.RequestedAtUtc.UtcDateTime) == day).ToArray();
         var minutes = rows.GroupBy(row => row.Type).ToDictionary(group => group.Key,
             group => group.Sum(row => row.DurationMs) / 60_000d);
         var durations = rows.Where(row => row.Type == "batch-gate")
@@ -119,9 +146,26 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
             .Where(fact => DateOnly.FromDateTime(fact.StartedAtUtc.UtcDateTime) == day)
             .Sum(fact => (fact.DurationMs ?? (long)(fact.CompletedAtUtc - fact.StartedAtUtc).TotalMilliseconds) / 60_000d);
         var sum = minutes.Values.Sum();
+        var causes = store.ListFallbackCauses(project);
+        var allPending = store.ListAllPending();
+        var timelines = todayManifests
+            .SelectMany(manifest => manifest.Members.Select(member =>
+                BatchMemberTimelineProjection.Build(store, member, manifest, allRows, checks, causes, allPending)))
+            .Where(item => item.Outcome == "published").ToArray();
+        var todayPreChecks = rows.Where(row => row.Type == "batch-pre-check").ToArray();
+        var todayChecks = checks.Where(check => todayPreChecks.Any(row =>
+            row.TriggerEvent == "pending:" + check.ReviewAttemptId)).ToArray();
+        var yield = new BatchPreCheckYield(todayPreChecks.Length,
+            todayChecks.Count(check => check.Outcome == "red"),
+            todayChecks.Count(check => check.Outcome == "red"
+                && store.ReadPendingOutcome(check.ReviewAttemptId) == "pre-check-red"),
+            todayPreChecks.Sum(row => row.DurationMs) / 60_000d);
         return new GateRunDailySummary(day, minutes, published, published / 24d,
             median, p90, host,
-            rows.Count > 0 && host > 0 ? Math.Abs(sum - host) / host * 100 : null);
+            rows.Length > 0 && host > 0 ? Math.Abs(sum - host) / host * 100 : null,
+            BatchMemberTimelineProjection.Phases(timelines),
+            timelines.Length == 0 ? null : (double)timelines.Count(item => item.DiagnosticRerun) / timelines.Length,
+            yield);
     }
 
     private void Prune(DateTime before)

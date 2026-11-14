@@ -15,6 +15,7 @@ import {
   type TaskInfo,
 } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
+import { NotificationService } from '../../../../services/notification.service';
 import { IntegrationDeadEndComponent } from '../integration-dead-end/integration-dead-end.component';
 import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-notice/acceptance-attempt-gap-notice.component';
 
@@ -63,6 +64,7 @@ const DELIVERED_LANES: readonly string[] = [
 })
 export class DeliveryClaimPanelComponent {
   private readonly tasks = inject(TaskService);
+  private readonly notifications = inject(NotificationService);
 
   readonly job = input.required<TaskInfo>();
   readonly escalated = computed(() => this.job().state === TaskState.Escalated);
@@ -76,7 +78,7 @@ export class DeliveryClaimPanelComponent {
   private readonly load = effect((onCleanup) => {
     const job = this.job();
     this.answer.set(null);
-    if (!DELIVERED_LANES.includes(job.state)) return;
+    if (job.mode === 'concept' || !DELIVERED_LANES.includes(job.state)) return;
     const subscription = this.tasks
       .getDeliveryClaim(job.id, job.watchPath ?? undefined)
       .subscribe({
@@ -224,6 +226,67 @@ export class DeliveryClaimPanelComponent {
   );
 
   readonly contentReview = computed(() => this.answer()?.contentReview ?? null);
+  readonly staleBrief = computed(() => {
+    const review = this.contentReview();
+    return this.job().state === TaskState.HumanReview && !!review
+      && (review.deliveryBriefVersion !== review.currentBriefVersion
+        || review.reviewBriefVersion !== review.currentBriefVersion);
+  });
+  readonly overrideOpen = signal(false);
+  readonly writtenReason = signal('');
+  readonly acceptanceBusy = signal(false);
+  readonly acceptanceError = signal<string | null>(null);
+  readonly difference = signal<{ fromVersion: string; toVersion: string; before: string; after: string } | null>(null);
+  readonly differenceOpen = signal(false);
+  readonly differenceError = signal<string | null>(null);
+
+  showDifference(): void {
+    this.differenceOpen.set(true);
+    this.differenceError.set(null);
+    this.tasks.getBriefDifference(this.job().id, this.job().watchPath).subscribe({
+      next: difference => this.difference.set(difference),
+      error: () => this.differenceError.set('The earlier brief text is unavailable for this edit.'),
+    });
+  }
+
+  reviewAgain(): void {
+    if (this.acceptanceBusy()) return;
+    this.acceptanceBusy.set(true);
+    this.acceptanceError.set(null);
+    this.tasks.reviewContentAgainstCurrentBrief(this.job().id, this.job().watchPath).subscribe({
+      next: () => {
+        this.acceptanceBusy.set(false);
+        this.notifications.success('Content review requested for the current brief.');
+        this.tasks.refresh(true);
+      },
+      error: (error: { error?: { error?: string } }) => {
+        this.acceptanceBusy.set(false);
+        this.acceptanceError.set(error.error?.error || 'Could not request content review.');
+      },
+    });
+  }
+
+  acceptWithReason(): void {
+    const reason = this.writtenReason().trim();
+    if (this.acceptanceBusy() || reason.length < 8) return;
+    this.acceptanceBusy.set(true);
+    this.acceptanceError.set(null);
+    const job = this.job();
+    this.tasks.moveJob(job.id, TaskState.Completed, job.watchPath, undefined,
+      reason, true).subscribe({
+      next: () => {
+        this.acceptanceBusy.set(false);
+        this.overrideOpen.set(false);
+        this.writtenReason.set('');
+        this.notifications.success('Accepted with a written reason.');
+        this.tasks.refresh(true);
+      },
+      error: (error: { error?: { error?: string } }) => {
+        this.acceptanceBusy.set(false);
+        this.acceptanceError.set(error.error?.error || 'Could not accept this delivery.');
+      },
+    });
+  }
   readonly contentPassed = computed(() => {
     const review = this.contentReview();
     return review?.contentStatus === 'pass'
@@ -256,7 +319,7 @@ export class DeliveryClaimPanelComponent {
     this.claim()?.basis === 'operator-override' ? this.claim()?.reason?.trim() || null : null,
   );
 
-  readonly show = computed(() => this.inDeliveredLane()
+  readonly show = computed(() => this.job().mode !== 'concept' && this.inDeliveredLane()
     && (!!this.answer() || !!this.job().integration || !!this.job().completionClaim
       || !!this.job().acceptanceAttemptGap
       || !!this.job().reviewProjection?.blockingAspects?.length

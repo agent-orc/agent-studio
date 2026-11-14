@@ -5,7 +5,7 @@ import { setTheme } from '../helpers/theme';
 import { SECURITY_POSTURE_FIXTURE_NOW, securityPostureFixture } from '../../src/app/features/project-detail/testing/security-posture-fixtures';
 
 /**
- * Security section of the Operations page on a fully mocked backend
+ * Installation Security section of Settings → Operations on a fully mocked backend
  * (AGT-3575). GET /api/security/posture answers the shared fixture; every
  * other API answers an empty list. Screenshots in both themes at 1280 and
  * 390 px go to JOB_RESULTS_DIR when it is set.
@@ -71,6 +71,9 @@ async function openOperations(page: Page, posture: { status: number; body: unkno
   await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay')
     .forEach(element => ((element as HTMLElement).style.display = 'none')));
   await expect(page.getByTestId('project-operations-area')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId('project-operations').getByTestId('operations-security')).toHaveCount(0);
+  await page.getByTestId('project-operations').getByRole('link', { name: 'Settings → Operations' }).click();
+  await expect(page.getByTestId('workspace-operations')).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe('Operations security section', () => {
@@ -98,9 +101,9 @@ test.describe('Operations security section', () => {
       expect(overflow, `${width}px horizontal overflow`).toBeLessThanOrEqual(1);
       const box = await section.boundingBox();
       expect(box!.x + box!.width, `${width}px right edge`).toBeLessThanOrEqual(width + 1);
-      // The Operations area scrolls inside the shell; a viewport as tall as the
-      // area lets the element screenshot show the whole section unclipped.
-      const tall = await page.getByTestId('project-operations-area').evaluate(element => element.scrollHeight);
+      // The Settings panel scrolls inside the shell; a tall viewport lets the
+      // element screenshot show the whole section unclipped.
+      const tall = await page.getByTestId('workspace-operations').evaluate(element => element.scrollHeight);
       await page.setViewportSize({ width, height: Math.min(Math.max(height, tall + 200), 12_000) });
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
@@ -116,7 +119,7 @@ test.describe('Operations security section', () => {
     const answered = page.waitForResponse(response => response.url().endsWith('/api/security/posture'));
     await page.reload({ waitUntil: 'domcontentloaded' });
     expect((await answered).status()).toBe(403);
-    await expect(page.getByTestId('project-operations-area')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('workspace-operations')).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId('operations-security')).toHaveCount(0);
   });
 });

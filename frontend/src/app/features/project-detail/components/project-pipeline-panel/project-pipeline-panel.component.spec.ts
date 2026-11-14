@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { Subject } from 'rxjs';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
@@ -7,6 +8,45 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { ProjectPipelinePanelComponent } from './project-pipeline-panel.component';
 import type { PipelineCatalogueStep, PipelineStepSetting } from '../../../task-pipeline';
 import type { ProjectPipelineCostTimeline } from '../../../project-token-usage';
+import { TaskService } from '../../../../services/task.service';
+
+describe('ProjectPipelinePanelComponent bulk aspect write', () => {
+  it('keeps each saved entry and default from the starting type for delayed PUTs', async () => {
+    interface StepResponse { stepId: string; pipelineType: string; pipelineSteps: Record<string, PipelineStepSetting>;
+      pipelineStepsByType: Record<string, Record<string, PipelineStepSetting>> }
+    const first = new Subject<StepResponse>();
+    const second = new Subject<StepResponse>();
+    await TestBed.configureTestingModule({
+      imports: [ProjectPipelinePanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const setProjectPipelineStep = vi.spyOn(TestBed.inject(TaskService), 'setProjectPipelineStep')
+      .mockReturnValueOnce(first.asObservable()).mockReturnValueOnce(second.asObservable());
+    const fixture = TestBed.createComponent(ProjectPipelinePanelComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    const panel = fixture.componentInstance;
+    panel.catalogue.set(['one', 'two'].map(id => ({
+      id, displayName: id, kind: 'aspect', phase: 'aspect', usesModel: true,
+      defaultEnabled: false,
+    })) as PipelineCatalogueStep[]);
+    panel.overrides.set({ one: { mode: 'warn' }, two: { enabled: true, mode: 'block' } });
+    panel.applyAspectAgent({ cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: null }).subscribe();
+    expect(panel.aspectBulkBusy()).toBe(true);
+    expect(setProjectPipelineStep).toHaveBeenCalledTimes(1);
+    panel.pipelineType.set('bug');
+    panel.catalogue.set([]);
+    panel.overrides.set({});
+    first.next({ stepId: 'one', pipelineType: 'task', pipelineSteps: {}, pipelineStepsByType: {} });
+    first.complete();
+    expect(setProjectPipelineStep).toHaveBeenCalledTimes(2);
+    expect(setProjectPipelineStep.mock.calls[1][1]).toMatchObject({
+      pipelineType: 'task', stepId: 'two', enabled: true, mode: 'block',
+    });
+    second.next({ stepId: 'two', pipelineType: 'task', pipelineSteps: {}, pipelineStepsByType: {} });
+    second.complete();
+    expect(panel.aspectBulkBusy()).toBe(false);
+  });
+});
 
 /**
  * Nav-rebuild T4a smoke. Compiles + instantiates the standalone component so a

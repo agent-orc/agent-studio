@@ -66,6 +66,21 @@ public class PickupHoldPolicyTests
     }
 
     [Fact]
+    public void HostModelUnavailable_NamesTheHostCapabilityHold()
+    {
+        var hold = Evaluate(Card(), rejection: new RemoteDispatchRejection
+        {
+            Code = "host-model-unavailable",
+            RunnerId = "runner-1",
+            RunnerName = "agent-runner-01",
+            Reason = "Host model unavailable on agent-runner-01: model-acceptance:claude:claude-opus-5.",
+            RejectedAtUtc = Now.AddMinutes(-9),
+        });
+        Assert.Equal(PickupHoldMechanisms.HostCapabilityMissing, hold!.Mechanism);
+        Assert.Contains("model-acceptance:claude:claude-opus-5", hold.Reason);
+    }
+
+    [Fact]
     public void CardOutsideAPickupLane_IsNotHeld()
     {
         // 3-progress has been picked up; "queued but unpickable" is not a state

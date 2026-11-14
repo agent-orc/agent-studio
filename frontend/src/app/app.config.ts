@@ -1,4 +1,4 @@
-import { ApplicationConfig, ENVIRONMENT_INITIALIZER, ErrorHandler, inject, provideBrowserGlobalErrorListeners, isDevMode } from '@angular/core';
+import { ApplicationConfig, ENVIRONMENT_INITIALIZER, ErrorHandler, effect, inject, provideBrowserGlobalErrorListeners, isDevMode } from '@angular/core';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { provideServiceWorker } from '@angular/service-worker';
 import { CHAT_MEDIA_LIGHTBOX } from 'coding-agent-chat/shared';
@@ -7,11 +7,13 @@ import { clientIdInterceptor } from './services/client-id.interceptor';
 import { offlineGuardInterceptor } from './services/offline-guard.interceptor';
 import { publicDemoGuardInterceptor } from './services/public-demo-guard.interceptor';
 import { sessionSecurityInterceptor } from './services/session-security.interceptor';
+import { shellReadInterceptor } from './services/shell-read.interceptor';
 import { buildIdentityInterceptor } from './services/build-identity.interceptor';
 import { MediaLightboxService } from './services/media-lightbox.service';
 import { TaskReferenceMicrocardHydratorService } from './services/task-reference-microcard-hydrator.service';
 import { DossierReferenceHydratorService } from './services/dossier-reference-hydrator.service';
 import { ProviderAuthStatusService } from './features/remote-hosts';
+import { ShellAccessService } from './services/shell-access.service';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -19,6 +21,7 @@ export const appConfig: ApplicationConfig = {
     provideHttpClient(withInterceptors([
       offlineGuardInterceptor,
       publicDemoGuardInterceptor,
+      shellReadInterceptor,
       sessionSecurityInterceptor,
       clientIdInterceptor,
       buildIdentityInterceptor,
@@ -40,7 +43,14 @@ export const appConfig: ApplicationConfig = {
     {
       provide: ENVIRONMENT_INITIALIZER,
       multi: true,
-      useValue: () => inject(ProviderAuthStatusService).start(),
+      useValue: () => {
+        const access = inject(ShellAccessService);
+        const providerAuth = inject(ProviderAuthStatusService);
+        effect(() => {
+          if (access.operator()) providerAuth.start();
+          else providerAuth.stop();
+        });
+      },
     },
     provideServiceWorker('ngsw-worker.js', {
       enabled: !isDevMode(),

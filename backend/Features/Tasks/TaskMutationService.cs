@@ -237,14 +237,23 @@ public class TaskMutationService
         using var span = TaskSwitchTrace.Span("mutation.read-current");
         // The preceding routing writer publishes before releasing this same
         // file lock. Its resident fact is therefore the newest routing input
-        // without a second folder scan on the common path.
+        // without a second folder scan on the common path. A fact whose
+        // task.json stamp no longer matches the disk missed a write (an
+        // external writer, or a publication that has not landed yet) and
+        // would normalize the new value against the old CLI (AGT-3723).
         var published = _scanner.FindPublishedJob(known.Id, known.WatchPath);
         if (published is not null && FileSystemPathComparer.Instance.Equals(
-                published.FolderPath, known.FolderPath)) return published;
+                published.FolderPath, known.FolderPath)
+            && MatchesTaskJson(published)) return published;
         return _scanner.ScanJobFolder(known.FolderPath,
             new WatchPathEntry { Name = known.ProjectName, Path = known.WatchPath },
             known.State, bypassMemo: true);
     }
+
+    private static bool MatchesTaskJson(TaskInfo info) =>
+        info.TaskJsonLength >= 0
+        && TaskCoreSourceStamp.Read(Path.Combine(info.FolderPath, "task.json"))
+            == new TaskCoreSourceStamp(info.TaskJsonLength, info.TaskJsonWriteTicks);
 
     private static IDisposable AcquireRoutingLock(string folder)
     {
@@ -2345,7 +2354,8 @@ public class TaskMutationService
             return _reservedJobIds.Values.Any(reserved => reserved.Contains(identity));
     }
 
-    public bool UpdateJobFile(string jobId, string fileName, string content, string? watchPath = null)
+    public bool UpdateJobFile(string jobId, string fileName, string content, string? watchPath = null,
+        string? actor = null)
     {
         var allowed = new[] { "prompt.md" };
         if (!allowed.Contains(fileName)) return false;
@@ -2358,9 +2368,22 @@ public class TaskMutationService
         // reliable signal because jobs stay there after stop / crash / restart.
 
         var filePath = Path.Combine(info.FolderPath, fileName);
+        var previousBrief = File.Exists(filePath) ? File.ReadAllText(filePath) : string.Empty;
         WriteAllTextWithRetry(filePath, content);
         if (string.Equals(fileName, "prompt.md", StringComparison.OrdinalIgnoreCase))
-            BriefVersionStore.Record(info.FolderPath, content);
+        {
+            var previousVersion = AgentStudio.Runner.RunDispositionPolicy.BriefVersion(previousBrief);
+            var currentVersion = BriefVersionStore.Record(info.FolderPath, content, previousBrief);
+            if (!string.Equals(previousVersion, currentVersion, StringComparison.OrdinalIgnoreCase))
+                _timeline?.Append(info.FolderPath, TimelineEventKinds.BriefChanged,
+                    actor ?? TimelineActors.System,
+                    $"Brief changed from {previousVersion} to {currentVersion}.",
+                    details: new Dictionary<string, string>
+                    {
+                        ["fromVersion"] = previousVersion,
+                        ["toVersion"] = currentVersion,
+                    });
+        }
         // prompt.md does not affect kanban-card fields, but UpdateJobFile is
         // user-initiated (edit prompt) and the next read should see the
         // change for any consumer that pulls TaskDetail with the prompt body.
@@ -2499,7 +2522,7 @@ public class TaskMutationService
                 Encoding.UTF8);
             // PendingIntent appears on TaskInfo (kanban card shows the intent),
             // so the snapshot must be invalidated for the next read to see it.
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: path);
             _scanner.PublishCoreFromKnownFolder(info.FolderPath);
             return intent;
         }
@@ -2539,7 +2562,7 @@ public class TaskMutationService
             if (File.Exists(stash)) File.Delete(stash);
             File.Move(path, stash);
             // pending-intent.json gone → TaskInfo.PendingIntent should be null.
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: path);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return intent;
         }
@@ -2598,7 +2621,7 @@ public class TaskMutationService
                 return PendingIntentAcknowledgeResult.HistoryWriteFailed;
 
             File.Delete(stash);
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: Path.Combine(jobFolder, "pending-intent.json"));
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return PendingIntentAcknowledgeResult.Consumed;
         }
@@ -2641,7 +2664,7 @@ public class TaskMutationService
             }
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: canonical);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
@@ -2680,7 +2703,7 @@ public class TaskMutationService
             var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: canonical);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
@@ -2712,7 +2735,7 @@ public class TaskMutationService
             {
                 File.Move(stash, canonical);
             }
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: canonical);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
         }
         catch (Exception ex)
@@ -2909,11 +2932,15 @@ public class TaskMutationService
             var project = _projectRegistry.FindByStorageLocation(watchPath);
             if (project == null) return null;
 
-            var floor = HighestExistingKeyNumber(project.Id, project.ShortCode, residentJobs) + 1;
-            _projectRegistry.EnsureTaskKeyFloor(project.Id, floor);
-
-            var seq = _projectRegistry.IssueNextTaskKey(project.Id);
-            return $"{project.ShortCode}-{seq}";
+            int floor;
+            using (TaskSwitchTrace.Span("mutation.key.floor"))
+                floor = HighestExistingKeyNumber(project.Id, project.ShortCode, residentJobs) + 1;
+            using (TaskSwitchTrace.Span("mutation.key.registry"))
+            {
+                _projectRegistry.EnsureTaskKeyFloor(project.Id, floor);
+                var seq = _projectRegistry.IssueNextTaskKey(project.Id);
+                return $"{project.ShortCode}-{seq}";
+            }
         }
         catch (Exception ex)
         {

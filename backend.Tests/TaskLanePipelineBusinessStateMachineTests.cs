@@ -290,6 +290,25 @@ public sealed class TaskLanePipelineBusinessStateMachineTests : IDisposable
     }
 
     [Fact]
+    public async Task HumanReviewMove_ResultScaffold_DoesNotInventAnUnexplainedOperatorQuestion()
+    {
+        const string id = "review-without-park-cause";
+        _fixture.SeedTask(TaskStates.AutoReview, id, LifecyclePhases.AwaitingReview);
+
+        var outcome = await _fixture.Transitions.MoveAsync(
+            id,
+            TaskStates.HumanReview,
+            _fixture.WatchPath,
+            cause: "human:api",
+            reason: "Parked with no recorded cause.");
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var status = File.ReadAllText(Path.Combine(outcome.NewFolderPath!, "status.md"));
+        Assert.DoesNotContain("Parked with no recorded cause.", status);
+        Assert.Contains("None recorded in this synthesized scaffold", status);
+    }
+
+    [Fact]
     public void AcceptedCards_StartupBackfill_ReceiveOperatorMarkedResultOnce()
     {
         var states = new[]

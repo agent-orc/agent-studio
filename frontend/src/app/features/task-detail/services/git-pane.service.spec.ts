@@ -8,6 +8,19 @@ import { GitPaneService, PROVENANCE_WAIT_MS } from './git-pane.service';
 import { TaskState, type TaskInfo } from '../../../models/task.model';
 
 describe('GitPaneService hidden pane loading', () => {
+  it('resolves provenance for a Human Review action while Overview is visible', async () => {
+    await TestBed.configureTestingModule({ providers: [GitPaneService,
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+      provideRouter([])] }).compileComponents();
+    const service = TestBed.inject(GitPaneService);
+    const http = TestBed.inject(HttpTestingController);
+    service.setJob({ id: 'job-review', watchPath: '/wp', state: '5-human-review' } as TaskInfo, false);
+    expect(service.provenanceLoaded()).toBe(false);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-review/provenance')).flush(null);
+    expect(service.provenanceLoaded()).toBe(true);
+    http.expectNone(request => request.url.endsWith('/api/tasks/job-review/code-review/list'));
+    http.verify();
+  });
   it('waits for the pane to open and reuses the same task snapshot', async () => {
     await TestBed.configureTestingModule({ providers: [GitPaneService,
       provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
@@ -23,6 +36,24 @@ describe('GitPaneService hidden pane loading', () => {
     service.setJob(job, false);
     service.setJob(job, true);
     http.expectNone(() => true);
+    http.verify();
+  });
+
+  it('reports provenance as loading only while its request is in flight', async () => {
+    await TestBed.configureTestingModule({ providers: [GitPaneService,
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+      provideRouter([])] }).compileComponents();
+    const service = TestBed.inject(GitPaneService);
+    const http = TestBed.inject(HttpTestingController);
+    const job = { id: 'job-y', watchPath: '/wp' } as TaskInfo;
+    // A hidden pane defers provenance; Accept must not wait for it.
+    service.setJob(job, false);
+    expect(service.provenanceLoading()).toBe(false);
+    service.setJob(job, true);
+    expect(service.provenanceLoading()).toBe(true);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-y/provenance')).flush(null);
+    expect(service.provenanceLoading()).toBe(false);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-y/code-review/list')).flush({ entries: [] });
     http.verify();
   });
 });

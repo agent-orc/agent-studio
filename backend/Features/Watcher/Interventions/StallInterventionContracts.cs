@@ -57,6 +57,12 @@ public sealed record StallInterventionRecord
     public DateTime? AdmissionStampUtc { get; init; }
 
     public DateTime DecidedAtUtc { get; init; }
+    /// <summary>The exact parked lane entry and delivery this receipt can restore.</summary>
+    public DateTime? ParkedAtUtc { get; init; }
+    public long? ParkedTaskWriteTicks { get; init; }
+    public string? RunAttemptId { get; init; }
+    public string? ReviewAttemptId { get; init; }
+    public string? DeliveryResultSha { get; init; }
     public DateTime? FollowUpDueUtc { get; init; }
     public DateTime? ResolvedAtUtc { get; init; }
 

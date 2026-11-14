@@ -1,11 +1,18 @@
 <section class="infrastructure" data-testid="execution-infrastructure" aria-label="Installation infrastructure">
   <h3>Installation infrastructure</h3>
   @if (infrastructure(); as infrastructure) {
-    <div class="infrastructure__grid">
+    <div class="infrastructure__grid" data-testid="execution-infrastructure-status">
       <p><strong>Workstation</strong><span>Local execution role in the table below. API process: {{ infrastructure.workstation }}</span></p>
       <p><strong>Task Server</strong><span>{{ infrastructure.taskServer }} · {{ infrastructure.taskServer === 'local monolith' ? 'this API is responding' : 'check installation checkpoints for route health' }}</span></p>
-      @if (infrastructure.taskServer === 'local monolith') {
-        <p data-testid="one-shot-route-status"><strong>One shot jobs</strong><span>Claim route unavailable on the local monolith. Runners retry every five minutes.</span></p>
+      @if (oneShotRouteReport(); as report) {
+        <p data-testid="one-shot-route-status"><strong>One shot jobs</strong>
+          <span>{{ report.hostName }} reports
+            {{ report.route.condition === 'standalone-task-server-required' ? 'that one shot jobs need the standalone Task Server' : 'the claim route answers ' + report.route.statusCode }}
+            since <time [attr.datetime]="report.route.firstSeenAt" [title]="report.route.firstSeenAt">{{ report.route.firstSeenAt | date:'short' }}</time>,
+            last seen <time [attr.datetime]="report.route.lastSeenAt">{{ report.route.lastSeenAt | date:'short' }}</time>
+            @if (oneShotRouteReports().length > 1) { · {{ oneShotRouteReports().length - 1 }} more {{ oneShotRouteReports().length === 2 ? 'host reports' : 'hosts report' }} it }
+            · retrying every {{ report.route.backoffSeconds / 60 }} min.
+            To run one shot jobs on runner hosts, connect them to a standalone Task Server; otherwise no action is needed.</span></p>
       }
       <p><strong>Engine</strong><span>@if (infrastructure.taskServer === 'remote Task Server') { observed by Task Server } @else {
           <app-status-indicator [tone]="engineTone(infrastructure.engine.state)" [label]="infrastructure.engine.state" [compact]="true" testId="execution-engine-state" /> }

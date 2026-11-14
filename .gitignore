@@ -114,6 +114,8 @@ frontend/mockup-chat.*.log
 # UpdateService launcher artefacts (update-service.sh detached pid + log).
 .update-service.pid
 .update-service.log
+# Generated UpdateService trigger token (owner-only secret, never commit).
+.update-token
 
 # runtime frontend dev-server logs (not source)
 frontend-ngserve.*.log

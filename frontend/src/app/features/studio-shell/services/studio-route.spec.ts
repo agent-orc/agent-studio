@@ -8,6 +8,13 @@ import {
   studioRouteForTab,
 } from './studio-route';
 
+describe('persona team routes', () => {
+  it('parses team and persona routes', () => {
+    expect(parseStudioRoute('#/workspace/team')).toEqual({ kind: 'team', personaId: null });
+    expect(parseStudioRoute('#/workspace/team/prs_one')).toEqual({ kind: 'team', personaId: 'prs_one' });
+    expect(studioRouteForTab({ kind: 'team', personaId: 'prs_one' })).toBe('/workspace/team/prs_one');
+  });
+});
 describe('Studio route contract', () => {
   afterEach(() => {
     vi.restoreAllMocks();

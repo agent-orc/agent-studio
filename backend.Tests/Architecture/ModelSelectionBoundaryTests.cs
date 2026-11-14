@@ -60,7 +60,7 @@ public sealed class ModelSelectionBoundaryTests
         ["AgentStudio.Tasks.TaskDetailResources"] = "execution state",
         ["AgentStudio.Tasks.TaskTransitionService"] = "output resource release",
         ["AgentStudio.Tasks.TaskEndpointHelpers"] = "execution state",
-        ["AgentStudio.Tasks.TaskCrudEndpoints"] = "model catalogue for the creation recommendation",
+        ["AgentStudio.Cli.RequestPathModelCatalogue"] = "bounded model catalogue for the creation recommendation (AGT-3709)",
         ["AgentStudio.Cli.CliEndpoints"] = "model catalogue and CLI path checks",
         ["AgentStudio.Cli.CliVersionMonitorHostedService"] = "CLI version probe",
         ["AgentStudio.Cli.QuotaProbeBase"] = "quota probe of the installed CLI",

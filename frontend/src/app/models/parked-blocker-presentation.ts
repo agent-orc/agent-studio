@@ -45,6 +45,7 @@ export type ParkOrigin =
   | 'review-loop-budget'
   | 'review-gate'
   | 'stall-intervention'
+  | 'auto-review-watchdog'
   | 'operator'
   | 'unknown';
 
@@ -187,6 +188,10 @@ export function parkCauseView(cause: string | null | undefined, causeDetail: str
     };
   }
   if (id === 'escalated' && detail) {
+    if (detail === 'auto-review-stranded') {
+      return { ...base, origin: 'auto-review-watchdog', label: 'Environmental · Auto Review watchdog',
+        parkedBy: 'the Auto Review watchdog', nextSteps: [] };
+    }
     if (LOOP_BUDGET_DETAILS.has(detail)) {
       return {
         ...base,

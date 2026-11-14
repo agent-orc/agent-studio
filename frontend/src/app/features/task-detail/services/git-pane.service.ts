@@ -167,6 +167,15 @@ export class GitPaneService implements OnDestroy {
   private provenanceWaitTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
+   * True only while a provenance request for the open job is in flight. A
+   * hidden git pane defers that request, so waiting on `provenanceLoaded` alone
+   * kept "Accept" disabled until the pane was opened (AGT-3625). The acceptance
+   * primary waits while this is true and `provenanceLoaded` is still false, so
+   * the wait stays bounded by `PROVENANCE_WAIT_MS` (AGT-3621).
+   */
+  readonly provenanceLoading = signal(false);
+
+  /**
    * Ordered chain of commits attributed to this task (oldest -&gt; newest).
    * Mirrors <c>TaskInfo.commits</c>; surfaces an in-memory list so the
    * git-pane can render a multi-commit strip and let the user pick which
@@ -279,7 +288,10 @@ export class GitPaneService implements OnDestroy {
       // new commit lands on the chain (continue-mode follow-up, recovery
       // commit, operator-driven steer).
       const chainChanged = oldChainSignature !== commitChainSignature(chain);
-      if (chainChanged && !visible) this.resourcesPending = true;
+      if (chainChanged && !visible) {
+        this.resourcesPending = true;
+        if (info.state === TaskState.HumanReview) this.loadProvenance();
+      }
       if (visible && this.resourcesPending) {
         this.resourcesPending = false;
         this.applyCommitDefault(chain);
@@ -309,6 +321,7 @@ export class GitPaneService implements OnDestroy {
     this.generatingMsg.set(false);
     this.provenance.set(null);
     this.provenanceLoaded.set(false);
+    this.provenanceLoading.set(false);
     this.provenanceRequestKey = null;
     this.clearProvenanceWait();
     this.codeReviews.set([]);
@@ -321,6 +334,9 @@ export class GitPaneService implements OnDestroy {
       this.applyCommitDefault(chain);
       this.loadProvenance();
       this.loadCodeReviews();
+    } else if (info?.state === TaskState.HumanReview) {
+      // Acceptance depends on landed-state provenance even while Overview is open.
+      this.loadProvenance();
     }
   }
 
@@ -354,6 +370,7 @@ export class GitPaneService implements OnDestroy {
   loadProvenance(): void {
     const info = this.currentJob;
     if (!info) return;
+    this.provenanceLoading.set(true);
     this.provenanceRequestKey = provenanceRequestKey(info, this.commitChain());
     // AGT-3621: bound the wait. A reply that has not settled in time releases
     // the acceptance primary; a late reply still refines the status wording.
@@ -389,6 +406,7 @@ export class GitPaneService implements OnDestroy {
     if (!sameJobIdentity(this.currentJob, info)) return;
     this.provenance.set(view);
     this.provenanceLoaded.set(true);
+    this.provenanceLoading.set(false);
     this.clearProvenanceWait();
   }
 
