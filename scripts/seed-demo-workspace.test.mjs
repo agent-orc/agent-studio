@@ -295,6 +295,15 @@ test('every board lane is discoverable on disk', () => {
   });
 });
 
+test('DEMO-9 Result references its seeded screenshot from the task results folder', () => {
+  withSeed((root) => {
+    const folder = taskFolder(root, { project: 'demo-app', key: 'DEMO-9' });
+    const status = readFileSync(join(folder, 'status.md'), 'utf8');
+    assert.match(status, /!\[\]\(results\/reports-export--real\.png\)/);
+    assert.ok(statSync(join(folder, 'results', 'reports-export--real.png')).size > 0);
+  });
+});
+
 test('the gallery covers every Dossier lifecycle state with valid descriptors', () => {
   withSeed((root) => {
     const galleryRoot = join(root, 'projects', CONTENT.dossiers.project, 'docs', CONTENT.dossiers.root);

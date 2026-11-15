@@ -458,7 +458,7 @@ The reports export is implemented and verified. One bounded empty-state assertio
 - Decide whether the empty-table assertion blocks release.
 
 ## Images
-- ![](../results/reports-export--real.png) (source: real)
+- ![](results/reports-export--real.png) (source: real)
 `
   );
   writeJson(join(dir, 'aspect-tests-and-evidence.json'), {

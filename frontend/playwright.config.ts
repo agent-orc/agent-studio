@@ -110,8 +110,9 @@ export default defineConfig({
       name: 'visual-evidence',
       testMatch: profile === 'standard' ? /visual-evidence\/.*\.spec\.ts/
         : profile === 'demo' && process.env.PW_A11Y_PINNED_DEMO === '1'
-          ? /visual-evidence\/accessibility-pinned-demo\.spec\.ts/ : /$^/,
-      testIgnore: profile === 'standard' ? /accessibility-pinned-demo\.spec\.ts/ : undefined,
+          ? /visual-evidence\/accessibility-pinned-demo\.spec\.ts/
+        : profile === 'demo' ? /visual-evidence\/demo-result-image\.spec\.ts/ : /$^/,
+      testIgnore: profile === 'standard' ? /(accessibility-pinned-demo|demo-result-image)\.spec\.ts/ : undefined,
       use: { ...devices['Desktop Chrome'], channel: undefined, video: 'retain-on-failure' },
     },
   ],
