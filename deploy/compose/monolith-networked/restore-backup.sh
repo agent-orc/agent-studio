@@ -48,7 +48,9 @@ env_value() { sed -n "s/^$1=//p" .env | tail -n 1; }
 [ -f .env ] || fail 'no .env in the stack directory; run setup.sh for the new stack first'
 data_dir="$(env_value STUDIO_DATA_DIR)"
 digest="$(env_value STUDIO_API_DIGEST)"
+operations_digest="$(env_value STUDIO_OPERATIONS_SERVER_DIGEST)"
 [ -n "$data_dir" ] && [ -n "$digest" ] || fail 'STUDIO_DATA_DIR and STUDIO_API_DIGEST must be set in .env'
+[ -n "$operations_digest" ] || fail 'STUDIO_OPERATIONS_SERVER_DIGEST must be set in .env'
 [ -r "$archive" ] || fail "cannot read the archive $archive"
 [ -r "$key" ] || fail "cannot read the backup key copy $key"
 [ -r "$secret_key" ] || fail "cannot read the secret store key copy $secret_key"
@@ -69,9 +71,19 @@ restored_stack="$stack_dir/restored-stack"
 [ ! -e "$restored_stack" ] || fail "$restored_stack already exists"
 mkdir -p "$restored_stack"
 image="ghcr.io/agent-orc/agent-studio-api@sha256:$digest"
+operations_image="ghcr.io/agent-orc/agent-operations-server@sha256:$operations_digest"
 volume="studio-restore-$$"
 docker volume create "$volume" > /dev/null
-trap 'docker volume rm -f "$volume" > /dev/null' EXIT
+trap 'docker volume rm -f "$volume" > /dev/null; rmdir "$restored_stack" 2>/dev/null || true' EXIT
+
+# This marker outlives a failed restore and prevents Operations Server from
+# starting with restored, unfenced bearer credentials.
+docker run --rm --user 0 --network none -v "$data_dir/operations:/data/operations" \
+  -v "$data_dir/operations-recovery:/recovery" --entrypoint /bin/sh "$image" -c '
+    set -e
+    touch /recovery/required
+    chown -R 10001:1654 /data/operations
+    find /data/operations -type d -exec chmod 770 {} +'
 
 # The API runs as UID 10001 and reads only owner-only key files: a root
 # one-shot hands the inputs and the empty targets to that account.
@@ -97,15 +109,29 @@ docker run --rm --user 10001:10001 "${agent[@]}" \
   -v "$volume:/work" \
   -v "$data_dir/workspace:/data/workspace" -v "$data_dir/home:/data/home" -v "$data_dir/projects:/data/projects" \
   -v "$data_dir/host-certificates:/data/host-certificates" -v "$data_dir/caddy-data:/data/caddy-data" \
+  -v "$data_dir/operations:/data/operations" \
   -v "$data_dir/origin-pull:/data/origin-pull" -v "$restored_stack:/data/restored-stack" \
   "$image" --studio-backup restore --key /work/backup.key --archive /work/archive --secret-key /work/secrets.kek \
     --actor "offline:$(id -un)@$(hostname)" \
     --target workspace=/data/workspace --target home=/data/home --target projects=/data/projects \
     --target host-certificates=/data/host-certificates --target caddy-data=/data/caddy-data \
     --target origin-pull=/data/origin-pull --target stack=/data/restored-stack \
+    --target operations=/data/operations \
     --restored-by "$(id -un)@$(hostname)" \
   || { rmdir "$restored_stack" 2>/dev/null || true
        fail 'the restore did not complete; see the message above. The targets are empty again and the workspace repository from setup.sh is back; fix the cause and run restore-backup.sh again.'; }
+
+docker run --rm --user 0 --network none -v "$data_dir/operations:/data/operations" \
+  --entrypoint /bin/sh "$operations_image" -c '
+    set -e
+    chown -R 1654:1654 /data/operations
+    find /data/operations -type d -exec chmod 750 {} +
+    find /data/operations -type f -exec chmod g+r {} +'
+backup_id="$(basename "$archive" .tar.gz.sbk)"
+docker run --rm --user 1654:1654 --network none -v "$data_dir/operations:/data/operations" \
+  -v "$data_dir/operations-recovery:/recovery" \
+  "$operations_image" recover /data/operations /recovery/required "$backup_id" \
+  || fail 'Operations credentials could not be fenced; the recovery marker blocks Operations Server. Do not start the stack.'
 
 bash "$stack_dir/secret-key.sh" install "$data_dir" "$secret_key"
 bash "$stack_dir/backup-key.sh" install "$key"

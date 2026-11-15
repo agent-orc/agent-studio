@@ -88,6 +88,7 @@ services:
       Backup__Sources__projects__Path: /data/projects
       Backup__Sources__projects__Projects: 'true'
       Backup__Sources__host-certificates__Path: /data/host-certificates
+      Backup__Sources__operations__Path: /run/backup-sources/operations
       # Stack configuration (.env, Caddyfiles, target credentials) without the keys directory.
       Backup__Sources__stack__Path: /run/backup-sources/stack
       Backup__Sources__stack__Exclude__0: keys
@@ -117,7 +118,7 @@ services:
       - ${STUDIO_DATA_DIR}/projects:/data/projects
       - ${STUDIO_DATA_DIR}/home:/data/home
       - ${STUDIO_DATA_DIR}/api-tmp:/tmp
-      - operations-client-secret:/run/operations/client:ro
+      - ${STUDIO_DATA_DIR}/operations/client-secret:/run/operations/client:ro
       - ${STUDIO_HOST_CA_DIR:?Run setup.sh or set STUDIO_HOST_CA_DIR}:/run/host-ca:ro
       - ${STUDIO_DATA_DIR}/host-certificates:/data/host-certificates
       - ${STUDIO_DATA_DIR}/backups:/data/backups
@@ -126,6 +127,7 @@ services:
       - .:/run/backup-sources/stack:ro
       - ${STUDIO_DATA_DIR}/caddy-data:/run/backup-sources/caddy-data:ro
       - ${STUDIO_DATA_DIR}/origin-pull:/run/backup-sources/origin-pull:ro
+      - ${STUDIO_DATA_DIR}/operations:/run/backup-sources/operations:ro
     depends_on:
       operations-bootstrap: {condition: service_completed_successfully}
     networks:
@@ -168,9 +170,9 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     volumes:
-      - operations-principals:/run/operations/principals
-      - operations-agent-secret:/run/operations/agent
-      - operations-client-secret:/run/operations/client
+      - ${STUDIO_DATA_DIR}/operations/principals:/run/operations/principals
+      - ${STUDIO_DATA_DIR}/operations/agent-secret:/run/operations/agent
+      - ${STUDIO_DATA_DIR}/operations/client-secret:/run/operations/client
 
   operations-server:
     image: ghcr.io/agent-orc/agent-operations-server@sha256:${STUDIO_OPERATIONS_SERVER_DIGEST:?Set the operations server image digest}
@@ -185,9 +187,11 @@ services:
       Operations__DataDirectory: /var/lib/operations
       Operations__PrincipalsFile: /run/operations/principals/principals.json
       Operations__AllowPrivateHttp: 'true'
+      Operations__RecoveryMarker: /run/operations/recovery/required
     volumes:
-      - operations-data:/var/lib/operations
-      - operations-principals:/run/operations/principals:ro
+      - ${STUDIO_DATA_DIR}/operations/data:/var/lib/operations
+      - ${STUDIO_DATA_DIR}/operations/principals:/run/operations/principals:ro
+      - ${STUDIO_DATA_DIR}/operations-recovery:/run/operations/recovery:ro
     depends_on:
       operations-bootstrap: {condition: service_completed_successfully}
     networks:
@@ -208,8 +212,8 @@ services:
       OPERATIONS_AGENT_ID: container-agent
       OPERATIONS_SPOOL_DIRECTORY: /var/lib/operations-agent/spool
     volumes:
-      - operations-agent-data:/var/lib/operations-agent
-      - operations-agent-secret:/run/operations/agent:ro
+      - ${STUDIO_DATA_DIR}/operations/agent-data:/var/lib/operations-agent
+      - ${STUDIO_DATA_DIR}/operations/agent-secret:/run/operations/agent:ro
     depends_on:
       operations-bootstrap: {condition: service_completed_successfully}
       operations-server: {condition: service_started}
@@ -262,10 +266,3 @@ networks:
     ipam:
       config:
         - subnet: 172.30.83.0/24
-
-volumes:
-  operations-principals:
-  operations-agent-secret:
-  operations-client-secret:
-  operations-data:
-  operations-agent-data:

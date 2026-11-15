@@ -130,6 +130,69 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public async Task Operations_authority_and_spool_round_trip_to_a_disposable_second_host()
+    {
+        var operations = Path.Combine(_fixture.Root, "data", "operations");
+        foreach (var folder in new[] { "principals", "agent-secret", "client-secret", "data", "agent-data/spool" })
+            Directory.CreateDirectory(Path.Combine(operations, folder));
+        var configuration = new ConfigurationBuilder().AddConfiguration(_fixture.Configuration())
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Backup:Sources:workspace:Path"] = _fixture.Workspace,
+                ["Backup:Sources:operations:Path"] = operations,
+            }).Build();
+        var service = new StudioBackupService(configuration, new BackupWritePause(), _clock, targets: _ => null);
+        Assert.Equal("backup-operations-incomplete",
+            (await Assert.ThrowsAsync<BackupException>(() => service.CreateAsync("test", CancellationToken.None))).Code);
+        File.WriteAllText(Path.Combine(operations, "principals", "principals.json"), "principal digests");
+        File.WriteAllText(Path.Combine(operations, "agent-secret", "token"), "agent token");
+        File.WriteAllText(Path.Combine(operations, "client-secret", "token"), "client token");
+        File.WriteAllText(Path.Combine(operations, "data", "operator-revocations.json"), "operator revocations");
+        File.WriteAllText(Path.Combine(operations, "data", "host-revocations.json"), "host revocations");
+        File.WriteAllText(Path.Combine(operations, "agent-data", "spool", "pending.json"), "pending journal");
+        using (var connection = OpenDatabase(Path.Combine(operations, "data", "operations.db")))
+            Execute(connection, "CREATE TABLE authority (value TEXT); INSERT INTO authority VALUES ('history');");
+        var record = await service.CreateAsync("test", CancellationToken.None);
+        Assert.True(service.ReadContents(record.Id)!.CredentialFiles!["operations-authority"] >= 6);
+        var second = Path.Combine(_fixture.Root, "second-host");
+        var restored = Path.Combine(second, "operations");
+        BackupRestore.Restore(_fixture.Catalog.ArchivePath(record.Id), BackupKey.Load(_fixture.KeyFile),
+            new BackupRestorePlan(new Dictionary<string, string> { ["operations"] = restored }, CloneCheckouts: false));
+        foreach (var relative in new[] { "principals/principals.json", "agent-secret/token", "client-secret/token",
+                     "data/operator-revocations.json", "data/host-revocations.json", "agent-data/spool/pending.json" })
+            Assert.Equal(File.ReadAllText(Path.Combine(operations, relative)), File.ReadAllText(Path.Combine(restored, relative)));
+        using var restoredDb = OpenDatabase(Path.Combine(restored, "data", "operations.db"));
+        using var command = restoredDb.CreateCommand();
+        command.CommandText = "SELECT value FROM authority";
+        Assert.Equal("history", command.ExecuteScalar());
+    }
+
+    [Fact]
+    public void Operations_overview_lists_outstanding_recovery_checks()
+    {
+        var operations = Path.Combine(_fixture.Root, "data", "operations");
+        var state = Path.Combine(operations, "data");
+        Directory.CreateDirectory(state);
+        File.WriteAllText(Path.Combine(state, "recovery.json"), """
+            {"backupId":"archive-a","fencedAt":"2026-11-15T00:00:00Z","items":[
+              {"kind":"reenrol","id":"host-a","complete":false,"oldPrincipalIds":["old-a"]},
+              {"kind":"agent-revocation","id":"host-a","complete":false,"oldPrincipalIds":["old-a"]},
+              {"kind":"operator-revocations","id":"installation","complete":true,"oldPrincipalIds":[]}
+            ]}
+            """);
+        var configuration = new ConfigurationBuilder().AddConfiguration(_fixture.Configuration())
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Backup:Sources:workspace:Path"] = _fixture.Workspace,
+                ["Backup:Sources:operations:Path"] = operations,
+            }).Build();
+        var overview = new StudioBackupService(configuration, new BackupWritePause(), _clock, targets: _ => null).Overview();
+        Assert.Equal("archive-a", overview.OperationsRecovery?.BackupId);
+        Assert.Equal(2, overview.OperationsRecovery?.Items.Count(item => !item.Complete));
+        Assert.Contains(overview.Warnings, warning => warning.Code == "operations-recovery-pending" && warning.Severity == "danger");
+    }
+
+    [Fact]
     public async Task Scheduled_tick_creates_uploads_and_verifies_then_waits_for_the_interval()
     {
         var target = new FakeTarget();
@@ -374,11 +437,12 @@ public sealed class StudioBackupTests : IDisposable
             "workspace/.security/access-state.json", "workspace/.security/secrets/items/a/v000001.sealed.json",
             "stack/.env", "stack/backup-target/ssh.key", "home/.ssh/id_ed25519",
             "home/.claude/credentials.json", "home/.local/share/AgentStudio/github-app/git-credentials",
-            "caddy-data/caddy/acme/acme.json", "host-certificates/host.key", "origin-pull/ca.key"
+            "caddy-data/caddy/acme/acme.json", "host-certificates/host.key", "origin-pull/ca.key",
+            "operations/principals/principals.json"
         };
         var files = names.Select(name => new BackupContentEntry(name, 1, "hash", "Stable"));
         var counts = BackupCredentialInventory.Count(files);
-        Assert.Equal(11, counts.Count);
+        Assert.Equal(12, counts.Count);
         Assert.All(counts.Values, count => Assert.Equal(1, count));
     }
 

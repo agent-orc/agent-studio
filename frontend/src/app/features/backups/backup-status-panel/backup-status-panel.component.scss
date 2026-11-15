@@ -73,6 +73,20 @@
   padding-inline-start: var(--studio-spacing-4);
 }
 
+.backup-status__recovery-list {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  padding-inline-start: var(--studio-spacing-4);
+}
+
+.backup-status__recovery-list li {
+  padding-inline-start: var(--studio-spacing-1);
+}
+
+.backup-status__recovery-list app-status-indicator {
+  margin-inline-start: var(--studio-spacing-2);
+}
+
 .backup-status__head {
   display: flex;
   flex-wrap: wrap;

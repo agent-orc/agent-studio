@@ -12,6 +12,9 @@ public static class OperationsServerHost
             ?? throw new InvalidOperationException("Operations:PrincipalsFile is required.");
         var directory = configuration["Operations:DataDirectory"]
             ?? throw new InvalidOperationException("Operations:DataDirectory is required.");
+        var marker = configuration["Operations:RecoveryMarker"];
+        if (marker is not null && File.Exists(marker))
+            throw new InvalidOperationException("Operations recovery has not fenced restored credentials.");
         // The kill switch's revocation list lives with the server's data, so the principal file can stay read-only.
         var revocations = configuration["Operations:RevocationsFile"] ?? Path.Combine(directory, OperationsAccess.RevocationsFileName);
         services.AddSingleton(new OperationsAccess(principals, revocations));
@@ -57,6 +60,14 @@ public static class OperationsServerHost
                 await Deny(context, 503, "principal-store-unavailable"); return;
             }
             if (principal is null) { await Deny(context, 401, "authentication-required"); return; }
+            if (principal.Kind == "service" && (request.Path.StartsWithSegments("/api/operations/v1/commands")
+                || request.Path.StartsWithSegments("/api/operations/v1/attempts")))
+            {
+                var directory = app.Configuration["Operations:DataDirectory"]!;
+                var marker = app.Configuration["Operations:RecoveryMarker"] ?? string.Empty;
+                if (OperationsRecovery.BlocksOperatorAccess(directory, marker))
+                { await Deny(context, 503, "operations-recovery-pending"); return; }
+            }
             if (request.Headers[OperationsProtocol.Header] != OperationsProtocol.Version.ToString())
             {
                 await Deny(context, 426, "protocol-incompatible"); return;

@@ -100,6 +100,25 @@
           </dl>
         </section>
       }
+      @if (o.operationsRecovery; as recovery) {
+        <section class="backup-status__block" data-testid="operations-recovery" aria-labelledby="operations-recovery-title">
+          <h4 id="operations-recovery-title">Operations recovery</h4>
+          <p>Old Operations credentials were fenced after restoring {{ recovery.backupId }}. Commands remain blocked while checks are outstanding.</p>
+          <ul class="backup-status__recovery-list" data-testid="operations-recovery-checks">
+            @for (item of recovery.items; track item.kind + ':' + item.id) {
+              <li [attr.data-kind]="item.kind" [attr.data-id]="item.id" [attr.data-complete]="item.complete">
+                @switch (item.kind) {
+                  @case ('reenrol') { Re-enrol remote agent {{ item.id }} }
+                  @case ('agent-revocation') { Check old credentials are revoked for {{ item.id }} }
+                  @case ('host-certificate-revocations') { Check host certificate revocations since the archive }
+                  @case ('operator-revocations') { Check operator principal revocations since the archive }
+                }
+                <app-status-indicator [compact]="true" [tone]="item.complete ? 'neutral' : 'warning'" [label]="item.complete ? 'Complete' : 'Outstanding'" />
+              </li>
+            }
+          </ul>
+        </section>
+      }
       @if (o.lastVerification; as v) {
         @if (v.proved?.length || v.notProved?.length) {
           <section class="backup-status__block" data-testid="operations-backups-verification-scope" aria-labelledby="operations-backups-scope-title">
