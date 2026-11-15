@@ -1,0 +1,14 @@
+<div class="isolation-hold" data-testid="batch-isolation-hold" role="status">
+  <strong>Batch flight {{ hold().flight }} is isolating a red result.</strong>
+  <span>Continue, steer and requeue wait until isolation ends.</span>
+  @if (hold().step && hold().dueAtUtc) {
+    <span>Current isolation step: {{ hold().step }}. Its deadline is
+      <time [attr.datetime]="hold().dueAtUtc">{{ dueLabel(hold().dueAtUtc!) }}</time>.
+      The next step follows this result, so its time is not yet scheduled.</span>
+  } @else {
+    <span>The next isolation step waits for the planner or active flight to finish; no due time is scheduled yet.</span>
+  }
+  <button type="button" class="studio-button btn btn--secondary" data-testid="isolation-open-batch"
+    (click)="panelOpen.set(true)">Open batch panel for Eject</button>
+</div>
+@if (panelOpen()) { <app-batch-panel [project]="project()" [closed]="closePanel" /> }
