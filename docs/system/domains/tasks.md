@@ -1727,6 +1727,14 @@ lane lists each card's result and checks again. "Send a round to close the
 gap" opens the prefilled prompt and result ref for editing, and nothing is
 sent until the owner confirms it through `POST .../continue` with `baseRef`.
 
+The Needs you list keeps its Human Review lane facts in the published operator
+stream, but lane membership is not an acceptance verdict. While the list is
+open, it sends the visible card keys to the same readiness POST as the board.
+It shows each completion headline and full reason, plus the count ready to
+accept among those cards, and refreshes on the attention poll. An unavailable
+preview is labelled unavailable rather than ready. The background operator
+fact sweep does not run completion checks or Git.
+
 ## Task-tab refinement projection
 
 The task-detail inspector orders its tabs as `Task | Activity | Result`.

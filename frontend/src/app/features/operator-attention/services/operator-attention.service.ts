@@ -1,6 +1,8 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
 import { groupAttention, type OperatorAttentionItem, type OperatorAttentionResponse } from '../models/operator-attention.model';
+import type { AcceptanceReadinessItem, AcceptanceReadinessReport } from '../../acceptance-readiness';
 import { CredentialInventoryService } from '../../credentials/credential-inventory.service';
 import { isBackupOverview, type BackupOverview } from '../../backups/backup-status.model';
 import { ProjectDocsService } from '../../../services/project-docs.service';
@@ -22,6 +24,14 @@ export class OperatorAttentionService {
   private readonly _backup = signal<OperatorAttentionItem | null>(null);
   private readonly _loaded = signal(false);
   private readonly _error = signal(false);
+  private readonly _readiness = signal<ReadonlyMap<string, AcceptanceReadinessItem>>(new Map());
+  private readonly _readinessChecked = signal(false);
+  private readonly _readinessLoading = signal(false);
+  private readonly _readinessError = signal(false);
+  private readinessActive = false;
+  private readinessInFlight = false;
+  private readinessQueued = false;
+  private readinessVersion = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight = false;
   private lastDossierRead = 0;
@@ -43,6 +53,32 @@ export class OperatorAttentionService {
   readonly error = this._error.asReadonly();
   readonly count = computed(() => this.items().length);
   readonly groups = computed(() => groupAttention(this.items()));
+  readonly reviewCount = computed(() => this._facts().filter(item => item.type === 'human-review.ready').length);
+  readonly readyCount = computed(() => this._facts().filter(item => item.type === 'human-review.ready'
+    && this.readinessFor(item)?.readiness === 'ready').length);
+  readonly readinessChecked = this._readinessChecked.asReadonly();
+  readonly readinessLoading = this._readinessLoading.asReadonly();
+  readonly readinessError = this._readinessError.asReadonly();
+
+  readinessFor(item: OperatorAttentionItem): AcceptanceReadinessItem | null {
+    return item.project && item.cardKey
+      ? this._readiness().get(readinessKey(item.project, item.cardKey)) ?? null : null;
+  }
+
+  /** Completion previews run only while the owner has the list open. */
+  setReadinessActive(active: boolean): void {
+    if (this.readinessActive === active) return;
+    this.readinessActive = active;
+    this.readinessVersion++;
+    if (active) {
+      this._readiness.set(new Map());
+      this._readinessChecked.set(false);
+      this._readinessError.set(false);
+    } else {
+      this.readinessQueued = false;
+      this._readinessLoading.set(false);
+    }
+  }
 
   start(): void {
     if (this.timer !== null) return;
@@ -57,6 +93,7 @@ export class OperatorAttentionService {
     if (this.timer === null) return;
     clearInterval(this.timer);
     this.timer = null;
+    this.setReadinessActive(false);
   }
 
   refresh(): void {
@@ -98,6 +135,7 @@ export class OperatorAttentionService {
         this.inFlight = false;
         const items = Array.isArray(response?.items) ? response.items : [];
         if (!sameRows(this._facts(), items)) this._facts.set(items);
+        if (this.readinessActive) void this.refreshReadiness();
         this._loaded.set(true);
         this._error.set(false);
       },
@@ -107,6 +145,59 @@ export class OperatorAttentionService {
       },
     });
   }
+
+  private async refreshReadiness(): Promise<void> {
+    if (this.readinessInFlight) {
+      this.readinessQueued = true;
+      return;
+    }
+    this.readinessInFlight = true;
+    const cards = this._facts().filter(item => item.type === 'human-review.ready'
+      && item.project && item.cardKey);
+    const version = ++this.readinessVersion;
+    this._readinessLoading.set(cards.length > 0);
+    this._readinessError.set(false);
+    if (cards.length === 0) {
+      this._readiness.set(new Map());
+      this._readinessChecked.set(true);
+      this.readinessInFlight = false;
+      return;
+    }
+    try {
+      const found = new Map<string, AcceptanceReadinessItem>();
+      // The endpoint caps named cards at 500 per request.
+      for (let offset = 0; offset < cards.length; offset += 500) {
+        const batch = cards.slice(offset, offset + 500);
+        const report = await firstValueFrom(this.http.post<AcceptanceReadinessReport>(
+          '/api/tasks/acceptance-readiness',
+          { items: batch.map(item => ({ jobId: item.cardKey, project: item.project })) },
+        ));
+        for (const item of report.items) {
+          found.set(readinessKey(item.projectName, item.taskKey || item.jobId), item);
+          if (item.key) found.set(readinessKey(item.projectName, item.key), item);
+        }
+      }
+      if (version !== this.readinessVersion || !this.readinessActive) return;
+      this._readiness.set(found);
+      this._readinessChecked.set(true);
+    } catch {
+      if (version !== this.readinessVersion || !this.readinessActive) return;
+      this._readiness.set(new Map());
+      this._readinessError.set(true);
+      this._readinessChecked.set(false);
+    } finally {
+      if (version === this.readinessVersion) this._readinessLoading.set(false);
+      this.readinessInFlight = false;
+      if (this.readinessQueued && this.readinessActive) {
+        this.readinessQueued = false;
+        void this.refreshReadiness();
+      }
+    }
+  }
+}
+
+function readinessKey(project: string, card: string): string {
+  return `${project}\u0000${card}`;
 }
 
 function sameRows(current: readonly OperatorAttentionItem[], next: readonly OperatorAttentionItem[]): boolean {
