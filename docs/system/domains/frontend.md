@@ -530,9 +530,12 @@ Owner actions join the workspace chronology from the task timeline and Dossier
 decision descriptor. The Owner actions class includes accepted and reissued
 lane moves, refused moves with their reason, decision cards, created cards, and
 confirmed Dossier decisions. Card rows open the task and Dossier rows link to
-the Dossier. The Day picker limits the stream and its class counts to a chosen
-local calendar day; clearing it restores the full history. Refused owner moves
-are appended to the card timeline at the move boundary.
+the Dossier. Card summaries use the display key (`key`, falling back to `id`)
+beside the project short-code chip; the task link keeps its project watch path
+so repeated task IDs still open the right card. The Day picker limits the stream
+and its class counts to a chosen local calendar day; clearing it restores the
+full history. Refused owner moves are appended to the card timeline at the move
+boundary.
 
 D10 steering feedback uses the same task timeline poll as the Overview status
 row and the Timeline tab. Overview shows only a fact marked current by the
