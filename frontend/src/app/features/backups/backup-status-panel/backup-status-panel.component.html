@@ -5,7 +5,7 @@
         <h3 id="operations-backups-title">Installation backups</h3>
         <p>Encrypted backups of the whole installation, verified by a restore and copied off this host.</p>
         <p data-testid="operations-backups-recovery-dependency">Quality Studio data and registry are included when present. Recovery still needs the escrowed backup and secret store keys, the Quality Studio image, and repository remotes to restore the checkouts.</p>
-        <a data-testid="operations-backups-content-list" href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/setup/studio-backup-restore.md#credential-content-list" target="_blank" rel="noopener noreferrer">Archive credential content list</a>
+        <a data-testid="operations-backups-content-list" [href]="recoveryRunbookUrl + '#credential-content-list'" target="_blank" rel="noopener noreferrer">Archive credential content list</a>
       </div>
       <button type="button" class="backup-status__refresh" data-testid="operations-backups-refresh" (click)="load()">Refresh</button>
     </header>
@@ -21,7 +21,7 @@
               @if (warning.code === 'backup-not-configured') {
                 <app-status-indicator [compact]="true" tone="warning" label="Backups are off" />
                 <span>The backup key must be stored on the host and configured as <code>Backup:KeyFile</code>. This requires host access.</span>
-                <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/studio-backup-restore.md" target="_blank" rel="noopener noreferrer">Open backup runbook</a>
+                <a [href]="recoveryRunbookUrl" target="_blank" rel="noopener noreferrer">Open backup runbook</a>
               } @else {
                 <app-status-indicator [compact]="true" [wrap]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
               }
@@ -100,7 +100,7 @@
             </tbody>
           </table>
         </div>
-        <p><a href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/setup/studio-backup-restore.md#restore-onto-a-new-host" target="_blank" rel="noopener noreferrer">Open the complete fresh-host restore sequence</a></p>
+        <p><a [href]="recoveryRunbookUrl + '#restore-onto-a-new-host'" target="_blank" rel="noopener noreferrer">Open the complete fresh-host restore sequence</a></p>
         <button type="button" class="backup-status__refresh" (click)="downloadHandoff(o)">Download owner handoff</button>
       </section>
       @if (o.lastRestore; as restore) {
