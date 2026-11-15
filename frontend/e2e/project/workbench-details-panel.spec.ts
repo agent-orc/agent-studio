@@ -612,7 +612,7 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   await expect(inline.getByTestId('workbench-decision-start')).toBeEnabled();
   await inline.getByTestId('workbench-decision-start').press('Enter');
   await expect(inline.getByTestId('workbench-decision-goal'))
-    .toHaveValue('Implement Naming Dossier according to the source Dossier and its recorded decisions.');
+    .toHaveValue('Choose the stable naming contract used by public references.');
   const seededPrompt = await inline.getByTestId('workbench-decision-prompt-preview').innerText();
   expect(seededPrompt.match(/Recorded decisions/g)).toHaveLength(1);
   await expect(inline.getByTestId('workbench-decision-prompt-preview'))
@@ -816,8 +816,8 @@ test('failed Dossier confirmation reports the card the server removed', async ({
   await page.goto('/');
   const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
   await frame.locator('[data-option-id="option-a"] input').check();
-  await frame.locator('[data-studio-decision-host-slot]').scrollIntoViewIfNeeded();
   const inline = page.getByTestId('workbench-inline-decision-action');
+  await inline.scrollIntoViewIfNeeded();
   await expect.poll(() => inline.evaluate(element => getComputedStyle(element).pointerEvents))
     .toBe('auto');
   await inline.getByTestId('workbench-decision-start').click();
