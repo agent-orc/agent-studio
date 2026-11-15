@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using AgentStudio.Pipeline;
+using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -113,6 +114,120 @@ public sealed class BatchGatePilotReleaseAttributionTests : BatchGatePilotServic
         AssertLane(first.Key, TaskStates.HumanReview);
         AssertLane(salvaged.Key, TaskStates.HumanReview);
         Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
+    public async Task Published_unattributed_member_is_repaired_from_its_batch_receipt()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        SeedMember(factory, "DOC-REPAIR-1", "docs/repair-1.md");
+        var repaired = SeedMember(factory, "DOC-REPAIR-2", "docs/repair-2.md",
+            commitMessage: "docs: repair second card\n\nAgent-Studio-Task: DOC-REPAIR-2");
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, repaired.Key);
+        ReviewSubjectStore.Write(folder, ReviewSubjectStore.Read(folder)! with
+        {
+            BaseSha = new string('f', 40),
+            IntegrationBranch = "refs/heads/develop",
+        });
+        var manifest = ClosePendingBatch(factory);
+        ClearCommits(factory, repaired.Key);
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        await pilot.TickAsync(CancellationToken.None);
+        AssertLane(repaired.Key, TaskStates.Escalated);
+        Assert.Equal("release-unattributed", factory.Services.GetRequiredService<BatchGateStore>()
+            .ReadPendingOutcome(repaired.ReviewAttemptId));
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(repaired.Key, TaskStates.HumanReview);
+        var task = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(repaired.Key, _watchPath)!;
+        Assert.Contains(task.Commits, commit => commit.Sha == repaired.ResultSha
+            && !string.IsNullOrWhiteSpace(commit.SupersededBySha));
+        Assert.Contains(task.IntegrationRecords, record => record.Id.StartsWith(
+            $"batch-map:{manifest.BatchId}:", StringComparison.Ordinal));
+        Assert.Contains(task.IntegrationRecords, record => record.Id.StartsWith(
+            $"batch-gate:{manifest.BatchId}:", StringComparison.Ordinal));
+        Assert.Equal(manifest.BatchId, Ownership(repaired.Key)?.BatchId);
+        Assert.Equal(1, _gate.BatchRuns);
+    }
+
+    [Fact]
+    public async Task Rebased_delivery_without_fenced_base_is_attributed_before_batch_release()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var first = SeedMember(factory, "DOC-BASE-1", "docs/base-1.md");
+        var rebased = SeedMember(factory, "DOC-BASE-2", "docs/base-2.md",
+            commitMessage: "docs: rebased delivery\n\nAgent-Studio-Task: DOC-BASE-2");
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, rebased.Key);
+        ReviewSubjectStore.Write(folder, ReviewSubjectStore.Read(folder)! with
+        {
+            BaseSha = new string('f', 40),
+            IntegrationBranch = "refs/heads/develop",
+        });
+        ClearCommits(factory, rebased.Key);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var sweep = new RemoteCompletionAttributionSweep(scanner,
+            factory.Services.GetRequiredService<AgentStudio.Git.GitService>(),
+            factory.Services.GetRequiredService<TaskMutationService>(),
+            factory.Services.GetRequiredService<RemoteTokenReceiptService>(),
+            Path.Combine(_workspace, "migrations", RemoteCompletionAttributionSweep.ReportFileName),
+            _clock, NullLogger<RemoteCompletionAttributionSweep>.Instance);
+
+        var report = sweep.RunOnce();
+        Assert.Equal(rebased.Key, Assert.Single(report.Tasks, row => row.Commits > 0).TaskKey);
+        Assert.Equal(rebased.ResultSha,
+            Assert.Single(scanner.FindJob(rebased.Key, _watchPath)!.Commits).Sha);
+        _gate.Batch = request => Green(request.ExpectedSha);
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        AssertLane(first.Key, TaskStates.HumanReview);
+        AssertLane(rebased.Key, TaskStates.HumanReview);
+        Assert.Equal(1, _gate.BatchRuns);
+    }
+
+    [Fact]
+    public async Task Missing_current_attribution_is_shown_and_refused_before_a_batch_gate()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-NO-ATTRIBUTION", "docs/no-attribution.md",
+            settleReview: false);
+        ClearCommits(factory, member.Key);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claim = authority.ClaimReview(member.ReviewAttemptId, "review-executor",
+            "review-host", 600, "claim-no-attribution");
+        Assert.True(claim.Accepted, claim.Message);
+        var leased = claim.ReviewAttempt!;
+        var passed = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(member.ReviewAttemptId, leased.LastFence,
+                leased.AuthorityEpoch, "pass-no-attribution"),
+            member.ResultSha, ReviewTerminalOutcome.Pass));
+        Assert.True(passed.Accepted, passed.Message);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!;
+        var source = authority.GetRun(member.RunAttemptId)!;
+
+        var refusal = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            pilot.EnqueueAsync(task, passed.ReviewAttempt!, source, _clock, CancellationToken.None));
+        Assert.Contains("Commit attribution is missing", refusal.Message);
+        await pilot.RunEmergencyFallbackAsync(task, passed.ReviewAttempt!, source,
+            _clock, CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.Escalated);
+        var status = File.ReadAllText(Path.Combine(_watchPath, TaskStates.Escalated,
+            member.Key, "status.md"));
+        Assert.Contains("Commit attribution is missing", status);
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
     }
 
     private static string SalvageMessage(string key, string title)
