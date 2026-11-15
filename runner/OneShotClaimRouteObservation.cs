@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer.Contracts;
+using System.Text.Json;
 
 namespace AgentRunner;
 
@@ -11,6 +12,7 @@ internal sealed class OneShotClaimRouteObservation
 {
     public const string ClaimRouteMissing = "claim-route-missing";
     public const string StandaloneTaskServerRequired = "standalone-task-server-required";
+    public const string MalformedClaimResponse = "malformed-claim-response";
 
     private readonly object _gate = new();
     private OneShotClaimRouteConditionDto? _current;
@@ -23,6 +25,7 @@ internal sealed class OneShotClaimRouteObservation
         TaskServerException ex when ex.Message.Contains("requires the standalone Task Server",
             StringComparison.OrdinalIgnoreCase) => StandaloneTaskServerRequired,
         TaskServerException { StatusCode: 404 } => ClaimRouteMissing,
+        JsonException => MalformedClaimResponse,
         _ => null,
     };
 

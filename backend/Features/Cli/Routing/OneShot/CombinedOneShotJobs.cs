@@ -78,7 +78,8 @@ public static class CombinedOneShotJobEndpoints
             CombinedOneShotJobs jobs, CancellationToken ct) =>
         {
             if (!RunnerMatches(context, request.RunnerId)) return RunnerIdentityMismatch();
-            return Results.Json(await jobs.ClaimAsync(request, ct));
+            var work = await jobs.ClaimAsync(request, ct);
+            return work is null ? Results.NoContent() : Results.Json(work);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
         api.MapPost("/complete", async (HttpContext context, OneShotJobCompletion request,
             CombinedOneShotJobs jobs, CancellationToken ct) =>
