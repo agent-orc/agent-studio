@@ -1,5 +1,7 @@
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -7,6 +9,35 @@ namespace TaskServer.Tests;
 
 public sealed class OneShotJobStoreTests
 {
+    [Fact]
+    public async Task Claim_route_returns_no_content_for_idle_queue_and_json_for_work()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = await StoreAsync(temp.Path, clock);
+        await RegisterAsync(store, clock);
+        var request = new OneShotJobClaimRequest("runner-a", "instance-a");
+
+        var idle = new DefaultHttpContext();
+        using var services = new ServiceCollection().AddLogging().AddRouting().BuildServiceProvider();
+        idle.RequestServices = services;
+        idle.Response.Body = new MemoryStream();
+        await (await TaskServerEndpoints.InvokeOneShotClaimAsync(
+            () => store.ClaimOneShotJobAsync(request, default))).ExecuteAsync(idle);
+        Assert.Equal(StatusCodes.Status204NoContent, idle.Response.StatusCode);
+        Assert.Equal(0, idle.Response.Body.Length);
+
+        await store.CreateOneShotJobAsync(Request(), default);
+        var claimed = new DefaultHttpContext();
+        claimed.RequestServices = services;
+        claimed.Response.Body = new MemoryStream();
+        await (await TaskServerEndpoints.InvokeOneShotClaimAsync(
+            () => store.ClaimOneShotJobAsync(request, default))).ExecuteAsync(claimed);
+        Assert.Equal(StatusCodes.Status200OK, claimed.Response.StatusCode);
+        Assert.Contains("jobId", System.Text.Encoding.UTF8.GetString(
+            ((MemoryStream)claimed.Response.Body).ToArray()));
+    }
+
     private static readonly DateTimeOffset Start = new(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
     private static OneShotJobRequest Request(string model = "gpt-6-sol")
         => new("codex", model, "Summarize this result.", "medium", 30, 100);

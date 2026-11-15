@@ -176,6 +176,9 @@ case "${PW_E2E_PROFILE:-standard}" in
     export WatchPaths__1__RepositoryPath="${WatchPaths__1__Path}"
     export DeliveryChain__Guarded=false
     export ReviewDecisionOrchestrator__BootDelaySeconds=3600
+    if [[ "${PW_E2E_PROFILE}" == owner-day ]]; then
+      export AcceptanceRail__Enabled=false
+    fi
     if [[ "${PW_E2E_PROFILE}" == public-demo ]]; then
       export Security__Profile=public-demo-readonly
       export Security__TrustedProxyAddresses=127.0.0.1

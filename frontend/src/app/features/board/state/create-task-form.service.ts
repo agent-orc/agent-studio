@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { Observable, Subject, TimeoutError, defaultIfEmpty, throwIfEmpty, timeout } from 'rxjs';
+import { Observable, Subject, TimeoutError, defaultIfEmpty, map, throwIfEmpty, timeout } from 'rxjs';
 import { CliType, CLI_TYPES, ComponentRoutingRequest, ComponentRoutingResolution, PromoteToCodingResponse, TaskMode, TaskState, WatchPathEntry } from '../../../models/task.model';
 import type { CliModelInfo } from '../../../features/cli';
 import type { PendingAttachment } from '../components/create-task-dialog/create-task-dialog.component';
@@ -9,6 +9,8 @@ import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { sessionFetch } from '../../../services/session-fetch';
 import { PageTaskRequest, pageContextKey } from '../../../models/page-context.model';
 import { QuotaApiService, type ModelRoutingRecommendation } from '../../quota';
+
+class EmptyProjectDefaultsError extends Error {}
 
 /**
  * Cycle 10a board-feature service: owns every field the create-job
@@ -298,7 +300,12 @@ export class CreateTaskFormService {
     this.refreshPolicySuggestion();
     this.jobService.getRegistryProjects().pipe(
       timeout(PROJECT_DEFAULTS_TIMEOUT_MS),
-      throwIfEmpty(() => new Error('Project registry returned no result')),
+      throwIfEmpty(() => new EmptyProjectDefaultsError('Project model defaults returned no result')),
+      map(projects => {
+        if (!Array.isArray(projects) || projects.length === 0)
+          throw new EmptyProjectDefaultsError('Project model defaults returned no result');
+        return projects;
+      }),
     ).subscribe({
       next: (projects) => {
         if (request !== this.projectDefaultsRequest) return;
@@ -323,10 +330,10 @@ export class CreateTaskFormService {
           ? (error as { status: unknown }).status : null;
         this.defaultsError.set(error instanceof TimeoutError
           ? 'Project model defaults timed out. Retry to load them.'
-          : error instanceof Error && error.message === 'Project registry returned no result'
+          : error instanceof EmptyProjectDefaultsError
             ? 'Project model defaults returned no result. Retry to load them.'
           : status === 0
-            ? 'Connection to the project registry failed. Retry to load model defaults.'
+            ? 'Connection to project model defaults failed. Retry to load them.'
           : `Could not load project model defaults${typeof status === 'number' && status > 0 ? ` (HTTP ${status})` : ''}. Retry to load them.`);
       },
     });

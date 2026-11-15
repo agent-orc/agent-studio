@@ -204,6 +204,36 @@ test('owner-day seeds 30 or more recent cards and owner triage scenes', () => {
   }
 });
 
+test('owner-day review cards carry distinct acceptance evidence', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-owner-acceptance-'));
+  try {
+    execFileSync(process.execPath, [SEED, '--root', root, '--owner-day'], { stdio: 'pipe', windowsHide: true });
+    const appRoot = join(root, 'projects/demo-app');
+    assert.equal(git(appRoot, 'remote', 'get-url', 'origin'), join(root, '.metadata/demo-app-origin.git'));
+    for (const key of ['DEMO-5', 'DEMO-6', 'DEMO-14']) {
+      const folder = join(appRoot, 'tasks/000', key);
+      const card = readJson(join(folder, 'task.json'));
+      const receipt = readJson(join(folder, 'integration-verification.json'));
+      const content = readJson(join(folder, 'aspect-requirement-fit.json'));
+      const context = readJson(join(folder, 'content-review-context.json'));
+      assert.equal(card.commits.length, 1, `${key} needs a delivery`);
+      assert.equal(card.commits[0].filesChanged, 1);
+      assert.equal(git(appRoot, 'merge-base', '--is-ancestor', card.commits[0].sha,
+        'refs/remotes/origin/develop'), '', `${key} must be published on develop`);
+      assert.equal(receipt.state, 'integrated-verified');
+      assert.equal(receipt.gateVerdict, 'Ok');
+      assert.match(receipt.reason, /Simulated/);
+      assert.equal(content.status, 'pass');
+      assert.equal(context.briefVersion, readFileSync(join(folder, '.metadata/brief-version'), 'utf8').trim());
+    }
+    const refused = join(appRoot, 'tasks/000/DEMO-19');
+    assert.equal(readJson(join(refused, 'aspect-requirement-fit.json')).status, 'concerns');
+    assert.equal(readJson(join(refused, 'integration-verification.json')).state, 'integrated-verified');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('isolated owner-day seed writes a readable red batch ledger beside its disposable state', () => {
   const root = mkdtempSync(join(tmpdir(), 'demo-batch-state-'));
   try {
