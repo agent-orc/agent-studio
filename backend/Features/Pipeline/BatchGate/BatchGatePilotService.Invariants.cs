@@ -358,7 +358,11 @@ public sealed partial class BatchGatePilotService
             return new BatchInvariantMemberFact(claim.TaskKey, queued.ReviewAttemptId,
                 claim.Disposition, true, ownership, live);
         }).ToArray();
-        var facts = new BatchInvariantFacts(manifest.BatchId, phase, manifest.Diagnostic, false, members);
+        // ParentBatchId is the durable isolation relationship. Older child
+        // snapshots may not carry the diagnostic flag, but their parent still
+        // owns the members and the child must never pause into a fallback.
+        var facts = new BatchInvariantFacts(manifest.BatchId, phase,
+            manifest.Diagnostic || manifest.ParentBatchId is not null, false, members);
         if (MonolithTransitionAdapter.BatchGateInvariants(facts).Count == 0) return null;
         var findings = MonolithTransitionAdapter.BatchGateInvariants(
             facts with { Live = BatchLive(manifest, leaseIsLiveness) });

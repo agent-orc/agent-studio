@@ -576,7 +576,7 @@ public sealed partial class BatchGatePilotService
                     if (pending is not null)
                         await StartConflictRoundAsync(pending, replay).ConfigureAwait(false);
                 }
-            ReconcileFormedBatches();
+            ReconcileFormedBatches(ct);
             CancelOrphanedStacks();
             ReleaseEjectedTerminalBatches(ct);
             foreach (var item in _store.ListPending().Where(item =>
@@ -835,6 +835,11 @@ public sealed partial class BatchGatePilotService
                 continue;
             try
             {
+                // A manual return re-admits the same review generation. Its
+                // old fallback cause is history, not a new recovery handoff.
+                // Clear it before reopening the queue so a crash at that seam
+                // cannot restart the failed per-task gate instead of planning.
+                _store.ClearFallbackCause(task.ProjectName, review.AttemptId);
                 _store.ReopenPending(review.AttemptId);
                 await EnqueueAsync(task, review, source, ReviewedAt(review), ct)
                     .ConfigureAwait(false);
@@ -997,11 +1002,12 @@ public sealed partial class BatchGatePilotService
         }
     }
 
-    internal void ReconcileFormedBatches()
+    internal void ReconcileFormedBatches(CancellationToken ct = default)
     {
         foreach (var manifest in _store.ListRecoverableManifests()
                      .Where(manifest => _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed))
         {
+            ct.ThrowIfCancellationRequested();
             var waiting = _store.ListPending();
             if (FormedExclusions(manifest, waiting).Length == 0) continue;
             var repo = waiting.FirstOrDefault(item => manifest.Members.Any(member =>
@@ -1010,7 +1016,7 @@ public sealed partial class BatchGatePilotService
             if (repo is not null)
             {
                 var currentBase = _git.FetchBatchIntegrationTip(repo.RepositoryPath,
-                    manifest.Scope.IntegrationBranch, CancellationToken.None);
+                    manifest.Scope.IntegrationBranch, ct);
                 if (currentBase is not null
                     && !string.Equals(currentBase, manifest.BaseSha,
                         StringComparison.OrdinalIgnoreCase))
@@ -3693,17 +3699,29 @@ public sealed class BatchGatePilotHostedService : BackgroundService
     private readonly BatchGatePilotService _pilot;
     private readonly TaskScannerService _scanner;
     private readonly ILogger<BatchGatePilotHostedService> _logger;
+    private readonly bool _enabled;
 
     public BatchGatePilotHostedService(BatchGatePilotService pilot, TaskScannerService scanner,
-        ILogger<BatchGatePilotHostedService> logger)
+        ILogger<BatchGatePilotHostedService> logger, IHostEnvironment environment,
+        IConfiguration configuration)
     {
         _pilot = pilot;
         _scanner = scanner;
         _logger = logger;
+        var underTestHost = AppDomain.CurrentDomain.GetAssemblies().Any(assembly =>
+            assembly.GetName().Name?.StartsWith("xunit", StringComparison.OrdinalIgnoreCase) == true);
+        _enabled = (!underTestHost && !environment.IsEnvironment("Test")
+            && !environment.IsEnvironment("Testing"))
+            || configuration.GetValue<bool>("BatchGatePilot:RunInTestHost");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!_enabled) return;
+        // BackgroundService.StartAsync runs ExecuteAsync through its first
+        // incomplete await. The scanner may already be published at startup,
+        // so yield before the first potentially synchronous reconciliation.
+        await Task.Yield();
         await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         while (!stoppingToken.IsCancellationRequested)
@@ -3723,6 +3741,7 @@ public sealed class BatchGatePilotHostedService : BackgroundService
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        if (!_enabled) return;
         // AGT-3755: a flight that ends now must not start a tick on a stopping host.
         _pilot.BeginShutdown();
         try { await _pilot.WaitForFlightsAsync(includeFallbacks: true, cancellationToken).ConfigureAwait(false); }

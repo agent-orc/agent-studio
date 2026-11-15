@@ -12,6 +12,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using AgentStudio.Pipeline;
 
 using Xunit;
 
@@ -126,6 +127,9 @@ public sealed class TestHostFactoryTests : IDisposable
         // every live host in the xunit process.
         var lifetime = factory.Services.GetRequiredService<IHostLifetime>();
         Assert.NotEqual("ConsoleLifetime", lifetime.GetType().Name);
+        var pilot = Assert.Single(factory.Services.GetServices<IHostedService>()
+            .OfType<BatchGatePilotHostedService>());
+        Assert.True(pilot.ExecuteTask?.IsCompletedSuccessfully);
     }
 
     [Fact]
