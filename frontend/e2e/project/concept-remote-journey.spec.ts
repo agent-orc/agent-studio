@@ -273,18 +273,23 @@ async function openCard(page: Page, id: string, watchPath: string, stage: string
   await page.goto(`/?job=${encodeURIComponent(id)}&watchPath=${encodeURIComponent(watchPath)}`);
   await setTheme(page, 'light');
   await expect(page.getByTestId('prompt-tab-overview')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('result-view')).toBeVisible({ timeout: 30_000 });
   await dismissNotifications(page);
   const root = process.env.JOB_RESULTS_DIR;
   if (!root) return;
   mkdirSync(root, { recursive: true });
   await page.screenshot({ path: join(root, `concept-${stage}-light-1280.png`) });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByTestId('prompt-tab-overview')).toBeVisible();
+  await page.getByTestId('detail-mobile-pane-result').click();
+  await expect(page.getByTestId('pane-protocol')).toBeVisible();
+  await expect(page.getByTestId('result-view')).toBeVisible();
   await dismissNotifications(page);
+  await page.mouse.move(360, 700);
   await page.screenshot({ path: join(root, `concept-${stage}-light-390.png`) });
   await setTheme(page, 'dark');
-  await expect(page.getByTestId('prompt-tab-overview')).toBeVisible();
+  await expect(page.getByTestId('result-view')).toBeVisible();
   await dismissNotifications(page);
+  await page.mouse.move(360, 700);
   await page.screenshot({ path: join(root, `concept-${stage}-dark-390.png`) });
 }
 
