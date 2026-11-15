@@ -156,8 +156,8 @@ case "${PW_E2E_PROFILE:-standard}" in
   # networked-https-demo: the networked-https stack seeded with the demo
   # cards, so role-scoped card reads (AGT-3669) meet real Ready and Human
   # Review cards.
-  demo|public-demo|networked-https-demo)
-    if [[ "${PW_E2E_OWNER_DAY:-0}" == 1 && "${PW_E2E_PROFILE}" == demo ]]; then
+  demo|owner-day|public-demo|networked-https-demo)
+    if [[ "${PW_E2E_PROFILE}" == owner-day ]]; then
       node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}" --owner-day
     else
       node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
