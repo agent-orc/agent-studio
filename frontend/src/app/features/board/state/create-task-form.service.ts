@@ -324,7 +324,7 @@ export class CreateTaskFormService {
         this.defaultsError.set(error instanceof TimeoutError
           ? 'Project model defaults timed out. Retry to load them.'
           : error instanceof Error && error.message === 'Project registry returned no result'
-            ? 'Project registry returned no result. Retry to load model defaults.'
+            ? 'Project model defaults returned no result. Retry to load them.'
           : status === 0
             ? 'Connection to the project registry failed. Retry to load model defaults.'
           : `Could not load project model defaults${typeof status === 'number' && status > 0 ? ` (HTTP ${status})` : ''}. Retry to load them.`);
