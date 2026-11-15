@@ -535,7 +535,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
 
   test('confirms selected reissue findings and owner note before moving', async ({ page }, testInfo) => {
     await openDetail(page, '5e-escalated');
-    const moves: Array<{ targetState: string; reissueInstructions: { findings: string[]; note: string } }> = [];
+    const moves: { targetState: string; reissueInstructions: { findings: string[]; note: string } }[] = [];
     await page.route(/\/move(\?|$)/, async route => {
       moves.push(route.request().postDataJSON());
       await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
@@ -828,8 +828,11 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await expect(page.getByTestId('escalation-essence')).toContainText(
       '3 review rounds · Reissue budget exhausted',
     );
-    await expect(page.getByTestId('escalation-context-empty')).toHaveText(
-      'No structured findings, review artifacts, or delivery context were recorded.',
+    await expect(page.getByTestId('escalation-context-empty')).toContainText(
+      'Structured review findings are missing.',
+    );
+    await expect(page.getByTestId('escalation-context-empty')).toContainText(
+      'Review artifacts are missing.',
     );
     await expect(page.getByTestId('escalation-gate-items')).toHaveCount(0);
     await expect(page.getByTestId('escalation-grade-documents')).toHaveCount(0);
@@ -840,6 +843,46 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     expect(height).toBeLessThan(300);
     await dismissAppErrorDialog(page);
     await shootBothThemes(page, testInfo, 'escalation-empty-context');
+  });
+
+  test('owner-day red batch exposes the failing test in the summary and Continue preview', async ({ page }, testInfo) => {
+    const diagnostic = {
+      batchId: 'demo-report-batch-1', phase: 'red', outcome: 'failed',
+      members: ['DEMO-20', 'DEMO-24'],
+      failingTest: 'ReportExportTests.EmptyReportKeepsExportDisabled',
+    };
+    await openDetail(page, '5e-escalated', true, false, undefined, async () => {
+      await page.route('**/results/batch-diagnostic.json**', route => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(diagnostic),
+      }));
+    });
+    const summary = page.getByTestId('escalation-summary');
+    await expect(summary.getByTestId('escalation-batch-diagnostic'))
+      .toContainText('ReportExportTests.EmptyReportKeepsExportDisabled');
+    await expect(summary.getByTestId('escalation-batch-diagnostic')).toContainText('demo-report-batch-1');
+    await expect(summary.getByTestId('escalation-batch-diagnostic')).toContainText('DEMO-20, DEMO-24');
+    await expect(summary.getByTestId('escalation-batch-artifact'))
+      .toHaveAttribute('href', /\/results\/batch-diagnostic\.json/);
+    await expect(summary.getByTestId('escalation-context-empty'))
+      .toContainText('Structured review findings are missing');
+    await summary.getByTestId('escalation-action-reissue-escalated').click();
+    await expect(page.getByTestId('reissue-instructions-preview'))
+      .toContainText('ReportExportTests.EmptyReportKeepsExportDisabled');
+    await expect(page.getByTestId('reissue-instructions-preview'))
+      .toContainText('demo-report-batch-1');
+    await expect(page.getByTestId('reissue-instructions-preview'))
+      .toContainText('DEMO-20, DEMO-24');
+    await expect(page.getByTestId('reissue-instructions-preview'))
+      .toContainText('results/batch-diagnostic.json');
+    await expect(page.getByTestId('escalation-confirm-submit')).toBeEnabled();
+    mkdirSync(SHOTS_DIR, { recursive: true });
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      const shot = await page.screenshot();
+      const name = `owner-day-batch-continue-${theme}--mocked.png`;
+      writeFileSync(path.join(SHOTS_DIR, name), shot);
+      await testInfo.attach(name, { body: shot, contentType: 'image/png' });
+    }
   });
 });
 

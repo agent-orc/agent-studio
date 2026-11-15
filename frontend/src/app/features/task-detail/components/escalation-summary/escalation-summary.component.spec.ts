@@ -77,6 +77,7 @@ function detail(over: {
 
 function mount(opts: {
   followUp?: string | null;
+  batchDiagnostic?: string | null;
   reviews?: unknown[];
   reviewsStream?: Subject<{ entries: unknown[] }>;
   events?: TaskTimelineEvent[];
@@ -87,8 +88,11 @@ function mount(opts: {
 }) {
   const taskStub = {
     listCodeReviews: () => opts.reviewsStream ?? of({ entries: opts.reviews ?? [] }),
-    readJobFile: () =>
-      opts.followUp == null ? throwError(() => ({ status: 404 })) : of(opts.followUp),
+    readJobFile: (_id: string, fileName: string) =>
+      fileName === 'orchestrator-follow-up.md' && opts.followUp != null
+        ? of(opts.followUp) : throwError(() => ({ status: 404 })),
+    readTaskResult: () => opts.batchDiagnostic == null
+      ? throwError(() => ({ status: 404 })) : of(opts.batchDiagnostic),
     continueJob: opts.continueJob ?? vi.fn(() => of({ status: 'queued' })),
   };
   const timelineStub = { events: signal<TaskTimelineEvent[]>(opts.events ?? []), syncTo: vi.fn() };
@@ -119,6 +123,33 @@ beforeEach(() => {
 });
 
 describe('EscalationSummaryComponent', () => {
+  it('shows owner-day batch evidence and carries it into the reissue preview', () => {
+    const base = detail({ id: 'DEMO-20' });
+    base.info.commits = [];
+    base.info.mergeSignal = null;
+    const fixture = mount({ detail: base, reviews: [], batchDiagnostic: JSON.stringify({
+      batchId: 'demo-report-batch-1', phase: 'red', outcome: 'failed',
+      members: ['DEMO-20', 'DEMO-24'],
+      failingTest: 'ReportExportTests.EmptyReportKeepsExportDisabled',
+    }) });
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="escalation-batch-diagnostic"]')?.textContent)
+      .toContain('ReportExportTests.EmptyReportKeepsExportDisabled');
+    expect(el.querySelector('[data-testid="escalation-batch-diagnostic"]')?.textContent)
+      .toContain('demo-report-batch-1');
+    expect(el.querySelector('[data-testid="escalation-batch-diagnostic"]')?.textContent)
+      .toContain('DEMO-20, DEMO-24');
+    expect(el.querySelector<HTMLAnchorElement>('[data-testid="escalation-batch-artifact"]')?.getAttribute('href'))
+      .toContain('/api/tasks/DEMO-20/results/batch-diagnostic.json');
+    expect(el.querySelector('[data-testid="escalation-context-empty"]')?.textContent)
+      .toContain('Structured review findings are missing');
+    fixture.componentInstance.openDecision('reissue-escalated');
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="reissue-instructions-preview"]')?.textContent)
+      .toContain('ReportExportTests.EmptyReportKeepsExportDisabled');
+    expect(el.querySelector('[data-testid="reissue-instructions-preview"]')?.textContent)
+      .toContain('results/batch-diagnostic.json');
+  });
   it('offers a gate retry and a project batch switch for gate infrastructure parks', () => {
     const parked = detail();
     parked.info.key = 'AGT-1994';
@@ -469,8 +500,11 @@ describe('EscalationSummaryComponent', () => {
     } as TaskDetail;
     const el: HTMLElement = mount({ reviews: [], detail: empty }).nativeElement;
 
-    expect(el.querySelector('[data-testid="escalation-context-empty"]')?.textContent?.trim()).toBe(
-      'No structured findings, review artifacts, or delivery context were recorded.',
+    expect(el.querySelector('[data-testid="escalation-context-empty"]')?.textContent).toContain(
+      'Structured review findings are missing.',
+    );
+    expect(el.querySelector('[data-testid="escalation-context-empty"]')?.textContent).toContain(
+      'Review artifacts are missing.',
     );
     expect(el.querySelector('[data-testid="escalation-gate-items"]')).toBeNull();
     expect(el.querySelector('[data-testid="escalation-grade-documents"]')).toBeNull();

@@ -16,9 +16,27 @@ import {
   gradeTone,
   latestParkedAttempt,
   parseStatusStubEscalation,
+  parseBatchDiagnostic,
   pickReviewHead,
   resolveGateItems,
 } from './escalation-summary.util';
+
+describe('batch diagnostic fallback', () => {
+  it('parses the owner-day artifact only when the decision fields are complete', () => {
+    const diagnostic = parseBatchDiagnostic(JSON.stringify({
+      batchId: 'demo-report-batch-1', phase: 'red',
+      failingTest: 'ReportExportTests.EmptyReportKeepsExportDisabled',
+      members: ['DEMO-20', 'DEMO-24'],
+    }));
+    expect(diagnostic).toEqual({
+      batchId: 'demo-report-batch-1',
+      failingTest: 'ReportExportTests.EmptyReportKeepsExportDisabled',
+      members: ['DEMO-20', 'DEMO-24'],
+    });
+    expect(parseBatchDiagnostic('{invalid')).toBeNull();
+    expect(parseBatchDiagnostic('{"batchId":"b","members":["DEMO-20"]}')).toBeNull();
+  });
+});
 
 describe('latestParkedAttempt', () => {
   const timeline = [
