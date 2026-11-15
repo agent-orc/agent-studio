@@ -186,7 +186,14 @@
                   }
                 </ul>
               }
-              <p>Members: @for (member of batch.members; track member.taskKey) { <span><a [href]="memberHref(member.taskKey)" (click)="openMember($event, member.taskKey)">{{ member.taskKey }}@if (memberTitle(member.taskKey); as title) { · {{ title }} }</a> ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
+              <p>Members: @for (member of batch.members; track member.taskKey) { <span><a [href]="memberHref(member.taskKey)" (click)="openMember($event, member.taskKey)">{{ member.taskKey }}@if (memberTitle(member.taskKey); as title) { · {{ title }} }</a> ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }})
+                @if (batch.phase === 'red' && !batch.parentBatchId && !member.released && data.pending.some(item => item.taskKey === member.taskKey)) {
+                  <button type="button" [attr.aria-label]="'Eject ' + member.taskKey"
+                    [disabled]="batch.isolationActive !== false || ejectRequests().some(request => request.taskKey === member.taskKey && request.status === 'pending')"
+                    [title]="batch.isolationActive !== false ? 'Eject is available after isolation ends.' : 'Eject this member from the batch.'"
+                    (click)="showConfirm(member.taskKey)">Eject</button>
+                }
+              </span> }</p>
               @if (isolationRows(batch); as rows) { <app-batch-isolation [project]="project()" [batchId]="batch.batchId" [rows]="rows" /> }
               <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
                 @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }

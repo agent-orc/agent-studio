@@ -6,8 +6,36 @@ import { describe, expect, it, vi } from 'vitest';
 import { BatchPanelComponent } from './batch-panel';
 import { isolatedRedState, redHalvingState } from '../testing/batch-fixtures';
 import { ModalStackService } from '../../../services/modal-stack.service';
+import { BatchGateService } from '../../../services/batch-gate.service';
 
 describe('BatchPanelComponent', () => {
+  it('shows a held member Eject action that unlocks when isolation ends', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    const active = { ...redHalvingState, pending: [{ ...redHalvingState.pending[0], taskKey: 'AGT-2' }],
+      batches: redHalvingState.batches.map(batch => batch.batchId === 'batch-7'
+        ? { ...batch, isolationActive: true } : batch) };
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(active);
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const eject = () => document.body.querySelector<HTMLButtonElement>('#batch-batch-7 [aria-label="Eject AGT-2"]');
+    expect(eject()).not.toBeNull();
+    expect(eject()?.disabled).toBe(true);
+    const refresh = TestBed.inject(BatchGateService).refresh('Demo');
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({ ...active,
+      batches: active.batches.map(batch => batch.batchId === 'batch-7'
+        ? { ...batch, isolationActive: false } : batch) });
+    await refresh;
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(eject()?.disabled).toBe(false);
+  });
   it('lists the per-task handoff in queue order without counting it as batch waiting', async () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
     const fixture = TestBed.createComponent(BatchPanelComponent);

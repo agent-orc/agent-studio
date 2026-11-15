@@ -1,11 +1,13 @@
 import { TestBed } from '@angular/core/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { describe, expect, it, vi } from 'vitest';
 import { Subject, of, throwError, type Observable } from 'rxjs';
 import { ContinueRoundPanelComponent } from './continue-round-panel.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import type { TaskInfo } from '../../../../models/task.model';
+import { BatchGateService } from '../../../../services/batch-gate.service';
+import { redHalvingState } from '../../../batch-gate/testing/batch-fixtures';
 
 const SHA = '3f9c2a7b1d4e5f60718293a4b5c6d7e8f9012345';
 const REF = `refs/heads/agent-studio/results/run_demo/fence-3/${SHA}`;
@@ -24,7 +26,8 @@ async function mount(
   state: string,
   continueJob: (...args: unknown[]) => Observable<unknown> = vi.fn(() => of({ status: 'queued', base: BASE })),
   getContinueRoundBase: () => Observable<unknown> = vi.fn(() => of({ base: BASE })),
-  extra: { mode?: string; getPromoteConcept?: () => Observable<unknown>; promoteConcept?: () => Observable<unknown> } = {},
+  extra: { mode?: string; getPromoteConcept?: () => Observable<unknown>; promoteConcept?: () => Observable<unknown>;
+    batchState?: typeof redHalvingState } = {},
 ) {
   const getPromoteConcept = extra.getPromoteConcept ?? vi.fn(() => of(PLAN));
   const promoteConcept = extra.promoteConcept ?? vi.fn(() => of({
@@ -33,6 +36,7 @@ async function mount(
   const refresh = vi.fn();
   const success = vi.fn();
   const error = vi.fn();
+  const batchState = signal(extra.batchState ?? null);
   TestBed.resetTestingModule();
   await TestBed.configureTestingModule({
     imports: [ContinueRoundPanelComponent],
@@ -40,10 +44,11 @@ async function mount(
       provideZonelessChangeDetection(),
       { provide: TaskService, useValue: { continueJob, getContinueRoundBase, refresh, getPromoteConcept, promoteConcept } },
       { provide: NotificationService, useValue: { success, error } },
+      { provide: BatchGateService, useValue: { state: () => batchState.asReadonly() } },
     ],
   }).compileComponents();
   const fixture = TestBed.createComponent(ContinueRoundPanelComponent);
-  fixture.componentRef.setInput('job', { id: 'AGT-3582', state, watchPath: '/project/tasks', mode: extra.mode } as TaskInfo);
+  fixture.componentRef.setInput('job', { id: 'AGT-3582', taskKey: 'AGT-2', projectName: 'demo', state, watchPath: '/project/tasks', mode: extra.mode } as TaskInfo);
   const promoteToCoding = vi.fn();
   fixture.componentInstance.promoteToCoding.subscribe(promoteToCoding);
   fixture.detectChanges();
@@ -66,11 +71,30 @@ async function mount(
   };
   return {
     host, byId, type, click, fill, fixture, continueJob, getContinueRoundBase, refresh, success, error,
-    getPromoteConcept, promoteConcept, promoteToCoding,
+    getPromoteConcept, promoteConcept, promoteToCoding, batchState,
   };
 }
 
 describe('ContinueRoundPanelComponent (AGT-3582)', () => {
+  it('shows the flight and blocks a round before submit, then releases on refresh', async () => {
+    const active = { ...redHalvingState, pending: [{ ...redHalvingState.pending[0], taskKey: 'AGT-2' }], batches: redHalvingState.batches.map(batch =>
+      batch.batchId === 'batch-7' ? { ...batch, isolationActive: true } : batch) };
+    const { byId, click, type, fixture, batchState, continueJob } = await mount('6-completed', undefined, undefined,
+      { batchState: active });
+    expect(byId('batch-isolation-hold')?.textContent).toContain('batch-7');
+    expect(byId('batch-isolation-hold')?.textContent).toContain('Continue, steer and requeue wait');
+    expect(byId('isolation-open-batch')).not.toBeNull();
+    click('continue-round-open');
+    type('continue-round-prompt', 'Fix result');
+    type('continue-round-reason', 'Needs revision');
+    expect(byId<HTMLButtonElement>('continue-round-submit')?.disabled).toBe(true);
+    expect(continueJob).not.toHaveBeenCalled();
+    batchState.set({ ...active, batches: active.batches.map(batch =>
+      batch.batchId === 'batch-7' ? { ...batch, isolationActive: false } : batch) });
+    fixture.detectChanges();
+    expect(byId('batch-isolation-hold')).toBeNull();
+    expect(byId<HTMLButtonElement>('continue-round-submit')?.disabled).toBe(false);
+  });
   it.each(['5-human-review', '6-completed'])('offers a round on a %s card', async (state) => {
     const { byId } = await mount(state);
     expect(byId('continue-round-open')).not.toBeNull();
