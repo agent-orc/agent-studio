@@ -61,6 +61,8 @@ describe('BackupStatusPanelComponent', () => {
     expect(host.querySelector('[data-testid="operations-backups-warnings"]')).toBeNull();
     expect(host.querySelector('[data-testid="operations-backups-key-id"]')?.textContent).toContain('a1b2c3d4e5f60718');
     expect(host.querySelector('[data-testid="operations-backups-secret-key-id"]')?.textContent).toContain('0011223344556677');
+    expect(host.querySelector('[data-testid="operations-backups-recovery-dependency"]')?.textContent)
+      .toContain('Quality Studio data and registry are included when present');
   });
 
   it('renders the stale warning when the newest good backup is older than the threshold', async () => {

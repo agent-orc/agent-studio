@@ -130,6 +130,44 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public async Task Fresh_host_restore_preserves_quality_repository_mapping_registry_and_previous_reviews()
+    {
+        var qualityData = Path.Combine(_fixture.Root, "quality", "data");
+        var qualityRegistry = Path.Combine(_fixture.Root, "quality", "registry");
+        Directory.CreateDirectory(Path.Combine(qualityData, "reviews"));
+        Directory.CreateDirectory(qualityRegistry);
+        var mapping = "{\"qualityRepositoryId\":\"repo-42\"}";
+        var registry = "{\"repositories\":[{\"id\":\"repo-42\"}]}";
+        var review = "{\"id\":\"review-17\",\"repositoryId\":\"repo-42\"}";
+        File.WriteAllText(Path.Combine(_fixture.Workspace, ".metadata", "quality-mapping.json"), mapping);
+        File.WriteAllText(Path.Combine(qualityRegistry, "repositories.json"), registry);
+        File.WriteAllText(Path.Combine(qualityData, "reviews", "review-17.json"), review);
+
+        var record = await _fixture.Service(_clock, null).CreateAsync("test", CancellationToken.None);
+        Assert.Equal("verified", (await _fixture.Service(_clock, null).VerifyAsync(record.Id, "test", CancellationToken.None)).Outcome);
+        var members = _fixture.ReadArchive(record.Id);
+        Assert.Equal(registry, Encoding.UTF8.GetString(members["quality-registry/repositories.json"]));
+        Assert.Equal(review, Encoding.UTF8.GetString(members["quality-data/reviews/review-17.json"]));
+
+        var host = Path.Combine(_fixture.Root, "fresh-host");
+        var targets = new Dictionary<string, string>
+        {
+            ["workspace"] = Path.Combine(host, "workspace"),
+            ["quality-data"] = Path.Combine(host, "quality", "data"),
+            ["quality-registry"] = Path.Combine(host, "quality", "registry"),
+        };
+        BackupRestore.Restore(_fixture.Catalog.ArchivePath(record.Id), BackupKey.Load(_fixture.KeyFile),
+            new BackupRestorePlan(targets, false));
+        Assert.Equal(mapping, File.ReadAllText(Path.Combine(targets["workspace"], ".metadata", "quality-mapping.json")));
+        Assert.Equal(registry, File.ReadAllText(Path.Combine(targets["quality-registry"], "repositories.json")));
+        Assert.Equal(review, File.ReadAllText(Path.Combine(targets["quality-data"], "reviews", "review-17.json")));
+        Assert.Single(Directory.GetFiles(Path.Combine(targets["quality-data"], "reviews")));
+        Assert.Equal("restore-target-not-empty", Assert.Throws<BackupException>(() =>
+            BackupRestore.Restore(_fixture.Catalog.ArchivePath(record.Id), BackupKey.Load(_fixture.KeyFile),
+                new BackupRestorePlan(targets, false))).Code);
+    }
+
+    [Fact]
     public async Task Scheduled_tick_creates_uploads_and_verifies_then_waits_for_the_interval()
     {
         var target = new FakeTarget();
@@ -1292,6 +1330,10 @@ internal sealed class BackupFixture : IDisposable
             ["Backup:Sources:home:Path"] = Home,
             ["Backup:Sources:projects:Path"] = Projects,
             ["Backup:Sources:projects:Projects"] = "true",
+            ["Backup:Sources:quality-data:Path"] = Path.Combine(Root, "quality", "data"),
+            ["Backup:Sources:quality-data:Optional"] = "true",
+            ["Backup:Sources:quality-registry:Path"] = Path.Combine(Root, "quality", "registry"),
+            ["Backup:Sources:quality-registry:Optional"] = "true",
         }).Build();
 
     public BackupOptions Options(bool withKey = true) => BackupOptions.From(Configuration(withKey));

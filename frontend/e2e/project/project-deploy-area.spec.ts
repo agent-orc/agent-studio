@@ -361,6 +361,8 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('workspace-operations')).toBeVisible();
     const backups = page.getByTestId('operations-backups');
     await expect(backups.getByTestId('operations-backups-content-list')).toHaveAttribute('href', /studio-backup-restore\.md#credential-content-list$/);
+    await expect(backups.getByTestId('operations-backups-recovery-dependency')).toContainText('Quality Studio data and registry are included when present');
+    await expect(backups.getByTestId('operations-backups-recovery-dependency')).toContainText('repository remotes');
     await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'failing');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="backup-stale"]')).toContainText('26 hours old');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="host-ca-mismatch"]')).toContainText('escrowed CA');
