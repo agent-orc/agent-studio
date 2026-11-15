@@ -352,7 +352,8 @@ public record GitCommitInfo(
     int FilesChanged,
     int Added,
     int Removed,
-    string? Body = null);
+    string? Body = null,
+    bool IsMerge = false);
 
 public sealed record RemoteDeliveryCommitRange(
     bool Success,
@@ -5048,8 +5049,10 @@ public partial class GitService
     }
 
     // A merge's imported second-parent commits are excluded by the revision
-    // set. Include the merge object only when its remerge diff contains an
-    // agent resolution, rather than attributing the automatic merge itself.
+    // set. The merge object itself belongs to the delivery even when Git made
+    // it cleanly: merge-only conflict-recovery rounds need current-generation
+    // attribution. Its file count is limited to the remerge diff, so imported
+    // integration changes are never presented as changes made by the task.
     private List<GitCommitInfo> GetDeliveryCommitsAtRoot(string repoRoot, string baseRef,
         string tipRef, string? excludeRef)
     {
@@ -5064,10 +5067,10 @@ public partial class GitService
         {
             var (paths, _, pathsCode) = RunGitArgs(repoRoot, "show", "--remerge-diff",
                 "--format=", "--name-only", sha, RevisionsOnly);
-            if (pathsCode != 0 || string.IsNullOrWhiteSpace(paths)) continue;
-            var changed = paths.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(path => path.Trim()).Where(path => path.Length > 0).Distinct().ToArray();
-            if (changed.Length == 0) continue;
+            var changed = pathsCode == 0
+                ? paths.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(path => path.Trim()).Where(path => path.Length > 0).Distinct().ToArray()
+                : [];
             var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
                 "--format=%H%x1f%h%x1f%aI%x1f%aN%x1f%s", sha);
             if (metadataCode != 0) continue;
@@ -5078,7 +5081,7 @@ public partial class GitService
                     | System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)) continue;
             commits.Add(new GitCommitInfo(parts[0], parts[1],
                 DateTime.SpecifyKind(at, DateTimeKind.Utc), parts[3], parts[4],
-                changed.Length, 0, 0));
+                changed.Length, 0, 0, IsMerge: true));
         }
         if (commits.Count == 0) return commits;
         string[] orderArgs = ["rev-list", revisions, .. exclusion, RevisionsOnly];

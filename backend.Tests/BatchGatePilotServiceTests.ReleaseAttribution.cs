@@ -8,6 +8,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
+using Contract = AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Tests;
 
 /// <summary>
@@ -17,6 +19,110 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class BatchGatePilotReleaseAttributionTests : BatchGatePilotServiceTests
 {
+    [Fact]
+    public async Task Merge_only_recovery_is_reattributed_to_its_run_and_enters_the_batch()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var baseSha = RemoteTip();
+        var member = SeedMember(factory, "DOC-3787", "docs/original.md",
+            settleReview: false, initialState: TaskStates.Escalated);
+
+        Git(_repo, "checkout", "-q", "develop");
+        File.WriteAllText(Path.Combine(_repo, "integrated-one.txt"), "one");
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-qm", "fix(DOC-OTHER-1): integrated one");
+        Git(_repo, "push", "-q", "origin", "develop");
+        Git(_repo, "checkout", "-q", "--detach", member.ResultSha);
+        Git(_repo, "merge", "-q", "--no-ff", "--no-edit", "origin/develop");
+        var firstMerge = Git(_repo, "rev-parse", "HEAD");
+
+        Git(_repo, "checkout", "-q", "develop");
+        File.WriteAllText(Path.Combine(_repo, "integrated-two.txt"), "two");
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-qm", "fix(DOC-OTHER-2): integrated two");
+        Git(_repo, "push", "-q", "origin", "develop");
+        Git(_repo, "checkout", "-q", "--detach", firstMerge);
+        Git(_repo, "merge", "-q", "--no-ff", "--no-edit", "origin/develop");
+        var resultSha = Git(_repo, "rev-parse", "HEAD");
+        PublishResult(member.Key, resultSha);
+
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var run = authority.AcquireRun(member.Key, RepositoryId, null, "coding-runner",
+            "coding-host", 600, "merge-only-run").RunAttempt!;
+        var resultRef = "refs/heads/agent-studio/results/" + member.Key;
+        var settled = authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch,
+                "merge-only-settle"),
+            Outcome = "done",
+            ResultSha = resultSha,
+            ResultEnvelope = new Contract.ImmutableResultEnvelope(RepositoryId, run.AttemptId,
+                baseSha, resultSha, resultRef, null, new string('b', 64)),
+        });
+        Assert.True(settled.Accepted, settled.Message);
+        var priorPlan = authority.GetReview(member.ReviewAttemptId)!.Subject.Plan;
+        var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            member.Key, RepositoryId, resultSha, run.AttemptId, "requirements", "policy", [],
+            "merge-only-review", ResultRef: resultRef, Plan: priorPlan));
+        Assert.True(created.Accepted, created.Message);
+        var claimed = authority.ClaimReview(created.ReviewAttempt!.AttemptId, "review-executor",
+            "review-host", 600, "merge-only-review-claim");
+        Assert.True(claimed.Accepted, claimed.Message);
+        var review = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.ReviewAttempt!.AttemptId,
+                claimed.ReviewAttempt.LastFence, claimed.ReviewAttempt.AuthorityEpoch,
+                "merge-only-review-pass"), resultSha, ReviewTerminalOutcome.Pass));
+        Assert.True(review.Accepted, review.Message);
+
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var folder = scanner.FindJob(member.Key, _watchPath)!.FolderPath;
+        ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
+        {
+            TaskKey = member.Key,
+            RunAttemptId = run.AttemptId,
+            AttemptChainId = "merge-only-chain",
+            Project = ProjectName,
+            Repository = RepositoryId,
+            ResultSha = resultSha,
+            BaseSha = baseSha,
+            ImmutableResultRef = resultRef,
+            IntegrationBranch = "refs/heads/develop",
+            CompletedAtUtc = _clock,
+        });
+        scanner.InvalidateCache();
+        var timeline = factory.Services.GetRequiredService<TimelineLog>();
+        var sweep = new RemoteCompletionAttributionSweep(scanner,
+            factory.Services.GetRequiredService<AgentStudio.Git.GitService>(),
+            factory.Services.GetRequiredService<TaskMutationService>(),
+            factory.Services.GetRequiredService<RemoteTokenReceiptService>(),
+            Path.Combine(_workspace, "merge-only-migrations", RemoteCompletionAttributionSweep.ReportFileName),
+            _clock, NullLogger<RemoteCompletionAttributionSweep>.Instance,
+            factory.Services.GetRequiredService<TaskStateMachine>(), timeline, authority);
+
+        var report = sweep.RunIntegrationHistoryRepairOnce();
+
+        Assert.Equal(2, Assert.Single(report.Tasks).Commits);
+        var repaired = scanner.FindJob(member.Key, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, repaired.State);
+        Assert.Contains(repaired.Commits, commit => commit.Sha == member.ResultSha
+            && commit.RunAttemptId == member.RunAttemptId);
+        Assert.Contains(repaired.Commits, commit => commit.Sha == firstMerge
+            && commit.RunAttemptId == run.AttemptId && commit.ResultSha == resultSha);
+        Assert.Contains(repaired.Commits, commit => commit.Sha == resultSha
+            && commit.RunAttemptId == run.AttemptId && commit.ResultSha == resultSha);
+        Assert.Contains(timeline.ReadAll(repaired.FolderPath), evt =>
+            evt.Kind == TimelineEventKinds.IntegrationHistoryAttributionRepaired
+            && evt.Details?.GetValueOrDefault("reason") == "merge-only-recovery-delivery");
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().EnqueueAsync(
+            repaired, review.ReviewAttempt!, authority.GetRun(run.AttemptId)!, _clock,
+            CancellationToken.None);
+        Assert.Contains(factory.Services.GetRequiredService<BatchGateStore>().ListPending(), pending =>
+            pending.Subject.TaskKey == member.Key);
+    }
+
     [Fact]
     public void Escalated_passing_review_recovers_imported_integration_history_without_agent_round()
     {

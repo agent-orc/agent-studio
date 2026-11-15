@@ -35,6 +35,7 @@ public sealed class RemoteCommitAttributionGuardTests
             RunGit(repo, "commit -q -m \"test(AGT-3786): first\"");
             var ownOne = RunGit(repo, "rev-parse HEAD");
             string? resolutionMerge = null;
+            string? cleanMerge = null;
             for (var index = 1; index <= 2; index++)
             {
                 RunGit(repo, "checkout -q develop");
@@ -47,6 +48,7 @@ public sealed class RemoteCommitAttributionGuardTests
                     ? "merge -q --no-ff -s ours develop -m \"Merge origin/develop\""
                     : "merge -q --no-ff develop -m \"Merge origin/develop\"");
                 if (index == 1) resolutionMerge = RunGit(repo, "rev-parse HEAD");
+                else cleanMerge = RunGit(repo, "rev-parse HEAD");
                 File.WriteAllText(Path.Combine(repo, $"own-{index + 1}.txt"), "own");
                 RunGit(repo, "add -A");
                 RunGit(repo, $"commit -q -m \"test(AGT-3786): own {index + 1}\"");
@@ -68,10 +70,12 @@ public sealed class RemoteCommitAttributionGuardTests
             var range = git.InspectRemoteDeliveryCommitRange(repo,
                 "runner/test/AGT-3786", tip, "refs/heads/develop", baseSha);
             Assert.True(range.Success, range.Warning);
-            Assert.Equal(4, range.Commits.Count);
+            Assert.Equal(5, range.Commits.Count);
             Assert.Contains(range.Commits, commit => commit.Sha == ownOne);
             Assert.Contains(range.Commits, commit => commit.Sha == resolutionMerge
-                && commit.FilesChanged == 1);
+                && commit.IsMerge && commit.FilesChanged == 1);
+            Assert.Contains(range.Commits, commit => commit.Sha == cleanMerge
+                && commit.IsMerge && commit.FilesChanged == 0);
             Assert.DoesNotContain(range.Commits, commit => commit.Subject.Contains("AGT-3784"));
             Assert.True(RemoteCommitAttributionGuard.Attribute("AGT-3786",
                 "runner/test/AGT-3786", range.Commits).Accepted);
