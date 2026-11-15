@@ -1111,7 +1111,7 @@ test.describe('Execution Hosts settings section', () => {
    * header names Stable's commit, and the review role shows its running image
    * next to the one the server expects.
    */
-  test('marks a host on the Stable version but another commit as differing from Stable', async ({ page }) => {
+  test('marks a host on the Stable version but another commit and guides its review host update', async ({ page }) => {
     // All host and release responses are mocked; no backend lifecycle is needed.
     await stubGroupedHostApis(page);
     const observedAt = new Date().toISOString();
@@ -1175,6 +1175,10 @@ test.describe('Execution Hosts settings section', () => {
     await expect(image.getByTestId('remote-host-review-image-running')).toHaveText('sha256:5f0e1d2c5f0e');
     await expect(image.getByTestId('remote-host-review-image-expected')).toHaveText('sha256:9a8b7c6d9a8b');
     await expect(image.getByTestId('remote-host-review-image-state')).toContainText('Differs from expected');
+    const update = machine.getByTestId('review-host-update');
+    await expect(update.getByTestId('review-host-expected-digest')).toContainText(expected);
+    await expect(update.getByTestId('review-host-deploy-procedure'))
+      .toHaveAttribute('href', /docs\/operations\/deploy-drain-procedure\.md$/);
 
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 900 });
@@ -1183,10 +1187,96 @@ test.describe('Execution Hosts settings section', () => {
         await dismissDevErrorDialog(page);
         await image.scrollIntoViewIfNeeded();
         await expect(image).toBeVisible();
+        await expect(update.getByTestId('review-host-update-start')).toBeVisible();
         await page.screenshot({
           path: join(SHOT_DIR, `execution-hosts-release-differs-${theme}-${width}--mocked.png`),
           animations: 'disabled',
         });
+        await update.scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: join(SHOT_DIR, `execution-hosts-review-update-${theme}-${width}--mocked.png`),
+          animations: 'disabled',
+        });
+      }
+    }
+
+    let statusReads = 0;
+    await page.route('**/api/clients/agent-runner-01-review/drain', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: '{}',
+    }));
+    await page.route('**/api/clients/agent-runner-01-review/resume', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: '{}',
+    }));
+    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => {
+      statusReads++;
+      const busy = statusReads === 1;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        draining: statusReads < 4, drained: !busy, running: busy
+          ? [{ kind: 'review', attemptId: 'review-active', taskKey: 'AGT-3648' }] : [],
+      }) });
+    });
+    await update.getByTestId('review-host-update-start').click();
+    await expect(update).toHaveAttribute('data-stage', 'blocked');
+    await expect(update.getByTestId('review-host-update-message')).toContainText('Review AGT-3648 is still active');
+    await expect(update.getByTestId('review-host-update-switch')).toHaveCount(0);
+    await update.getByRole('button', { name: 'Check quiet point' }).click();
+    await expect(update).toHaveAttribute('data-stage', 'quiet');
+    await update.getByTestId('review-host-update-switch').click();
+    await expect(update).toHaveAttribute('data-stage', 'switching');
+
+    await page.unroute('**/api/v1/management/host-releases');
+    let releaseReads = 0;
+    await page.route('**/api/v1/management/host-releases', route => {
+      releaseReads++;
+      const next = entry('agent-runner-01-review', true);
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        observedAt: new Date().toISOString(),
+        stable: { version: '0.9.5', commit: stableCommit }, behindCount: 0,
+        hosts: [{ ...next, lastSeenAt: releaseReads === 1 ? observedAt : new Date().toISOString(),
+          release: releaseReads === 1 ? next.release : { ...next.release, commit: stableCommit, imageRef: expected } }],
+      }) });
+    });
+    await update.getByTestId('review-host-update-verify').click();
+    await expect(update).toHaveAttribute('data-stage', 'switching');
+    await page.waitForTimeout(10);
+    await update.getByTestId('review-host-update-verify').click();
+    await expect(update).toHaveAttribute('data-stage', 'verified');
+    await update.getByTestId('review-host-update-resume').click();
+    await expect(update).toHaveAttribute('data-stage', 'complete');
+  });
+
+  test('shows review host update for a stale image on the current commit', async ({ page }) => {
+    await stubGroupedHostApis(page);
+    const observedAt = new Date().toISOString();
+    const commit = '3d61e8b0c4ab' + '0'.repeat(28);
+    const running = `registry.example/agent-review@sha256:${'5f0e1d2c'.repeat(8)}`;
+    const expected = `registry.example/agent-review@sha256:${'9a8b7c6d'.repeat(8)}`;
+    await page.unroute('**/api/v1/management/host-releases');
+    await page.route('**/api/v1/management/host-releases', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({
+        observedAt, stable: { version: '0.9.5', commit }, behindCount: 0, differsCount: 0,
+        hosts: [{ runnerId: 'agent-runner-01-review', name: 'agent-runner-01-review',
+          hostId: 'agent-runner-01', role: 'review',
+          release: { releaseId: 'review-old-image', version: '0.9.5', commit, imageRef: running },
+          state: 'current', behindByHours: null, behindForHours: null, alarmDue: false,
+          reason: 'The host runs the same commit as Stable.', lastSeenAt: observedAt,
+          heartbeatStale: false, expectedImageRef: expected }],
+      }),
+    }));
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
+    const update = page.getByTestId('review-host-update');
+    await expect(update.getByTestId('review-host-expected-digest')).toContainText(expected);
+    await expect(update.getByTestId('review-host-update-start')).toBeVisible();
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await update.scrollIntoViewIfNeeded();
+        await expect(update).toBeVisible();
+        await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-stale-review-image-${theme}-${width}--mocked.png`),
+          animations: 'disabled' });
       }
     }
   });

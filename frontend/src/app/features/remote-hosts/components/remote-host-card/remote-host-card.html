@@ -53,6 +53,7 @@
       @if (plane.sustainedThrottling) { <div><dt>Throttling</dt><dd data-testid="remote-host-review-plane-alarm"><app-status-indicator tone="warning" label="CPU throttling sustained" [detail]="plane.alarmSuggestion" [compact]="true" /> {{ plane.alarmSuggestion }}</dd></div> }
     }
   </dl>
+  <app-review-host-update [target]="reviewUpdate()" />
   <app-review-restart-history [hosts]="restartHosts()" />
   <div class="host__details" data-testid="remote-host-detail-summaries">
         <section class="detail" data-testid="remote-host-detail-section-identity">
