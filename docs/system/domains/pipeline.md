@@ -1125,7 +1125,9 @@ Task Server gate protocol remains the target for admission of these subjects.
 The outbound pull worker uses an exclusively scoped `gate.execute` Runner
 credential and starts the release-pinned backend binary with
 `--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
-on that host. The worker registers, claims from `/api/pull-gates`, downloads
+on that host. Pull gate mutations authenticate this service bearer directly;
+they do not require a browser `X-Client-Id` header. The worker registers,
+claims from `/api/pull-gates`, downloads
 the exact source bundle, heartbeats its lease, streams progress through those
 heartbeats, and uploads the result and files from its `artifacts/` run folder.
 The server refuses uploads after lease expiry or replacement. Completed

@@ -28,6 +28,7 @@ public sealed class QuotaService
     private readonly QuotaHistoryStore? _history;
     private readonly bool _networked;
     private readonly bool _pinnedDemo;
+    private readonly bool _emptyFixtureQuota;
     private readonly TimeProvider _clock;
     private readonly ConcurrentDictionary<string, QuotaSnapshot> _pendingHostDrops = new();
     private readonly Dictionary<string, DateTime> _seenHostObservations = new(StringComparer.Ordinal);
@@ -52,6 +53,7 @@ public sealed class QuotaService
         _networked = !SecurityProfiles.IsLocal(configuration);
         _clock = clock ?? TimeProvider.System;
         _pinnedDemo = DemoQuotaSnapshots.Enabled(configuration);
+        _emptyFixtureQuota = DemoQuotaSnapshots.EmptyFixtureEnabled(configuration);
         if (_pinnedDemo)
         {
             // AGT-3593: a demo or worktree test backend shares the runner host.
@@ -421,12 +423,17 @@ public sealed class QuotaService
         {
             At = now,
             TtlSeconds = (int)_ttl.TotalSeconds,
-            Snapshots = _probes.Keys.Select(k => DemoQuotaSnapshots.For(k, now)).ToList()
+            Snapshots = _probes.Keys.Select(k => PinnedFor(k, now)).ToList()
         };
     }
 
     private QuotaSnapshot? PinnedDemoFor(string cliType)
-        => _probes.ContainsKey(cliType) ? DemoQuotaSnapshots.For(cliType, _clock.GetUtcNow().UtcDateTime) : null;
+        => _probes.ContainsKey(cliType) ? PinnedFor(cliType, _clock.GetUtcNow().UtcDateTime) : null;
+
+    private QuotaSnapshot PinnedFor(string cliType, DateTime nowUtc)
+        => _emptyFixtureQuota
+            ? DemoQuotaSnapshots.EmptyFixtureFor(cliType, nowUtc)
+            : DemoQuotaSnapshots.For(cliType, nowUtc);
 
     /// <summary>
     /// Append a trusted snapshot to the quota history (AGT-3001). The store

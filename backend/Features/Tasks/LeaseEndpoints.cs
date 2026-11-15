@@ -2225,7 +2225,9 @@ public static class LeaseEndpoints
                     run.RepositoryId,
                     run.ResultSha!,
                     run.AttemptId,
-                    AttemptAuthorityService.Hash(requirements),
+                    TaskModes.IsConcept(task.Mode)
+                        ? BriefVersionStore.ReadCurrent(task.FolderPath)
+                        : AttemptAuthorityService.Hash(requirements),
                     AttemptAuthorityService.Hash("remote-review-policy:v1"),
                     run.EvidenceDigests,
                     $"review-subject:{run.AttemptId}:{run.ResultSha}",
@@ -2476,12 +2478,16 @@ public static class LeaseEndpoints
                       $"`{req.SalvageAuthoritativeBaseBranch ?? salvageBranch}` at " +
                       $"`{req.SalvageAuthoritativeBaseSha ?? salvageCommitSha}` was the authoritative pickup base.{Environment.NewLine}"
                     : string.Empty;
-                File.WriteAllText(
-                    deliverablesPath,
-                    $"# Remote runner deliverables{Environment.NewLine}{Environment.NewLine}" +
-                    $"- Salvage branch {branchRef} at `{salvageCommitSha}`.{Environment.NewLine}" +
-                    recoveryLine,
-                    System.Text.Encoding.UTF8);
+                var existingDeliverables = File.Exists(deliverablesPath)
+                    ? File.ReadAllText(deliverablesPath)
+                    : $"# Remote runner deliverables{Environment.NewLine}";
+                var salvageLine = $"- Salvage branch {branchRef} at `{salvageCommitSha}`.{Environment.NewLine}";
+                if (!existingDeliverables.Contains(salvageLine, StringComparison.Ordinal))
+                    File.WriteAllText(
+                        deliverablesPath,
+                        existingDeliverables.TrimEnd() + Environment.NewLine + Environment.NewLine +
+                        salvageLine + recoveryLine,
+                        System.Text.Encoding.UTF8);
                 artifactCommits.TryCommitArtifactUpload(
                     null, task.Id, task.FolderPath, ["results/deliverables.md"]);
             }

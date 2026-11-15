@@ -18,17 +18,32 @@ public static class DemoQuotaSnapshots
     /// <summary>Explicit opt-in for a pinned quota source on any other backend.</summary>
     public const string ModeKey = "Quota:Mode";
     public const string PinnedMode = "demo";
+    public const string EmptyFixtureMode = "fixture-empty";
 
     public const string Source = "demo snapshot";
 
     /// <summary>
     /// True for the public demo profile, an isolated worktree test backend, or
-    /// <c>Quota:Mode=demo</c>.
+    /// an explicit pinned mode. The fixture-empty mode keeps isolated remote
+    /// execution off host quotas while leaving admission open for fake CLIs.
     /// </summary>
     public static bool Enabled(IConfiguration configuration)
         => SecurityProfiles.IsPublicDemo(configuration)
             || configuration[WorktreeTestBackendKey]?.Trim() == "1"
-            || string.Equals(configuration[ModeKey]?.Trim(), PinnedMode, StringComparison.OrdinalIgnoreCase);
+            || string.Equals(configuration[ModeKey]?.Trim(), PinnedMode, StringComparison.OrdinalIgnoreCase)
+            || EmptyFixtureEnabled(configuration);
+
+    public static bool EmptyFixtureEnabled(IConfiguration configuration)
+        => string.Equals(configuration[ModeKey]?.Trim(), EmptyFixtureMode, StringComparison.OrdinalIgnoreCase);
+
+    public static QuotaSnapshot EmptyFixtureFor(string cliType, DateTime nowUtc) => new()
+    {
+        CliType = cliType,
+        FetchedAt = nowUtc,
+        Plan = "Fixture",
+        Source = Source,
+        Windows = [],
+    };
 
     /// <summary>The pinned snapshot for one CLI as of <paramref name="nowUtc"/>.</summary>
     public static QuotaSnapshot For(string cliType, DateTime nowUtc) => cliType switch
