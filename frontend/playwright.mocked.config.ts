@@ -22,6 +22,7 @@ export default defineConfig({
       '**/board/ready-runner-wait-reasons.spec.ts',
       '**/board/card-host-capability-and-dossier-chip.spec.ts',
       '**/task-detail/pipeline-column-headers.spec.ts',
+      '**/task-detail/escalation-summary.spec.ts',
       '**/system/semantic-contrast.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/project/operations-security.spec.ts',
