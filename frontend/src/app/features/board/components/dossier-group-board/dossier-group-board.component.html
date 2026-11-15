@@ -9,6 +9,9 @@
         @for (card of group.cards; track card.taskKey) {
           <li>
             <button type="button" (click)="jobClick.emit(card)" [attr.data-testid]="'dossier-board-card-' + card.id">
+              @if (slicePosition(card.dossier); as position) {
+                <span class="dossier-board__slice" data-testid="dossier-board-slice">{{ position }}</span>
+              }
               <strong>{{ card.key ?? card.id }}</strong> {{ card.title }}
             </button>
             <span>{{ laneName(card.state) }}</span>

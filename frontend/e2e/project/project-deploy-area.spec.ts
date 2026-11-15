@@ -379,14 +379,39 @@ test.describe('Project Deploy area (mocked)', () => {
     // The runbook compares the escrowed copies against these ids (AGT-3738).
     await expect(backups.getByTestId('operations-backups-key-id')).toContainText('3f2a9c0d11e4b7a8');
     await expect(backups.getByTestId('operations-backups-secret-key-id')).toContainText('0b1c2d3e4f5a6b7c');
+    const handoff = backups.getByTestId('operations-backups-handoff');
+    await expect(handoff).toContainText('Do not start the stack before restore');
+    await expect(handoff).toContainText('Host CA private and public keys');
+    await expect(handoff).toContainText('Project Git remotes');
+    await expect(handoff).toContainText('Operations Server');
+    await expect(handoff).toContainText('Quality Studio');
+    await expect(handoff.getByRole('link', { name: 'Fetch both files from the off-host target' }))
+      .toHaveAttribute('href', /#fresh-host-step-2$/);
+    await expect(handoff.getByRole('link', { name: 'Re-enrol remote agents and review revocations' }))
+      .toHaveAttribute('href', /#fresh-host-step-8$/);
+    const downloadPromise = page.waitForEvent('download');
+    await handoff.getByRole('button', { name: 'Download owner handoff' }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('studio-fresh-host-recovery.txt');
+    const handoffPath = await download.path();
+    const handoffText = fs.readFileSync(handoffPath!, 'utf8');
+    expect(handoffText).toContain('Archive SHA-256');
+    expect(handoffText).toContain('Not checked by Studio');
+    expect(handoffText).toContain('#restore-onto-a-new-host');
+    expect(handoffText).not.toContain('PRIVATE KEY');
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       fs.mkdirSync(results, { recursive: true });
       await backups.screenshot({ path: path.join(results, `operations-host-ca-mismatch-${theme}--mocked.png`) });
+      await page.setViewportSize({ width: 1280, height: 1600 });
+      await handoff.screenshot({ path: path.join(results, `operations-recovery-handoff-${theme}--mocked.png`) });
+      await page.setViewportSize({ width: 1280, height: 800 });
     }
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await backups.evaluate(element => element.getBoundingClientRect().width)).toBeLessThanOrEqual(390);
     await backups.screenshot({ path: path.join(results, 'operations-host-ca-mismatch-390--mocked.png') });
+    await page.setViewportSize({ width: 390, height: 2200 });
+    await handoff.screenshot({ path: path.join(results, 'operations-recovery-handoff-390--mocked.png') });
     await page.setViewportSize({ width: 1280, height: 800 });
 
     stale = false;
