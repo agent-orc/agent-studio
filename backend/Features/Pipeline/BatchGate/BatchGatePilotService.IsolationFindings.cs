@@ -19,6 +19,8 @@ public sealed partial class BatchGatePilotService
                      _store.HasState(manifest.BatchId)
                      && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Green))
         {
+            try
+            {
             ct.ThrowIfCancellationRequested();
             var child = green.ParentBatchId is not null;
             var admitted = child ? green.Members.Select(member => member.TaskKey).ToArray()
@@ -29,9 +31,8 @@ public sealed partial class BatchGatePilotService
                     && member.RunAttempt == item.Subject.RunAttempt))
                 .ToDictionary(item => item.Subject.TaskKey, StringComparer.Ordinal);
             var complete = admitted.Length > 0 && admitted.All(pending.ContainsKey);
-            if (child && (!complete || pending.Count != green.Members.Count
-                    || green.Members.Any(member => !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration)))
-                continue;
+            var childLostGeneration = child && (!complete || pending.Count != green.Members.Count
+                || green.Members.Any(member => !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration));
             BatchCoordinatorLease? lease;
             try { lease = _leases.TryAcquire(LeaseScope(green), child ? "green-isolation-recovery" : "green-batch-recovery"); }
             catch (IOException) { continue; }
@@ -39,6 +40,15 @@ public sealed partial class BatchGatePilotService
             try
             {
                 if (_store.LatestState(green.BatchId) is not { Phase: BatchPhase.Green } state) continue;
+                if (childLostGeneration)
+                {
+                    // A green diagnostic child cannot publish without every
+                    // immutable review generation. Retire it so its red parent
+                    // can hand the still pending members to fallback recovery.
+                    State(green, BatchPhase.Abandoned, state.CandidateSha, lease.Fence,
+                        "isolation child lost a review generation before publication");
+                    continue;
+                }
                 var run = _store.ListRuns(green.BatchId)
                     .Where(item => item.CandidateSha == state.CandidateSha)
                     .MaxBy(item => item.StartedAtUtc);
@@ -66,6 +76,13 @@ public sealed partial class BatchGatePilotService
                     .ConfigureAwait(false);
             }
             finally { _leases.Release(lease); }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException
+                                       or BatchPhaseTransitionRefusedException)
+            {
+                _logger.LogWarning(ex, "batch-gate-green-recovery-failed batch={BatchId}", green.BatchId);
+            }
         }
     }
 

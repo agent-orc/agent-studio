@@ -61,6 +61,8 @@ describe('BackupStatusPanelComponent', () => {
     expect(host.querySelector('[data-testid="operations-backups-warnings"]')).toBeNull();
     expect(host.querySelector('[data-testid="operations-backups-key-id"]')?.textContent).toContain('a1b2c3d4e5f60718');
     expect(host.querySelector('[data-testid="operations-backups-secret-key-id"]')?.textContent).toContain('0011223344556677');
+    expect(host.querySelector('[data-testid="operations-backups-recovery-dependency"]')?.textContent)
+      .toContain('Quality Studio data and registry are included when present');
   });
 
   it('gives the owner a fresh-host handoff with every dependency and exact restore steps', async () => {
@@ -72,6 +74,8 @@ describe('BackupStatusPanelComponent', () => {
       expect(handoff.textContent).toContain(name);
     }
     expect(handoff.textContent).toContain('Not checked by Studio');
+    expect(handoff.textContent).toContain('Data and registry archived when present');
+    expect(handoff.textContent).toContain('image and repository checkouts required');
     expect(handoff.textContent).toContain('studio-backup-20261109T060000Z-abc123');
     expect(handoff.querySelector('a[href$="#restore-onto-a-new-host"]')).not.toBeNull();
     expect(handoff.querySelector('a[href$="#check-the-escrowed-copies"]')).not.toBeNull();

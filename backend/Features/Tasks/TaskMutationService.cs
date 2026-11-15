@@ -2031,6 +2031,13 @@ public class TaskMutationService
                     .Where(identity => !string.IsNullOrWhiteSpace(identity))
                     .Select(identity => identity!)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                // Promotion supplies a stable child id. A retry must recover the
+                // existing card, never let EnsureUniqueJobId add a suffix.
+                if ((req.CreationSource?.StartsWith("concept-promotion:", StringComparison.Ordinal) == true
+                        || req.CreationSource?.StartsWith("decision-apply:", StringComparison.Ordinal) == true
+                        || req.CreationSource?.StartsWith("persona-proposal:", StringComparison.Ordinal) == true)
+                    && used.Contains(baseSlug))
+                    return null;
                 var foreign = jobs
                     .Where(job => !WatchPathComparison.PathsEqual(job.WatchPath, entry.Path))
                     .SelectMany(job => new[] { job.Id, job.Key, job.TaskKey, TaskCoreRecord.Limit(job.Id, 128) })

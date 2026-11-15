@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { Observable, Subject, timeout } from 'rxjs';
+import { Observable, Subject, TimeoutError, defaultIfEmpty, throwIfEmpty, timeout } from 'rxjs';
 import { CliType, CLI_TYPES, ComponentRoutingRequest, ComponentRoutingResolution, PromoteToCodingResponse, TaskMode, TaskState, WatchPathEntry } from '../../../models/task.model';
 import type { CliModelInfo } from '../../../features/cli';
 import type { PendingAttachment } from '../components/create-task-dialog/create-task-dialog.component';
@@ -37,6 +37,7 @@ export class CreateTaskFormService {
   readonly visible = signal(false);
   readonly submitting = signal(false);
   readonly defaultsPending = signal(false);
+  readonly defaultsError = signal<string | null>(null);
   readonly routing = signal<ComponentRoutingResolution | null>(null);
   readonly routingPending = signal(false);
   private routingRequest: ComponentRoutingRequest | null = null;
@@ -290,13 +291,17 @@ export class CreateTaskFormService {
     this.newWatchPath = watchPath;
     const request = ++this.projectDefaultsRequest;
     this.defaultsPending.set(true);
+    this.defaultsError.set(null);
     this.modelSelectionExplicit.set(false);
     this.applyStoredCliDefault();
     this.loadCreateModels(this.newCliType());
     this.refreshPolicySuggestion();
-    this.jobService.getRegistryProjects().subscribe({
+    this.jobService.getRegistryProjects().pipe(
+      timeout(PROJECT_DEFAULTS_TIMEOUT_MS),
+      throwIfEmpty(() => new Error('Project registry returned no result')),
+    ).subscribe({
       next: (projects) => {
-        if (request !== this.projectDefaultsRequest || !this.visible()) return;
+        if (request !== this.projectDefaultsRequest) return;
         this.defaultsPending.set(false);
         const project = projects.find(p => p.storageLocation === watchPath);
         if (!project) return;
@@ -311,10 +316,24 @@ export class CreateTaskFormService {
         this.loadCreateModels(this.newCliType());
         this.refreshPolicySuggestion();
       },
-      error: () => {
-        if (request === this.projectDefaultsRequest) this.defaultsPending.set(false);
+      error: (error: unknown) => {
+        if (request !== this.projectDefaultsRequest) return;
+        this.defaultsPending.set(false);
+        const status = typeof error === 'object' && error !== null && 'status' in error
+          ? (error as { status: unknown }).status : null;
+        this.defaultsError.set(error instanceof TimeoutError
+          ? 'Project model defaults timed out. Retry to load them.'
+          : error instanceof Error && error.message === 'Project registry returned no result'
+            ? 'Project model defaults returned no result. Retry to load them.'
+          : status === 0
+            ? 'Connection to the project registry failed. Retry to load model defaults.'
+          : `Could not load project model defaults${typeof status === 'number' && status > 0 ? ` (HTTP ${status})` : ''}. Retry to load them.`);
       },
     });
+  }
+
+  retryProjectDefaults(): void {
+    this.selectProject(this.newWatchPath);
   }
 
   markModelSelectionExplicit(): void {
@@ -353,6 +372,7 @@ export class CreateTaskFormService {
     this.visible.set(false);
     this.projectDefaultsRequest++;
     this.defaultsPending.set(false);
+    this.defaultsError.set(null);
     this.newTitle = '';
     this.newPrompt = '';
     this.newAgent = 'claude';
@@ -382,7 +402,7 @@ export class CreateTaskFormService {
    * fire `submitted$` so the shell can refresh.
    */
   submit(): void {
-    if (this.submitting() || this.agentPending()) return;
+    if (this.submitting() || this.agentPending() || this.defaultsError()) return;
     const route = this.routing();
     if (this.routingPending() || route?.requiresQuestion) {
       this.errorDialog.show(new Error(route?.questionReason || 'Ownership routing is still being resolved.'), {
@@ -491,6 +511,9 @@ export class CreateTaskFormService {
     this.routingPolicy.getModelRoutingRecommendation(this.newTaskType, this.newCliType()).pipe(
       // A suggestion that never answers must not keep Create disabled.
       timeout(SUGGESTION_TIMEOUT_MS),
+      // Limited sessions can suppress this read through shellReadInterceptor.
+      // That interceptor completes without emitting, so settle the wait here.
+      defaultIfEmpty(null),
     ).subscribe({
       next: (suggestion) => {
         if (request !== this.suggestionRequest) return;
@@ -578,6 +601,7 @@ export class CreateTaskFormService {
 // ---------- module-private helpers ----------
 
 const SUGGESTION_TIMEOUT_MS = 3000;
+const PROJECT_DEFAULTS_TIMEOUT_MS = 5000;
 
 function readDefaultCliPref(): CliType {
   const stored = localStorage.getItem('defaultCliType') as CliType | null;

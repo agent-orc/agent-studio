@@ -29,7 +29,12 @@ The create dialog resolves the selected project's `cliDefault` and
 `modelDefault` from the registry before enabling Create. Changing the project
 replaces those defaults; changing the agent or model afterward is an explicit
 choice. The model displayed at submission is sent as an explicit model so the
-new card shows the same selection. The Create button uses `appPendingButton`
+new card shows the same selection. The registry lookup has a five-second
+timeout. If it fails, the dialog shows the HTTP status or timeout reason and
+offers Retry while retaining the draft; Create stays disabled until the lookup
+succeeds. A restricted session can complete the optional model-routing read
+without a result; the dialog then uses the project or saved model instead of
+waiting for a suggestion. The Create button uses `appPendingButton`
 until the request settles. On success the dialog closes and a short, quiet
 toast opens the new card; on failure the draft remains available.
 
@@ -777,7 +782,12 @@ occur. It is not a claim about tunnel transfer time.
   its badge, age, and one-line reason visible when closed. Continue (reissue)
   opens a confirmation with selectable findings, an optional owner note, and
   the next agent's instructions before the move to Ready. The saved selection
-  survives review-artifact rotation. Accept with reason records an operator
+  survives review-artifact rotation. Reissue keeps the card in Escalated and
+  shows persistent pending feedback until the move request settles, even if
+  the operator switches tabs. After a successful response, the board and open
+  detail change to Ready together and the Undo action becomes available. A
+  refused reissue leaves the current tab in place and reports the refusal.
+  Accept with reason records an operator
   override for the completion gate; abort is the destructive alternative.
   When findings, review artifacts,
   and delivery context are absent, the section renders one compact empty line.

@@ -1,13 +1,14 @@
 using System.Text.Json;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Pipeline;
 
 /// <summary>One invariant finding of the batch gate state (AGT-3563).</summary>
 public sealed record BatchGateInvariantView(
     string Kind, string BatchId, string? Phase, string? TaskKey,
-    string? ReviewAttemptId, string Detail, string Repair);
+    string? ReviewAttemptId, string Detail, string Repair, long AgeMs = 0);
 
 /// <summary>The last invariant check of one project.</summary>
 public sealed record BatchGateInvariantReport(
@@ -80,6 +81,35 @@ public sealed partial class BatchGatePilotService
         }
     }
 
+    private void RepairOrphanedPending()
+    {
+        var manifests = _store.ListManifests().Select(item => item.BatchId)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var item in _store.ListPending())
+        {
+            try
+            {
+                var folder = MemberFolder(item);
+                var marker = BatchGateOwnershipStore.Read(folder);
+                var action = PendingAction(item, marker, manifests, false, _time.GetUtcNow());
+                if (action is not (BatchPendingRecoveryAction.RestoreQueuedMarker
+                    or BatchPendingRecoveryAction.ReleaseMissingOwner)) continue;
+                BatchGateOwnershipStore.Write(folder,
+                    new BatchGateOwnership(item.ReviewAttemptId,
+                        item.Subject with { OwningBatchId = null }));
+                _logger.LogWarning(
+                    "batch-gate-pending-ownership-repaired task={TaskKey} attempt={AttemptId} priorBatch={BatchId} ageMs={AgeMs}",
+                    item.Subject.TaskKey, item.ReviewAttemptId, marker?.BatchId,
+                    Math.Max(0, (long)(_time.GetUtcNow() - item.EnqueuedAtUtc).TotalMilliseconds));
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+            {
+                _logger.LogWarning(ex, "batch-gate-pending-ownership-repair-failed attempt={AttemptId}",
+                    item.ReviewAttemptId);
+            }
+        }
+    }
+
     private void Repair(InvariantAssessment assessment, BatchCoordinatorLease lease)
     {
         var manifest = assessment.Manifest;
@@ -147,17 +177,23 @@ public sealed partial class BatchGatePilotService
         var now = _time.GetUtcNow();
         var manifests = _store.ListManifests();
         var assessments = AssessInvariants(manifests, _store.ListPending());
+        var pending = _store.ListPending();
+        var pendingFindings = PendingFindings(pending, manifests, now);
         var projects = manifests.Select(manifest => manifest.Scope.Project)
+            .Concat(pending.Select(item => item.Subject.Project))
             .Concat(_invariantReports.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         foreach (var project in projects)
         {
             var findings = assessments
                 .Where(item => string.Equals(item.Manifest.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
-                .SelectMany(item => item.Findings.Select(finding => View(item, finding)))
+                .SelectMany(item => item.Findings.Select(finding => View(item, finding, now)))
+                .Concat(pendingFindings.Where(item => item.Project == project).Select(item => item.Finding))
                 .ToArray();
             // A finding that persists is logged once, when it appears.
             var known = _invariantReports.GetValueOrDefault(project)?.Findings ?? [];
-            foreach (var finding in findings.Except(known))
+            var knownWithoutAge = known.Select(finding => finding with { AgeMs = 0 }).ToHashSet();
+            foreach (var finding in findings.Where(finding =>
+                         !knownWithoutAge.Contains(finding with { AgeMs = 0 })))
                 _logger.LogWarning(
                     "batch-gate-invariant kind={Kind} batch={BatchId} phase={Phase} task={TaskKey} detail={Detail}",
                     finding.Kind, finding.BatchId, finding.Phase, finding.TaskKey, finding.Detail);
@@ -165,11 +201,102 @@ public sealed partial class BatchGatePilotService
         }
     }
 
-    private static BatchGateInvariantView View(InvariantAssessment assessment, BatchInvariantFinding finding)
+    private static BatchGateInvariantView View(InvariantAssessment assessment, BatchInvariantFinding finding,
+        DateTimeOffset now)
         => new(Kebab(finding.Kind.ToString()), finding.BatchId,
             assessment.Phase?.ToString().ToLowerInvariant(), finding.TaskKey,
             assessment.Claims.FirstOrDefault(claim => claim.TaskKey == finding.TaskKey)?.ReviewAttemptId,
-            finding.Detail, Kebab(finding.Repair.ToString()));
+            finding.Detail, Kebab(finding.Repair.ToString()),
+            Math.Max(0, (long)(now - assessment.Manifest.ClosedAtUtc).TotalMilliseconds));
+
+    private IReadOnlyList<(string Project, BatchGateInvariantView Finding)> PendingFindings(
+        IReadOnlyList<BatchGatePendingRecord> pending, IReadOnlyList<BatchGateManifest> manifests,
+        DateTimeOffset now)
+    {
+        var knownIds = manifests.Select(manifest => manifest.BatchId)
+            .ToHashSet(StringComparer.Ordinal);
+        var causes = new Dictionary<string, IReadOnlyDictionary<string, BatchGateFallbackCause>>(
+            StringComparer.Ordinal);
+        var unreadableCauses = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var project in pending.Select(item => item.Subject.Project).Distinct(StringComparer.Ordinal))
+        {
+            try
+            {
+                causes[project] = _store.ListFallbackCauses(project)
+                    .GroupBy(cause => cause.ReviewAttemptId, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+            {
+                unreadableCauses.Add(project);
+                _logger.LogWarning(ex, "batch-gate-fallback-journal-unreadable project={Project}", project);
+            }
+        }
+        var findings = new List<(string, BatchGateInvariantView)>();
+        foreach (var item in pending)
+        {
+            var age = Math.Max(0, (long)(now - item.EnqueuedAtUtc).TotalMilliseconds);
+            if (unreadableCauses.Contains(item.Subject.Project))
+            {
+                findings.Add((item.Subject.Project, new BatchGateInvariantView(
+                    "orphaned-pending-member", string.Empty, "pending", item.Subject.TaskKey,
+                    item.ReviewAttemptId, "fallback handoff journal is unreadable",
+                    "inspect-journal", age)));
+                continue;
+            }
+            try
+            {
+                var marker = BatchGateOwnershipStore.Read(MemberFolder(item));
+                causes[item.Subject.Project].TryGetValue(item.ReviewAttemptId, out var reason);
+                var action = PendingAction(item, marker, knownIds, HandoffReady(reason), now);
+                if (action is BatchPendingRecoveryAction.None or BatchPendingRecoveryAction.WaitForBatch
+                    or BatchPendingRecoveryAction.WaitForPlanner) continue;
+                findings.Add((item.Subject.Project, new BatchGateInvariantView(
+                    "orphaned-pending-member", marker?.BatchId ?? string.Empty,
+                    marker?.BatchId is null ? "pending" : "unknown", item.Subject.TaskKey,
+                    item.ReviewAttemptId,
+                    action switch
+                    {
+                        BatchPendingRecoveryAction.RestoreQueuedMarker => "pending generation has no ownership marker",
+                        BatchPendingRecoveryAction.ReleaseMissingOwner => "ownership names a missing batch manifest",
+                        BatchPendingRecoveryAction.ResumeFallback =>
+                            "fallback handoff has no running per-task gate: " + reason!.Event,
+                        _ => "unowned member exceeded the batch planner maximum wait",
+                    }, Kebab(action.ToString()), age)));
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+            {
+                findings.Add((item.Subject.Project, new BatchGateInvariantView(
+                    "orphaned-pending-member", string.Empty, "pending", item.Subject.TaskKey,
+                    item.ReviewAttemptId, "pending generation cannot read its recovery journal: "
+                        + ex.GetType().Name, "inspect-journal", age)));
+            }
+        }
+        return findings;
+    }
+
+    private bool HandoffReady(BatchGateFallbackCause? cause)
+        => cause is not null && (cause.BatchId is null || _store.LatestState(cause.BatchId).Phase
+            is BatchPhase.Paused or BatchPhase.Abandoned);
+
+    private BatchPendingRecoveryAction PendingAction(BatchGatePendingRecord item,
+        BatchGateOwnership? marker, IReadOnlySet<string> known, bool handoffReady,
+        DateTimeOffset now)
+    {
+        var task = _scanner.FindJob(item.Subject.TaskKey, item.WatchPath);
+        var projection = _authority.GetTaskProjection(item.Subject.TaskKey);
+        var age = Math.Max(0, (long)(now - item.EnqueuedAtUtc).TotalMilliseconds);
+        var maximumWait = (long)TimeSpan.FromMinutes(
+            _settings.Get(item.Subject.Project).BatchGate.MaximumWaitMinutes).TotalMilliseconds;
+        return MonolithTransitionAdapter.BatchPendingRecovery(new BatchPendingRecoveryFacts(
+            CurrentGeneration(item, task, projection), task?.State == TaskStates.AutoReview,
+            marker is null, marker is null || marker.ReviewAttemptId == item.ReviewAttemptId,
+            marker?.BatchId is not null, marker?.BatchId is { } owner
+                && (known.Contains(owner) || _store.HasManifest(owner)
+                    || _store.IsQuarantined(owner)),
+            marker?.FallbackGateActive == true || FallbackInFlight(item.ReviewAttemptId),
+            handoffReady, age, maximumWait));
+    }
 
     private static string Kebab(string name)
         => string.Concat(name.Select((letter, index) => char.IsUpper(letter)
@@ -207,12 +334,12 @@ public sealed partial class BatchGatePilotService
         BatchPhase? phase = record?.State.Phase
             ?? (_store.HasState(manifest.BatchId) ? _store.LatestState(manifest.BatchId).Phase : null);
         if (phase is not (null or BatchPhase.Formed or BatchPhase.Abandoned
-            or BatchPhase.Red or BatchPhase.Published)) return null;
+            or BatchPhase.Red or BatchPhase.Publishing or BatchPhase.Published)) return null;
         IReadOnlyList<BatchMemberClaim> claims = record?.Members ?? manifest.Members
             .Select(member => new BatchMemberClaim(member.TaskKey, member.RunAttempt, null,
                 BatchMemberDisposition.Claimed)).ToArray();
         // A settled batch without a queued member has nothing to check.
-        if (phase is not (null or BatchPhase.Formed)
+        if (phase is not (null or BatchPhase.Formed or BatchPhase.Red or BatchPhase.Publishing)
             && claims.All(claim => ClaimedPending(manifest, claim, pending) is null)) return null;
         if (record is null && phase is { } legacy)
             claims = MonolithTransitionAdapter.BatchMemberDispositions(legacy, claims, ReplayOutcomesOf(manifest));
@@ -231,7 +358,11 @@ public sealed partial class BatchGatePilotService
             return new BatchInvariantMemberFact(claim.TaskKey, queued.ReviewAttemptId,
                 claim.Disposition, true, ownership, live);
         }).ToArray();
-        var facts = new BatchInvariantFacts(manifest.BatchId, phase, manifest.Diagnostic, false, members);
+        // ParentBatchId is the durable isolation relationship. Older child
+        // snapshots may not carry the diagnostic flag, but their parent still
+        // owns the members and the child must never pause into a fallback.
+        var facts = new BatchInvariantFacts(manifest.BatchId, phase,
+            manifest.Diagnostic || manifest.ParentBatchId is not null, false, members);
         if (MonolithTransitionAdapter.BatchGateInvariants(facts).Count == 0) return null;
         var findings = MonolithTransitionAdapter.BatchGateInvariants(
             facts with { Live = BatchLive(manifest, leaseIsLiveness) });

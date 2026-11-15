@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
-import type { PromoteConceptResponse, PromoteConceptTasksResponse, TaskInfo } from '../../../../../models/task.model';
+import type { ConceptPromotionRecovery, PromoteConceptResponse, PromoteConceptTasksResponse, TaskInfo } from '../../../../../models/task.model';
 import { TaskService } from '../../../../../services/task.service';
 import { NotificationService } from '../../../../../services/notification.service';
 import { PendingButtonDirective } from '../../../../../components/async-feedback';
@@ -10,6 +10,7 @@ type Promotion =
   | { state: 'loading' }
   | { state: 'ready'; plan: PromoteConceptResponse }
   | { state: 'creating'; plan: PromoteConceptResponse }
+  | { state: 'partial'; plan: PromoteConceptResponse; message: string; recovery: ConceptPromotionRecovery }
   | { state: 'error'; message: string };
 
 /**
@@ -46,11 +47,20 @@ export class ContinueModeRefusalComponent {
   readonly working = computed(() => this.busy() || this.promotion().state === 'loading' || this.creating());
   readonly plan = computed(() => {
     const read = this.promotion();
-    return read.state === 'ready' || read.state === 'creating' ? read.plan : null;
+    return read.state === 'ready' || read.state === 'creating' || read.state === 'partial' ? read.plan : null;
   });
   readonly promoteError = computed(() => {
     const read = this.promotion();
-    return read.state === 'error' ? read.message : null;
+    return read.state === 'error' || read.state === 'partial' ? read.message : null;
+  });
+  readonly recovery = computed(() => {
+    const read = this.promotion();
+    return read.state === 'partial' ? read.recovery : null;
+  });
+  readonly confirmLabel = computed(() => {
+    if (this.recovery()) return 'Retry promotion';
+    const count = this.plan()?.items.length ?? 0;
+    return `Create ${count} implementation ${count === 1 ? 'card' : 'cards'}`;
   });
 
   private readonly tasks = inject(TaskService);
@@ -65,7 +75,9 @@ export class ContinueModeRefusalComponent {
     const job = this.job();
     this.promotion.set({ state: 'loading' });
     this.tasks.getPromoteConcept(job.id, job.watchPath ?? undefined).subscribe({
-      next: (plan) => this.promotion.set({ state: 'ready', plan }),
+      next: (plan) => this.promotion.set(plan.recovery && plan.recovery.phase !== 'completed'
+        ? { state: 'partial', plan, message: 'An earlier promotion did not finish.', recovery: plan.recovery }
+        : { state: 'ready', plan }),
       error: (err: unknown) => this.promotion.set({
         state: 'error',
         message: serverErrorMessage(err, 'The implementation proposals of this Dossier could not be read.'),
@@ -75,7 +87,7 @@ export class ContinueModeRefusalComponent {
 
   createCards(): void {
     const read = this.promotion();
-    if (read.state !== 'ready' || read.plan.items.length === 0) return;
+    if ((read.state !== 'ready' && read.state !== 'partial') || read.plan.items.length === 0) return;
     const job = this.job();
     this.promotion.set({ state: 'creating', plan: read.plan });
     this.tasks.promoteConcept(job.id, read.plan.items.map((_, index) => index), job.watchPath ?? undefined).subscribe({
@@ -84,10 +96,13 @@ export class ContinueModeRefusalComponent {
         this.notifications.success(createdSummary(result));
         this.promoted.emit();
       },
-      error: (err: unknown) => this.promotion.set({
-        state: 'error',
-        message: serverErrorMessage(err, 'The implementation cards were not created.'),
-      }),
+      error: (err: unknown) => {
+        const body = (err as { error?: { recovery?: ConceptPromotionRecovery } })?.error;
+        const message = serverErrorMessage(err, 'Promotion could not finish.');
+        this.promotion.set(body?.recovery
+          ? { state: 'partial', plan: read.plan, message, recovery: body.recovery }
+          : { state: 'error', message });
+      },
     });
   }
 

@@ -312,6 +312,112 @@ public sealed class ConceptPipelineTests : IDisposable
         Assert.Equal("decided", Assert.Single(updates).CurrentStatus);
     }
 
+    [Theory]
+    [InlineData("after-card-created", "creating-cards")]
+    [InlineData("after-cards-recorded", "cards-recorded")]
+    [InlineData("after-dossier-accepted", "dossier-accepted")]
+    public async Task Promotion_Failure_ExposesCreatedKeys_AndRetryConverges(string failurePoint, string expectedPhase)
+    {
+        var repository = Path.Combine(_root, "repository");
+        var taskStore = Path.Combine(_root, "tasks");
+        Directory.CreateDirectory(repository);
+        Directory.CreateDirectory(taskStore);
+        var (config, scanner, states, mutations) = BuildServices(repository, taskStore);
+        var sourceId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "concept-recovery-source", Title = "Concept recovery source",
+            Mode = TaskModes.Concept, RequiresIntegration = false,
+            WatchPath = taskStore, TargetState = TaskStates.HumanReview,
+        })!;
+        var source = scanner.FindJob(sourceId, taskStore)!;
+        var directory = ConceptWorkbenchContract.CreateScaffold(
+            repository, "recovery", "Recovery", "Recovery test.", source.Key ?? source.Id);
+        var descriptorPath = Path.Combine(directory, "workbench.json");
+        var descriptor = JsonSerializer.Deserialize<ConceptWorkbenchDescriptor>(
+            File.ReadAllText(descriptorPath), new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        descriptor = descriptor with { Status = "active", ImplementationTasks =
+        [
+            new() { Id = "first", Title = "First slice", PromptMarkdown = "Implement first slice." },
+            new() { Id = "second", Title = "Second slice", PromptMarkdown = "Implement second slice.", DependsOn = ["first"] },
+        ] };
+        File.WriteAllText(descriptorPath, JsonSerializer.Serialize(descriptor,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        var placedDescriptor = Path.Combine(ConceptWorkbenchStore.SnapshotRoot(source.FolderPath),
+            "docs", "recovery", "workbench.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(placedDescriptor)!);
+        File.Copy(descriptorPath, placedDescriptor);
+        var plan = new PromoteConceptResponse
+        {
+            Source = new ConceptSourceDocument
+            {
+                RepoRelativePath = "docs/recovery/index.html", Title = "Recovery",
+            },
+            Items = descriptor.ImplementationTasks,
+        };
+        var service = new ConceptPromotionService(scanner, mutations,
+            new ManagedRepositoryMutationService(
+                new GitService(NullLogger<GitService>.Instance, scanner, config)),
+            new WorkbenchChangeNotifier(NullLogger<WorkbenchChangeNotifier>.Instance),
+            NullLogger<ConceptPromotionService>.Instance);
+        service.FailurePoint = point => { if (point == failurePoint) throw new IOException("Injected promotion failure"); };
+
+        Assert.Throws<IOException>(() => service.Promote(source, plan, new PromoteConceptRequest()));
+        var recovery = service.GetRecovery(source);
+        Assert.Equal(expectedPhase, recovery.Phase);
+        Assert.NotEmpty(recovery.Created);
+        Assert.All(recovery.Created, card => Assert.False(string.IsNullOrWhiteSpace(card.TaskKey ?? card.JobId)));
+        Assert.Equal(recovery.Created.Select(card => card.JobId),
+            ConceptPromotionRecoveryStore.Read(source.FolderPath)!.Created.Select(card => card.JobId));
+        if (failurePoint == "after-card-created")
+            Assert.Empty(SpawnedTaskLedger.Read(source.FolderPath));
+
+        service.FailurePoint = null;
+        var result = service.Promote(source, plan, new PromoteConceptRequest());
+        Assert.Equal(2, result.Created.Count);
+        Assert.Equal(2, scanner.ScanAllJobs().Count(card =>
+            card.CreationSource.StartsWith("concept-promotion:", StringComparison.Ordinal)));
+        Assert.Equal(2, SpawnedTaskLedger.Read(source.FolderPath).Count);
+        Assert.All(result.Created, promoted =>
+        {
+            var card = scanner.FindJob(promoted.JobId, taskStore)!;
+            Assert.Equal("docs/recovery/index.html", card.Dossier?.Path);
+            Assert.Contains(source.Key ?? source.Id, card.References.RelatedTo);
+        });
+        Assert.Equal([result.Created[0].TaskKey], scanner.FindJob(result.Created[1].JobId, taskStore)!
+            .References.DependsOn.Select(edge => edge.Key));
+        using var accepted = JsonDocument.Parse(File.ReadAllText(placedDescriptor));
+        Assert.Equal("decided", accepted.RootElement.GetProperty("status").GetString());
+
+        Directory.CreateDirectory(TaskPaths.ResultsDir(source.FolderPath));
+        File.WriteAllText(Path.Combine(TaskPaths.ResultsDir(source.FolderPath), "deliverables.md"),
+            "# Approved concept\n\nThe sight review approved this deliverable.\n");
+        CompletionContentFixture.RecordPassedReview(source.FolderPath, "concept-fit");
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+        pipelineLog.Begin(source.FolderPath, PipelineCatalogue.Concept, source.ProjectName, source.Id);
+        var now = source.CreatedAt.ToUniversalTime().AddMinutes(1);
+        foreach (var stepId in new[] { PipelineCatalogue.ConceptSightReviewGateStepId,
+                     PipelineCatalogue.ConceptPromotionStepId })
+            pipelineLog.RecordStep(source.FolderPath, new PipelineStepExecution
+            {
+                StepId = stepId,
+                Kind = stepId == PipelineCatalogue.ConceptPromotionStepId ? StepKind.Tool : StepKind.Orchestrator,
+                Status = PipelineStepStatus.Passed,
+                StartedAt = now, CompletedAt = now, Verdict = "sight-review-approved",
+            });
+        pipelineLog.Complete(source.FolderPath, now);
+        var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
+        var transitions = new TaskTransitionService(scanner, states, mutations,
+            new GitService(NullLogger<GitService>.Instance, scanner, config, prompts),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config),
+            NullLogger<TaskTransitionService>.Instance, pipelineLog: pipelineLog);
+        var move = await transitions.MoveAsync(source.Id, TaskStates.Completed, taskStore);
+        Assert.Equal(MoveJobStatus.Success, move.Status);
+        var completed = scanner.FindJob(source.Id, taskStore)!;
+        service.RecordPhase(completed, "completed");
+        Assert.Equal(TaskStates.Completed, completed.State);
+        Assert.Equal("completed", ConceptPromotionRecoveryStore.Read(completed.FolderPath)?.Phase);
+    }
+
     [Fact]
     public void Review_RejectsSliceDependenciesThatAreUnknownForwardOrDuplicated()
     {
