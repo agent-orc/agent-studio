@@ -1,13 +1,7 @@
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  effect,
-  inject,
-  input,
-  output,
-  signal,
+  ChangeDetectionStrategy, Component, computed, effect,
+  inject, input, output, signal,
 } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 
