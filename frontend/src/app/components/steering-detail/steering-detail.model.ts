@@ -24,6 +24,7 @@ import {
   type AspectFinding,
   type AspectVerdictTone,
 } from '../aspect-findings';
+import type { StatusTone } from '../status-indicator/status-indicator.component';
 
 /** The four completion-loop steering verdicts (mirrors the orchestrator). */
 export type SteeringVerdict = 'accept' | 'reissue' | 'escalate' | 'continuation';
@@ -66,6 +67,19 @@ export function steeringTone(verdict: SteeringVerdict): AspectVerdictTone {
     case 'escalate':     return 'danger';
     case 'continuation': return 'neutral';
   }
+}
+
+/** Steering verdict to shared status indicator tone (AGT-3403). */
+const STEERING_STATUS_TONES: Readonly<Record<SteeringVerdict, StatusTone>> = {
+  accept: 'success',
+  reissue: 'warning',
+  escalate: 'danger',
+  continuation: 'neutral',
+};
+
+/** Map a steering verdict to a shared status tone; unknown verdicts are neutral. */
+export function steeringStatusTone(verdict: SteeringVerdict): StatusTone {
+  return STEERING_STATUS_TONES[verdict] ?? 'neutral';
 }
 
 /** Human label for a steering verdict chip. */

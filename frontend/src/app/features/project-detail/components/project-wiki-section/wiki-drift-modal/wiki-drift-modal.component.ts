@@ -6,6 +6,7 @@ import { DriftReport, DriftReportDetailResponse } from '../../../../../models/dr
 import { DriftService } from '../../../../../services/drift.service';
 import { TaskService } from '../../../../../services/task.service';
 import { CliCatalogStore } from '../../../../cli';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
 import { OverlayPortalDirective } from '../../../../../directives/overlay-portal.directive';
 import { copyTextToClipboard } from '../../../../../services/clipboard.util';
@@ -15,6 +16,7 @@ import {
   wikiFormatTimestamp,
   wikiSlug,
 } from '../wiki-path.util';
+import { driftScoreBandTone } from '../wiki-drift-band';
 import { type WikiLinkedElement, wikiLinkedElementKindLabel } from '../wiki-linked-element';
 
 /** How long the copy button keeps its result wording before resetting. */
@@ -35,13 +37,14 @@ const DRIFT_REPORT_LIMIT = 12;
   selector: 'app-wiki-drift-modal',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, OverlayPortalDirective, StudioIconComponent, TooltipDirective],
+  imports: [FormsModule, OverlayPortalDirective, StatusIndicatorComponent, StudioIconComponent, TooltipDirective],
   templateUrl: './wiki-drift-modal.component.html',
   styleUrl: './wiki-drift-modal.component.scss',
 })
 export class WikiDriftModalComponent implements OnInit, OnDestroy {
   readonly cliTypes = CLI_TYPES;
   readonly formatTimestamp = wikiFormatTimestamp;
+  readonly bandTone: (band: string | null | undefined) => StatusTone = driftScoreBandTone;
 
   readonly projectName = input.required<string>();
   /** Repo-relative path of the open page; null for the root folder. */

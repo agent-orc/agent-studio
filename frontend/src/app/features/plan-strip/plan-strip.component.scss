@@ -121,35 +121,8 @@
 }
 
 .plan-item__heartbeat {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  display: inline-flex;
   flex: 0 0 auto;
-  background: var(--studio-accent);
-
-  &--pulsing {
-    animation: plan-pulse 1.4s ease-in-out infinite;
-  }
-
-  &--dim {
-    background: var(--studio-fg-dim);
-    opacity: 0.5;
-  }
-}
-
-@keyframes plan-pulse {
-  0% {
-    box-shadow: 0 0 0 0 var(--studio-accent-faint);
-    opacity: 1;
-  }
-  70% {
-    box-shadow: 0 0 0 6px transparent;
-    opacity: 0.6;
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-    opacity: 1;
-  }
 }
 
 .plan-item__expand {
@@ -294,8 +267,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .plan-item--changed,
-  .plan-item__heartbeat--pulsing {
+  .plan-item--changed {
     animation-duration: 0s;
   }
 }

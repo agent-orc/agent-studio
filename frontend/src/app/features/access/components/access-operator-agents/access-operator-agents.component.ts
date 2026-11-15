@@ -1,5 +1,6 @@
 import { DOCUMENT } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { formatAccessTime } from '../../models/access.model';
@@ -25,6 +26,7 @@ import { OperatorAgentsService } from '../../services/operator-agents.service';
   selector: 'app-access-operator-agents',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [StatusIndicatorComponent],
   templateUrl: './access-operator-agents.component.html',
   styleUrl: './access-operator-agents.component.scss',
 })

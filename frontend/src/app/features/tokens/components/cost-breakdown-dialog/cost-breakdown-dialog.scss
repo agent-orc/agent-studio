@@ -7,8 +7,8 @@
 }
 
 .cost-breakdown__state { color: var(--studio-fg-dim); }
-.cost-breakdown__state--error,
-.cost-breakdown__warning { color: var(--studio-accent-6-strong); }
+.cost-breakdown__state--error { color: var(--studio-accent-6-strong); }
+.cost-breakdown__unconfirmed { justify-self: start; }
 
 .cost-breakdown__model {
   display: grid;

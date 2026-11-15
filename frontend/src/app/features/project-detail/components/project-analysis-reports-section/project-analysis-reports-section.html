@@ -79,14 +79,14 @@
             [attr.data-testid]="'project-analysis-report-row'"
             (click)="openReport.emit(r)" tabindex="0" (keydown.enter)="openReport.emit(r)" (keydown.space)="openReport.emit(r); $event.preventDefault()">
           <header>
-            <span class="par__sev par__sev--{{ r.severity.toLowerCase() }}">{{ r.severity }}</span>
+            <app-status-indicator [tone]="severityTone(r.severity)" [label]="r.severity" [compact]="true"
+                                  testId="project-analysis-report-severity" />
             <span class="par__topic">{{ r.topic }}</span>
             <span class="par__trigger" [cacTooltip]="'Trigger: ' + r.trigger">{{ triggerLabel(r.trigger) }}</span>
             @if (r.parseStatus !== 'Structured') {
-              <span class="par__parse par__parse--bad"
-                    [attr.data-testid]="'project-analysis-report-parse-' + r.parseStatus.toLowerCase()"
-                    [cacTooltip]="parseTooltip(r)">
-                ⚠️ {{ parseLabel(r.parseStatus) }}
+              <span class="par__parse" [cacTooltip]="parseTooltip(r)">
+                <app-status-indicator tone="warning" [label]="parseLabel(r.parseStatus)" [compact]="true"
+                                      [testId]="'project-analysis-report-parse-' + r.parseStatus.toLowerCase()" />
               </span>
             }
             <span class="par__ts">{{ formatTime(r.createdAt) }}</span>

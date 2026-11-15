@@ -4,7 +4,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { OperatorSweepProjection } from '../../../task-pipeline';
-import { OperatorSweepsBlockComponent } from './operator-sweeps-block';
+import { OperatorSweepsBlockComponent, sweepsStatusTone } from './operator-sweeps-block';
 
 function projection(overrides: Partial<OperatorSweepProjection> = {}): OperatorSweepProjection {
   return {
@@ -88,6 +88,12 @@ describe('OperatorSweepsBlockComponent', () => {
     expect(gate?.textContent).toContain('gate host repair');
     expect(host.querySelector('[data-testid="operator-sweep-toggle-gate-triage"]')?.textContent?.trim()).toBe('Resume');
     expect(host.querySelector('[data-testid="operator-sweep-salvage"]')?.textContent).toContain('Overdue');
+    const sweepTone = (id: string) => host.querySelector<HTMLElement>(`[data-testid="operator-sweep-${id}"] [data-testid="operator-sweep-state"]`)?.dataset['tone'];
+    expect(sweepTone('gate-triage')).toBe('neutral');
+    expect(sweepTone('salvage')).toBe('danger');
+    const header = host.querySelector<HTMLElement>('[data-testid="operator-sweeps-state"]');
+    expect(header?.textContent?.trim()).toBe('Attention needed');
+    expect(header?.dataset['tone']).toBe('danger');
 
     const waiting = host.querySelector('[data-testid="operator-sweeps-waiting"] [data-task="AGT-2955"]');
     expect(waiting?.textContent).toContain('whole round budget');
@@ -112,5 +118,13 @@ describe('OperatorSweepsBlockComponent', () => {
 
     expect(host.querySelector('[data-testid="operator-sweep-toggle-fix-rounds"]')?.textContent?.trim()).toBe('Resume');
     expect(host.querySelector('[data-testid="operator-sweep-fix-rounds"]')?.textContent).toContain('human:ops');
+  });
+
+  it('maps the sweeps header status onto tones', () => {
+    expect(sweepsStatusTone('healthy')).toBe('success');
+    expect(sweepsStatusTone('alarm')).toBe('danger');
+    expect(sweepsStatusTone('paused')).toBe('neutral');
+    expect(sweepsStatusTone('disabled')).toBe('neutral');
+    expect(sweepsStatusTone('later')).toBe('neutral');
   });
 });

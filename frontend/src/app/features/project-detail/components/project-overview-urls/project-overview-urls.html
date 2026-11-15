@@ -24,11 +24,6 @@
     <ul class="overview-urls__list">
       @for (url of visibleUrls(); track url.id) {
         <li class="overview-urls__row" [attr.data-testid]="'project-overview-url-' + url.id">
-          <span class="overview-urls__dot"
-                [class.overview-urls__dot--running]="statusFor(url) === 'running'"
-                [class.overview-urls__dot--offline]="statusFor(url) === 'offline'"
-                [class.overview-urls__dot--building]="statusFor(url) === 'building'"
-                aria-hidden="true"></span>
           <button type="button"
                   class="overview-urls__link"
                   [attr.aria-label]="'Open ' + url.label + ' preview'"
@@ -36,14 +31,11 @@
             <strong>{{ url.label }}</strong>
             <span>{{ host(url.url) }}</span>
           </button>
-          <span class="overview-urls__pill"
-                [class.overview-urls__pill--running]="statusFor(url) === 'running'"
-                [class.overview-urls__pill--offline]="statusFor(url) === 'offline'"
-                [class.overview-urls__pill--building]="statusFor(url) === 'building'"
+          <span class="overview-urls__status"
                 role="status"
                 aria-live="polite"
                 [attr.data-status]="statusFor(url)"
-                [attr.data-testid]="'project-overview-url-status-' + url.id">{{ statusFor(url) | projectUrlStatusLabel }}</span>
+                [attr.data-testid]="'project-overview-url-status-' + url.id"><app-status-indicator [compact]="true" [tone]="statusTone(statusFor(url))" [label]="statusFor(url) | projectUrlStatusLabel" /></span>
           @if (url.startRule && (statusFor(url) === 'offline' || statusFor(url) === 'building')) {
             <button type="button"
                     class="overview-urls__start"

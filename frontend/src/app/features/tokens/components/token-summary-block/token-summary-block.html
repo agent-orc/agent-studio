@@ -8,11 +8,11 @@
         <span class="tok-sum__sub">No orchestrator activity yet.</span>
       }
       @if ((s.unknownModelCount ?? 0) > 0) {
-        <span class="studio-pill studio-pill--warn"
-              data-testid="token-summary-pricing-drift"
-              [cacTooltip]="'These active model ids are absent from the pinned TokenEconomy catalog. Update and verify the exact package pin.'">
-          {{ s.unknownModelCount }} model{{ s.unknownModelCount === 1 ? '' : 's' }} without price data
-        </span>
+        <app-status-indicator tone="warning"
+                              [label]="s.unknownModelCount + ' model' + (s.unknownModelCount === 1 ? '' : 's') + ' without price data'"
+                              detail="These active model ids are absent from the pinned TokenEconomy catalog. Update and verify the exact package pin."
+                              [compact]="true"
+                              testId="token-summary-pricing-drift" />
       }
     </header>
 

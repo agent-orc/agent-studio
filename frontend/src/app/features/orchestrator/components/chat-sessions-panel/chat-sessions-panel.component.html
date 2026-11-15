@@ -110,15 +110,14 @@
             data-testid="chat-session-open"
             (click)="open(row)">
       <span class="chat-row__lead" aria-hidden="true">
-        @if (row.live) {
-          <span class="chat-row__live-dot" [attr.data-live]="row.live"></span>
-        } @else if (row.unread) {
+        @if (!row.live && row.unread) {
           <span class="chat-row__unread-dot" data-testid="chat-session-unread"></span>
         }
       </span>
       <span class="chat-row__title" data-testid="chat-session-title">{{ row.title }}</span>
       @if (row.liveLabel) {
-        <span class="chat-row__status" [attr.data-live]="row.live" data-testid="chat-session-live">{{ row.liveLabel }}</span>
+        <app-status-indicator class="chat-row__status" [attr.data-live]="row.live" [tone]="liveTone(row.live)"
+                              [label]="row.liveLabel" [compact]="true" testId="chat-session-live" />
       } @else {
         <time class="chat-row__time" [attr.datetime]="row.lastActivityAt" data-testid="chat-session-time">{{ row.timeLabel }}</time>
       }

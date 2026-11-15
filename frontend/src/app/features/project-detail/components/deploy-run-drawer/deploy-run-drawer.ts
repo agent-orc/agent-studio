@@ -15,6 +15,8 @@ import {
   type DeployRunAction,
   type DeploymentLogLine,
 } from '../../state/deploy-area.model';
+import { runStateTone } from '../../state/deploy-status-tone';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 export interface DeployRunActionState {
   busy: DeployRunAction | null;
@@ -29,7 +31,7 @@ const ACTION_LABEL: Record<DeployRunAction, string> = {
 @Component({
   selector: 'app-deploy-run-drawer',
   standalone: true,
-  imports: [DatePipe, SidesheetComponent],
+  imports: [DatePipe, SidesheetComponent, StatusIndicatorComponent],
   templateUrl: './deploy-run-drawer.html',
   styleUrl: './deploy-run-drawer.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -48,11 +50,11 @@ export class DeployRunDrawerComponent {
   readonly title = computed(() => `${triggerLabel(this.run().trigger)} to ${this.run().environmentName}`);
   readonly subtitle = computed(() => this.run().releaseVersion ? `Release ${this.run().releaseVersion}` : this.run().releaseId);
   readonly duration = computed(() => formatDuration(this.run().startedAt, this.run().finishedAt));
-  readonly approval = computed(() => {
+  readonly approval = computed<{ tone: StatusTone; label: string }>(() => {
     const run = this.run();
-    if (run.approvedBy) return `Approved by ${run.approvedBy}`;
-    if (run.state === 'awaiting-approval') return 'Waiting for an Owner or Maintainer';
-    return run.steps.some(step => step.name === 'approval') ? 'Not approved' : 'Not required';
+    if (run.approvedBy) return { tone: 'success', label: `Approved by ${run.approvedBy}` };
+    if (run.state === 'awaiting-approval') return { tone: 'warning', label: 'Waiting for an Owner or Maintainer' };
+    return { tone: 'neutral', label: run.steps.some(step => step.name === 'approval') ? 'Not approved' : 'Not required' };
   });
   readonly actions = computed(() => runActions(this.run().state).map(kind => ({ kind, label: ACTION_LABEL[kind] })));
   readonly logError = computed(() => {
@@ -65,6 +67,7 @@ export class DeployRunDrawerComponent {
   });
 
   protected readonly stateLabel = RUN_STATE_LABEL;
+  protected readonly runTone = runStateTone;
   protected readonly stepLabel = STEP_STATE_LABEL;
   protected readonly stepKindLabel = stepKindLabel;
 

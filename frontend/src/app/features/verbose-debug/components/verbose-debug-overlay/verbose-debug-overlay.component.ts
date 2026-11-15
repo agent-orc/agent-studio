@@ -32,7 +32,8 @@ import {
 import { formatTokens as fmtTokens } from '../../../../services/format.util';
 
 import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
-import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { TOOL_LABELS, artifactStatusTone, debugRunStatusTone, decisionSeverityTone, warningRowTone } from './verbose-debug-status';
 export type VerboseDebugTab =
   | 'overview'
   | 'actors'
@@ -85,16 +86,6 @@ interface ArtifactRow {
   timestamp?: string;
 }
 
-const TOOL_LABELS: Record<ToolFamily, string> = {
-  read: 'Read',
-  search: 'Search',
-  command: 'Command',
-  edit: 'Edit',
-  task: 'Task',
-  todo: 'Todo',
-  other: 'Other',
-};
-
 /**
  * Read-only fullscreen "Verbose Debug" overlay. Surfaces actor activity,
  * orchestrator decisions, supervisor advisories, run timing, tool density,
@@ -107,11 +98,16 @@ const TOOL_LABELS: Record<ToolFamily, string> = {
   selector: 'app-verbose-debug-overlay',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, OverlayPortalDirective],
+  imports: [OverlayPortalDirective, StatusIndicatorComponent],
   templateUrl: './verbose-debug-overlay.component.html',
   styleUrl: './verbose-debug-overlay.component.scss',
 })
 export class VerboseDebugOverlayComponent {
+  readonly severityTone = decisionSeverityTone;
+  readonly warningTone = warningRowTone;
+  readonly runStatusTone = debugRunStatusTone;
+  readonly artifactTone = artifactStatusTone;
+
   readonly lines = input<readonly CliOutputLine[]>([]);
   readonly runTimeline = input<RunTimeline | null>(null);
   readonly screenshots = input<readonly TaskScreenshot[]>([]);

@@ -27,13 +27,14 @@ import {
 } from '../wiki-linked-element';
 import { WikiRelatedTasksComponent } from '../wiki-related-tasks/wiki-related-tasks.component';
 import { MenuComponent, type MenuItemClickEvent } from '../../../../../components/menu';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 
 type WikiAnchorState = 'pending' | 'available' | 'missing' | 'active';
 
 @Component({
   selector: 'app-wiki-linked-elements',
   standalone: true,
-  imports: [WikiRelatedTasksComponent, MenuComponent],
+  imports: [WikiRelatedTasksComponent, MenuComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './wiki-linked-elements.component.html',
   styleUrl: './wiki-linked-elements.component.scss',

@@ -22,18 +22,11 @@
   }
 
   @if (tokenFreshness(); as freshness) {
-    <div class="tup__freshness"
-         [class.tup__freshness--warning]="freshness.status !== 'complete'"
-         data-testid="token-usage-as-of">
-      <span class="tup__freshness-dot" aria-hidden="true"></span>
-      <span>
-        Data as of
-        @if (freshness.asOf) {
-          <time [attr.datetime]="freshness.asOf">{{ formatTs(freshness.asOf) }} UTC</time>
-        } @else {
-          <span>no readable activity timestamp</span>
-        }
-      </span>
+    <div class="tup__freshness" data-testid="token-usage-as-of" [attr.data-freshness]="freshness.status">
+      <app-status-indicator [tone]="freshnessTone(freshness.status)"
+                            [label]="'Data as of ' + (freshness.asOf ? formatTs(freshness.asOf) + ' UTC' : 'no readable activity timestamp')"
+                            [compact]="true"
+                            testId="token-usage-freshness" />
     </div>
     @if (freshness.warning; as warning) {
       <div class="tup__source-warning" data-testid="token-usage-source-warning">

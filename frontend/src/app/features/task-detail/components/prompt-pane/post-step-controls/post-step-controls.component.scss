@@ -83,18 +83,9 @@
   }
 
   &__attempt-number,
-  &__attempt-status,
   &__artifact {
     font-family: var(--font-mono);
     white-space: nowrap;
-  }
-
-  &__history-row[data-status='ok'] &__attempt-status {
-    color: var(--severity-pass);
-  }
-
-  &__history-row[data-status='failed'] &__attempt-status {
-    color: var(--severity-high);
   }
 
   &__attempt-summary,

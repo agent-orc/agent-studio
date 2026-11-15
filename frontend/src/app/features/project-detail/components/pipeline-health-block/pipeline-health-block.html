@@ -4,28 +4,28 @@
            [attr.data-status]="h.status"
            data-testid="pipeline-health">
     <header class="ph__head">
-      <span class="ph__title"><i aria-hidden="true"></i>Pipeline health</span>
-      <span class="ph__state">{{ h.status === 'alarm' ? 'Attention needed' : (h.status === 'running' ? 'Gate running' : 'Healthy') }}</span>
+      <span class="ph__title">Pipeline health</span>
+      <app-status-indicator class="ph__state" [tone]="headerStatus(h.status).tone" [label]="headerStatus(h.status).label" testId="pipeline-health-state" />
       <button type="button" class="ph__flow" data-testid="pipeline-health-open-flow" (click)="openFlowHealth.emit()">Flow health</button>
     </header>
     <div class="ph__grid">
       <section class="ph__metric" data-testid="pipeline-health-gate">
         <span class="ph__label">Machine gate</span>
         @if (h.activeGate; as gate) {
-          <strong>{{ gate.isHanging ? 'Gate hanging since ' : 'Running for ' }}{{ gate.elapsedMinutes }} min</strong>
+          <app-status-indicator [tone]="gate.isHanging ? 'danger' : 'running'" [label]="(gate.isHanging ? 'Gate hanging since ' : 'Running for ') + gate.elapsedMinutes + ' min'" testId="pipeline-health-gate-state" />
           <small>{{ gate.jobId }} · budget {{ gate.budgetMinutes }} min</small>
         } @else {
-          <strong>Idle</strong>
+          <app-status-indicator tone="neutral" label="Idle" testId="pipeline-health-gate-state" />
           <small>No acquired gate without completion</small>
         }
       </section>
       <section class="ph__metric" data-testid="pipeline-health-fingerprint">
         <span class="ph__label">Failure fingerprint</span>
         @if (h.fingerprint; as fp) {
-          <strong>{{ fp.consecutiveFailures }} / {{ fp.threshold }} consecutive</strong>
+          <app-status-indicator [tone]="fp.isSystemic ? 'danger' : 'warning'" [label]="fp.consecutiveFailures + ' / ' + fp.threshold + ' consecutive'" testId="pipeline-health-fingerprint-state" />
           <small>{{ fp.isSystemic ? 'Systemic gate problem' : fp.fingerprint }}</small>
         } @else {
-          <strong>No repeating failure</strong>
+          <app-status-indicator tone="success" label="No repeating failure" testId="pipeline-health-fingerprint-state" />
           <small>Sequence resets after a passing gate</small>
         }
       </section>

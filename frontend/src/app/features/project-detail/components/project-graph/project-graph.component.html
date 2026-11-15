@@ -39,14 +39,14 @@
           {{ project.solutions.length }} solution {{ project.solutions.length === 1 ? 'manifest' : 'manifests' }} ·
           {{ project.workflows.length }} workflow {{ project.workflows.length === 1 ? 'manifest' : 'manifests' }} (presence only) ·
           <span data-testid="project-graph-source-provenance">
-            {{ project.sourceRevision ? project.sourceRevision.slice(0, 12) : 'revision unavailable' }} · {{ project.sourceState }}
+            {{ project.sourceRevision ? project.sourceRevision.slice(0, 12) : 'revision unavailable' }} · <app-status-indicator [compact]="true" [tone]="sourceStateTone(project.sourceState)" [label]="project.sourceState" testId="project-graph-source-state" />
           </span>
         </div>
       </div>
 
       @if (project.warnings.length > 0) {
         <div class="project-graph__warnings" data-testid="project-graph-warnings">
-          <strong>Partial discovery</strong>
+          <app-status-indicator tone="warning" label="Partial discovery" testId="project-graph-warnings-state" />
           @for (warning of project.warnings; track warning) { <span>{{ warning }}</span> }
         </div>
       }
@@ -114,9 +114,9 @@
                           <summary>{{ relations.length }} {{ relations.length === 1 ? 'relation' : 'relations' }}</summary>
                           <ul>
                             @for (relation of relations; track relation.id) {
-                              <li [class.is-unresolved]="relation.resolution === 'unresolved'">
+                              <li>
                                 <strong>{{ relation.direction === 'outgoing' ? '→' : '←' }} {{ relation.label }}</strong>
-                                <span>{{ relation.resolution }} · {{ relation.evidence }}</span>
+                                <span><app-status-indicator [compact]="true" [tone]="relationTone(relation.resolution)" [label]="relation.resolution" testId="project-graph-relation-resolution" /> · {{ relation.evidence }}</span>
                               </li>
                             }
                           </ul>

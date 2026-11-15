@@ -67,6 +67,11 @@ describe('ProjectDeployHistoryComponent', () => {
     expect(withoutTime('run-c-production')).toEqual(['Deploy', 'Production', '2026.10.19.2', 'Awaiting approval', 'local.dev', 'Not finished']);
     expect(cells('run-c-stage-redeploy').slice(0, 4)).toEqual(['Redeploy', 'Staging', '2026.10.19.2', 'Cancelled']);
     expect(cells('run-a-stage-rollback')[0]).toBe('Automatic rollback');
+    const outcomeTone = (id: string) => byTestId(`deploy-run-row-${id}`)!
+      .querySelector<HTMLElement>('[data-testid="deploy-run-outcome-cell"]')!.dataset['tone'];
+    expect(outcomeTone('run-b-stage')).toBe('warning');
+    expect(outcomeTone('run-c-production')).toBe('info');
+    expect(outcomeTone('run-c-stage-redeploy')).toBe('neutral');
     expect(byTestId('deploy-history-count')?.textContent?.trim()).toBe('7 of 7 runs');
   });
 

@@ -11,10 +11,12 @@
       <span class="ov-agent-work__value" data-testid="agent-work-calls">
         <span class="studio-count-badge">{{ aw.calls }} session{{ aw.calls === 1 ? '' : 's' }}</span>
         @if (aw.recovered) {
-          <span class="studio-pill studio-pill--warn"
-                [cacTooltip]="'At least one CLI invocation could not resume the prior session and reconstructed context from disk.'">
-            recovered
-          </span>
+          <app-status-indicator
+            tone="warning"
+            label="recovered"
+            detail="At least one CLI invocation could not resume the prior session and reconstructed context from disk."
+            [compact]="true"
+            testId="agent-work-recovered" />
         }
       </span>
       <span class="ov-agent-work__timing">

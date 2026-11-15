@@ -22,22 +22,6 @@
   background: color-mix(in srgb, var(--studio-warn) 7%, var(--studio-bg-surface));
 }
 
-.dossier__signal {
-  display: inline-grid;
-  width: var(--studio-spacing-4);
-  height: var(--studio-spacing-4);
-  place-items: center;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--studio-warn) 16%, transparent);
-  color: var(--studio-warn);
-  font-weight: 700;
-}
-
-.dossier__label {
-  color: var(--studio-fg-strong);
-  font-weight: 700;
-}
-
 .dossier__reason {
   min-width: 0;
   overflow: hidden;

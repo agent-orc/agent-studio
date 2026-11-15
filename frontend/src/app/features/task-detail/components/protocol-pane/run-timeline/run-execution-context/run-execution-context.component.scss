@@ -40,7 +40,4 @@
   flex: 1 1 200px;
   min-width: 0;
 }
-.exec-context__source-flag { font-size: 10px; border-radius: 3px; padding: 0 4px; flex: 0 0 auto; }
-.exec-context__source-flag--ok { color: var(--severity-ok, var(--studio-accent)); background: color-mix(in srgb, var(--severity-ok, var(--studio-accent)) 14%, transparent); }
-.exec-context__source-flag--missing { color: var(--studio-fg-muted); background: var(--studio-bg-hover); }
 .exec-context__source-detail { color: var(--studio-fg-dim); font-size: 10.5px; font-style: italic; }

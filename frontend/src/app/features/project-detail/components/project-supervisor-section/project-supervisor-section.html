@@ -3,14 +3,9 @@
     <span class="psup__icon">🛡️</span>
     Supervisor
     <app-concept-help concept="supervisor" />
-    @if (status() === 'live') {
-      <span class="psup__pill psup__pill--good" data-testid="project-supervisor-status">live</span>
-    } @else if (status() === 'idle') {
-      <span class="psup__pill" data-testid="project-supervisor-status">idle</span>
-    } @else if (status() === 'paused') {
-      <span class="psup__pill psup__pill--warn" data-testid="project-supervisor-status">paused</span>
-    } @else if (status() === 'error') {
-      <span class="psup__pill psup__pill--bad" data-testid="project-supervisor-status">error</span>
+    @if (status() !== 'unknown') {
+      <app-status-indicator class="psup__status" [tone]="statusTone()" [label]="status()" [compact]="true"
+                            testId="project-supervisor-status" />
     }
   </h3>
 
@@ -18,7 +13,7 @@
     <p class="studio-empty">Loading…</p>
   } @else if (observation()) {
     <dl class="psup__meta">
-      <div><dt>Runner</dt><dd>{{ observation()!.runnerStatus }}</dd></div>
+      <div><dt>Runner</dt><dd><app-status-indicator [tone]="runnerTone(observation()!.runnerStatus)" [label]="observation()!.runnerStatus" [compact]="true" testId="project-supervisor-runner-status" /></dd></div>
       @if (observation()!.currentJobId) {
         <div><dt>Active task</dt><dd>{{ observation()!.currentJobId }} · state {{ observation()!.currentRunState || '—' }}</dd></div>
       }
@@ -50,10 +45,9 @@
     } @else {
       <ul class="psup__list" data-testid="project-supervisor-advisories">
         @for (a of advisories(); track a.createdAt + a.topic) {
-          <li class="psup__item"
-              [class.psup__item--high]="a.severity === 'High'"
-              [class.psup__item--warn]="a.severity === 'Warn'">
-            <span class="psup__sev">{{ a.severity }}</span>
+          <li class="psup__item">
+            <app-status-indicator [tone]="severityTone(a.severity)" [label]="a.severity" [compact]="true"
+                                  testId="project-supervisor-advisory-severity" />
             <span class="psup__topic">{{ a.topic }}</span>
             <span class="psup__msg">{{ a.message }}</span>
           </li>

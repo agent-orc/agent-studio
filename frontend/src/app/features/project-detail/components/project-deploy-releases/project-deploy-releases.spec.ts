@@ -2,7 +2,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { vi } from 'vitest';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { of } from 'rxjs';
-import { ProjectDeployReleasesComponent } from './project-deploy-releases';
+import { ProjectDeployReleasesComponent, verdictTone } from './project-deploy-releases';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
 import { QualityStudioService } from '../../../../services/quality-studio.service';
 import { buildEnvironmentCards, type DeployPanel, type Release } from '../../state/deploy-area.model';
@@ -64,7 +64,8 @@ describe('ProjectDeployReleasesComponent', () => {
     expect(byTestId('deploy-release-detail')?.textContent).toContain('Release 2026.10.19.2');
     expect(byTestId('deploy-release-detail')?.textContent).toContain('WEB-35');
     expect(byTestId('deploy-release-live-in')?.textContent?.trim()).toBe('Staging');
-    expect(byTestId('deploy-release-verdict')?.textContent).toContain(`Full suite: green · SHA ${'c'.repeat(40)}`);
+    expect(byTestId('deploy-release-verdict')?.textContent?.replace(/\s+/g, ' ')).toContain(`Full suite: green · SHA ${'c'.repeat(40)}`);
+    expect(byTestId('deploy-release-verdict-state')?.dataset['tone']).toBe('success');
     expect(byTestId(`deploy-release-${'c'.repeat(16)}`)?.getAttribute('aria-current')).toBe('true');
   });
 
@@ -78,6 +79,12 @@ describe('ProjectDeployReleasesComponent', () => {
     expect(byTestId('deploy-release-detail')?.textContent).toContain('Release 2026.10.18.1');
     expect(byTestId('deploy-release-live-in')?.textContent?.trim()).toBe('Production');
     expect(byTestId(`deploy-release-${'c'.repeat(16)}`)?.getAttribute('aria-current')).toBeNull();
+  });
+
+  it('maps the full-suite verdict onto a tone', () => {
+    expect(verdictTone('green')).toBe('success');
+    expect(verdictTone('red')).toBe('danger');
+    expect(verdictTone('later')).toBe('neutral');
   });
 
   it('reconciles Quality counts with card rows and opens the release range', async () => {

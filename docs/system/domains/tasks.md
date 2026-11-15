@@ -1,7 +1,30 @@
 # Tasks Domain Map
 
-Version: 2026-11-09
+Version: 2026-11-15
 Status: System-of-record map for task storage, lanes, and API mutation changes.
+
+## Fenced remote delivery attribution and published repair
+
+The server first verifies the immutable result ref and exact result SHA. It
+normally attributes the fenced base to result commit range. If a continue
+round rebased away the runner's local start merge, the server uses the result's
+merge-base with the integration line and attributes only commits carrying this
+card's `Agent-Studio-Task` trailer. The existing foreign subject guard still
+rejects an owned commit whose subject names another card. The run timeline
+records the missing base and fallback. A delivery without attributed commits
+cannot enter a batch; its completion warning is shown on Auto Review and the
+card is escalated before a gate runs.
+An available fenced base that is not in the result remains a recoverable
+salvage refusal and requests a merge round.
+
+On batch pilot ticks, a card escalated with `release-unattributed` can be
+repaired from its existing published member receipt. The published batch's
+pre-tip SHA preserves the integration line at publication time, so attribution
+does not collapse after the candidate lands on develop. Recovery verifies the
+published candidate, gate verdict, current review generation, and every
+replacement source before recording attribution, replacement mapping, and
+integration evidence. It then moves the card to Human Review. It creates no
+delivery or integration commit and does not accept the card.
 
 Use this when a change touches job folders, lane states, task metadata,
 workspace registry records, task CRUD, ordering, review evidence, run timeline,
@@ -241,6 +264,18 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   ids become plain `dependsOn` edges to the predecessor slice cards (not
   `requiresCompletion` edges on the concept), and promoting a slice also
   promotes its predecessors first.
+- Promotion and acceptance are separate actions (AGT-3701).
+  `POST /api/tasks/{id}/promote-concept` (from Human review or Accepted) only
+  creates the selected slices (`itemIndexes`, empty for all), records the
+  `post-concept-promotion` step, and returns the created cards with their slice
+  index. It never moves the concept card, so a refused acceptance cannot hide
+  created cards behind an error status. `GET` returns the slices plus
+  `promoted`, the slices that already have a card. Accepting the concept later
+  marks the Dossier accepted and keeps that step passed; it is marked skipped
+  only when no slice was promoted. Promotion leaves the Dossier lifecycle alone.
+  The Studio offers this as **Create implementation cards** on the Dossier view
+  (through the Dossier's source concept card) and on the concept card's
+  Overview. The Dossier's **Start one combined task** stays the single-card path.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
   code-change request. The `message` names the card's mode and the two ways
@@ -2083,9 +2118,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   option IDs, rationale, operator and decision time, but projects no settled
   promotion decision. The descriptor keeps its current status, and the normal
   prepare and confirm path remains available for a later promotion decision.
-  Concept promotion marks the descriptor `decided` after creating its slice
-  cards, retains those recorded choices, and can be retried without duplicating
-  the cards or lifecycle transition.
+  Concept promotion creates slice cards without changing the descriptor status.
+  Concept acceptance marks the descriptor `decided` and retains those recorded
+  choices. Promotion can be retried without duplicating cards.
 - A delivering card resolved through `references.workbenches` or a descriptor
   `sourceTaskKeys` back edge receives the Dossier maintenance prompt contract.
   It appends only its own dated implementation entry between the canonical log

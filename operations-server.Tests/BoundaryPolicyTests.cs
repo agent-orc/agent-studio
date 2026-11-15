@@ -58,9 +58,7 @@ public sealed class BoundaryPolicyTests
             Assert.DoesNotContain(File.ReadAllText(Path.Combine(agent, "token")), first[Path.Combine(principals, "principals.json")]);
             if (!OperatingSystem.IsWindows())
                 foreach (var file in first.Keys) Assert.Equal(
-                    file == Path.Combine(client, "token")
-                        ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead
-                        : UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead,
                     File.GetUnixFileMode(file));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
@@ -115,10 +113,8 @@ public sealed class BoundaryPolicyTests
             foreach (var file in original) Assert.Equal(file.Value, File.ReadAllText(file.Key));
             if (!OperatingSystem.IsWindows())
                 foreach (var directory in new[] { principals, agent, client })
-                    Assert.Equal(directory == client
-                            ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
-                              | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
-                            : UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+                    Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                                 | UnixFileMode.GroupRead | UnixFileMode.GroupExecute,
                         File.GetUnixFileMode(directory));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }

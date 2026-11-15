@@ -1,4 +1,5 @@
 import type { CliModelInfo } from '../../features/cli';
+import type { StatusTone } from '../status-indicator/status-indicator.component';
 import { mapThinkingLevel, mappedThinkingLevelNote } from '../../features/cli/thinking-levels';
 
 /** Same rule as the backend: an unoffered known rung maps to the highest offered rung below it. */
@@ -30,6 +31,11 @@ export function modelAriaLabel(model: CliModelInfo): string {
 
 export function olderModelNote(model: CliModelInfo): string {
   return model.availabilityNote?.trim() || 'Older generation';
+}
+
+/** Tone of an older model's note: an unavailable model needs attention, an older one is a settled fact. */
+export function olderModelNoteTone(model: CliModelInfo): StatusTone {
+  return model.available === false ? 'warning' : 'neutral';
 }
 
 export function olderModelAriaLabel(model: CliModelInfo): string {

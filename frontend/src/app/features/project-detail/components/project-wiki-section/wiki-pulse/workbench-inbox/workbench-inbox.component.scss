@@ -89,18 +89,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.wbinbox__state-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--pwiki-paper-muted, var(--studio-fg-muted));
-}
-
-.wbinbox__state-dot[data-tone='review'] { background: var(--studio-warn); }
-.wbinbox__state-dot[data-tone='repair'] { background: var(--studio-danger, var(--severity-high)); }
-.wbinbox__state-dot[data-tone='active'] { background: var(--studio-accent-3); }
-
 .wbinbox ul {
   display: flex;
   flex-direction: column;

@@ -124,7 +124,7 @@
         <p class="operator-dashboard__remote-help">Push compares local commits to the tracked remote branch. Pull compares remote commits to the local branch. No upstream means the local branch is not linked to a remote branch, so neither direction can be verified.</p>
       </div>
       @if (hasLargeSyncDelta()) {
-        <span class="operator-dashboard__remote-warning">More than 50 commits need synchronization</span>
+        <app-status-indicator tone="warning" label="More than 50 commits need synchronization" [compact]="true" testId="project-overview-remote-warning" />
       }
     </header>
     @if (managedRemoteBranches().length > 0) {
@@ -144,8 +144,8 @@
               }
             </div>
             <div class="operator-dashboard__sync-directions">
-              <span data-direction="push">Push <strong>{{ pushLabel(branch) }}</strong></span>
-              <span data-direction="pull">Pull <strong>{{ pullLabel(branch) }}</strong></span>
+              <span data-direction="push">Push <app-status-indicator [tone]="syncTone(branch, branch.ahead)" [label]="pushLabel(branch)" [compact]="true" testId="project-overview-sync-push" /></span>
+              <span data-direction="pull">Pull <app-status-indicator [tone]="syncTone(branch, branch.behind)" [label]="pullLabel(branch)" [compact]="true" testId="project-overview-sync-pull" /></span>
             </div>
             <span class="operator-dashboard__tracking">@if (branch.upstream) {
               Tracking {{ branch.upstream }} · {{ formatAgo(branch.lastCommitAtUtc) }}
@@ -188,11 +188,8 @@
               (click)="openRail.emit('deploy')">Open Deploy</button>
       <button type="button" data-testid="project-overview-open-operations"
               (click)="openRail.emit('operations')">Open Operations</button>
-      <span class="operator-dashboard__deployment-state"
-            [class.operator-dashboard__deployment-state--pending]="deploymentState() === 'pending'"
-            [class.operator-dashboard__deployment-state--failed]="deploymentState() === 'failed'">
-        {{ deploymentStateLabel() }}
-      </span>
+      <app-status-indicator [tone]="deploymentStateTone()" [label]="deploymentStateLabel()" [compact]="true"
+                            testId="project-overview-deployment-state" />
     </header>
 
     @if (deployment()?.lastDeployment; as last) {
@@ -210,7 +207,7 @@
         <div>
           <span>Delivered</span>
           <strong>{{ last.jobsSinceLastRestart }} task{{ last.jobsSinceLastRestart === 1 ? '' : 's' }}</strong>
-          <small>{{ last.durationSeconds }} s · {{ last.status }}</small>
+          <small>{{ last.durationSeconds }} s · <app-status-indicator [tone]="lastDeploymentTone(last.status)" [label]="last.status" [compact]="true" testId="project-overview-last-deployment-status" /></small>
         </div>
       </div>
     }

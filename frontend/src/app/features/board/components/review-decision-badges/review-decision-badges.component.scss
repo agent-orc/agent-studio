@@ -2,43 +2,7 @@
   display: contents;
 }
 
-.review-decision-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  min-height: var(--studio-card-pill-height);
-  padding: 0 var(--studio-card-pill-padding-x);
-  font-size: var(--studio-card-meta-size);
-  font-weight: 650;
-  letter-spacing: 0.02em;
+app-status-indicator {
   cursor: help;
-  border: 1px solid transparent;
-  border-radius: 7px;
-}
-
-.review-decision-badge__glyph {
-  font-size: 11px;
-  line-height: 1;
-}
-
-.review-decision-badge--attention {
-  color: var(--studio-accent-6-strong);
-  background: color-mix(in srgb, var(--studio-accent-6) 18%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-accent-6) 45%, transparent);
-}
-
-// R1: the two park kinds are separated by background tint and glyph, never by a
-// side bar. A decision waits for a person; a failure park waits for a fix.
-.review-decision-badge--decision {
-  color: var(--studio-accent-strong, var(--studio-accent));
-  background: color-mix(in srgb, var(--studio-accent) 18%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-accent) 45%, transparent);
-  font-variant-numeric: tabular-nums;
-}
-
-.review-decision-badge--parked {
-  color: var(--studio-fg-muted);
-  background: color-mix(in srgb, var(--studio-fg-muted) 12%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-fg-muted) 32%, transparent);
   font-variant-numeric: tabular-nums;
 }

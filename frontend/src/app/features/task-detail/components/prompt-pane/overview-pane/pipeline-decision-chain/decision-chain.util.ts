@@ -11,6 +11,7 @@
  * Dependency-free so the ordering and the cost wording are unit-tested
  * against fixtures, apart from the host component.
  */
+import type { StatusTone } from '../../../../../../components/status-indicator/status-indicator.component';
 import type {
   PipelineExecutionRecord,
   PipelineStepExecution,
@@ -184,4 +185,32 @@ export function buildDecisionTransitions(
     });
   }
   return transitions;
+}
+
+const TRANSITION_VERDICT_TONES: Readonly<Record<string, StatusTone>> = {
+  pass: 'success',
+  accept: 'success',
+  reissue: 'warning',
+  escalate: 'warning',
+  block: 'danger',
+  'loop-detected': 'danger',
+  'n/a': 'neutral',
+};
+
+/**
+ * Tone of a raw transition verdict in the decision chain (AGT-3403); verdicts
+ * the engine adds later stay neutral.
+ */
+export function decisionVerdictTone(verdict: string | null | undefined): StatusTone {
+  const key = (verdict ?? 'n/a').trim().toLowerCase();
+  return Object.hasOwn(TRANSITION_VERDICT_TONES, key) ? TRANSITION_VERDICT_TONES[key] : 'neutral';
+}
+
+/** Visible wording and tone of a recorded Human Operator intent outcome. */
+export function operatorIntentOutcome(outcome: string): { label: string; tone: StatusTone } {
+  if (outcome.startsWith('applied:run-limit:')) return { label: 'applied to the card', tone: 'success' };
+  if (outcome === 'applied:stopped-and-held') return { label: 'run stopped and card held', tone: 'warning' };
+  if (outcome === 'applied:run-finished-held') return { label: 'card held after the run finished', tone: 'warning' };
+  if (outcome.startsWith('recorded, not applied')) return { label: 'recorded, not applied', tone: 'info' };
+  return { label: outcome, tone: 'neutral' };
 }

@@ -43,6 +43,5 @@
 // Tiers and sources read through tint, never as an alarm (R1, R4).
 .access-badge[data-tier='T2'] { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-fg-strong); }
 .access-badge[data-tone='untrusted'] { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-fg-strong); }
-.access-badge[data-tone='active'] { background: color-mix(in srgb, var(--studio-success) 16%, transparent); color: var(--studio-fg-strong); }
 .approvals__scroll { overflow-x: auto; }
 tr[data-focused='true'] td { background: color-mix(in srgb, var(--studio-accent) 8%, transparent); }

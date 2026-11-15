@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { QuotaForecastPanelComponent } from './quota-forecast-panel';
+import { QuotaForecastPanelComponent, quotaFallbackIndicator, quotaFallbackState } from './quota-forecast-panel';
 import type { QuotaForecast, QuotaHistoryResponse } from '../../models/quota-history.model';
 
 const WEEKLY = 'Current week (all models)';
@@ -95,6 +95,12 @@ describe('QuotaForecastPanelComponent', () => {
     expect(fallback?.getAttribute('data-armed')).toBe('true');
     expect(el.querySelector('[data-testid="quota-fallback-target"]')?.textContent?.trim()).toBe('codex · gpt-5.6-sol');
     expect(fallback?.textContent).toContain('Armed');
+    expect(fallback?.getAttribute('data-state')).toBe('armed');
+    const state = el.querySelector('[data-testid="quota-fallback-state"]') as HTMLElement;
+    expect(state.dataset['tone']).toBe('success');
+    const badge = el.querySelector('[data-testid="quota-forecast-badge"]') as HTMLElement;
+    expect(badge.dataset['tone']).toBe('warning');
+    expect(badge.textContent?.trim()).toBe('Full before reset');
     expect(fallback?.textContent).toContain('95% cap');
   });
 
@@ -109,5 +115,17 @@ describe('QuotaForecastPanelComponent', () => {
     expect(el.querySelector('[data-testid="quota-forecast-sentence"]')?.textContent)
       .toContain('the reset time is unknown');
     expect(el.querySelector('[data-testid="quota-fallback"]')).toBeNull();
+  });
+});
+
+describe('quotaFallbackIndicator', () => {
+  it('maps engaged, armed and not armed fallbacks and falls back to neutral', () => {
+    expect(quotaFallbackState({ engaged: true, armed: true })).toBe('engaged');
+    expect(quotaFallbackState({ engaged: false, armed: true })).toBe('armed');
+    expect(quotaFallbackState({ engaged: false, armed: false })).toBe('unarmed');
+    expect(quotaFallbackIndicator('engaged')).toEqual({ tone: 'info', label: 'Engaged' });
+    expect(quotaFallbackIndicator('armed')).toEqual({ tone: 'success', label: 'Armed' });
+    expect(quotaFallbackIndicator('unarmed')).toEqual({ tone: 'danger', label: 'Not armed' });
+    expect(quotaFallbackIndicator('later')).toEqual({ tone: 'neutral', label: 'later' });
   });
 });

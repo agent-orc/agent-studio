@@ -193,6 +193,11 @@ export function killKindLabel(kind: OperatorKillKind): string {
   return kind === 'all' ? 'All operator access' : kind === 'session' ? 'One session' : 'Drill';
 }
 
+/** AGT-3403: revoked principals are done, a pending revocation still exposes access. */
+export function propagationTone(state: OperatorKillPropagationState): 'success' | 'danger' | 'neutral' {
+  return state === 'revoked' ? 'success' : state === 'pending' ? 'danger' : 'neutral';
+}
+
 export function propagationLabel(state: OperatorKillPropagationState): string {
   switch (state) {
     case 'revoked': return 'Operations Server principals revoked';

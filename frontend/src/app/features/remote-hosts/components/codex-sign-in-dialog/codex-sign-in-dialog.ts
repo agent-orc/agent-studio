@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, signal, untracked } from '@angular/core';
 import { Subscription, switchMap, takeWhile, timer } from 'rxjs';
 import { DialogComponent } from '../../../../components/dialog/dialog.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { NotificationService } from '../../../../services/notification.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import type {
@@ -16,7 +17,7 @@ type CodexSignInPhase = 'starting' | 'pending' | 'verifying' | 'failed';
 @Component({
   selector: 'app-codex-sign-in-dialog',
   standalone: true,
-  imports: [DialogComponent],
+  imports: [DialogComponent, StatusIndicatorComponent],
   templateUrl: './codex-sign-in-dialog.html',
   styleUrl: './codex-sign-in-dialog.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

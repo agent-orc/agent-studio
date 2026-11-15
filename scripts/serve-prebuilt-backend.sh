@@ -14,7 +14,7 @@ fi
 
 backend_started=0
 stop() {
-  if [[ "${PW_E2E_PROFILE:-}" == first-run ]] && declare -F first_run_stop_runners >/dev/null; then
+  if [[ "${PW_E2E_PROFILE:-}" == first-run || "${PW_E2E_PROFILE:-}" == concept-remote ]] && declare -F first_run_stop_runners >/dev/null; then
     first_run_stop_runners
   fi
   if (( backend_started )); then
@@ -185,12 +185,18 @@ case "${PW_E2E_PROFILE:-standard}" in
     source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
     first_run_prepare
     ;;
+  concept-remote)
+    source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
+    first_run_prepare
+    source "${REPO_ROOT}/scripts/concept-e2e-fixture.sh"
+    concept_e2e_prepare
+    ;;
   *) echo "Unknown PW_E2E_PROFILE: ${PW_E2E_PROFILE}" >&2; exit 2 ;;
 esac
 
 "${REPO_ROOT}/api.sh" start
 backend_started=1
-if [[ "${PW_E2E_PROFILE:-}" == first-run ]]; then
+if [[ "${PW_E2E_PROFILE:-}" == first-run || "${PW_E2E_PROFILE:-}" == concept-remote ]]; then
   first_run_start_runners
 fi
 failures=0

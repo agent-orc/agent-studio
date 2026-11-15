@@ -131,7 +131,6 @@ public sealed class BatchGatePilotFlightClaimTests : BatchGatePilotServiceTests
             if (Interlocked.Increment(ref runs) == 1) await hang.Task;
             return Green(request.ExpectedSha);
         };
-        var originTip = Git(_origin, "rev-parse", "develop");
         try
         {
             SeedMember(factory, "CODE-GATEHANG-1", "src/gatehang-1.cs");
@@ -142,6 +141,14 @@ public sealed class BatchGatePilotFlightClaimTests : BatchGatePilotServiceTests
             var hung = Assert.Single(store.ListRecoverableManifests());
             Assert.Equal(BatchFlightStage.Gating, store.ReadFlightClaim(ProjectName)!.Stage);
 
+            // A later formed flight must not wait for the hung process to exit.
+            SeedMember(factory, "CODE-AFTERHANG-1", "src/afterhang-1.cs");
+            SeedMember(factory, "CODE-AFTERHANG-2", "src/afterhang-2.cs");
+            pilot.RequestCloseNow(ProjectName);
+            await pilot.TickAsync(CancellationToken.None);
+            var later = Assert.Single(store.ListRecoverableManifests(), item => item.BatchId != hung.BatchId);
+            Assert.Equal(BatchPhase.Formed, store.LatestState(later.BatchId).Phase);
+
             // Past the gate deadline: gate timeout 150 minutes plus the grace.
             _clock = _clock.AddMinutes(150 + BatchFlightClaimPolicy.GatingGraceMinutes + 1);
             await pilot.TickAsync(CancellationToken.None);
@@ -150,7 +157,14 @@ public sealed class BatchGatePilotFlightClaimTests : BatchGatePilotServiceTests
             Assert.Equal(BatchPhase.Abandoned, retired.Phase);
             Assert.Equal(BatchFlightClaimExpiry.StageDeadlinePassed, retired.FlightClaimExpiry);
             Assert.Contains("gate step", retired.Reason);
-            Assert.Equal(originTip, Git(_origin, "rev-parse", "develop"));
+            Assert.Null(store.ReadPublication(hung.BatchId));
+
+            for (var attempt = 0; attempt < 200 && !Published("CODE-AFTERHANG-1"); attempt++)
+            {
+                await pilot.TickAsync(CancellationToken.None);
+                await Task.Delay(50);
+            }
+            Assert.True(Published("CODE-AFTERHANG-1") && Published("CODE-AFTERHANG-2"), _errors.ToString());
 
             // The members fly again in a new batch and publish; no restart.
             for (var attempt = 0; attempt < 200 && !Published("CODE-GATEHANG-1"); attempt++)

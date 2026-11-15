@@ -11,7 +11,8 @@
     <span class="tup__value" data-testid="token-row-model">
       {{ tb.model || '-' }}
       @if (tb.hasModelMismatch) {
-        <strong class="tup__mismatch" data-testid="token-model-mismatch">Mismatch</strong>
+        <app-status-indicator class="tup__mismatch" tone="warning" label="Mismatch" [compact]="true"
+                              testId="token-model-mismatch" />
       }
     </span>
     <span class="tup__label">Last update</span><span class="tup__value" data-testid="token-row-last-update">{{ tb.lastUpdate || '-' }}</span>
@@ -45,7 +46,9 @@
             <td>
               {{ row.model || '-' }}
               @if (row.modelMismatch) {
-                <strong class="tup__mismatch tup__mismatch--run" data-testid="token-run-model-mismatch">Mismatch (pinned {{ row.pinnedModel || 'unknown' }})</strong>
+                <app-status-indicator class="tup__mismatch tup__mismatch--run" tone="warning"
+                                      [label]="'Mismatch (pinned ' + (row.pinnedModel || 'unknown') + ')'"
+                                      [compact]="true" testId="token-run-model-mismatch" />
               }
             </td>
             <td class="tup__num">{{ formatTokens(row.total) }}</td>
