@@ -352,7 +352,8 @@ public record GitCommitInfo(
     int FilesChanged,
     int Added,
     int Removed,
-    string? Body = null);
+    string? Body = null,
+    bool IsMerge = false);
 
 public sealed record RemoteDeliveryCommitRange(
     bool Success,
@@ -4998,15 +4999,18 @@ public partial class GitService
     /// commits the task branch is ahead of its fork point - no wall-clock window,
     /// no boundary slack. Returns an empty list when either ref is missing.
     /// </summary>
-    public List<GitCommitInfo> GetCommitsInRangeAtRoot(string repoRoot, string fromRef, string toRef)
+    public List<GitCommitInfo> GetCommitsInRangeAtRoot(string repoRoot, string fromRef, string toRef,
+        string? excludeRef = null)
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return [];
-        if (!IsLikelyBranchName(fromRef) || !IsLikelyBranchName(toRef)) return [];
+        if (!IsLikelyBranchName(fromRef) || !IsLikelyBranchName(toRef)
+            || excludeRef is not null && !IsLikelyBranchName(excludeRef)) return [];
         var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
 
         const char US = '\x1f';
         var fmt = "%H%x1f%h%x1f%aI%x1f%aN%x1f%s";
-        var args = $"log --no-merges --shortstat --pretty=format:\"{fmt}\" {fromRef}..{toRef} {RevisionsOnly}";
+        var args = $"log --no-merges --shortstat --pretty=format:\"{fmt}\" {fromRef}..{toRef}"
+            + (excludeRef is null ? "" : $" --not {excludeRef}") + $" {RevisionsOnly}";
         var (output, _, code) = RunGit(root, args);
         if (code != 0 || string.IsNullOrWhiteSpace(output)) return [];
 
@@ -5042,6 +5046,73 @@ public partial class GitService
                 Removed: removed));
         }
         return list;
+    }
+
+    // A merge's imported second-parent commits are excluded by the revision
+    // set. The merge object itself belongs to the delivery even when Git made
+    // it cleanly: merge-only conflict-recovery rounds need current-generation
+    // attribution. Its file count is limited to the remerge diff, so imported
+    // integration changes are never presented as changes made by the task.
+    private List<GitCommitInfo> GetDeliveryCommitsAtRoot(string repoRoot, string baseRef,
+        string tipRef, string? excludeRef)
+    {
+        var commits = GetCommitsInRangeAtRoot(repoRoot, baseRef, tipRef, excludeRef);
+        var revisions = $"{baseRef}..{tipRef}";
+        var exclusion = excludeRef is null ? Array.Empty<string>() : new[] { "--not", excludeRef };
+        string[] mergeArgs = ["rev-list", "--merges", revisions, .. exclusion, RevisionsOnly];
+        var (merges, _, mergeCode) = RunGitArgs(repoRoot, mergeArgs);
+        if (mergeCode != 0) return commits;
+        foreach (var sha in merges.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                     .Select(line => line.Trim()))
+        {
+            var (paths, _, pathsCode) = RunGitArgs(repoRoot, "show", "--remerge-diff",
+                "--format=", "--name-only", sha, RevisionsOnly);
+            var changed = pathsCode == 0
+                ? paths.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(path => path.Trim()).Where(path => path.Length > 0).Distinct().ToArray()
+                : [];
+            var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
+                "--format=%H%x1f%h%x1f%aI%x1f%aN%x1f%s", sha);
+            if (metadataCode != 0) continue;
+            var parts = metadata.Trim().Split('\x1f');
+            if (parts.Length < 5 || !DateTime.TryParse(parts[2],
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal
+                    | System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)) continue;
+            commits.Add(new GitCommitInfo(parts[0], parts[1],
+                DateTime.SpecifyKind(at, DateTimeKind.Utc), parts[3], parts[4],
+                changed.Length, 0, 0, IsMerge: true));
+        }
+        if (commits.Count == 0) return commits;
+        string[] orderArgs = ["rev-list", revisions, .. exclusion, RevisionsOnly];
+        var (order, _, orderCode) = RunGitArgs(repoRoot, orderArgs);
+        if (orderCode != 0) return commits;
+        var bySha = commits.ToDictionary(commit => commit.Sha, StringComparer.OrdinalIgnoreCase);
+        return order.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(sha => bySha.GetValueOrDefault(sha.Trim()))
+            .Where(commit => commit is not null).Select(commit => commit!).ToList();
+    }
+
+    private string? DeliveryIntegrationExclusion(string repoRoot, string baseRef,
+        string deliveryRef, string integrationRef)
+    {
+        if (!IsAncestor(repoRoot, deliveryRef, integrationRef)) return integrationRef;
+        // A release may fast-forward the result onto the integration line
+        // before completion. Excluding the live line would hide the result
+        // itself; the latest merged integration parent is its historical tip.
+        var (merges, _, code) = RunGitArgs(repoRoot, "rev-list", "--first-parent",
+            "--merges", $"{baseRef}..{deliveryRef}", RevisionsOnly);
+        if (code != 0) return null;
+        foreach (var merge in merges.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var (parents, _, parentsCode) = RunGitArgs(repoRoot, "rev-list", "--parents",
+                "-n", "1", merge.Trim(), RevisionsOnly);
+            if (parentsCode != 0) continue;
+            var parts = parents.Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 3 && IsAncestor(repoRoot, baseRef, parts[2])
+                && IsAncestor(repoRoot, parts[2], integrationRef)) return parts[2];
+        }
+        return null;
     }
 
     /// <summary>
@@ -5128,8 +5199,19 @@ public partial class GitService
                 {
                     var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch)
                         ?? TaskIntegrationBranch.NormalizeRef("main");
+                    var integrationName = TaskIntegrationBranch.Name(integrationBranch);
+                    var integrationRef = $"refs/remotes/origin/{integrationName}";
+                    var (_, _, integrationFetchCode) = FetchWithCatchUpBudget(repoRoot,
+                        cancellationToken, "fetch", "--no-tags", "origin",
+                        $"+refs/heads/{integrationName}:{integrationRef}");
+                    if (integrationFetchCode != 0)
+                        return Failed($"Integration branch '{integrationName}' could not be fetched for delivery attribution.");
+                    // A task may publish its own result before completion. Its
+                    // immutable fenced base remains authoritative in that case.
+                    var exclusion = DeliveryIntegrationExclusion(repoRoot, baseSha,
+                        deliveryRef, integrationRef);
                     var exactCommits = WithMessagesAtRoot(repoRoot,
-                        GetCommitsInRangeAtRoot(repoRoot, baseSha, deliveryRef));
+                        GetDeliveryCommitsAtRoot(repoRoot, baseSha, deliveryRef, exclusion));
                     exactCommits.Reverse();
                     return new RemoteDeliveryCommitRange(true, integrationBranch, baseSha, tip,
                         exactCommits, null, DeliveryVerificationStatus.Verified);
@@ -5182,7 +5264,8 @@ public partial class GitService
                 : missingBaseWarning + " No integration merge-base is available for task-owned fallback.");
 
         var commits = WithMessagesAtRoot(repoRoot,
-            GetCommitsInRangeAtRoot(repoRoot, selected.Base, deliveryRef));
+            GetDeliveryCommitsAtRoot(repoRoot, selected.Base, deliveryRef,
+                DeliveryIntegrationExclusion(repoRoot, selected.Base, deliveryRef, selected.Ref)));
         commits.Reverse();
         if (missingBaseWarning is not null)
         {

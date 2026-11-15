@@ -1,6 +1,9 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.Runner;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Tasks;
 
@@ -14,6 +17,7 @@ public sealed class RemoteCompletionAttributionSweep
 {
     public const string ReportFileName = "remote-completion-attribution-v1.json";
     public const string SalvageSubjectReportFileName = "salvage-subject-attribution-v1.json";
+    public const string IntegrationHistoryReportFileName = "integration-history-attribution-v1.json";
     private static readonly TimeSpan Lookback = TimeSpan.FromDays(8);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -27,6 +31,9 @@ public sealed class RemoteCompletionAttributionSweep
     private readonly ILogger<RemoteCompletionAttributionSweep> _logger;
     private readonly string _reportPath;
     private readonly DateTimeOffset _now;
+    private readonly TaskStateMachine? _states;
+    private readonly TimelineLog? _timeline;
+    private readonly AttemptAuthorityService? _authority;
 
     public RemoteCompletionAttributionSweep(
         TaskScannerService scanner,
@@ -34,7 +41,10 @@ public sealed class RemoteCompletionAttributionSweep
         TaskMutationService mutations,
         RemoteTokenReceiptService tokens,
         IConfiguration configuration,
-        ILogger<RemoteCompletionAttributionSweep> logger)
+        ILogger<RemoteCompletionAttributionSweep> logger,
+        TaskStateMachine states,
+        TimelineLog timeline,
+        AttemptAuthorityService authority)
         : this(
             scanner,
             git,
@@ -47,7 +57,7 @@ public sealed class RemoteCompletionAttributionSweep
                 "migrations",
                 ReportFileName),
             DateTimeOffset.UtcNow,
-            logger)
+            logger, states, timeline, authority)
     {
     }
 
@@ -58,7 +68,10 @@ public sealed class RemoteCompletionAttributionSweep
         RemoteTokenReceiptService tokens,
         string reportPath,
         DateTimeOffset now,
-        ILogger<RemoteCompletionAttributionSweep> logger)
+        ILogger<RemoteCompletionAttributionSweep> logger,
+        TaskStateMachine? states = null,
+        TimelineLog? timeline = null,
+        AttemptAuthorityService? authority = null)
     {
         _scanner = scanner;
         _git = git;
@@ -67,6 +80,9 @@ public sealed class RemoteCompletionAttributionSweep
         _reportPath = reportPath;
         _now = now;
         _logger = logger;
+        _states = states;
+        _timeline = timeline;
+        _authority = authority;
     }
 
     public RemoteCompletionAttributionSweepReport RunOnce()
@@ -198,6 +214,102 @@ public sealed class RemoteCompletionAttributionSweep
         return report;
     }
 
+    /// <summary>
+    /// Repairs a passing reviewed delivery escalated solely because a commit
+    /// imported from the integration line was mistaken for task work.
+    /// </summary>
+    public RemoteCompletionAttributionSweepReport RunIntegrationHistoryRepairOnce()
+    {
+        var reportPath = Path.Combine(Path.GetDirectoryName(_reportPath)!, IntegrationHistoryReportFileName);
+        if (File.Exists(reportPath))
+        {
+            var prior = JsonSerializer.Deserialize<RemoteCompletionAttributionSweepReport>(
+                File.ReadAllText(reportPath), Json);
+            if (prior is { UnresolvedTasks: 0 }) return prior with { AlreadyCompleted = true };
+        }
+
+        var rows = new List<RemoteCompletionAttributionSweepTaskReport>();
+        if (_states is not null && _timeline is not null && _authority is not null)
+        foreach (var task in _scanner.ScanAllJobsWithArchive().Where(task => task.State == TaskStates.Escalated))
+        {
+            var subject = ReviewSubjectStore.Read(task.FolderPath);
+            if (subject is null || subject.CompletedAtUtc < _now - Lookback) continue;
+            var key = task.Key ?? task.Id;
+            var projection = _authority.GetTaskProjection(key);
+            var review = projection.CurrentReviewAttempt;
+            if (review?.Outcome != ReviewTerminalOutcome.Pass
+                || !string.Equals(projection.CurrentRunAttempt?.AttemptId, subject.RunAttemptId,
+                    StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(review.SourceRunAttemptId, subject.RunAttemptId,
+                    StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(review.TestedResultSha, subject.ResultSha,
+                    StringComparison.OrdinalIgnoreCase)) continue;
+            var warning = _timeline.ReadAll(task.FolderPath).LastOrDefault(evt =>
+                evt.Kind == TimelineEventKinds.AgentRunFinished
+                && string.Equals(evt.RunId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase))
+                ?.Details?.GetValueOrDefault("commitAttributionWarning");
+            var match = Regex.Match(warning ?? "", @"commit (?<sha>[0-9a-fA-F]{7,40}) names foreign task");
+            var alreadyAttributed = task.Commits.Count(commit => string.Equals(commit.RunAttemptId,
+                subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(commit.ResultSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase));
+            if (alreadyAttributed > 0) continue;
+            var repository = _git.ResolveRepoRootForWatchPath(task.WatchPath);
+            var deliveryRef = subject.ImmutableResultRef ?? subject.ResultRef;
+            if (string.IsNullOrWhiteSpace(repository) || string.IsNullOrWhiteSpace(deliveryRef)) continue;
+            var range = _git.InspectRemoteDeliveryCommitRange(repository, deliveryRef,
+                subject.ResultSha, subject.IntegrationBranch ?? task.IntegrationBranch,
+                subject.BaseSha, taskKey: key);
+            if (!range.Success || range.Commits.Count == 0) continue;
+            var integrationRef = "refs/remotes/origin/" + TaskIntegrationBranch.Name(range.IntegrationBranch);
+            var importedForeignCommit = match.Success
+                && _git.IsAncestor(repository, match.Groups["sha"].Value, integrationRef);
+            var newDeliveryCommits = range.Commits.Where(commit => !task.Commits.Any(existing =>
+                string.Equals(existing.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase))).ToList();
+            var mergeOnlyRecovery = !match.Success && newDeliveryCommits.Count > 0
+                && newDeliveryCommits.All(commit => commit.IsMerge);
+            if (!importedForeignCommit && !mergeOnlyRecovery) continue;
+
+            var repair = RepairCommits(task, subject);
+            if (repair.Commits == 0)
+            {
+                rows.Add(new RemoteCompletionAttributionSweepTaskReport(task.ProjectName, key,
+                    subject.ResultSha, 0, 0, repair.Warning));
+                continue;
+            }
+            var moved = _states.MoveJob(task.Id, TaskStates.AutoReview, task.WatchPath,
+                cause: TimelineActors.System, expectedSourceState: TaskStates.Escalated,
+                transitionCause: LaneChangeCauses.ReviewVerdict,
+                transitionDetail: "integration-history-attribution-repaired");
+            if (moved.Status != MoveJobStatus.Success)
+            {
+                rows.Add(new RemoteCompletionAttributionSweepTaskReport(task.ProjectName, key,
+                    subject.ResultSha, repair.Commits, 0, $"Lane restoration failed: {moved.Status}."));
+                continue;
+            }
+            var details = new Dictionary<string, string>
+            {
+                ["resultSha"] = subject.ResultSha,
+                ["reason"] = importedForeignCommit
+                    ? "imported-integration-history"
+                    : "merge-only-recovery-delivery",
+                ["attributedCommits"] = repair.Commits.ToString(),
+            };
+            if (importedForeignCommit) details["foreignCommit"] = match.Groups["sha"].Value;
+            _timeline.Append(moved.NewFolderPath ?? task.FolderPath,
+                TimelineEventKinds.IntegrationHistoryAttributionRepaired, TimelineActors.System,
+                "Restored the passing reviewed delivery after excluding integration history from attribution.",
+                subject.RunAttemptId, details: details);
+            rows.Add(new RemoteCompletionAttributionSweepTaskReport(task.ProjectName, key,
+                subject.ResultSha, repair.Commits, 0, null));
+        }
+
+        var report = new RemoteCompletionAttributionSweepReport(1, _now, false,
+            rows.Count(row => row.Commits > 0 && row.Warning is null), 0,
+            rows.Count(row => row.Warning is not null), rows);
+        WriteReport(report, reportPath);
+        return report;
+    }
+
     internal static IReadOnlyList<string> BaseCandidates(
         TaskInfo task,
         ReviewSubjectRecord subject)
@@ -268,9 +380,14 @@ public sealed class RemoteCompletionAttributionSweep
                 string.IsNullOrWhiteSpace(subject.Executor) ? "remote-runner-backfill" : subject.Executor,
                 subject.ResultSha,
                 attribution.Commits);
-            return written
-                ? (attribution.Commits.Count, null)
-                : (0, "The verified delivery range could not be persisted.");
+            if (!written) return (0, "The verified delivery range could not be persisted.");
+            var current = _scanner.FindJob(task.Key ?? task.Id, task.WatchPath);
+            var persistedForRun = current?.Commits.Count(commit => string.Equals(
+                    commit.RunAttemptId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(commit.ResultSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)) ?? 0;
+            return persistedForRun > 0
+                ? (persistedForRun, null)
+                : (0, "The verified range contained only commits attributed to an earlier run.");
         }
 
         return (0, warnings.Count == 0
