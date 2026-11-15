@@ -36,6 +36,7 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  flightClaim?: { batchId: string; stage: string; stageDeadlineUtc: string; end?: unknown | null } | null;
   ejectRequests?: { project: string; taskKey: string; actor: string; reason: string;
     requestedAtUtc: string; status: 'pending' | 'released'; releasedAtUtc?: string | null }[];
   perTaskGates?: { taskKey: string; reviewAttemptId: string; position: number; total: number;

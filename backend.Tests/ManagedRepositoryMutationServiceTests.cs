@@ -145,7 +145,37 @@ public sealed class ManagedRepositoryMutationServiceTests : IDisposable
         Assert.Equal(new RepositoryTextLayout(newLine, finalNewline), RepositoryTextLayout.Detect(text));
     }
 
-    private ManagedRepositoryMutationService Service()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Execute_DecisionReceiptWriteCarriesTheOperationTrailerAndIsGateNeutral(bool alterTitle)
+    {
+        // AGT-3703: a server decision receipt on the integration branch must be
+        // recognizable as gate-neutral at acceptance, and only while it changes
+        // nothing beyond the receipt and its lifecycle bookkeeping.
+        var descriptor = Path.Combine(_root, "docs", "tracked", "workbench.json");
+        var parent = RunGit("rev-parse", "HEAD").Trim();
+        var title = alterTitle ? ",\n  \"title\": \"Changed\"" : "";
+        var result = Service().Execute(
+            "Project", _root, ManagedRepositoryMutationService.DecisionReceiptOperationPrefix + "tracked",
+            "chore(workbench): request revision for tracked", ["docs/tracked/workbench.json"],
+            () => File.WriteAllText(descriptor,
+                "{\n  \"id\": \"tracked\"" + title + ",\n  \"status\": \"decision-pending\",\n"
+                + "  \"lifecycleHistory\": [{\"state\": \"review-requested\"}],\n"
+                + "  \"decision\": {\"outcome\": \"rework\", \"state\": \"pending\"}\n}\n"));
+
+        Assert.True(result.Success, result.Error);
+        var head = RunGit("rev-parse", "HEAD").Trim();
+        Assert.Contains(ManagedRepositoryMutationService.DecisionReceiptCommitTrailer,
+            RunGit("log", "-1", "--format=%B"));
+        Assert.Equal(!alterTitle, Git().IsManagedDecisionReceiptCommit(_root, head, parent));
+        Assert.False(Git().IsManagedDocumentKeyCommit(_root, head, parent));
+    }
+
+    private ManagedRepositoryMutationService Service() =>
+        new(Git(), logger: NullLogger<ManagedRepositoryMutationService>.Instance);
+
+    private GitService Git()
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -155,9 +185,7 @@ public sealed class ManagedRepositoryMutationServiceTests : IDisposable
         }).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
-        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
-        return new ManagedRepositoryMutationService(
-            git, logger: NullLogger<ManagedRepositoryMutationService>.Instance);
+        return new GitService(NullLogger<GitService>.Instance, scanner, config);
     }
 
     private string RunGit(params string[] args)

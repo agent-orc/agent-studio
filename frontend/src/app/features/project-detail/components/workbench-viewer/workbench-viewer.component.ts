@@ -41,6 +41,7 @@ import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draf
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
+import { carryRecordedSelections } from '../workbench-decision-panel/workbench-decision-panel.util';
 import { DossierCardListComponent } from '../dossier-card-list/dossier-card-list.component';
 import { ConceptPromotionComponent } from '../../../../components/concept-promotion/concept-promotion.component';
 import { ThemeService } from '../../../studio-shell/services/theme.service';
@@ -249,9 +250,7 @@ export class WorkbenchViewerComponent {
     const document = this.document();
     if (!document) return;
     this.decisionDrafts.discard(this.projectName(), this.workbenchId());
-    const discovered = discoverWorkbenchDecisionMarkup(document.html);
-    this.decisionResponses.set(document.workbench.decision?.responses
-      ?? document.workbench.recordedResponses ?? discovered.responses);
+    this.decisionResponses.set(initialDecisionResponses(document, null));
     this.hydrateFrame();
   }
 
@@ -316,20 +315,11 @@ export class WorkbenchViewerComponent {
         this.document.set(document);
         this.documentResolved.emit(document);
         this.lastUpdatedAtUtc.set(new Date().toISOString());
-        const discovered = discoverWorkbenchDecisionMarkup(document.html);
         if (document.workbench.decision?.state === 'succeeded')
           this.decisionDrafts.discard(project, id);
         if (reworkRevisionLanded(document)) this.decisionDrafts.discard(project, id);
-        const saved = this.decisionDrafts.draft(project, id)?.responses;
-        const restored = saved
-          ? normalizeWorkbenchDecisionResponses(saved, discovered.points)
-          : null;
-        this.decisionResponses.set(
-          reworkRevisionLanded(document)
-            ? discovered.responses
-            : document.workbench.decision?.responses
-              ?? document.workbench.recordedResponses ?? restored ?? discovered.responses,
-        );
+        this.decisionResponses.set(initialDecisionResponses(
+          document, this.decisionDrafts.draft(project, id)?.responses ?? null));
         this.loading.set(false);
       },
       error: response => {
@@ -339,6 +329,24 @@ export class WorkbenchViewerComponent {
       },
     });
   }
+}
+
+/**
+ * The responses the Dossier opens with. A landed revision shows the owner's
+ * recorded selections from the rework receipt, not the authored defaults
+ * (AGT-3703); otherwise the receipt, then the browser draft, then the markup.
+ */
+function initialDecisionResponses(
+  document: WorkbenchDocument,
+  saved: readonly WorkbenchDecisionResponse[] | null,
+): WorkbenchDecisionResponse[] {
+  const discovered = discoverWorkbenchDecisionMarkup(document.html);
+  const decision = document.workbench.decision;
+  if (reworkRevisionLanded(document))
+    return carryRecordedSelections(decision?.responses ?? document.workbench.recordedResponses,
+      discovered.points, discovered.responses);
+  const restored = saved ? normalizeWorkbenchDecisionResponses(saved, discovered.points) : null;
+  return decision?.responses ?? document.workbench.recordedResponses ?? restored ?? discovered.responses;
 }
 
 function reworkRevisionLanded(document: WorkbenchDocument): boolean {

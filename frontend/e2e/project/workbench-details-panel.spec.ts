@@ -41,11 +41,32 @@ const DOSSIER_HTML = `<style>
   </section>
 </main>`;
 
+/** The revision the follow-up round delivers: new section, authored default on option A. */
+const REVISED_HTML = `<main>
+  <h1>Naming Dossier</h1>
+  <p>Select the stable public naming contract.</p>
+  <section data-decision-id="public-name" data-decision-kind="single">
+    <h2>Choose the public name</h2>
+    <ul>
+      <li data-option-id="option-a"><input type="radio" checked> A · Same grid (recommended)</li>
+      <li data-option-id="option-b"><input type="radio"> B · Dedicated header</li>
+    </ul>
+    <label>Reason <textarea data-comment="Naming reason"></textarea></label>
+  </section>
+  <section><h2>Privacy</h2><p>Public names never carry personal data.</p></section>
+</main>`;
+
+const REVISION_CARD = {
+  available: true, key: 'AGT-2600', jobId: 'naming-concept', title: 'Concept: naming contract',
+  lane: '6-completed', mode: 'concept', reason: null,
+};
+
 interface CapturedCalls {
   taskBodies: Record<string, unknown>[];
   decisionBodies: Record<string, unknown>[];
   steerBodies: Record<string, unknown>[];
   deletedTaskIds: string[];
+  landRevision: () => void;
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -128,7 +149,11 @@ function cardResource(id: string, name: string, data: unknown) {
 async function installMocks(
   page: Page, descriptor: DescriptorState = DECISION_READY, failFirstConfirm = false,
 ): Promise<CapturedCalls> {
-  const captured: CapturedCalls = { taskBodies: [], decisionBodies: [], steerBodies: [], deletedTaskIds: [] };
+  let revisionLanded = false;
+  const captured: CapturedCalls = {
+    taskBodies: [], decisionBodies: [], steerBodies: [], deletedTaskIds: [],
+    landRevision: () => { revisionLanded = true; },
+  };
   let taskCreated = false;
   let decision: Record<string, unknown> | null = null;
   let decisionStage: string | null = null;
@@ -167,6 +192,17 @@ async function installMocks(
     isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
   }));
   await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: {} }));
+  // The header quota read is not under test; the catch-all array would crash it.
+  await page.route('**/api/workspaces/*/quota/admission**', route => json(route, {
+    workspaceId: 'workspace-evidence',
+    workspace: { projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+    projects: [],
+  }));
+  // Model prices in the picker are not under test; no known price keeps the pills plain.
+  await page.route('**/api/token-pricing/calculate', route => json(route, { items: [] }));
+  // The usage cockpit is not under test; a failed read keeps it inert.
+  await page.route('**/api/usage/cockpit**', route => json(route, {}, 503));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-08-11T10:00:00Z', snapshots: [], ttlSeconds: 600,
   }));
@@ -405,12 +441,22 @@ async function installMocks(
         spawnedTaskKeys: body['spawnedTaskKeys'], responses: body['responses'],
         taskDraft: outcome === 'rework' ? null : body['task'], cliType: body['cliType'],
         model: body['model'], thinkingLevel: body['thinkingLevel'],
+        request: outcome === 'rework' ? body['request'] ?? null : null,
+        revisionTaskKey: outcome === 'rework' ? REVISION_CARD.key : null,
       };
       return json(route, {
         success: true, errorCode: null, error: null, workbenchId: WORKBENCH_ID,
         operationId: body['operationId'], outcome, decisionStage,
         revision, fingerprint, spawnedTaskKeys: body['spawnedTaskKeys'],
         responses: body['responses'], taskDraft: body['task'], idempotent: false,
+        ...(outcome === 'rework' ? {
+          revisionCard: REVISION_CARD,
+          revisionRound: {
+            status: 'queued', taskKey: REVISION_CARD.key, title: REVISION_CARD.title,
+            queueReason: 'project-busy', queuePosition: 1,
+            detail: 'Another card holds the project\'s runner slot. The round starts when the slot is free.',
+          },
+        } : {}),
       });
     },
   );
@@ -445,16 +491,20 @@ async function installMocks(
           title: 'Implement the stable naming contract', lane: '2-ready', state: '2-ready',
           environments: [], section: null, decision: null, implementationIndex: null }] : [])],
       },
-      html: DOSSIER_HTML, branch: 'develop', revision,
-      workingTreeModified: false, fingerprint, entryFingerprint: 'entry-a',
+      html: revisionLanded ? REVISED_HTML : DOSSIER_HTML, branch: 'develop', revision,
+      workingTreeModified: false, fingerprint,
+      entryFingerprint: revisionLanded ? 'entry-b' : 'entry-a',
+      revisionCard: REVISION_CARD,
     }),
   );
 
   return captured;
 }
 
-async function seedWorkbench(page: Page, theme: 'light' | 'dark' = 'light') {
-  await page.addInitScript(({ project, workbenchId, theme }) => {
+async function seedWorkbench(
+  page: Page, theme: 'light' | 'dark' = 'light', storedModel = true,
+) {
+  await page.addInitScript(({ project, workbenchId, theme, storedModel }) => {
     if (!sessionStorage.getItem('agt2610-workbench-seeded')) {
       sessionStorage.clear();
       sessionStorage.setItem('agt2610-workbench-seeded', '1');
@@ -466,8 +516,9 @@ async function seedWorkbench(page: Page, theme: 'light' | 'dark' = 'light') {
     }));
     localStorage.setItem('atp.studio.theme', theme);
     localStorage.setItem('defaultCliType', 'claude');
-    localStorage.setItem('defaultModel:claude', 'claude-opus-4-6');
-  }, { project: PROJECT, workbenchId: WORKBENCH_ID, theme });
+    if (storedModel) localStorage.setItem('defaultModel:claude', 'claude-opus-4-6');
+    else localStorage.removeItem('defaultModel:claude');
+  }, { project: PROJECT, workbenchId: WORKBENCH_ID, theme, storedModel });
 }
 
 for (const scenario of [
@@ -857,11 +908,13 @@ test('inline Dossier decision requests rework through its orchestrator session',
     .toContainText('Rework requested on');
   await expect(inline.getByTestId('workbench-decision-receipt'))
     .toContainText('gpt-5.6-sol');
-  expect(captured.steerBodies).toHaveLength(1);
-  expect(captured.steerBodies[0]).toEqual(expect.objectContaining({
-    cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
+  await expect(inline.getByTestId('workbench-decision-revision-round'))
+    .toContainText('Revision round queued on AGT-2600');
+  expect(captured.steerBodies).toHaveLength(0);
+  expect(captured.decisionBodies[1]).toEqual(expect.objectContaining({
+    outcome: 'rework', cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
   }));
-  expect(captured.steerBodies[0]['prompt']).toContain(
+  expect(captured.decisionBodies[1]['revisionPrompt']).toContain(
     'Raise the total and revise the supporting rationale.',
   );
   await page.screenshot({
@@ -917,3 +970,89 @@ test('active shaping Dossier names the descriptor states that open decisions', a
     path: resolve(RESULTS, 'agt-3697-active-shaping-gate-notice--light.png'),
   });
 });
+
+/**
+ * AGT-3703 (playthrough AGT-3649 F10): the owner asks for one more section in
+ * the rework form, sees the card that runs the revision, confirms without
+ * picking a model, sees the queued round, and finds their choice again after
+ * the revision lands.
+ */
+for (const variant of [
+  { name: 'light', theme: 'light' as const, width: 1600, height: 1000 },
+  { name: 'dark', theme: 'dark' as const, width: 1600, height: 1000 },
+  { name: '390', theme: 'light' as const, width: 390, height: 844 },
+]) {
+  test(`rework form asks for the request and keeps the owner choice after the revision (${variant.name})`, async ({ page, devBackend }) => {
+    expect(devBackend.port).toBeGreaterThan(0);
+    mkdirSync(RESULTS, { recursive: true });
+    await page.setViewportSize({ width: variant.width, height: variant.height });
+    const captured = await installMocks(page);
+    await seedWorkbench(page, variant.theme, false);
+    await page.goto('/');
+    await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
+
+    const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+    await frame.locator('[data-option-id="option-b"] input').check();
+    const inline = page.getByTestId('workbench-inline-decision-action');
+    const rework = inline.getByTestId('workbench-decision-rework');
+    await expect(rework).toBeEnabled();
+    await rework.click();
+
+    const form = inline.getByTestId('workbench-decision-rework-confirmation');
+    await expect(form.getByTestId('workbench-decision-revision-card'))
+      .toContainText('AGT-2600 · Concept: naming contract');
+    await expect(form.getByTestId('workbench-decision-revision-card')).toContainText('Accepted');
+    await expect(form.getByTestId('workbench-decision-agent'))
+      .toHaveAttribute('aria-label', /claude-opus-4-6/);
+    const confirm = form.getByTestId('workbench-decision-confirm-rework');
+    await expect(confirm).toBeDisabled();
+    await form.getByTestId('workbench-decision-rework-request')
+      .fill('Add a privacy section that says what the public name may contain.');
+    await expect(confirm).toBeEnabled();
+    const request = form.getByTestId('workbench-decision-rework-request');
+    const colours = await request.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { color: style.color, background: style.backgroundColor };
+    });
+    expect(contrastRatio(colours.color, colours.background), 'request field contrast')
+      .toBeGreaterThanOrEqual(4.5);
+    await form.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: resolve(RESULTS, `agt-3703-rework-form--${variant.name}.png`),
+      fullPage: variant.width > 400,
+    });
+
+    await confirm.click();
+    const round = inline.getByTestId('workbench-decision-revision-round');
+    await expect(round).toContainText('Revision round queued on AGT-2600');
+    await expect(round).toContainText('runner slot');
+    await expect(inline.getByTestId('workbench-decision-request-receipt'))
+      .toContainText('Add a privacy section');
+    expect(captured.steerBodies).toHaveLength(0);
+    expect(captured.decisionBodies[1]).toEqual(expect.objectContaining({
+      outcome: 'rework', confirmed: true, cliType: 'claude', model: 'claude-opus-4-6',
+      request: 'Add a privacy section that says what the public name may contain.',
+      responses: [expect.objectContaining({ selectedOptionIds: ['option-b'] })],
+    }));
+    expect(captured.decisionBodies[1]['revisionPrompt'])
+      .toContain('Owner request:\nAdd a privacy section');
+    await round.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: resolve(RESULTS, `agt-3703-rework-round-queued--${variant.name}.png`),
+      fullPage: variant.width > 400,
+    });
+
+    captured.landRevision();
+    await page.reload();
+    await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
+    await expect(frame.getByRole('heading', { name: 'Privacy' })).toBeVisible();
+    await expect(frame.locator('[data-option-id="option-b"] input')).toBeChecked();
+    await expect(frame.locator('[data-option-id="option-a"] input')).not.toBeChecked();
+    await expect(page.getByTestId('workbench-inline-decision-action')
+      .getByTestId('workbench-decision-receipt')).toHaveCount(0);
+    await page.screenshot({
+      path: resolve(RESULTS, `agt-3703-revision-keeps-owner-choice--${variant.name}.png`),
+      fullPage: variant.width > 400,
+    });
+  });
+}

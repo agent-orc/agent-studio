@@ -1669,6 +1669,14 @@ export class TaskService {
     );
   }
 
+  /** Read a task-owned result artifact through the guarded results endpoint. */
+  readTaskResult(jobId: string, fileName: string, watchPath?: string) {
+    return this.getUtf8Text(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/results/${encodeURIComponent(fileName)}`,
+      this.withWatchPath(watchPath),
+    );
+  }
+
   /**
    * Git-backed history for one task file, served by the Slice 2 file-source
    * API. `scope: 'code'` reads the dev-seat repository checkout, so it is

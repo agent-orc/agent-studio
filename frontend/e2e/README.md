@@ -95,7 +95,10 @@ Secure session cookie. The spec creates the owner in the sign-in gate, waits
 30 seconds on the second-factor screen (past the four-second offline grace of
 the disconnected live-update hub), then enrolls an authenticator with a code it
 computes from the shown secret (AGT-3614). With `JOB_RESULTS_DIR` set, it
-writes light, dark and 390 px screenshots to `owner-second-factor/`.
+writes light, dark and 390 px screenshots to `owner-second-factor/`. It then
+clears the browser session and signs in with one of the recovery codes. The
+profile creates a private encryption key beside the disposable workspace and
+removes it when the backend stops; no operator key override is needed.
 
 ### Networked project checkout journey
 

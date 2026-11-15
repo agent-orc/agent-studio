@@ -55,7 +55,7 @@ describe('WorkbenchViewerComponent', () => {
         provideZonelessChangeDetection(),
         provideHttpClient(),
         provideHttpClientTesting(),
-        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), refresh: vi.fn() } },
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), getCliModelCatalog: () => of({ models: [], source: 'test' }), refresh: vi.fn() } },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(WorkbenchViewerComponent);
@@ -99,7 +99,7 @@ describe('WorkbenchViewerComponent', () => {
         provideZonelessChangeDetection(),
         provideHttpClient(),
         provideHttpClientTesting(),
-        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), refresh: vi.fn() } },
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), getCliModelCatalog: () => of({ models: [], source: 'test' }), refresh: vi.fn() } },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(WorkbenchViewerComponent);
@@ -141,7 +141,7 @@ describe('WorkbenchViewerComponent', () => {
         provideHttpClientTesting(),
         {
           provide: TaskService,
-          useValue: { getReferenceStatuses: () => of([]), refresh: vi.fn(), taskEvents: EMPTY },
+          useValue: { getReferenceStatuses: () => of([]), getCliModelCatalog: () => of({ models: [], source: 'test' }), refresh: vi.fn(), taskEvents: EMPTY },
         },
       ],
     }).compileComponents();
@@ -336,7 +336,7 @@ describe('WorkbenchViewerComponent', () => {
         provideZonelessChangeDetection(),
         provideHttpClient(),
         provideHttpClientTesting(),
-        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), refresh: vi.fn() } },
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), getCliModelCatalog: () => of({ models: [], source: 'test' }), refresh: vi.fn() } },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(WorkbenchViewerComponent);

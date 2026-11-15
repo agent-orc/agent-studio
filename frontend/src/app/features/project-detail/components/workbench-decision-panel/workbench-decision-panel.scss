@@ -195,6 +195,7 @@
 }
 
 .decision-panel__receipt-note { flex: 1 1 100%; }
+.decision-panel__receipt-note[data-round-status='failed'] { color: var(--studio-error); }
 
 .decision-panel__created {
   display: flex;

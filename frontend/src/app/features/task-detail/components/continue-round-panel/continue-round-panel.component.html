@@ -6,6 +6,9 @@
         <button type="button" class="round__button" data-testid="continue-round-open" (click)="openForm()">Continue with a follow-up</button>
       }
     </div>
+    @if (isolationHold(); as hold) {
+      <app-isolation-hold [hold]="hold" [project]="job().projectName" />
+    }
     @if (open()) {
       <div class="round__form" data-testid="continue-round-form">
         <app-segmented-control
