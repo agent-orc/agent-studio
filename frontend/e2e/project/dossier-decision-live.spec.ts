@@ -61,10 +61,17 @@ test('a Dossier decision that cannot be saved removes its card, and the retry de
   }
 
   // The retry creates a fresh card and records the decision with it.
+  await page.reload();
+  await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
   await restoreAnswers(page);
   await revealAction(page);
-  await expect(inline.getByTestId('workbench-decision-confirm')).toBeEnabled({ timeout: 30_000 });
-  await inline.getByTestId('workbench-decision-confirm').click();
+  const confirm = inline.getByTestId('workbench-decision-confirm');
+  if (await confirm.isVisible()) await inline.getByRole('button', { name: 'Cancel' }).click();
+  await expect(inline).toContainText('2 of 2 answered');
+  await inline.getByTestId('workbench-decision-start').click();
+  await inline.getByTestId('workbench-decision-title').fill(title);
+  await expect(confirm).toBeEnabled({ timeout: 30_000 });
+  await confirm.click();
   const created = inline.getByTestId('workbench-decision-created-tasks');
   await expect(created).toContainText(title, { timeout: 30_000 });
   await expect(page.getByTestId('workbench-viewer-status')).toHaveAttribute('data-status', 'decided');
