@@ -24,6 +24,33 @@ public sealed class BackupAuditTests : IDisposable
     public void Dispose() => _fixture.Dispose();
 
     [Fact]
+    public void Read_audit_bounds_polling_and_records_new_outcomes_and_actors()
+    {
+        var service = Service(null);
+        for (var index = 0; index < 20; index++)
+            service.AuditRead("usr_owner", BackupAudit.InventoryRead, null, BackupAudit.Succeeded, "Viewed backup inventory.");
+        service.AuditRead("usr_owner", BackupAudit.ContentsRead, "studio-backup-one", BackupAudit.Succeeded, "Viewed archive content list.");
+        service.AuditRead("usr_owner", BackupAudit.ContentsRead, "studio-backup-one", BackupAudit.Failed, "Archive content list could not be read.");
+        service.AuditRead("usr_operator", BackupAudit.InventoryRead, null, BackupAudit.Succeeded, "Viewed backup inventory.");
+        Assert.Equal(4, Backups().Count);
+
+        _clock.Advance(StudioBackupService.ReadAuditWindow);
+        service.AuditRead("usr_owner", BackupAudit.InventoryRead, null, BackupAudit.Succeeded, "Viewed backup inventory.");
+        Assert.Equal(5, Backups().Count);
+        Assert.Equal("usr_owner", Backups()[^1].Actor);
+        Assert.True(_audit.VerifyChain().Ok);
+    }
+
+    [Fact]
+    public void Read_audit_target_accepts_only_archive_ids()
+    {
+        Assert.Equal("studio-backup-20261109T000000Z-000000",
+            BackupAudit.ArchiveTarget("studio-backup-20261109T000000Z-000000"));
+        Assert.Null(BackupAudit.ArchiveTarget("credential-value"));
+        Assert.Null(BackupAudit.ArchiveTarget("studio-backup-secret=value"));
+    }
+
+    [Fact]
     public async Task Scheduled_tick_records_create_upload_and_verify_with_the_schedule_actor()
     {
         var target = new FlakyTarget { Failures = 1 };
