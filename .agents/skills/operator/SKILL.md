@@ -114,7 +114,7 @@ its class code. The cursor is saved, so the next `watch` resumes after it.
 | 20 | `escalation.opened` | Read the card and its timeline in Studio; continue with a precise prompt or leave it to the Owner. |
 | 21 | `human-review.ready` | `studio-op accept <card>`; on exit 7 log the reasons and leave the card. |
 | 22 | `decision-card.opened` | Owner decision. Log it as `observed`; do not act. |
-| 23 | `backend.stalled`, `progress.idle-with-ready` | `studio-op capacity`, then `studio-op triage`. |
+| 23 | `backend.stalled`, `progress.idle-with-ready`, `gate-host.unreachable` | `studio-op capacity`, then `studio-op triage`. For an unreachable gate host the Owner brings it back or points `RemoteGate:SshHost` elsewhere; the gate resumes on its own. |
 | 24 | `batch.red`, `batch.isolating`, `batch.record-unreadable` | Runbook "Stuck batch flight", "Base-verdict quarantine" or "Unreadable batch record". |
 | 25 | `push.pending-overdue`, `push.blocked` | Runbook "Lost pending push"; for `push.blocked`, use the card's Retry integration. |
 | 26 | `quota.exhausted`, `quota.fallback-active` | `studio-op capacity`; wait for the reset or change a step model (below). |

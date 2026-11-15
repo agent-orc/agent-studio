@@ -133,7 +133,9 @@ public sealed partial class BatchGatePilotService
         _time = timeProvider ?? TimeProvider.System;
         _snapshots = new BatchGateSnapshotBuilder(store, authority, scanner, git, logger);
         _queueStalls = new GateQueueStallMonitor(store, _time);
-        _hostOutage = new GateHostOutageMonitor(_time);
+        // AGT-3792: the installation's one gate host health state, when the host provides it.
+        _hostOutage = services?.GetService<GateHostOutageMonitor>() ?? new GateHostOutageMonitor(_time);
+        _hostOutage.Ended += OnGateHostOutageEnded;
         _advisor = advisor;
         _reservations = reservations;
         _reservations?.LoadPersistedProjects(_settings.GetAll().Keys);
@@ -516,6 +518,8 @@ public sealed partial class BatchGatePilotService
             // AGT-3569: expire stale durable claims before recovery reads phases.
             ExpireFlightClaims();
             ObserveFallbackFlights();
+            // AGT-3792: an unreachable gate host is probed, not run against.
+            await ProbeGateHostAsync(ct).ConfigureAwait(false);
             if (_configuration is not null && _time.GetUtcNow() >= _nextStorageRetentionAt)
             {
                 _nextStorageRetentionAt = _time.GetUtcNow().AddHours(6);
@@ -1937,7 +1941,7 @@ public sealed partial class BatchGatePilotService
                 }
             }
             if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
-                RecordGateHostReachable(gated.FirstOrDefault()?.WatchPath ?? string.Empty);
+                RecordGateHostReachable();
             if (gate.Verdict != BuildTestGateVerdict.Ok
                 || !string.Equals(gate.TestedSha, assembly.CandidateSha,
                     StringComparison.OrdinalIgnoreCase))

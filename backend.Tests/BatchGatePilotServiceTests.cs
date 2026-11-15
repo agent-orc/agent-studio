@@ -44,6 +44,8 @@ public abstract partial class BatchGatePilotServiceTests : IDisposable
     private protected readonly string _repo;
     private protected readonly string _origin;
     private protected readonly ScriptedGate _gate = new();
+    /// <summary>Without a host the outage probes with one gate run per backoff step (AGT-3746).</summary>
+    private protected readonly ScriptedGateHostProbe _probe = new();
     private protected readonly ErrorLog _errors = new();
     private protected DateTimeOffset _clock = new(2026, 9, 27, 10, 0, 0, TimeSpan.Zero);
 
@@ -4387,6 +4389,8 @@ public abstract partial class BatchGatePilotServiceTests
                 services.AddSingleton<ILoggerProvider>(_errors);
                 services.RemoveAll<IBuildTestGateRunner>();
                 services.AddSingleton<IBuildTestGateRunner>(_gate);
+                services.RemoveAll<IGateHostProbe>();
+                services.AddSingleton<IGateHostProbe>(_probe);
                 services.RemoveAll<AttemptAuthorityService>();
                 services.AddSingleton(sp => new AttemptAuthorityService(
                     sp.GetRequiredService<IConfiguration>(),
@@ -4409,6 +4413,22 @@ public abstract partial class BatchGatePilotServiceTests
     private protected sealed class PilotTimeProvider(Func<DateTimeOffset> now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now();
+    }
+
+    /// <summary>The gate host transport probe (AGT-3792); it never opens a connection.</summary>
+    private protected sealed class ScriptedGateHostProbe : IGateHostProbe
+    {
+        private int _probes;
+
+        public string? Host { get; set; }
+        public Func<GateHostProbeResult> Answer { get; set; } = () => new GateHostProbeResult(true);
+        public int Probes => Volatile.Read(ref _probes);
+
+        public Task<GateHostProbeResult> ProbeAsync(CancellationToken ct)
+        {
+            Interlocked.Increment(ref _probes);
+            return Task.FromResult(Answer());
+        }
     }
 
     private protected static string Git(string cwd, params string[] args)

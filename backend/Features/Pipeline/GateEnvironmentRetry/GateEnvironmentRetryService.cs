@@ -112,6 +112,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     private readonly TimeProvider _time;
     private readonly TaskRunnerService? _continuations;
     private readonly AgentStudio.Runner.AiOperatorDecisionGateway _decisions;
+    private readonly TaskTransitionService? _transitions;
+    private readonly GateHostOutageMonitor? _hostHealth;
 
     // One replay per card at a time. A sweep rung and the operator action run
     // the same merge against the same branch, so letting both in would spend two
@@ -132,7 +134,9 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         ILogger<GateEnvironmentRetryService> logger,
         TimeProvider? time = null,
         TaskRunnerService? continuations = null,
-        AgentStudio.Runner.AiOperatorDecisionGateway? decisions = null)
+        AgentStudio.Runner.AiOperatorDecisionGateway? decisions = null,
+        TaskTransitionService? transitions = null,
+        GateHostOutageMonitor? hostHealth = null)
     {
         _scanner = scanner;
         _settings = settings;
@@ -147,6 +151,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         _time = time ?? TimeProvider.System;
         _continuations = continuations;
         _decisions = decisions ?? AgentStudio.Runner.AiOperatorDecisionGateway.ForTestHost(configuration);
+        _transitions = transitions;
+        _hostHealth = hostHealth;
     }
 
     public string Decider => AiOperatorDeciders.GateEnvironmentRetry;
@@ -162,6 +168,11 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     {
         var options = Options;
         if (!options.Enabled) return new GateEnvironmentRetrySweep(0, 0, 0, 0);
+
+        await ReturnTransportEscalationsAsync(ct).ConfigureAwait(false);
+        // AGT-3792: a replay cannot reach an unreachable gate host; it would
+        // only spend a rung. The ladder waits for the outage probe.
+        if (_hostHealth?.HoldsGateReplay == true) return new GateEnvironmentRetrySweep(0, 0, 0, 0);
 
         var jobs = _scanner.ScanAllAutomationJobs()
             .Where(job => GateEnvironmentRetryFactsReader.Lanes.Contains(job.State))
@@ -309,6 +320,131 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     }
 
     /// <summary>
+    /// AGT-3792: a card the merge gate escalated as <c>gate-environment-exhausted</c>
+    /// because of the gate transport asked for "repair the gate transport,
+    /// then retry the gate". Once the gate host answered after the escalation,
+    /// this is that retry: the integration is replayed with the passed review
+    /// (restarting the bounded ladder), and the card returns to the lane it was
+    /// escalated from, where the delivery chain takes the new verdict. A card
+    /// escalated for any other gate failure is left alone.
+    /// </summary>
+    public async Task<int> ReturnTransportEscalationsAsync(CancellationToken ct = default)
+    {
+        if (_hostHealth is null || _transitions is null) return 0;
+        var escalated = _scanner.ScanAllAutomationJobs()
+            .Where(job => job.State == TaskStates.Escalated && EscalatedByTransport(job))
+            .OrderBy(job => job.EnteredLaneAt)
+            .ToList();
+        var returned = 0;
+        foreach (var job in escalated)
+        {
+            ct.ThrowIfCancellationRequested();
+            var escalatedAt = AsOffset(job.EnteredLaneAt) ?? _time.GetUtcNow();
+            // Without an answer from the host since this escalation, none of the later ones returns either.
+            if (!await _hostHealth.ConfirmReachableSinceAsync(escalatedAt, ct).ConfigureAwait(false)) break;
+            if (!_hostHealth.ReturnsTransportEscalation(escalatedAt)) continue;
+            try
+            {
+                if (await ReturnTransportEscalationAsync(job, ct).ConfigureAwait(false)) returned++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "gate-transport-recovery failed project={Project} job={JobId}",
+                    job.ProjectName, job.Id);
+            }
+        }
+        return returned;
+    }
+
+    /// <summary>The escalation parked the card on a transport failure of its merge gate.</summary>
+    internal static bool EscalatedByTransport(TaskInfo job)
+        => job.ParkedBlocker?.BlockerType == GateFailureParkCategories.EnvironmentExhausted
+           && GateFailureRouter.ReadReceipt(job.FolderPath) is { Triage.Kind: GateEnvironmentKinds.Transport };
+
+    private async Task<bool> ReturnTransportEscalationAsync(TaskInfo job, CancellationToken ct)
+    {
+        if (!_inFlight.TryAdd(job.TaskKey, 0)) return false;
+        GateEnvironmentRetryResult replay;
+        try
+        {
+            var status = _integrationStatus.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
+            // Judged as the Auto Review card it returns as: the integrating phase
+            // an escalated card keeps is no running acceptance. A merge that is
+            // really running still holds the replay back through its gate journal.
+            var evaluation = Evaluate(job with { State = TaskStates.AutoReview }, status, Options,
+                transportRecovered: true);
+            if (MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(evaluation.Facts) is { } refusal)
+            {
+                _logger.LogInformation(
+                    "gate-transport-recovery skipped project={Project} job={JobId} reason={Reason}",
+                    job.ProjectName, job.Id, refusal);
+                return false;
+            }
+            replay = await ReplayAsync(job, evaluation, GateEnvironmentRetrySources.TransportRecovered, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _inFlight.TryRemove(job.TaskKey, out _);
+        }
+        // The replay met the outage again: the card waits for the next recovery.
+        if (_hostHealth!.Current is not null) return false;
+
+        var current = _scanner.FindJob(job.Id, job.WatchPath);
+        if (current is null || current.State != TaskStates.Escalated) return false;
+        var target = LaneBeforeEscalation(current) ?? TaskStates.AutoReview;
+        var reason = $"The gate transport answers again. The integration was replayed with the passed review "
+            + $"({replay.Outcome?.ToString() ?? "no verdict"}) and the card returned to "
+            + $"{TaskStates.DisplayName(target)}, where its merge verdict is taken as usual.";
+        var moved = await _transitions!.MoveAsync(current.Id, target, current.WatchPath, ct,
+            cause: TimelineActors.System,
+            reason: reason,
+            expectedSourceState: TaskStates.Escalated,
+            suppressProductExecution: true,
+            transitionCause: LaneChangeCauses.IntegrationRecovery,
+            transitionDetail: GateEnvironmentRetrySources.TransportRecovered).ConfigureAwait(false);
+        if (moved.Status != MoveJobStatus.Success)
+        {
+            _logger.LogWarning(
+                "gate-transport-recovery move failed project={Project} job={JobId} target={Target} status={Status} message={Message}",
+                current.ProjectName, current.Id, target, moved.Status, moved.Message);
+            return false;
+        }
+        var returnedCard = _scanner.FindJob(current.Id, current.WatchPath) ?? current;
+        _timeline.Append(returnedCard.FolderPath, TimelineEventKinds.IntegrationRecoveryQueued, TimelineActors.System,
+            reason, details: new Dictionary<string, string>
+            {
+                ["automatic"] = "true",
+                ["source"] = GateEnvironmentRetrySources.TransportRecovered,
+                ["returnedTo"] = target,
+                ["outcome"] = replay.Outcome?.ToString() ?? string.Empty,
+                [GateEnvironmentRetryReceipts.DeliveryShaKey] = replay.DeliverySha ?? string.Empty,
+            });
+        if (target == TaskStates.AutoReview && _scanner.FindJob(current.Id, current.WatchPath) is { } returned)
+        {
+            // As the delivery chain does: the card is in the integration phase
+            // of Auto Review, so an integrated delivery advances to Human Review.
+            TaskJsonFile.UpdateField(returned.FolderPath, "phase", LifecyclePhases.Integrating, _logger);
+            _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(returned.FolderPath);
+        }
+        _logger.LogInformation(
+            "gate-transport-recovery returned project={Project} job={JobId} target={Target} outcome={Outcome}",
+            current.ProjectName, current.Id, target, replay.Outcome);
+        return true;
+    }
+
+    /// <summary>The lane the card was escalated from, read from its last lane change into Escalated.</summary>
+    private string? LaneBeforeEscalation(TaskInfo job)
+    {
+        var from = _timeline.ReadAll(job.FolderPath)
+            .LastOrDefault(entry => entry.Kind == TimelineEventKinds.LaneChanged
+                && entry.Details?.GetValueOrDefault("to") == TaskStates.Escalated)
+            ?.Details?.GetValueOrDefault("from");
+        return from is TaskStates.AutoReview or TaskStates.HumanReview ? from : null;
+    }
+
+    /// <summary>
     /// AGT-3060: applies the engine's gate-environment receipt. The facts are
     /// read again; a card whose failure, delivery or spent rungs changed since
     /// the occurrence was frozen is settled without an effect.
@@ -366,10 +502,16 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     /// The facts the ladder needs plus the facts the writes need, read once so
     /// the sweep and the operator action cannot disagree about the same card.
     /// </summary>
+    /// <param name="transportRecovered">
+    /// AGT-3792: the gate host answers again after a transport failure. The
+    /// ladder leaves transport failures alone while the host may still be down;
+    /// once it answers, the typed gate-environment failure is replayable.
+    /// </param>
     internal GateEnvironmentRetryEvaluation Evaluate(
         TaskInfo job,
         TaskIntegrationStatus? status,
-        GateEnvironmentRetryOptions options)
+        GateEnvironmentRetryOptions options,
+        bool transportRecovered = false)
     {
         var subject = ReviewSubjectStore.Read(job.FolderPath);
         var deliverySha = ReviewSubjectStore.IsValidResultSha(subject?.ResultSha)
@@ -394,6 +536,12 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             options,
             now,
             inFlight);
+        if (transportRecovered)
+            withoutReview = withoutReview with
+            {
+                IsGateEnvironmentFailure = withoutReview.IsGateEnvironmentFailure
+                    || status?.Failure?.Code == AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+            };
         // Load review archives only when every other eligibility fact holds.
         // Most cards in these lanes have no gate failure to retry.
         var reviewLookup = MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(withoutReview)
@@ -480,9 +628,10 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         // budget that can never be exhausted. An operator replay is not a rung:
         // it restarts the ladder, so it carries rung 0.
         var isOperator = source == GateEnvironmentRetrySources.Operator;
-        if (!isOperator && evaluation.ShutdownInterruption) source = GateEnvironmentRetrySources.Shutdown;
+        var restartsLadder = GateEnvironmentRetrySources.RestartsLadder(source);
+        if (!restartsLadder && evaluation.ShutdownInterruption) source = GateEnvironmentRetrySources.Shutdown;
         var isShutdown = source == GateEnvironmentRetrySources.Shutdown;
-        var rung = isOperator || isShutdown ? 0 : evaluation.Ledger.AttemptsSpent + 1;
+        var rung = restartsLadder || isShutdown ? 0 : evaluation.Ledger.AttemptsSpent + 1;
         var maximum = evaluation.Facts.Backoff.Count;
         GateEnvironmentRetryReceipts.RecordRetry(
             _timeline,
@@ -493,6 +642,9 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             isOperator
                 ? $"Operator replayed the integration of {Short(deliverySha)} into {evaluation.IntegrationBranch} "
                   + "after a gate environment failure, reusing the passed review and restarting the bounded ladder."
+                : restartsLadder
+                ? $"The gate transport answers again: replayed the integration of {Short(deliverySha)} into "
+                  + $"{evaluation.IntegrationBranch}, reusing the passed review and restarting the bounded ladder."
                 : isShutdown
                 ? $"Resumed the integration of {Short(deliverySha)} into {evaluation.IntegrationBranch} after the "
                   + "service's own stop interrupted its gate, reusing the passed review without spending a retry."
@@ -675,6 +827,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     {
         var attempt = source == GateEnvironmentRetrySources.Shutdown
             ? "The resumed integration after a service stop"
+            : source == GateEnvironmentRetrySources.TransportRecovered
+            ? "The integration replay after the gate transport recovered"
             : rung == 0
             ? "The operator integration replay"
             : $"Gate-environment retry {rung}/{maximum}";

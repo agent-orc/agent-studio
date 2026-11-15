@@ -175,7 +175,7 @@ public sealed class GateHostOutagePolicyTests
     public void Monitor_admits_one_probe_per_backoff_step_and_reports_the_closed_outage()
     {
         var clock = new MutableClock(Start);
-        var monitor = new GateHostOutageMonitor(clock);
+        var monitor = new GateHostOutageMonitor(clock, unreachableAfter: 1);
         Assert.True(monitor.TryStartRun());
         monitor.Unreachable("AGT-A", "ssh exited 255");
         monitor.Held("AGT-B");
@@ -192,6 +192,153 @@ public sealed class GateHostOutagePolicyTests
         Assert.Equal(["AGT-A", "AGT-B"], ended.AffectedRuns);
         Assert.True(ended.Escalated);
         Assert.Null(monitor.Reachable());
+    }
+
+    [Theory]
+    [InlineData("ssh: connect to host 172.30.83.1 port 12222: Connection refused", "connection-refused")]
+    [InlineData("Connection timed out during banner exchange", "banner-timeout")]
+    [InlineData("ssh: connect to host gate port 22: No route to host", "no-route")]
+    [InlineData("ssh: Could not resolve hostname kori-gate: Name or service not known", "name-resolution")]
+    [InlineData("ssh: connect to host gate port 22: Connection timed out", "connection-timeout")]
+    [InlineData("scp: /srv/gates/run/response.json: No such file or directory", null)]
+    [InlineData("deterministic-suite-red", null)]
+    public void Names_the_kind_of_a_transport_failure(string evidence, string? kind)
+        => Assert.Equal(kind, GateHostOutagePolicy.TransportFailureKind(evidence));
+
+    [Fact]
+    public void Consecutive_failures_of_one_kind_mark_the_host_unreachable_from_the_first()
+    {
+        var clock = new MutableClock(Start);
+        var monitor = new GateHostOutageMonitor(clock);
+        Assert.Null(monitor.TransportFailed("ssh: connect to host gate port 12222: Connection refused", "AGT-A"));
+        clock.Now = Start.AddSeconds(10);
+        Assert.Null(monitor.TransportFailed("Connection timed out during banner exchange", "AGT-A"));
+        clock.Now = Start.AddSeconds(20);
+        Assert.Null(monitor.TransportFailed("ssh: connect to host gate port 12222: Connection refused", "AGT-B"));
+        Assert.True(monitor.TryStartRun());
+        clock.Now = Start.AddSeconds(30);
+
+        var outage = Assert.IsType<GateHostOutage>(
+            monitor.TransportFailed("ssh: connect to host gate port 12222: Connection refused"));
+
+        Assert.Equal(Start, outage.SinceUtc);
+        Assert.Equal("connection-refused", outage.Kind);
+        Assert.Equal(4, outage.FailedProbes);
+        Assert.Equal(["AGT-A", "AGT-B"], outage.AffectedRuns);
+        Assert.Contains("Connection refused", outage.LastError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_reached_host_resets_the_count_toward_unreachable()
+    {
+        var clock = new MutableClock(Start);
+        var monitor = new GateHostOutageMonitor(clock);
+        monitor.TransportFailed("Connection refused");
+        monitor.TransportFailed("Connection refused");
+        Assert.Null(monitor.Reachable());
+        Assert.Equal(Start, monitor.LastReachableUtc);
+        monitor.TransportFailed("Connection refused");
+        monitor.TransportFailed("Connection refused");
+        Assert.Null(monitor.Current);
+    }
+
+    [Fact]
+    public async Task With_a_transport_probe_no_run_starts_and_the_probe_backs_off()
+    {
+        var clock = new MutableClock(Start);
+        var answers = new Queue<GateHostProbeResult>([new(false, "Connection refused"), new(true)]);
+        var probe = new QueueProbe(answers);
+        var monitor = new GateHostOutageMonitor(clock, probe, unreachableAfter: 1);
+        GateHostOutageEnded? reported = null;
+        monitor.Ended += ended => reported = ended;
+        monitor.TransportFailed("Connection refused", "AGT-A", "/watch/alpha");
+
+        clock.Now = Start.AddMinutes(10);
+        Assert.False(monitor.TryStartRun());
+        Assert.True(monitor.RunsHeld);
+        Assert.Equal(false, (await monitor.ProbeIfDueAsync(CancellationToken.None))?.Reachable);
+        // Inside the next backoff step the probe does not run again.
+        Assert.Null(await monitor.ProbeIfDueAsync(CancellationToken.None));
+        Assert.Equal(1, probe.Probes);
+        clock.Now = Start.AddMinutes(11);
+
+        Assert.Equal(true, (await monitor.ProbeIfDueAsync(CancellationToken.None))?.Reachable);
+
+        Assert.Null(monitor.Current);
+        Assert.True(monitor.TryStartRun());
+        Assert.Equal(Start, reported?.SinceUtc);
+        Assert.Equal(["/watch/alpha"], reported!.WatchPaths);
+    }
+
+    [Fact]
+    public async Task Gate_transport_attempts_report_to_the_gate_host_health_state()
+    {
+        var clock = new MutableClock(Start);
+        var monitor = new GateHostOutageMonitor(clock);
+        var transport = new ScriptedTransport { Refuse = true };
+        var runner = new RemoteBuildTestGateRunner(transport,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<RemoteBuildTestGateRunner>.Instance,
+            hostHealth: monitor);
+        var request = new BuildTestGateRequest("/repo", new string('b', 40), "merge-gate");
+
+        var refused = await runner.RunAsync(request, null, null, PostStepMode.Fail, TimeSpan.FromMinutes(5),
+            CancellationToken.None);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, refused.Verdict);
+        Assert.Equal(3, transport.Attempts);
+        Assert.Equal("connection-refused", Assert.IsType<GateHostOutage>(monitor.Current).Kind);
+
+        transport.Refuse = false;
+        clock.Now = Start.AddMinutes(1);
+        var green = await runner.RunAsync(request, null, null, PostStepMode.Fail, TimeSpan.FromMinutes(5),
+            CancellationToken.None);
+
+        Assert.Equal(BuildTestGateVerdict.Ok, green.Verdict);
+        Assert.Null(monitor.Current);
+        Assert.Equal(Start.AddMinutes(1), monitor.LastReachableUtc);
+    }
+
+    [Fact]
+    public void Transport_escalations_return_only_after_the_host_answered_and_no_outage_is_open()
+    {
+        Assert.True(GateHostOutagePolicy.ReturnsTransportEscalation(true, Start, Start.AddMinutes(1), false));
+        Assert.False(GateHostOutagePolicy.ReturnsTransportEscalation(true, Start, Start.AddMinutes(-1), false));
+        Assert.False(GateHostOutagePolicy.ReturnsTransportEscalation(true, Start, null, false));
+        Assert.False(GateHostOutagePolicy.ReturnsTransportEscalation(true, Start, Start.AddMinutes(1), true));
+        Assert.False(GateHostOutagePolicy.ReturnsTransportEscalation(false, Start, Start.AddMinutes(1), false));
+    }
+
+    private sealed class QueueProbe(Queue<GateHostProbeResult> answers) : IGateHostProbe
+    {
+        public int Probes { get; private set; }
+        public string? Host => "kori-gate";
+
+        public Task<GateHostProbeResult> ProbeAsync(CancellationToken ct)
+        {
+            Probes++;
+            return Task.FromResult(answers.Dequeue());
+        }
+    }
+
+    private sealed class ScriptedTransport : IRemoteGateTransport
+    {
+        public bool Refuse { get; set; }
+        public int Attempts { get; private set; }
+
+        public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode, TimeSpan timeout,
+            CancellationToken ct)
+        {
+            Attempts++;
+            if (Refuse)
+                throw new IOException("ssh exited 255: ssh: connect to host 172.30.83.1 port 12222: Connection refused");
+            return Task.FromResult(new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 5, "", "green", true, false)
+            {
+                ExpectedSha = request.ExpectedSha,
+                TestedSha = request.ExpectedSha,
+                GateId = request.GateId,
+            });
+        }
     }
 
     private sealed class MutableClock(DateTimeOffset now) : TimeProvider

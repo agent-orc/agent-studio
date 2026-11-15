@@ -83,7 +83,8 @@ public sealed record BatchInvariantFinding(
 public sealed record BatchPendingRecoveryFacts(
     bool CurrentGeneration, bool InAutoReview, bool MarkerMissing,
     bool MarkerMatchesAttempt, bool HasOwner, bool OwnerManifestExists,
-    bool FallbackActive, bool HasFallbackCause, long AgeMs, long MaximumWaitMs);
+    bool FallbackActive, bool HasFallbackCause, long AgeMs, long MaximumWaitMs,
+    bool GateHostUnreachable = false);
 
 public enum BatchPendingRecoveryAction
 {
@@ -109,7 +110,9 @@ public static class BatchPendingRecoveryPolicy
                 : BatchPendingRecoveryAction.ReleaseMissingOwner;
         if (facts.FallbackActive) return BatchPendingRecoveryAction.None;
         if (facts.HasFallbackCause) return BatchPendingRecoveryAction.ResumeFallback;
-        return facts.AgeMs >= facts.MaximumWaitMs
+        // AGT-3792: the planner holds every member while the gate host is
+        // unreachable; an unowned member waits for it, not for a retry.
+        return facts.AgeMs >= facts.MaximumWaitMs && !facts.GateHostUnreachable
             ? BatchPendingRecoveryAction.RetryPlanner : BatchPendingRecoveryAction.WaitForPlanner;
     }
 }

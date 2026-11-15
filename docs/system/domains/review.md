@@ -1495,6 +1495,22 @@ retried merely because its output also contains network text. Transport
 exhaustion is excluded from integration replay and retains a typed environment
 blocker; it never starts an agent fix round or accepts the failed gate.
 
+Every transport attempt also reports to the one gate host health state,
+`GateHostOutageMonitor` (AGT-3792). Three consecutive failures of one kind
+(connection refused, banner timeout, no route, name resolution, connection
+timeout; `RemoteGate:HostUnreachableAfterFailures`) mark the host unreachable
+from the first of them. While it is unreachable, an `ssh host true` probe
+checks it with the AGT-3746 backoff instead of a gate run. The batch planner
+forms no batch, the gate-environment ladder spends no rung, and the orphan
+sweep waits. Pipeline health shows `gate-host-unreachable` and Needs you shows
+`gate-host.unreachable`, naming the host, the first failure, the last error,
+the waiting batch members, and the owner's options (bring the host back, or
+point `RemoteGate:SshHost` elsewhere). Once the host has answered, the ladder
+sweep replays each card that a transport failure escalated as
+`gate-environment-exhausted` (source `transport-recovered`, which restarts the
+ladder). It then returns the card to the lane it was escalated from. A card
+escalated for any other gate failure stays where it is.
+
 ## Integration-branch gate health (AGT-2819)
 
 Because each gate is measured on the merge base on every delivery, the review
