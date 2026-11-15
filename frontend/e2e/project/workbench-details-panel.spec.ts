@@ -535,7 +535,9 @@ for (const scenario of [
     await page.goto('/');
 
     const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
-    await frame.locator('[data-option-id="option-a"] input').check();
+    const option = frame.locator('[data-option-id="option-a"] input');
+    await expect(option).toBeVisible({ timeout: 30_000 });
+    await option.check();
     const inline = page.getByTestId('workbench-inline-decision-action');
     await inline.getByTestId('workbench-decision-start').click();
     await inline.getByTestId('workbench-decision-title').fill('Implement the stable naming contract');
