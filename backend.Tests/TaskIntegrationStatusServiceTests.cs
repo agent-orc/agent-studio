@@ -1385,6 +1385,38 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_PublishedGateOnLaterTree_VerifiesContainedDelivery()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "delivery.txt"), "delivery");
+        Commit(repo, "delivery");
+        var delivery = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        File.WriteAllText(Path.Combine(repo, "later.txt"), "later");
+        Commit(repo, "later tree");
+        var laterTree = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        var now = NewClock().GetUtcNow();
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("gate-tree", "AGT-3788", project, repo, log, commits: [Commit(delivery)]);
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = job.Key!, RunAttemptId = "run-gate-tree", Project = project,
+            Repository = repo, ResultSha = delivery, AttemptChainId = "attempt-gate-tree",
+            ImmutableResultRef = "origin/agent-studio/results/run-gate-tree",
+            CompletedAtUtc = now,
+        });
+        Assert.True(PublishedGateEvidenceStore.Append(repo, new PublishedGateEvidence(
+            project, "develop", laterTree, "pre-develop-build", job.Id,
+            nameof(BuildTestGateVerdict.Ok), "passed", laterTree, now)));
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
+        Assert.Equal(laterTree, status.Verification?.Sha);
+    }
+
+    [Fact]
     public void BuildLookup_OnlyDeliveredLanes_GetAVerdict()
     {
         var repo = SeedDevelopMainRepo();

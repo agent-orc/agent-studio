@@ -672,6 +672,8 @@ public sealed class GitStateIndexService : BackgroundService
         lock (state.Gate)
         {
             if (state.Disposed) return;
+            if (state.NextTimeoutAttemptAt is { } retryAt && _timeProvider.GetUtcNow() < retryAt)
+                return;
             // A task event or queued fact work does not supersede a run in flight.
             if (trigger is not ("task-event" or "facts")) state.InvalidationVersion++;
             if (Volatile.Read(ref state.Running) == 1)
@@ -738,7 +740,7 @@ public sealed class GitStateIndexService : BackgroundService
                 : ex is DirectoryNotFoundException ? "repository-unavailable"
                 : "refresh-failed";
             var retry = RecordFailure(state, reason, ex.ToString(), run.Attempted);
-            if (retry > 0) _ = RetryAfterBackoffAsync(state, retry);
+            if (retry > 0 && reason != "timeout") _ = RetryAfterBackoffAsync(state, retry);
         }
         finally
         {
@@ -770,7 +772,8 @@ public sealed class GitStateIndexService : BackgroundService
             lock (state.Gate)
             {
                 state.ActiveDeadline = null;
-                rerun = state.RerunRequested && !state.Disposed;
+                rerun = state.RerunRequested && !state.Disposed
+                    && (state.NextTimeoutAttemptAt is not { } retryAt || _timeProvider.GetUtcNow() >= retryAt);
                 nextTrigger = state.RerunTrigger ?? "coalesced";
                 state.RerunRequested = false;
                 state.RerunTrigger = null;
@@ -1070,6 +1073,9 @@ public sealed class GitStateIndexService : BackgroundService
             state.LastError = error;
             state.FailureSince ??= _timeProvider.GetUtcNow();
             state.LastFailedInput = attemptedInput;
+            if (reason == "timeout")
+                state.NextTimeoutAttemptAt = _timeProvider.GetUtcNow()
+                    + TimeSpan.FromMinutes(Math.Min(30, 1 << Math.Min(state.Failures + 1, 5)));
             _projectionCache.MarkFailed(state.WatchPath, reason);
             return ++state.Failures <= _options.MaxRetries ? state.Failures : 0;
         }
@@ -1082,6 +1088,7 @@ public sealed class GitStateIndexService : BackgroundService
         state.LastError = null;
         state.FailureSince = null;
         state.LastFailedInput = null;
+        state.NextTimeoutAttemptAt = null;
     }
 
     private void RecordRunHealth(RepoState state, string outcome, int spawns, (string Command, int Count, long Ms)? slowest)
@@ -1254,6 +1261,7 @@ public sealed class GitStateIndexService : BackgroundService
         public string? LastError;
         public DateTimeOffset? FailureSince;
         public RepoInput? LastFailedInput;
+        public DateTimeOffset? NextTimeoutAttemptAt;
         public CancellationTokenSource? ActiveDeadline;
         // AGT-3322: configuration generation and fact-store state.
         public GitEffectiveConfig? Config;

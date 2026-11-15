@@ -26,6 +26,10 @@ describe('BatchLaneIndicatorComponent', () => {
     await fixture.whenStable();
     expect(fixture.nativeElement.textContent).toContain('Batch: 0 waiting');
     expect(fixture.nativeElement.textContent).toContain('Per-task gates: 1 queued · 1 running');
+    state.set({ ...state()!, plan: { ...state()!.plan, decision: 'disabled' } });
+    await fixture.whenStable();
+    expect(fixture.nativeElement.textContent).toContain('Per-task gates: 1 queued · 1 running');
+    expect(fixture.nativeElement.textContent).not.toContain('Batch:');
   });
   it('counts batches in the running phase, not unfinished runs in abandoned batches', async () => {
     const state = signal<BatchGateState | null>(redHalvingState);

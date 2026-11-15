@@ -80,6 +80,8 @@ function backupEntries() {
   });
   const id = 'studio-backup-20261109T060000Z-a1b2c3';
   return [
+    backup(60, '2026-11-10T07:32:00Z', 'usr_owner', 'backup.contents.read', id, 'succeeded', 'Viewed archive content list.'),
+    backup(59, '2026-11-10T07:31:00Z', 'usr_owner', 'backup.inventory.read', null, 'succeeded', 'Viewed backup inventory.'),
     backup(58, '2026-11-10T07:30:00Z', 'offline:ops@restore-host', 'backup.restore', `${id}.studio-backup`, 'succeeded',
       `Restored backup ${id}: 412 files, 3 checkouts cloned, skipped sources: none.`),
     backup(57, '2026-11-09T09:02:00Z', 'usr_owner', 'backup.retention', null, 'succeeded',
@@ -149,6 +151,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof operato
   }));
   await page.route('**/api/auth/runner-enrollments', route => json(route, []));
   await page.route('**/api/auth/runners', route => json(route, []));
+  await page.route(url => url.pathname === '/api/auth/audit/factors', route => json(route, []));
   await stubGrantRoutes(page);
   await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-approvals'), route => json(route, []));
   await page.route(url => url.pathname.startsWith('/api/auth/iam/break-glass'), route => json(route, []));
@@ -305,7 +308,9 @@ test('owner reads who created, copied, verified, pruned, and restored backups, w
 
   await expect(access.getByRole('heading', { name: 'Backup activity' })).toBeVisible();
   const backups = access.getByTestId('access-backup-activity');
-  await expect(backups.getByTestId('access-backup-activity-caption')).toContainText('Newest 6 records');
+  await expect(backups.getByTestId('access-backup-activity-caption')).toContainText('Newest 8 records');
+  await expect(backups.getByTestId('access-backup-entry-59')).toContainText('View backup inventory');
+  await expect(backups.getByTestId('access-backup-entry-60')).toContainText('View archive contents');
   await expect(backups.getByTestId('access-backup-entry-53')).toContainText('Create');
   await expect(backups.getByTestId('access-backup-entry-53')).toContainText('schedule');
   await expect(backups.getByTestId('access-backup-outcome-54')).toHaveAttribute('data-tone', 'danger');
