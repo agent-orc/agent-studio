@@ -83,6 +83,8 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route('**/api/usage/cockpit**', route => route.fulfill(json({}, 503)));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({ ttlSeconds: 600, snapshots: [] })));
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ sessions: [] })));
+  await page.route('**/api/security/posture', route => route.fulfill(json({ error: 'permission-denied' }, 403)));
+  await page.route('**/api/workspaces/*/quota/admission', route => route.fulfill(json({ error: 'unavailable' }, 503)));
   const project = {
     sourceType: 'local-folder', id: 'PROJ-WEB', displayName: PROJECT, shortCode: 'WEB', workspaceId: 'ws',
     color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: STORAGE,
@@ -354,7 +356,6 @@ test.describe('Project Deploy area (mocked)', () => {
       backups: [stale ? newest : { ...newest, offHost: 'uploaded' }, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
       generatedAt: '2026-10-20T08:00:00+00:00',
     }));
-    await page.route('**/api/security/posture', route => route.fulfill(json({ error: 'permission-denied' }, 403)));
     await page.getByTestId('deploy-tab-operations').click();
     await expect(page.getByTestId('project-operations').getByTestId('operations-backups')).toHaveCount(0);
     await page.getByTestId('project-operations').getByRole('link', { name: 'Settings → Operations' }).click();
@@ -486,9 +487,13 @@ test.describe('Project Deploy area (mocked)', () => {
         { kind: 'operator-revocations', id: 'installation', complete: false, oldPrincipalIds: [] },
       ] },
     }));
-    await page.route('**/api/security/posture', route => route.fulfill(json({ error: 'permission-denied' }, 403)));
     await page.getByTestId('deploy-tab-operations').click();
-    await page.getByTestId('project-operations').getByRole('link', { name: 'Settings → Operations' }).click();
+    const projectOperations = page.getByTestId('project-operations');
+    await expect(projectOperations.getByTestId('operations-backups')).toHaveCount(0);
+    const settingsOperations = projectOperations.getByRole('link', { name: 'Settings → Operations' });
+    await expect(settingsOperations).toHaveAttribute('href', '#/workspace/settings/operations');
+    await settingsOperations.click();
+    await expect(page).toHaveURL(/#\/workspace\/settings\/operations$/);
     await expect(page.getByTestId('workspace-operations')).toBeVisible();
     const backups = page.getByTestId('operations-backups');
     const receipt = backups.getByTestId('operations-backups-restore');
