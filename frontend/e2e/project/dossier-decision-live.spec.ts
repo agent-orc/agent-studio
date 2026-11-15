@@ -53,7 +53,7 @@ test('a Dossier decision that cannot be saved removes its card, and the retry de
     await expect(alert).toContainText('The Dossier decision could not be saved', { timeout: 30_000 });
     await expect(alert).toContainText('was removed again');
     await expect(alert).not.toContainText('git config');
-    expect(await boardTitles(request)).not.toContain(title);
+    await expect.poll(() => boardTitles(request)).not.toContain(title);
     expect((await readWorkbench(request)).workbench.decision ?? null).toBeNull();
     await capture(page, 'dossier-decision-failed');
   } finally {
