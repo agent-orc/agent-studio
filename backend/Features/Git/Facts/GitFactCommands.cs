@@ -113,6 +113,24 @@ internal static class GitFactCommands
         return Lines(result.StandardOutput);
     }
 
+    /// <summary>One read of the parent graph below a protected tip, for bulk ancestry queries.</summary>
+    internal static IReadOnlyList<(string Sha, string[] Parents)> RevListParents(string root, string tip)
+    {
+        var result = Run(root, ["rev-list", "--topo-order", "--parents", tip]);
+        if (!result.Success)
+        {
+            GitProcessBudget.Token.ThrowIfCancellationRequested();
+            throw new GitFactReadException("rev-list", result.StandardError);
+        }
+        var parents = new List<(string, string[])>();
+        foreach (var line in Lines(result.StandardOutput))
+        {
+            var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            parents.Add((fields[0], fields[1..]));
+        }
+        return parents;
+    }
+
     /// <summary>Non-merge commits of <c>base..head</c>, newest first, as <c>log --no-merges</c> lists them.</summary>
     internal static IReadOnlyList<string>? RangeCommits(string root, string baseSha, string headSha)
     {
