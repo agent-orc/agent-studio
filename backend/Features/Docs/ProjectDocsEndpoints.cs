@@ -125,7 +125,7 @@ public static class ProjectDocsEndpoints
             return Results.Ok(docs.GetWikiWorkbenchOverview(names, requested));
         });
 
-        app.MapGet("/api/projects/{projectName}/workbenches/{id}", (string projectName, string id, ProjectDocsService docs, DossierCardsService cards) =>
+        app.MapGet("/api/projects/{projectName}/workbenches/{id}", (string projectName, string id, ProjectDocsService docs, DossierCardsService cards, WorkbenchRevisionRoundService revisions) =>
         {
             var item = docs.GetWikiWorkbenchCatalogue(projectName, includeHistory: true)?.Items
                 .FirstOrDefault(candidate => candidate.Id == id);
@@ -134,7 +134,11 @@ public static class ProjectDocsEndpoints
             var document = docs.ReadWikiWorkbench(projectName, id);
             return document == null
                 ? Results.NotFound(new { error = "Dossier is not available in the selected Wiki source." })
-                : Results.Ok(document with { Cards = cards.List(projectName, document.Workbench) });
+                : Results.Ok(document with
+                {
+                    Cards = cards.List(projectName, document.Workbench),
+                    RevisionCard = revisions.Target(projectName, document.Workbench.SourceTaskKeys),
+                });
         });
 
         app.MapGet("/api/projects/{projectName}/workbenches/{key}/references",
@@ -159,20 +163,51 @@ public static class ProjectDocsEndpoints
         // The Workbench Decision gate (AGT-2375). Prepare validates against
         // the exact revision/fingerprint and writes nothing; confirm is the
         // single durable write and lands in the Dossier's own workbench.json.
+        // A rework request names the card that runs the revision (AGT-3703):
+        // prepare shows it, confirm refuses before any write when no source
+        // concept card can take the round, and then starts or queues the
+        // round on that card through the ordinary continue admission.
         app.MapPost("/api/projects/{projectName}/workbenches/{id}/decisions/prepare",
             (string projectName, string id, PrepareWorkbenchDecisionRequest body,
-                WorkbenchDecisionService decisions) =>
-                WorkbenchDecisionHttpResult(decisions.Prepare(projectName, id, body)));
+                WorkbenchDecisionService decisions, ProjectDocsService docs,
+                WorkbenchRevisionRoundService revisions) =>
+            {
+                var result = decisions.Prepare(projectName, id, body);
+                if (!result.Success || body.Outcome != "rework") return WorkbenchDecisionHttpResult(result);
+                var card = RevisionCard(projectName, id, docs, revisions);
+                return WorkbenchDecisionHttpResult(card.Available
+                    ? result with { RevisionCard = card }
+                    : NoRevisionCard(result, card));
+            });
 
         app.MapPost("/api/projects/{projectName}/workbenches/{id}/decisions/confirm",
-            (string projectName, string id, ConfirmWorkbenchDecisionRequest body,
-                WorkbenchDecisionService decisions, ProjectDocsService docs) =>
+            async (string projectName, string id, ConfirmWorkbenchDecisionRequest body,
+                WorkbenchDecisionService decisions, ProjectDocsService docs,
+                WorkbenchRevisionRoundService revisions, CancellationToken ct) =>
             {
-                var result = decisions.Confirm(projectName, id, body);
+                WorkbenchRevisionCard? card = null;
+                if (body.Outcome == "rework" && body.Confirmed)
+                {
+                    card = RevisionCard(projectName, id, docs, revisions);
+                    if (!card.Available)
+                        return WorkbenchDecisionHttpResult(NoRevisionCard(new WorkbenchDecisionResult
+                        {
+                            WorkbenchId = id,
+                            OperationId = body.OperationId,
+                            Outcome = body.Outcome,
+                        }, card));
+                }
+                var result = decisions.Confirm(projectName, id, body, card?.Key);
                 // The descriptor is a docs/ file, so the warm wiki cache must
                 // not keep serving the pre-decision bytes.
                 if (result.Success) docs.InvalidateWikiContent(projectName);
-                return WorkbenchDecisionHttpResult(result);
+                if (!result.Success || card == null) return WorkbenchDecisionHttpResult(result);
+                var prompt = string.IsNullOrWhiteSpace(body.RevisionPrompt)
+                    ? WorkbenchRevisionCardPolicy.FallbackPrompt(id, body.Request, body.Responses)
+                    : body.RevisionPrompt.Trim();
+                var round = await revisions.StartAsync(projectName, card, prompt, body.Actor.Trim(),
+                    body.CliType, body.Model, body.ThinkingLevel, ct);
+                return WorkbenchDecisionHttpResult(result with { RevisionCard = card, RevisionRound = round });
             });
 
         app.MapPost("/api/projects/{projectName}/workbenches/{id}/document",
@@ -544,6 +579,25 @@ public static class ProjectDocsEndpoints
         return Results.Ok(payload);
     }
 
+    private static WorkbenchRevisionCard RevisionCard(
+        string projectName, string id, ProjectDocsService docs, WorkbenchRevisionRoundService revisions)
+    {
+        var item = docs.GetWikiWorkbenchCatalogue(projectName, includeHistory: true)?.Items
+            .FirstOrDefault(candidate => candidate.Valid && candidate.Id == id);
+        return item == null
+            ? WorkbenchRevisionCard.Unavailable("The Dossier could not be read to find its source concept card.")
+            : revisions.Target(projectName, item.SourceTaskKeys);
+    }
+
+    private static WorkbenchDecisionResult NoRevisionCard(
+        WorkbenchDecisionResult result, WorkbenchRevisionCard card) => result with
+    {
+        Success = false,
+        ErrorCode = "no-revision-card",
+        Error = card.Reason,
+        RevisionCard = card,
+    };
+
     private static IResult WorkbenchDecisionHttpResult(WorkbenchDecisionResult result)
     {
         if (result.Success) return Results.Ok(result);
@@ -551,7 +605,7 @@ public static class ProjectDocsEndpoints
         {
             "not-canonical" => Results.NotFound(result),
             "stale-revision" or "dirty-descriptor" or "operation-id-conflict"
-                or "already-settled" => Results.Conflict(result),
+                or "already-settled" or "no-revision-card" => Results.Conflict(result),
             "validation" => Results.BadRequest(result),
             _ => Results.Json(result, statusCode: StatusCodes.Status500InternalServerError),
         };
