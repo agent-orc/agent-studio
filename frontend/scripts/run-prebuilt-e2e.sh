@@ -28,6 +28,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *studio-op-operator-cli.spec.ts*) PW_E2E_PROFILE=operator-cli ;;
       *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
       *dossier-decision-live.spec.ts*) PW_E2E_PROFILE=demo ;;
+      *owner-day-token-usage.spec.ts*) PW_E2E_PROFILE=owner-day ;;
       *owner-day-acceptance.spec.ts*) PW_E2E_PROFILE=owner-day ;;
       *public-demo-shell.spec.ts*) PW_E2E_PROFILE=public-demo ;;
       *owner-day-real-backend.spec.ts*) PW_E2E_PROFILE=owner-day ;;

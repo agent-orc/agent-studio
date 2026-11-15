@@ -157,6 +157,15 @@ function taskDir(root, task) {
   return join(root, 'projects', task.project, 'tasks', bucket(task.key), task.key);
 }
 
+function historySteps(index, task) {
+  const coreStart = iso(index * 30 + 104);
+  const reviewStart = iso(index * 30 + 110);
+  return [
+    { stepId: 'core-agent-run', kind: 1, model: 'claude-opus-4-8', status: 2, startedAt: coreStart, completedAt: reviewStart, durationMs: 354200, inputTokens: 42827, outputTokens: 30668, cacheReadTokens: 2284920, cacheCreationTokens: 341824 },
+    { stepId: 'aspect-code-quality', kind: 2, model: task.key === 'DEMO-24' ? 'demo-unpriced-model' : 'claude-haiku-4-5', status: 2, startedAt: reviewStart, completedAt: reviewStart, durationMs: 8200, inputTokens: 1200, outputTokens: 540, cacheReadTokens: 18000, cacheCreationTokens: 0 },
+  ];
+}
+
 function writeTask(root, task, index) {
   const dir = taskDir(root, task);
   const id = slug(task);
@@ -185,6 +194,25 @@ function writeTask(root, task, index) {
   };
 
   if (task.history) {
+    const calls = historySteps(index, task).map((step) => ({
+      ts: step.startedAt, model: step.model,
+      participantId: step.kind === 1 ? 'agent:claude' : 'support:aspect-code-quality',
+      cliType: 'claude', inputTokens: step.inputTokens, outputTokens: step.outputTokens,
+      cacheReadTokens: step.cacheReadTokens, cacheCreationTokens: step.cacheCreationTokens,
+    }));
+    json.tokenSummary = {
+      calls: calls.length,
+      inputTokens: calls.reduce((sum, call) => sum + call.inputTokens, 0),
+      outputTokens: calls.reduce((sum, call) => sum + call.outputTokens, 0),
+      cacheReadTokens: calls.reduce((sum, call) => sum + call.cacheReadTokens, 0),
+      cacheCreationTokens: calls.reduce((sum, call) => sum + call.cacheCreationTokens, 0),
+      totalTokens: calls.reduce((sum, call) => sum + call.inputTokens + call.outputTokens + call.cacheReadTokens + call.cacheCreationTokens, 0),
+      allModelsPriced: task.key !== 'DEMO-24',
+      lastModel: calls[0].model,
+      lastModelId: calls[0].model,
+      lastUpdate: calls.at(-1).ts,
+      entries: calls,
+    };
     json.sessionName = `demo-session-${task.key.toLowerCase()}`;
     json.lastProgressAt = ARGS.ownerDay && task.state === '3-progress'
       ? recentIso(2) : iso(index * 30 + 110);
@@ -697,10 +725,7 @@ function writeHistory(dir, task, id, index) {
     jobId: id,
     project: PROJECTS.find((p) => p.key === task.project).name,
     startedAt: t1,
-    steps: [
-      { stepId: 'core-agent-run', kind: 1, model: 'claude-opus-4-8', status: 2, startedAt: t1, completedAt: t2, durationMs: 354200, inputTokens: 42827, outputTokens: 30668, cacheReadTokens: 2284920, cacheCreationTokens: 341824 },
-      { stepId: 'aspect-code-quality', kind: 2, model: 'claude-haiku-4-5', status: 2, startedAt: t2, completedAt: t2, durationMs: 8200, inputTokens: 1200, outputTokens: 540, cacheReadTokens: 18000, cacheCreationTokens: 0 },
-    ],
+    steps: historySteps(index, task),
   });
 }
 
