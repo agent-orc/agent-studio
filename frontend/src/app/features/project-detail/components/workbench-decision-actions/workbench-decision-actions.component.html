@@ -76,7 +76,9 @@
   <div class="decision-actions__bar">
     <span data-testid="workbench-decision-answer-count">
       {{ decisionPoints().length }} inline decision point{{ decisionPoints().length === 1 ? '' : 's' }}
-      · {{ answersComplete() ? 'ready' : 'answer every point in the document before recording them together' }}
+      · {{ answeredCount() }} of {{ decisionPoints().length }} answered
+      · {{ decisionPoints().length - answeredCount() }} still open
+      @if (document().workbench.recordedResponses?.length) { · Saved in Dossier }
     </span>
     <div class="decision-actions__buttons">
       @if (!inline()) {
@@ -86,6 +88,11 @@
       <button type="button" data-testid="workbench-decision-rework"
               [attr.title]="reworkDisabledReason()"
               [disabled]="!canRequestRework()" (click)="beginRework()">Request rework</button>
+      @if (canRecordPartial()) {
+        <button type="button" data-testid="workbench-decision-record"
+                [appPendingButton]="pending()" pendingLabel="Recording…"
+                (click)="recordPartial()">Record answered choices</button>
+      }
       <button type="button" data-testid="workbench-decision-start"
               [disabled]="!canPrepareFeature()" (click)="prepareFeatureCard()">Start task</button>
     </div>

@@ -80,6 +80,38 @@ test('a Dossier decision that cannot be saved removes its card, and the retry de
   await capture(page, 'dossier-decision-decided');
 });
 
+test('one answer is durable and open; the later answer starts one card', async ({ page, request }) => {
+  const repository = resolve(process.env['PW_E2E_WORKSPACE']!, 'projects', 'demo-app');
+  commitSeededDocs(repository);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openDossier(page);
+  const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+  await frame.locator('[data-option-id="window-30"] input').check();
+  await revealAction(page);
+  const inline = page.getByTestId('workbench-inline-decision-action');
+  await expect(inline.getByTestId('workbench-decision-start')).toBeDisabled();
+  await expect(inline).toContainText('1 of 2 answered');
+  await inline.getByTestId('workbench-decision-record').click();
+  await expect(inline).toContainText('Saved in Dossier', { timeout: 30_000 });
+  await expect(inline).toContainText('1 still open');
+  const partial = await readWorkbench(request);
+  expect(partial.workbench.status).toBe('decision-pending');
+  expect(partial.workbench.decision ?? null).toBeNull();
+  await capture(page, 'dossier-one-answer-open');
+
+  await frame.locator('[data-option-id="proof-receipt"] input').check();
+  await revealAction(page);
+  await inline.getByTestId('workbench-decision-start').click();
+  const title = `Implement both export policies ${Date.now().toString(36)}`;
+  await inline.getByTestId('workbench-decision-title').fill(title);
+  await inline.getByTestId('workbench-decision-confirm').click();
+  await expect(inline.getByTestId('workbench-decision-created-tasks')).toContainText(title, { timeout: 30_000 });
+  const final = await readWorkbench(request);
+  expect(final.workbench.decision?.spawnedTaskKeys).toHaveLength(1);
+  expect((await boardTitles(request)).filter(entry => entry === title)).toHaveLength(1);
+  await capture(page, 'dossier-both-answered');
+});
+
 async function openDossier(page: Page): Promise<void> {
   await page.addInitScript(({ project, workbenchId }) => {
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -117,11 +149,10 @@ async function restoreAnswers(page: Page): Promise<void> {
   }
 }
 
-/** The inline action floats over the slot after the last decision point. */
+/** Bring the inline action into view even when the artifact has no host slot. */
 async function revealAction(page: Page, block: ScrollLogicalPosition = 'center'): Promise<void> {
-  const slot = page.frameLocator('[data-testid="workbench-viewer-frame"]')
-    .locator('[data-studio-decision-host-slot]');
-  await slot.evaluate((element, position) => element.scrollIntoView({ block: position }), block);
+  await page.getByTestId('workbench-inline-decision-action')
+    .evaluate((element, position) => element.scrollIntoView({ block: position }), block);
 }
 
 async function capture(page: Page, name: string): Promise<void> {

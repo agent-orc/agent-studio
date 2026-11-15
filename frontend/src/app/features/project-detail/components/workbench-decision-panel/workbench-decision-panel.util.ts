@@ -19,9 +19,16 @@ export function selectedDecisionText(
     if (!response) return [];
     const selected = new Set(response.selectedOptionIds);
     const labels = point.options.filter(option => selected.has(option.id)).map(option => option.label);
-    const choice = `${point.label}: ${labels.join(', ') || 'No option selected'}`;
+    const choice = `${point.label}: ${labels.join(', ') || 'Still open'}`;
     return [response.comment ? `${choice}. Note: ${response.comment}` : choice];
   }).join('\n');
+}
+
+export function answeredDecisionCount(
+  points: readonly WorkbenchDecisionPoint[], responses: readonly WorkbenchDecisionResponse[],
+): number {
+  const byId = new Map(responses.map(response => [response.decisionId, response]));
+  return points.filter(point => (byId.get(point.id)?.selectedOptionIds.length ?? 0) > 0).length;
 }
 
 export function cardPrompt(
@@ -47,6 +54,24 @@ export function cardPrompt(
     '',
     ...draft.acceptanceCriteria.map(item => `- ${item}`),
   ].join('\n');
+}
+
+export function featureTaskDraft(
+  document: WorkbenchDocument, projectName: string, title: string,
+  goal: string, selectedSummary: string,
+): WorkbenchTaskDraft {
+  return {
+    title: title.trim() || `Implement ${document.workbench.title}`,
+    goal: goal.trim(),
+    acceptanceCriteria: [
+      'Implement every recorded Dossier selection and preserve its stated constraints.',
+      'Verify the resulting behavior with the checks required by the affected surface.',
+    ],
+    evidenceLinks: [document.workbench.entryPath],
+    chosenOption: bounded(selectedSummary, 2_000) || null,
+    relatedTaskKeys: document.workbench.sourceTaskKeys,
+    targetProject: projectName, initialLane: '2-ready', mode: 'coding', taskType: 'feature',
+  };
 }
 
 export function reworkPrompt(

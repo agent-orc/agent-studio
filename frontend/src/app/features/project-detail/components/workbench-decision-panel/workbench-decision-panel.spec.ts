@@ -116,6 +116,33 @@ describe('WorkbenchDecisionPanelComponent', () => {
 
   afterEach(() => http.verify());
 
+  it('records one answer while leaving another explicitly open and does not create a card', () => {
+    const partial = [RESPONSES[0], {
+      decisionId: 'proof', kind: 'single', selectedOptionIds: [], comment: null,
+    }];
+    fixture.componentRef.setInput('decisionPoints', [...POINTS, {
+      id: 'proof', kind: 'single', label: 'Choose deletion proof',
+      options: [{ id: 'receipt', label: 'Receipt' }], commentLabel: 'Optional note',
+    }]);
+    fixture.componentRef.setInput('responses', partial);
+    fixture.detectChanges();
+    const record = fixture.nativeElement.querySelector('[data-testid="workbench-decision-record"]') as HTMLButtonElement;
+    expect(record.disabled).toBe(false);
+    expect(fixture.nativeElement.textContent).toContain('1 of 2 answered');
+    record.click();
+    const prepare = http.expectOne('/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/prepare');
+    expect(prepare.request.body).toEqual(expect.objectContaining({ outcome: 'record-only', responses: partial, task: null }));
+    const operationId = prepare.request.body.operationId;
+    prepare.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
+      decisionStage: 'prepared', revision: 'c'.repeat(40), fingerprint: 'b'.repeat(64), responses: partial });
+    const confirm = http.expectOne('/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/confirm');
+    expect(confirm.request.body).toEqual(expect.objectContaining({ outcome: 'record-only',
+      responses: partial, spawnedTaskKeys: [], confirmed: true }));
+    confirm.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
+      decisionStage: 'succeeded', revision: 'd'.repeat(40), fingerprint: 'e'.repeat(64), responses: partial });
+    expect(createJob).not.toHaveBeenCalled();
+  });
+
   it('shows recorded choices after concept acceptance without offering another decision', () => {
     fixture.componentRef.setInput('document', {
       ...DOCUMENT,
