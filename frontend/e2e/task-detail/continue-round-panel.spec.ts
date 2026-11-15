@@ -421,3 +421,55 @@ test('a refused concept follow-up promotes the card from its Dossier proposals (
     await deleteCard(id, watchPath);
   }
 });
+
+test('an incomplete concept promotion shows created keys and a safe retry', async ({ page }, testInfo) => {
+  const watchPath = await pickWatchPath();
+  const id = await createConceptCard(watchPath, 'promotion-retry');
+  await presentInLane(page, id, watchPath, '5-human-review');
+  await routeBase(page);
+  await routeGuardedContinue(page);
+  let attempts = 0;
+  await page.route(/\/api\/tasks\/[^/]+\/promote-concept(\?|$)/, route => {
+    if (route.request().method() === 'GET')
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(attempts === 0
+        ? CONCEPT_PLAN : { ...CONCEPT_PLAN, recovery: {
+          phase: 'cards-recorded', created: [{ jobId: 'first-slice', taskKey: 'AGT-9001' }],
+          nextAction: 'Retry promotion. Existing cards will be reused.',
+        } }) });
+    attempts++;
+    return route.fulfill({
+      status: attempts === 1 ? 409 : 200, contentType: 'application/json',
+      body: JSON.stringify(attempts === 1 ? {
+        error: 'concept-promotion-incomplete', message: 'The Dossier could not be marked as decided.',
+        recovery: { phase: 'cards-recorded', created: [
+          { jobId: 'first-slice', taskKey: 'AGT-9001' },
+        ], nextAction: 'Retry promotion. Existing cards will be reused.' },
+      } : { source: CONCEPT_PLAN.source, created: [
+        { jobId: 'first-slice', taskKey: 'AGT-9001', title: CONCEPT_PLAN.items[0].title },
+      ] }),
+    });
+  });
+
+  try {
+    await openCard(page, id, watchPath, 'light');
+    const panel = await fillRound(page, 'continue', CODE_SHAPED_FOLLOW_UP, GUARD_REASON);
+    await panel.getByTestId('continue-round-submit').click();
+    const refusal = panel.getByTestId('continue-mode-refusal');
+    await refusal.getByTestId('continue-mode-promote').click();
+    await refusal.getByTestId('continue-mode-promote-confirm').click();
+    await expect(refusal.getByTestId('continue-mode-promote-recovery')).toContainText('AGT-9001');
+    await expect(refusal.getByTestId('continue-mode-promote-confirm')).toHaveText('Retry promotion');
+    await refusal.getByTestId('continue-mode-promote-back').click();
+    await refusal.getByTestId('continue-mode-promote').click();
+    await expect(refusal.getByTestId('continue-mode-promote-recovery')).toContainText('AGT-9001');
+    await refusal.getByTestId('continue-mode-promote-recovery').evaluate(el => el.scrollIntoView({ block: 'center' }));
+    await page.screenshot({ path: evidencePath(testInfo, 'concept-promotion-recovery-light.png') });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: evidencePath(testInfo, 'concept-promotion-recovery-dark.png') });
+    await refusal.getByTestId('continue-mode-promote-confirm').click();
+    await expect(panel.getByTestId('continue-round-form')).toHaveCount(0);
+    expect(attempts).toBe(2);
+  } finally {
+    await deleteCard(id, watchPath);
+  }
+});

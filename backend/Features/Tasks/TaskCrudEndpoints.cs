@@ -502,7 +502,11 @@ public static class TaskCrudEndpoints
             var plan = scanner.BuildPromoteConceptPlan(info.Id, info.WatchPath);
             return plan is null
                 ? Results.Conflict(new { error = "The concept Dossier is missing or did not pass concept review." })
-                : Results.Ok(promotion.WithPromotedSlices(info, plan));
+                : Results.Ok(promotion.WithPromotedSlices(info, plan) with
+                {
+                    Recovery = AgentStudio.Pipeline.ConceptPromotionRecoveryStore.Read(info.FolderPath) is null
+                        ? null : promotion.GetRecovery(info),
+                });
         });
 
         group.MapPost("/{jobId}/promote-concept", (
@@ -536,7 +540,12 @@ public static class TaskCrudEndpoints
             }
             catch (Exception ex)
             {
-                return Results.Conflict(new { error = ex.Message });
+                return Results.Conflict(new
+                {
+                    error = "concept-promotion-incomplete",
+                    message = ex.Message,
+                    recovery = promotion.GetRecovery(info),
+                });
             }
         });
 

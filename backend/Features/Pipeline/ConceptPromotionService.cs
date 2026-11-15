@@ -1,4 +1,6 @@
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.Git;
 using AgentStudio.Shared;
 
@@ -22,6 +24,7 @@ public sealed class ConceptPromotionService
     private readonly ILogger<ConceptPromotionService> _logger;
     private readonly PipelineExecutionLog? _pipelineLog;
     private readonly object _gate = new();
+    internal Action<string>? FailurePoint { get; set; }
 
     public ConceptPromotionService(
         AgentStudio.Tasks.TaskScannerService scanner,
@@ -100,19 +103,55 @@ public sealed class ConceptPromotionService
                 predecessors[index].Select(predecessor => ReasonFor(plan.Source.RepoRelativePath, predecessor)).ToList());
         }).ToList();
 
-        var created = CreateCards(source, spawns)
-            .Select((card, position) => card with
-            {
-                ItemIndex = indexes[position],
-                State = _scanner.FindJob(card.JobId, source.WatchPath)?.State,
-            })
-            .ToList();
-        RecordPromotionStep(source, created.Count);
-        return new PromoteConceptTasksResponse
+        lock (_gate)
         {
-            Source = plan.Source,
-            Created = created,
-        };
+            var previous = ConceptPromotionRecoveryStore.Read(source.FolderPath);
+            ConceptPromotionRecoveryStore.Write(source.FolderPath, new ConceptPromotionRecovery
+            {
+                Reasons = (previous?.Reasons ?? []).Concat(spawns.Select(spawn => spawn.Reason))
+                    .Distinct(StringComparer.Ordinal).ToList(),
+            });
+            var created = CreateCards(source, spawns)
+                .Select((card, position) => card with
+                {
+                    ItemIndex = indexes[position],
+                    State = _scanner.FindJob(card.JobId, source.WatchPath)?.State,
+                })
+                .ToList();
+            ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source, "cards-recorded"));
+            FailurePoint?.Invoke("after-cards-recorded");
+            RecordPromotionStep(source, created.Count);
+            ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source, "completed"));
+            return new PromoteConceptTasksResponse
+            {
+                Source = plan.Source,
+                Created = created,
+            };
+        }
+    }
+
+    public ConceptPromotionRecovery GetRecovery(TaskInfo source, string? phase = null)
+    {
+        var state = ConceptPromotionRecoveryStore.Read(source.FolderPath) ?? new ConceptPromotionRecovery();
+        var ledger = SpawnedTaskLedger.Read(source.FolderPath, _logger);
+        var created = new List<PromotedConceptTask>();
+        foreach (var reason in state.Reasons)
+        {
+            var recorded = ledger.FirstOrDefault(row => row.Reason == reason);
+            var card = _scanner.FindJob(recorded?.TargetJobId ?? recorded?.TargetKey ?? ChildId(source, reason), source.WatchPath);
+            if (card is null || (recorded is null && card.CreationSource != reason)) continue;
+            created.Add(new PromotedConceptTask { JobId = card.Id, TaskKey = card.Key, Title = card.Title });
+        }
+        return state with { Phase = phase ?? state.Phase, Created = created };
+    }
+
+    public void RecordPhase(TaskInfo source, string phase)
+        => ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source, phase));
+
+    private static string ChildId(TaskInfo source, string reason)
+    {
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(reason)))[..16].ToLowerInvariant();
+        return $"concept-{source.Id.ToLowerInvariant()}-{digest}";
     }
 
     private void RecordPromotionStep(TaskInfo source, int createdCount)
@@ -278,57 +317,54 @@ public sealed class ConceptPromotionService
                     .FirstOrDefault(record => string.Equals(record.Reason, spawn.Reason, StringComparison.Ordinal));
                 if (existing != null)
                 {
-                    var prior = _scanner.FindJob(existing.TargetJobId ?? existing.TargetKey ?? "", source.WatchPath);
-                    if (spawn.Request.Dossier is { } dossier)
-                    {
-                        if (prior is { Dossier: null })
-                            _mutations.SetJobDossier(prior.Id, dossier, prior.WatchPath);
-                    }
-                    // A retry may encounter cards cut before slice dependencies
-                    // were recorded. Repair their missing edges before returning
-                    // the ledger result, while preserving unrelated references.
-                    var missing = PredecessorKeys(ledger, spawn)
-                        .Where(edge => prior?.References.DependsOn.All(current =>
-                            !string.Equals(current.Key, edge.Key, StringComparison.OrdinalIgnoreCase)) == true)
-                        .ToList();
-                    if (prior is not null && missing.Count > 0
-                        && !_mutations.SetTaskReferences(prior.Id, prior.References with
-                        {
-                            DependsOn = [.. prior.References.DependsOn, .. missing],
-                        }, prior.WatchPath))
-                        throw new IOException($"Could not restore dependencies for implementation card {prior.Key ?? prior.Id}.");
+                    var prior = _scanner.FindJob(existing.TargetJobId ?? existing.TargetKey ?? "", source.WatchPath)
+                        ?? throw new InvalidOperationException("A recorded implementation card is missing. Restore it before retrying promotion.");
+                    if (spawn.Request.Dossier is { } dossier
+                        && prior.Dossier is null
+                        && !_mutations.SetJobDossier(prior.Id, dossier, prior.WatchPath))
+                        throw new IOException("The implementation card's Dossier relation could not be persisted.");
+                    EnsureRelations(source, prior, PredecessorKeys(ledger, spawn));
                     promoted.Add(new PromotedConceptTask
                     {
-                        JobId = existing.TargetJobId ?? "",
-                        TaskKey = existing.TargetKey,
+                        JobId = prior.Id,
+                        TaskKey = prior.Key,
                         Title = title,
                     });
                     continue;
                 }
 
-                var jobId = _mutations.CreateJob(spawn.Request with
+                var childId = ChildId(source, spawn.Reason);
+                var recovered = _scanner.FindJob(childId, source.WatchPath);
+                if (recovered is not null && recovered.CreationSource != spawn.Reason)
+                    throw new InvalidOperationException("The promotion child identity belongs to another card.");
+                var jobId = recovered?.Id ?? _mutations.CreateJob(spawn.Request with
                 {
+                    Id = childId,
+                    CreationSource = spawn.Reason,
                     Title = title,
                     WatchPath = source.WatchPath,
                     Dossier = spawn.Request.Dossier ?? source.Dossier,
                 });
+                // Another promotion request may have created the stable child
+                // while this call waited for the task create lock.
+                if (jobId is null)
+                {
+                    recovered = _scanner.FindJob(childId, source.WatchPath);
+                    if (recovered?.CreationSource == spawn.Reason) jobId = recovered.Id;
+                }
                 if (string.IsNullOrWhiteSpace(jobId))
                     throw new InvalidOperationException(
                         $"Could not create implementation card {position + 1}.");
 
+                if (ConceptPromotionRecoveryStore.Read(source.FolderPath) is not null)
+                    ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source));
+                FailurePoint?.Invoke("after-card-created");
                 var created = _scanner.FindJob(jobId, source.WatchPath);
-                var dependsOn = PredecessorKeys(ledger, spawn);
-                if (created != null && (!string.IsNullOrWhiteSpace(source.Key) || dependsOn.Count > 0))
+                if (created?.CreationSource != spawn.Reason)
+                    throw new InvalidOperationException("The implementation card could not be verified for recovery.");
+                if (created != null)
                 {
-                    if (!_mutations.SetTaskReferences(
-                        jobId,
-                        new TaskReferences
-                        {
-                            DependsOn = dependsOn,
-                            RelatedTo = string.IsNullOrWhiteSpace(source.Key) ? [] : [source.Key!],
-                        },
-                        created.WatchPath))
-                        throw new IOException($"Could not record dependencies for implementation card {created.Key ?? created.Id}.");
+                    EnsureRelations(source, created, PredecessorKeys(ledger, spawn));
                     created = _scanner.FindJob(jobId, source.WatchPath) ?? created;
                 }
 
@@ -336,7 +372,7 @@ public sealed class ConceptPromotionService
                 if (!SpawnedTaskLedger.Append(source.FolderPath, new SpawnedTaskRecord
                     {
                         At = DateTime.UtcNow,
-                        SourceKey = source.Key,
+                        SourceKey = source.Key ?? source.Id,
                         TargetProject = source.ProjectName,
                         TargetKey = targetKey,
                         TargetJobId = jobId,
@@ -358,11 +394,27 @@ public sealed class ConceptPromotionService
         return promoted;
     }
 
+    private void EnsureRelations(TaskInfo source, TaskInfo card, IReadOnlyList<TaskDependencyReference> predecessors)
+    {
+        var sourceKey = source.Key ?? source.Id;
+        var missingSource = !card.References.RelatedTo.Contains(sourceKey, StringComparer.OrdinalIgnoreCase);
+        var missingPredecessors = predecessors.Where(edge => card.References.DependsOn.All(current =>
+            !string.Equals(current.Key, edge.Key, StringComparison.OrdinalIgnoreCase))).ToList();
+        if (!missingSource && missingPredecessors.Count == 0) return;
+        var updated = card.References with
+        {
+            RelatedTo = missingSource ? [.. card.References.RelatedTo, sourceKey] : card.References.RelatedTo,
+            DependsOn = [.. card.References.DependsOn, .. missingPredecessors],
+        };
+        if (!_mutations.SetTaskReferences(card.Id, updated, card.WatchPath))
+            throw new IOException($"Could not record relations for implementation card {card.Key ?? card.Id}.");
+    }
+
     /// <summary>
     /// Plain delivery edges to the predecessor cards: a predecessor releases its
     /// dependents once its delivery is integrated, not only when it completes.
     /// </summary>
-    private List<TaskDependencyReference> PredecessorKeys(
+    private static List<TaskDependencyReference> PredecessorKeys(
         IReadOnlyList<SpawnedTaskRecord> ledger, ConceptCardSpawn spawn)
     {
         var keys = new List<TaskDependencyReference>();

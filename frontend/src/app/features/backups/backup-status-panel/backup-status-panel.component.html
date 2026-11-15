@@ -4,6 +4,7 @@
       <div>
         <h3 id="operations-backups-title">Installation backups</h3>
         <p>Encrypted backups of the whole installation, verified by a restore and copied off this host.</p>
+        <p data-testid="operations-backups-recovery-dependency">Quality Studio data and registry are included when present. Recovery still needs the escrowed backup and secret store keys, the Quality Studio image, and repository remotes to restore the checkouts.</p>
         <a data-testid="operations-backups-content-list" href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/setup/studio-backup-restore.md#credential-content-list" target="_blank" rel="noopener noreferrer">Archive credential content list</a>
       </div>
       <button type="button" class="backup-status__refresh" data-testid="operations-backups-refresh" (click)="load()">Refresh</button>

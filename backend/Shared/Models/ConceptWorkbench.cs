@@ -108,6 +108,16 @@ public sealed record PromoteConceptResponse
     /// instead of creating second ones.
     /// </summary>
     public List<PromotedConceptTask> Promoted { get; init; } = [];
+    public ConceptPromotionRecovery? Recovery { get; init; }
+}
+
+/// <summary>Durable promotion progress returned after failures and on later plan reads.</summary>
+public sealed record ConceptPromotionRecovery
+{
+    public string Phase { get; init; } = "creating-cards";
+    public List<string> Reasons { get; init; } = [];
+    public List<PromotedConceptTask> Created { get; init; } = [];
+    public string NextAction { get; init; } = "Retry promotion. Existing cards will be reused.";
 }
 
 public sealed record PromoteConceptRequest

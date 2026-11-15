@@ -95,6 +95,10 @@ services:
       Backup__Sources__caddy-data__Path: /run/backup-sources/caddy-data
       Backup__Sources__origin-pull__Path: /run/backup-sources/origin-pull
       Backup__Sources__origin-pull__Optional: 'true'
+      Backup__Sources__quality-data__Path: /run/backup-sources/quality-data
+      Backup__Sources__quality-data__Optional: 'true'
+      Backup__Sources__quality-registry__Path: /run/backup-sources/quality-registry
+      Backup__Sources__quality-registry__Optional: 'true'
       # Off-host copy: none, sftp, s3 or directory (with compose.backup-mount.yaml).
       Backup__Target__Kind: ${STUDIO_BACKUP_TARGET:-none}
       Backup__Target__Host: ${STUDIO_BACKUP_SFTP_HOST:-}
@@ -126,6 +130,8 @@ services:
       - .:/run/backup-sources/stack:ro
       - ${STUDIO_DATA_DIR}/caddy-data:/run/backup-sources/caddy-data:ro
       - ${STUDIO_DATA_DIR}/origin-pull:/run/backup-sources/origin-pull:ro
+      - /srv/agent-studio/quality/data:/run/backup-sources/quality-data:ro
+      - /srv/agent-studio/quality/registry:/run/backup-sources/quality-registry:ro
     depends_on:
       operations-bootstrap: {condition: service_completed_successfully}
     networks:

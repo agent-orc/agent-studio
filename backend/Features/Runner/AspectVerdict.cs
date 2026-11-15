@@ -84,6 +84,7 @@ public sealed record AspectVerdict(
 
     /// <summary>Admission deferred this aspect until the provider quota resets.</summary>
     public bool IsQuotaDeferred { get; init; }
+    public bool IsHostWaiting { get; init; }
 }
 
 /// <summary>

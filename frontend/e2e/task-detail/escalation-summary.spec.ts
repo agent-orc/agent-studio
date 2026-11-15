@@ -577,6 +577,60 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     expect(moves[0].reissueInstructions.findings.join(' ')).not.toContain('Render every grade document.');
   });
 
+  test('keeps reissue pending across navigation and updates the open card after the POST resolves', async ({ page }, testInfo) => {
+    await openDetail(page, '5e-escalated');
+    let releaseMove: (() => void) | undefined;
+    const moveHeld = new Promise<void>(resolve => { releaseMove = resolve; });
+    let moved = false;
+    await page.route(/\/move(\?|$)/, async route => {
+      await moveHeld;
+      moved = true;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), route =>
+      route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify(buildDetail(moved ? '2-ready' : '5e-escalated')) }));
+    await page.route('**/api/v1/studio/board**', route => {
+      const info = buildInfo(moved ? '2-ready' : '5e-escalated');
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        backlog: [], preparation: [], orchestratorPrep: [],
+        ready: moved ? [info] : [], progress: [], failedPickup: [],
+        codeNotComplete: [], review: [], autoReview: [], humanReview: [],
+        escalated: moved ? [] : [info], completed: [], archive: [],
+      }) });
+    });
+    await page.getByTestId('escalation-action-reissue-escalated').click();
+    await page.getByTestId('escalation-confirm-submit').click();
+    await expect(page.getByText(/Reissuing .* to Ready/)).toBeVisible();
+    await expect(page.getByTestId('studio-lane-select')).toHaveValue('5e-escalated');
+    await expect(page.getByTestId('overview-title-lane')).toContainText('Escalated');
+    await page.setViewportSize({ width: 1024, height: 800 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const name = `reissue-pending-${theme}.png`;
+      const shot = await page.screenshot();
+      await saveShot(testInfo, name, shot);
+      writeFileSync(path.join(SHOTS_DIR, name), shot);
+    }
+    await page.getByTestId('studio-tab-board:__all__').click();
+    await expect(page.getByText(/Reissuing .* to Ready/)).toBeVisible();
+    await expect(page.getByText(/Requeued .* to Ready/)).toHaveCount(0);
+    await expect(page.getByTestId('task-card').filter({ hasText: 'Result-Templates Teil 2' })).toHaveClass(/task-card--5e-escalated/);
+    releaseMove?.();
+    await expect(page.getByText(/Reissuing .* to Ready/)).toHaveCount(0);
+    await expect(page.getByTestId('task-card').filter({ hasText: 'Result-Templates Teil 2' })).toHaveClass(/task-card--2-ready/);
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+    await expect(page.getByTestId('studio-lane-select')).toHaveValue('2-ready');
+    await expect(page.getByTestId('overview-title-lane')).toContainText('Ready');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const name = `reissue-resolved-${theme}.png`;
+      const shot = await page.screenshot();
+      await saveShot(testInfo, name, shot);
+      writeFileSync(path.join(SHOTS_DIR, name), shot);
+    }
+  });
+
   test('shows the latest continued attempt in the parked header', async ({ page }, testInfo) => {
     await openDetail(page, '5e-escalated', true, true);
     await expect(page.getByTestId('escalation-essence')).toContainText(

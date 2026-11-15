@@ -70,6 +70,55 @@ public sealed partial class BatchGatePilotService
         }
     }
 
+    // The cause is written before a paused batch becomes terminal. It is the
+    // durable handoff when the host stops between releasing a marker and
+    // starting the per-task flight.
+    private void PersistFallbackHandoff(BatchGatePendingRecord pending, PerTaskFallbackCause cause)
+        => _store.RecordFallbackCause(new BatchGateFallbackCause(pending.Subject.Project,
+            pending.Subject.TaskKey, pending.ReviewAttemptId, pending.Subject.RunAttempt,
+            cause.Rule, cause.Event, cause.BatchId, _time.GetUtcNow()));
+
+    private void RecoverFallbackHandoffs(CancellationToken ct,
+        Dictionary<(string Repo, string Branch), string?> fetchedBases)
+    {
+        var pending = _store.ListPending();
+        var known = _store.ListManifests().Select(manifest => manifest.BatchId)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var project in pending.Select(item => item.Subject.Project).Distinct(StringComparer.Ordinal))
+        {
+            Dictionary<string, BatchGateFallbackCause> byAttempt;
+            try
+            {
+                byAttempt = _store.ListFallbackCauses(project)
+                    .GroupBy(cause => cause.ReviewAttemptId, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or System.Text.Json.JsonException)
+            {
+                _logger.LogWarning(ex, "batch-gate-fallback-journal-unreadable project={Project}", project);
+                continue;
+            }
+            foreach (var item in pending.Where(item => item.Subject.Project == project))
+            {
+                try
+                {
+                    if (!byAttempt.TryGetValue(item.ReviewAttemptId, out var cause)
+                        || FallbackInFlight(item.ReviewAttemptId)) continue;
+                    var marker = BatchGateOwnershipStore.Read(MemberFolder(item));
+                    if (PendingAction(item, marker, known, HandoffReady(cause), _time.GetUtcNow())
+                        != BatchPendingRecoveryAction.ResumeFallback) continue;
+                    ScheduleFallback(item, ct, new PerTaskFallbackCause(cause.Rule, cause.Event, cause.BatchId),
+                        containedInSha: PublishedIn(Refresh(item), fetchedBases, ct, gateInterrupted: true));
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or System.Text.Json.JsonException)
+                {
+                    _logger.LogWarning(ex, "batch-gate-fallback-handoff-recovery-failed attempt={AttemptId}",
+                        item.ReviewAttemptId);
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// A closed manifest is immutable. Probe each still-admitted review against
     /// the new base and close one linked successor containing only survivors.

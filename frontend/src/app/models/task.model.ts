@@ -1870,6 +1870,13 @@ export interface PromoteConceptResponse {
   projectName: string;
   /** Slices that already have a card from an earlier promotion. */
   promoted?: PromotedConceptTask[];
+  recovery?: ConceptPromotionRecovery | null;
+}
+
+export interface ConceptPromotionRecovery {
+  phase: string;
+  created: PromotedConceptTask[];
+  nextAction: string;
 }
 
 export interface PromotedConceptTask {

@@ -1,7 +1,12 @@
+extern alias TaskServerAssembly;
+
 using System.Net;
 using System.Text;
 using AgentStudio.Cli;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using TaskServerStore = TaskServerAssembly::AgentStudio.TaskServer.TaskServerStore;
+using TaskServerOptions = TaskServerAssembly::AgentStudio.TaskServer.TaskServerOptions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -69,18 +74,28 @@ public sealed class RemoteCliOneShotTests
     }
 
     [Fact]
-    public async Task Networked_one_shot_without_task_server_never_spawns_a_provider()
+    public async Task Combined_one_shot_without_capable_host_waits_without_spawning_a_provider()
     {
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        var directory = Path.Combine(Path.GetTempPath(), "combined-one-shot-wait-" + Guid.NewGuid().ToString("N"));
+        try
         {
-            ["Security:Profile"] = "networked",
-            ["CodexCli:Path"] = "/missing/provider-cli",
-        }).Build();
-        var oneShot = new RemoteCliOneShot("codex",
-            new ClientFactory(new HttpClient(new RecordingHandler())), config);
-        var result = await oneShot.RunAsync(new("codex", "gpt-6-sol", "Hello"));
-        Assert.False(result.Ok);
-        Assert.Contains("Task Server", result.Error);
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Security:Profile"] = "networked",
+                ["CodexCli:Path"] = "/missing/provider-cli",
+            }).Build();
+            var handler = new RecordingHandler();
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 14, 12, 0, 0, TimeSpan.Zero));
+            var jobs = new CombinedOneShotJobs(new TaskServerStore(
+                Options.Create(new TaskServerOptions { DataDirectory = directory }), clock));
+            var oneShot = new RemoteCliOneShot("codex",
+                new ClientFactory(new HttpClient(handler)), config, combinedJobs: jobs);
+            var result = await oneShot.RunAsync(new("codex", "gpt-6-sol", "Hello"));
+            Assert.False(result.Ok);
+            Assert.Equal("waiting for a host with model-acceptance:codex:gpt-6-sol", result.Error);
+            Assert.Null(handler.Path);
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 
     private sealed class ClientFactory(HttpClient client) : IHttpClientFactory

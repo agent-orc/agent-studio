@@ -2095,9 +2095,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   option IDs, rationale, operator and decision time, but projects no settled
   promotion decision. The descriptor keeps its current status, and the normal
   prepare and confirm path remains available for a later promotion decision.
-  Concept promotion marks the descriptor `decided` after creating its slice
-  cards, retains those recorded choices, and can be retried without duplicating
-  the cards or lifecycle transition.
+  Concept promotion creates slice cards without changing the descriptor status.
+  Concept acceptance marks the descriptor `decided` and retains those recorded
+  choices. Promotion can be retried without duplicating cards.
 - A delivering card resolved through `references.workbenches` or a descriptor
   `sourceTaskKeys` back edge receives the Dossier maintenance prompt contract.
   It appends only its own dated implementation entry between the canonical log

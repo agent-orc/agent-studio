@@ -33,8 +33,55 @@ public sealed class OwnerActivityProjectionTests
         Assert.All(result, row => Assert.Equal("owner_action", row.Kind));
         Assert.Contains(result, row => row.Summary.Contains("6-completed") && row.JobId == "job-1");
         Assert.Contains(result, row => row.Topic == "refusal" && row.Reasoning == "missing gate");
-        Assert.Contains(result, row => row.Summary.StartsWith("Reissued DEMO-9"));
+        Assert.Contains(result, row => row.Summary.StartsWith("Reissued job-1"));
         Assert.Contains(result, row => row.Topic == "card-created");
+    }
+
+    [Fact]
+    public void TimelineSummariesUseDisplayKeyAndKeepProjectScopedNavigation()
+    {
+        var events = new[]
+        {
+            Event(TimelineEventKinds.PromptCreated, "Created"),
+            Event(TimelineEventKinds.LaneChanged, "5-human-review → 2-ready",
+                new() { ["from"] = TaskStates.HumanReview, ["to"] = TaskStates.Ready }),
+            Event(TimelineEventKinds.LaneChanged, "5-human-review → 6-completed",
+                new() { ["from"] = TaskStates.HumanReview, ["to"] = TaskStates.Completed }),
+            Event(TimelineEventKinds.OwnerMoveRefused, "Move refused"),
+        };
+        var demo = new TaskInfo
+        {
+            Id = "shared-id", Key = "DEMO-20", TaskKey = "/tmp/agt3645-stack-b/projects/demo-app::DEMO-20",
+            Title = "Demo card", ProjectName = "Demo", WatchPath = "/tmp/agt3645-stack-b/projects/demo-app",
+        };
+        var other = demo with
+        {
+            Key = "OTHER-20", TaskKey = "/tmp/other/projects/app::OTHER-20",
+            ProjectName = "Other", WatchPath = "/tmp/other/projects/app",
+        };
+
+        var demoRows = OwnerActivityProjection.FromTimeline(demo, events).ToList();
+        var otherRows = OwnerActivityProjection.FromTimeline(other, events).ToList();
+
+        Assert.Equal(4, demoRows.Count);
+        Assert.Contains(demoRows, row => row.Summary == "Created DEMO-20: Demo card");
+        Assert.Contains(demoRows, row => row.Summary.StartsWith("Reissued DEMO-20:"));
+        Assert.Contains(demoRows, row => row.Summary.StartsWith("Accepted DEMO-20:"));
+        Assert.Contains(demoRows, row => row.Summary.StartsWith("DEMO-20: Move refused"));
+        Assert.All(demoRows.Concat(otherRows), row => Assert.DoesNotContain("/tmp/", row.Summary));
+        Assert.All(demoRows, row =>
+        {
+            Assert.Equal("Demo", row.Project);
+            Assert.Equal("shared-id", row.JobId);
+            Assert.Equal(demo.WatchPath, row.WatchPath);
+        });
+        Assert.All(otherRows, row =>
+        {
+            Assert.StartsWith("OTHER-20", row.Summary.Replace("Created ", "").Replace("Reissued ", "").Replace("Accepted ", ""));
+            Assert.Equal("Other", row.Project);
+            Assert.Equal("shared-id", row.JobId);
+            Assert.Equal(other.WatchPath, row.WatchPath);
+        });
     }
 
     [Fact]
