@@ -31,7 +31,8 @@ public sealed record AutoReviewStrandingFacts(
     bool ReenteredBatchBefore = false, TimeSpan? ScheduledRetryOverdue = null,
     bool CauseBreakerWait = false, bool InfrastructureFailure = false,
     bool InfrastructureRetryAvailable = false, bool InfrastructureRetryScheduled = false,
-    bool HostCapacityHeld = false);
+    bool HostCapacityHeld = false,
+    bool HostCapabilityWait = false, bool HostCapabilityAvailable = false);
 
 /// <summary>Per-card liveness decision for Auto Review. All ownership facts are read before acting.</summary>
 public static class AutoReviewStrandingPolicy
@@ -61,8 +62,13 @@ public static class AutoReviewStrandingPolicy
             || facts.RunningStep || facts.ActiveReview
             || facts.BatchMember || facts.QueuedRound || facts.QueuedStep
             || OwnedByScheduledRetry(facts) || facts.CauseBreakerWait
-            || facts.InfrastructureRetryScheduled || facts.HostCapacityHeld)
+            || facts.InfrastructureRetryScheduled || facts.HostCapacityHeld
+            || facts.HostCapabilityWait && !facts.HostCapabilityAvailable)
             return AutoReviewStrandingAction.Leave;
+        // A report review that waited for a model host gets a fresh step once
+        // that capability appears, even if an earlier recovery started it.
+        if (facts.ReportOnly && facts.HostCapabilityWait && facts.HostCapabilityAvailable)
+            return AutoReviewStrandingAction.StartStep;
         if (facts.InfrastructureFailure)
             return facts.InfrastructureRetryAvailable
                 ? AutoReviewStrandingAction.StartStep : AutoReviewStrandingAction.Escalate;
