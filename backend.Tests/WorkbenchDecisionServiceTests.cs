@@ -76,6 +76,46 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
     }
 
     [Fact]
+    public void RecordOneChoice_LeavesTheOtherOpenAndLaterFeatureDecisionCreatesOneCard()
+    {
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+        var first = catalogue.Read("Project", "routing-policy")!;
+        var responses = new List<WorkbenchDecisionResponse>
+        {
+            new() { DecisionId = "route", Kind = "single", SelectedOptionIds = ["direct"] },
+            new() { DecisionId = "proof", Kind = "single", SelectedOptionIds = [] },
+        };
+        var recorded = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "record-one-choice", Outcome = "record-only", Actor = "Robert",
+            ExpectedFingerprint = first.Fingerprint, Responses = responses, Confirmed = true,
+        });
+        Assert.True(recorded.Success, recorded.Error);
+        var open = catalogue.Read("Project", "routing-policy")!;
+        Assert.Equal("active", open.Workbench.Status);
+        Assert.Equal("review-requested", open.Workbench.LifecycleState);
+        Assert.Null(open.Workbench.Decision);
+        Assert.Equal(2, open.Workbench.RecordedResponses.Count);
+        Assert.Empty(open.Workbench.RecordedResponses[1].SelectedOptionIds);
+
+        responses[1] = responses[1] with { SelectedOptionIds = ["receipt"] };
+        var feature = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "feature-after-record", Outcome = "feature-spawn", Actor = "Robert",
+            ExpectedFingerprint = open.Fingerprint, Responses = responses,
+            Task = FeaturePrepare(open.Fingerprint).Task,
+            SpawnedTaskKeys = ["AGT-42"], Confirmed = true,
+        });
+        Assert.True(feature.Success, feature.Error);
+        var settled = catalogue.Read("Project", "routing-policy")!;
+        Assert.Equal("decided", settled.Workbench.Status);
+        Assert.Equal(["AGT-42"], settled.Workbench.Decision!.SpawnedTaskKeys);
+        Assert.Equal(2, settled.Workbench.Decision.Responses.Count);
+        Assert.Equal(["AGT-42"], settled.Workbench.SourceTaskKeys.Where(key => key == "AGT-42"));
+    }
+
+    [Fact]
     public void Confirm_WritesTheDecisionIntoWorkbenchJsonWithLifecycleHistory()
     {
         WriteSchemaTwo("routing-policy");

@@ -2135,7 +2135,10 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   `6-completed` after the review.
 - An operator may record inline Dossier choices before promotion with a
   `decision` receipt whose outcome is `record-only`. It carries the selected
-  option IDs, rationale, operator and decision time, but projects no settled
+  option IDs, rationale, operator and decision time, and may leave other inline
+  points explicitly open with empty selections. Recording at least one answer
+  writes no task card. A later full feature decision replaces this receipt and
+  links its one spawned card. The receipt projects no settled
   promotion decision. The descriptor keeps its current status, and the normal
   prepare and confirm path remains available for a later promotion decision.
   Concept promotion creates slice cards without changing the descriptor status.

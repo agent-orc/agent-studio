@@ -25,9 +25,11 @@ import {
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
 import {
   actionErrorMessage,
+  answeredDecisionCount,
   bounded,
   cardPrompt,
   createOperationId,
+  featureTaskDraft,
   laneLabel,
   readDefaultCli,
   readDefaultModel,
@@ -39,12 +41,7 @@ import {
 } from '../workbench-decision-panel/workbench-decision-panel.util';
 
 type ActionMode = 'feature-spawn' | 'rework' | null;
-
-/** Answer progress of the inline decision points, e.g. "3 inline decision points · ready". */
-export function decisionAnswerCountLabel(count: number, complete: boolean): string {
-  const points = `${count} inline decision point${count === 1 ? '' : 's'}`;
-  return `${points} · ${complete ? 'ready' : 'answer every point in the document'}`;
-}
+type DecisionOutcome = Exclude<ActionMode, null> | 'record-only';
 
 @Component({
   selector: 'app-workbench-decision-actions',
@@ -88,14 +85,9 @@ export class WorkbenchDecisionActionsComponent {
   readonly requestState = computed(() =>
     this.store.state(this.projectName(), this.document().workbench.id));
   readonly pending = computed(() => this.requestState().pending !== null);
-  readonly answersComplete = computed(() => {
-    if (this.decisionPoints().length === 0) return true;
-    const responses = new Map(this.responses().map(response => [response.decisionId, response]));
-    return this.decisionPoints().every(point =>
-      (responses.get(point.id)?.selectedOptionIds.length ?? 0) > 0);
-  });
-  readonly answerCountLabel = computed(() =>
-    decisionAnswerCountLabel(this.decisionPoints().length, this.answersComplete()));
+  readonly answeredCount = computed(() => answeredDecisionCount(this.decisionPoints(), this.responses()));
+  readonly answersComplete = computed(() => this.answeredCount() === this.decisionPoints().length);
+  readonly canRecordPartial = computed(() => !this.settled() && !this.pending() && this.answeredCount() > 0 && !this.answersComplete());
   readonly selectedSummary = computed(() => selectedDecisionText(
     this.decisionPoints(), this.responses()));
   readonly hasReworkComment = computed(() =>
@@ -184,6 +176,16 @@ export class WorkbenchDecisionActionsComponent {
     if (!this.canPrepareFeature()) return;
     this.seedFeatureDraft();
     this.mode.set('feature-spawn');
+  }
+
+  recordPartial(): void {
+    if (!this.canRecordPartial()) return;
+    const actor = this.actor().trim();
+    if (!actor) { this.invalid('Add the decision owner.'); return; }
+    this.resetFeedback();
+    const request = { ...this.baseRequest('record-only', actor, null), operationId: createOperationId() };
+    this.store.recordChoices(this.projectName(), this.document().workbench.id, request)
+      .pipe(catchError(error => this.fail(error))).subscribe(() => this.finish());
   }
 
   beginRework(): void {
@@ -343,7 +345,7 @@ export class WorkbenchDecisionActionsComponent {
   }
 
   private baseRequest(
-    outcome: Exclude<ActionMode, null>, actor: string, task: WorkbenchTaskDraft | null,
+    outcome: DecisionOutcome, actor: string, task: WorkbenchTaskDraft | null,
   ): PrepareWorkbenchDecisionRequest {
     this.validationError.set(null);
     return {
@@ -371,18 +373,8 @@ export class WorkbenchDecisionActionsComponent {
   }
 
   private featureDraft(): WorkbenchTaskDraft {
-    return {
-      title: this.title().trim() || `Implement ${this.document().workbench.title}`,
-      goal: this.goal().trim(),
-      acceptanceCriteria: [
-        'Implement every recorded Dossier selection and preserve its stated constraints.',
-        'Verify the resulting behavior with the checks required by the affected surface.',
-      ],
-      evidenceLinks: [this.document().workbench.entryPath],
-      chosenOption: bounded(this.selectedSummary(), 2_000) || null,
-      relatedTaskKeys: this.document().workbench.sourceTaskKeys,
-      targetProject: this.projectName(), initialLane: '2-ready', mode: 'coding', taskType: 'feature',
-    };
+    return featureTaskDraft(this.document(), this.projectName(), this.title(),
+      this.goal(), this.selectedSummary());
   }
 
   private agent(): { cliType: CliType; model: string; thinkingLevel: string | null } {

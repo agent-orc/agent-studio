@@ -102,5 +102,6 @@ textarea:focus-visible { outline: 2px solid var(--studio-accent-3); outline-offs
 
 @media (max-width: 700px) {
   .decision-actions__bar { align-items: flex-start; flex-wrap: wrap; padding-inline: var(--studio-spacing-3); }
+  .decision-actions__buttons { flex-wrap: wrap; width: 100%; justify-content: flex-start; }
   .decision-actions__confirmation { padding-inline: var(--studio-spacing-3); }
 }

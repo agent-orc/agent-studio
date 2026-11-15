@@ -1141,7 +1141,7 @@ public sealed class WorkbenchCatalogueService
             }
             var responseError = WorkbenchDecisionContracts.ValidateResponses(
                 responses,
-                allowPartial: outcome == "rework");
+                allowPartial: outcome is "rework" or "record-only");
             if (responseError != null)
                 throw new InvalidDataException($"Decision {responseError}");
         }
