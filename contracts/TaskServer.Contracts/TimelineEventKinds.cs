@@ -64,6 +64,8 @@ public static class TimelineEventKinds
     public const string IntegrationLease = "integration_lease";
     /// <summary>The CLI invocation ended; <see cref="TimelineEvent.Summary"/> carries the outcome.</summary>
     public const string AgentRunFinished = "agent_run_finished";
+    /// <summary>A passing review regained commit attribution after imported integration commits were excluded.</summary>
+    public const string IntegrationHistoryAttributionRepaired = "integration_history_attribution_repaired";
     /// <summary>An operator move fenced a remote attempt while retaining its work as reference.</summary>
     public const string RunAttemptRevoked = "run_attempt_revoked";
     /// <summary>An operator withdrew a card from an active batch before moving its lane.</summary>

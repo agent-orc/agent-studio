@@ -36,7 +36,8 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             {
                 var condition = OneShotClaimRouteObservation.Classify(ex);
                 var entered = condition is not null && _route.Observe(condition,
-                    ((TaskServerException)ex).StatusCode, ex.Message, RouteBackoff, (clock ?? (() => DateTime.UtcNow))());
+                    ex is TaskServerException serverError ? serverError.StatusCode : 200,
+                    ex.Message, RouteBackoff, (clock ?? (() => DateTime.UtcNow))());
                 if (condition is null || entered)
                     log($"one-shot-job-poll-failed error={ex.GetType().Name}: {ex.Message}"
                         + (entered ? $" condition={condition} backoff={(int)RouteBackoff.TotalSeconds}s" : string.Empty));

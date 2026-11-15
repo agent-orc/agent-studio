@@ -36,6 +36,7 @@ test.beforeEach(() => {
 test('a Dossier decision that cannot be saved removes its card, and the retry decides the Dossier', async ({ page, request }) => {
   const repository = resolve(process.env['PW_E2E_WORKSPACE']!, 'projects', 'demo-app');
   commitSeededDocs(repository);
+  await expect.poll(async () => (await readWorkbench(request)).workbench.decision ?? null).toBeNull();
   const lock = branchLock(repository);
   await page.setViewportSize({ width: 1280, height: 900 });
   await openDossier(page);
@@ -53,7 +54,7 @@ test('a Dossier decision that cannot be saved removes its card, and the retry de
     await expect(alert).toContainText('The Dossier decision could not be saved', { timeout: 30_000 });
     await expect(alert).toContainText('was removed again');
     await expect(alert).not.toContainText('git config');
-    expect(await boardTitles(request)).not.toContain(title);
+    await expect.poll(() => boardTitles(request)).not.toContain(title);
     expect((await readWorkbench(request)).workbench.decision ?? null).toBeNull();
     await capture(page, 'dossier-decision-failed');
   } finally {
@@ -61,10 +62,17 @@ test('a Dossier decision that cannot be saved removes its card, and the retry de
   }
 
   // The retry creates a fresh card and records the decision with it.
+  await page.reload();
+  await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
   await restoreAnswers(page);
   await revealAction(page);
-  await expect(inline.getByTestId('workbench-decision-confirm')).toBeEnabled({ timeout: 30_000 });
-  await inline.getByTestId('workbench-decision-confirm').click();
+  const confirm = inline.getByTestId('workbench-decision-confirm');
+  if (await confirm.isVisible()) await inline.getByRole('button', { name: 'Cancel' }).click();
+  await expect(inline).toContainText('2 of 2 answered');
+  await inline.getByTestId('workbench-decision-start').click();
+  await inline.getByTestId('workbench-decision-title').fill(title);
+  await expect(confirm).toBeEnabled({ timeout: 30_000 });
+  await confirm.click();
   const created = inline.getByTestId('workbench-decision-created-tasks');
   await expect(created).toContainText(title, { timeout: 30_000 });
   await expect(page.getByTestId('workbench-viewer-status')).toHaveAttribute('data-status', 'decided');
@@ -78,6 +86,39 @@ test('a Dossier decision that cannot be saved removes its card, and the retry de
   expect(execFileSync('git', ['-C', repository, 'log', '-1', '--format=%an <%ae>'], { encoding: 'utf8' }).trim())
     .toBe('Agent Studio <studio@agent-studio.invalid>');
   await capture(page, 'dossier-decision-decided');
+});
+
+test('one answer is durable and open; the later answer starts one card', async ({ page, request }) => {
+  const repository = resolve(process.env['PW_E2E_WORKSPACE']!, 'projects', 'demo-app');
+  commitSeededDocs(repository);
+  await expect.poll(async () => (await readWorkbench(request)).workbench.decision ?? null).toBeNull();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openDossier(page);
+  const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+  await frame.locator('[data-option-id="window-30"] input').check();
+  await revealAction(page);
+  const inline = page.getByTestId('workbench-inline-decision-action');
+  await expect(inline.getByTestId('workbench-decision-start')).toBeDisabled();
+  await expect(inline).toContainText('1 of 2 answered');
+  await inline.getByTestId('workbench-decision-record').click();
+  await expect(inline).toContainText('Saved in Dossier', { timeout: 30_000 });
+  await expect(inline).toContainText('1 still open');
+  const partial = await readWorkbench(request);
+  expect(partial.workbench.status).toBe('decision-pending');
+  expect(partial.workbench.decision ?? null).toBeNull();
+  await capture(page, 'dossier-one-answer-open');
+
+  await frame.locator('[data-option-id="proof-receipt"] input').check();
+  await revealAction(page);
+  await inline.getByTestId('workbench-decision-start').click();
+  const title = `Implement both export policies ${Date.now().toString(36)}`;
+  await inline.getByTestId('workbench-decision-title').fill(title);
+  await inline.getByTestId('workbench-decision-confirm').click();
+  await expect(inline.getByTestId('workbench-decision-created-tasks')).toContainText(title, { timeout: 30_000 });
+  const final = await readWorkbench(request);
+  expect(final.workbench.decision?.spawnedTaskKeys).toHaveLength(1);
+  expect((await boardTitles(request)).filter(entry => entry === title)).toHaveLength(1);
+  await capture(page, 'dossier-both-answered');
 });
 
 async function openDossier(page: Page): Promise<void> {
@@ -117,14 +158,15 @@ async function restoreAnswers(page: Page): Promise<void> {
   }
 }
 
-/** The inline action floats over the slot after the last decision point. */
+/** Bring the inline action into view even when the artifact has no host slot. */
 async function revealAction(page: Page, block: ScrollLogicalPosition = 'center'): Promise<void> {
-  const slot = page.frameLocator('[data-testid="workbench-viewer-frame"]')
-    .locator('[data-studio-decision-host-slot]');
-  await slot.evaluate((element, position) => element.scrollIntoView({ block: position }), block);
+  await page.getByTestId('workbench-inline-decision-action')
+    .evaluate((element, position) => element.scrollIntoView({ block: position }), block);
 }
 
 async function capture(page: Page, name: string): Promise<void> {
+  const updateNotice = page.getByRole('status').filter({ hasText: 'Agent Studio was updated' });
+  if (await updateNotice.isVisible()) await updateNotice.getByRole('button', { name: 'Dismiss' }).click();
   const viewports = [{ suffix: '1280', width: 1280, height: 900 }, { suffix: '390', width: 390, height: 1200 }];
   for (const theme of ['light', 'dark'] as Theme[]) {
     await setTheme(page, theme);
@@ -149,16 +191,27 @@ async function capture(page: Page, name: string): Promise<void> {
 }
 
 /**
- * The demo seed leaves its Dossiers uncommitted, and decisions require a
- * committed descriptor. The seed commit names its own identity per command,
- * so the host still has no git identity when Studio writes the decision.
+ * Decisions require a committed descriptor. Restore this Dossier from the
+ * repository's seed commit between scenarios because the demo stack is shared.
+ * Test commits name their own identity, so Studio still has no host git identity.
  */
 function commitSeededDocs(repository: string): void {
   execFileSync('git', ['-C', repository, 'add', '--', 'docs'], { encoding: 'utf8' });
   const staged = execFileSync('git', ['-C', repository, 'diff', '--cached', '--name-only'], { encoding: 'utf8' });
-  if (!staged.trim()) return;
-  execFileSync('git', ['-C', repository, '-c', 'user.name=Demo Seed', '-c', 'user.email=seed@demo.invalid',
-    'commit', '-q', '-m', 'seed: demo Dossiers'], { encoding: 'utf8' });
+  if (staged.trim()) {
+    execFileSync('git', ['-C', repository, '-c', 'user.name=Demo Seed', '-c', 'user.email=seed@demo.invalid',
+      'commit', '-q', '-m', 'seed: demo Dossiers'], { encoding: 'utf8' });
+  }
+  const seed = execFileSync('git', ['-C', repository, 'rev-list', '--max-parents=0', 'HEAD'],
+    { encoding: 'utf8' }).trim();
+  expect(seed).not.toBe('');
+  execFileSync('git', ['-C', repository, 'restore', `--source=${seed}`, '--staged', '--worktree',
+    '--', 'docs/dossiers/export-retention/workbench.json'], { encoding: 'utf8' });
+  const reset = execFileSync('git', ['-C', repository, 'diff', '--cached', '--name-only'], { encoding: 'utf8' });
+  if (reset.trim()) {
+    execFileSync('git', ['-C', repository, '-c', 'user.name=Demo Seed', '-c', 'user.email=seed@demo.invalid',
+      'commit', '-q', '-m', 'test: restore export retention Dossier'], { encoding: 'utf8' });
+  }
 }
 
 function branchLock(repository: string): string {

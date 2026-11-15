@@ -6,14 +6,14 @@ namespace AgentStudio.Tags;
 public interface ITagMaintenanceSynthesis
 {
     string Model { get; }
-    Task<IReadOnlyList<TagMaintenanceProposal>> ProposeAsync(string project, string input, CancellationToken ct);
+    Task<IReadOnlyList<TagMaintenanceProposal>> ProposeAsync(string project, string runId, string input, CancellationToken ct);
 }
 
 public sealed class TagMaintenanceSynthesis(CliOneShotRegistry oneShots, RuntimePromptService prompts) : ITagMaintenanceSynthesis
 {
     public const string PromptTemplate = "tag-maintenance-synthesis.md";
     public string Model => ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet);
-    public async Task<IReadOnlyList<TagMaintenanceProposal>> ProposeAsync(string project, string input, CancellationToken ct)
+    public async Task<IReadOnlyList<TagMaintenanceProposal>> ProposeAsync(string project, string runId, string input, CancellationToken ct)
     {
         var prompt = prompts.Render(PromptTemplate, new Dictionary<string, string?> { ["input"] = input },
             new PromptCallContext(Project: project, Step: "periodic-tag-maintenance", Model: Model));
@@ -26,8 +26,19 @@ public sealed class TagMaintenanceSynthesis(CliOneShotRegistry oneShots, Runtime
             SelectionConsumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.OneShot("tags"),
         }, ct);
         if (!result.Ok) throw new InvalidOperationException(result.Error ?? "Tag synthesis failed.");
-        return JsonSerializer.Deserialize<List<TagMaintenanceProposal>>(result.ParsedText, TagMaintenancePolicy.Json)
-            ?? throw new InvalidOperationException("Tag synthesis returned no proposal array.");
+        var json = JsonReplyExtractor.ExtractJsonArray(result.ParsedText);
+        try
+        {
+            return JsonSerializer.Deserialize<List<TagMaintenanceProposal>>(json ?? "", TagMaintenancePolicy.Json)
+                ?? throw new JsonException("Proposal array was null.");
+        }
+        catch (JsonException ex)
+        {
+            var prefix = result.ParsedText.Replace("\r", " ").Replace("\n", " ");
+            if (prefix.Length > 120) prefix = prefix[..120];
+            throw new InvalidOperationException(
+                $"Tag maintenance run {runId} returned invalid proposal JSON. Answer begins: '{prefix}'. {ex.Message}", ex);
+        }
     }
 }
 
@@ -118,7 +129,7 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                     excerptLimit = 4000,
                     items = selected.Select(i => i with { Text = i.Text.Length > 4000 ? i.Text[..4000] : i.Text }),
                 });
-                var proposals = await synthesis.ProposeAsync(project, input, ct);
+                var proposals = await synthesis.ProposeAsync(project, run.Id, input, ct);
                 if (proposals.Count > 20) throw new ArgumentException("Synthesis exceeded 20 proposals.");
                 // Incomplete usage counts cannot prove a tag unused; the other proposal kinds continue.
                 if (!snapshot.UsageComplete)

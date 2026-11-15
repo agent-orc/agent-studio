@@ -2150,6 +2150,18 @@ catch (Exception ex)
     crashRecorder.Record("SalvageSubjectAttributionRepair", ex);
 }
 
+// Repair passing reviewed deliveries escalated after an integration merge
+// imported another card's commit into their fenced result range.
+if (runRepairSweeps) try
+{
+    hostTimeline.Sweep("IntegrationHistoryAttributionRepair",
+        () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunIntegrationHistoryRepairOnce());
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("IntegrationHistoryAttributionRepair", ex);
+}
+
 // Cap legacy durable CLI logs after the one-time full-history wiki read
 // backfill but before CLI reattachment can append new output. The sweep also
 // ensures the sole rotation file stays outside workspace evidence commits.

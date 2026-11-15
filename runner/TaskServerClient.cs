@@ -2420,7 +2420,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     }
 
     private async Task<TResp?> SendJsonAsync<TReq, TResp>(HttpMethod method, string url, TReq body,
-        CancellationToken ct, bool allowEmptyResponse = false)
+        CancellationToken ct, bool allowEmptyResponse = false, bool allowNoContentResponse = false)
     {
         // The standalone Task Server's established HTTP contract uses numeric
         // enum values. Legacy monolith DTOs continue to use string enums.
@@ -2441,6 +2441,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                 $"POST {url} -> {(int)resp.StatusCode}: {(resp.StatusCode == HttpStatusCode.RequestEntityTooLarge ? text : Trim(text))}",
                 ProxyErrorCode((int)resp.StatusCode) ?? errorCode);
         }
+        if (allowNoContentResponse && resp.StatusCode == HttpStatusCode.NoContent) return default;
         if (allowEmptyResponse)
         {
             if (resp.StatusCode == HttpStatusCode.NoContent) return default;
