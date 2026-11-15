@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Security.Cryptography;
 using AgentStudio.Registry;
+using AgentStudio.Operations.Contracts;
 using AgentStudio.Secrets;
 using AgentStudio.Security;
 
@@ -62,7 +63,8 @@ public sealed record BackupOverview(
     IReadOnlyList<BackupWarning> Warnings,
     IReadOnlyList<BackupOverviewItem> Backups,
     string GeneratedAt,
-    BackupRestoreReceipt? LastRestore = null);
+    BackupRestoreReceipt? LastRestore = null,
+    OperationsRecoveryDocument? OperationsRecovery = null);
 
 /// <summary>
 /// Installation backups (AGT-3574): creates consistent encrypted archives,
@@ -274,8 +276,24 @@ public sealed class StudioBackupService
         var lastRestore = options.Sources.FirstOrDefault(source => source.Name == "workspace") is { } workspace
             ? BackupRestoreReceipts.Latest(workspace.Path)
             : null;
+        OperationsRecoveryDocument? operationsRecovery = null;
+        var operationsSource = options.Sources.FirstOrDefault(source => source.Name == "operations");
+        if (operationsSource is not null)
+        {
+            var path = Path.Combine(operationsSource.Path, "data", "recovery.json");
+            if (File.Exists(path))
+            {
+                try { operationsRecovery = System.Text.Json.JsonSerializer.Deserialize<OperationsRecoveryDocument>(
+                    File.ReadAllText(path), OperationsProtocol.Json); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                { _logger?.LogError(ex, "Operations recovery state could not be read"); }
+            }
+        }
 
         var warnings = new List<BackupWarning>();
+        if (operationsRecovery?.Items.Count(item => !item.Complete) is > 0)
+            warnings.Add(new("operations-recovery-pending", "danger",
+                "Operations recovery checks remain. Commands are blocked until re-enrolment and revocation checks finish."));
         if (HostCertificateAuthority.FingerprintWarning(_configuration) is { } caWarning)
             warnings.Add(new("host-ca-mismatch", "danger", caWarning));
         if (!options.Enabled)
@@ -344,7 +362,7 @@ public sealed class StudioBackupService
             BackupSchedulePolicy.NextBackupAt(options, state, records.FirstOrDefault()) is { } next
                 ? (next < now ? now : next).ToString("O") : null,
             lastGood, ageHours, stale, state.LastRun, verification, offHost, warnings,
-            records.Take(20).Select(Item).ToArray(), now.ToString("O"), lastRestore);
+            records.Take(20).Select(Item).ToArray(), now.ToString("O"), lastRestore, operationsRecovery);
     }
 
     /// <summary>What a verified restore verification does not show; the runbook's periodic owner check covers the keys.</summary>
