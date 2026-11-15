@@ -1,0 +1,25 @@
+:host {
+  display: inline;
+  min-width: 0;
+}
+
+.dossier-slice {
+  color: var(--studio-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dossier-slice--link {
+  text-decoration: underline;
+  text-decoration-color: var(--studio-border);
+  text-underline-offset: 2px;
+}
+.dossier-slice--link:hover {
+  color: var(--studio-fg);
+  text-decoration-color: currentColor;
+}
+.dossier-slice--link:focus-visible {
+  border-radius: var(--studio-radius-sm);
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 2px;
+}

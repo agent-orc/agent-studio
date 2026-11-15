@@ -185,3 +185,37 @@
 .backup-status thead th {
   color: var(--studio-text-secondary);
 }
+
+@media (max-width: 600px) {
+  .backup-status__handoff-table thead {
+    display: none;
+  }
+
+  .backup-status__handoff-table tr {
+    display: grid;
+    gap: var(--studio-spacing-1);
+    padding-block: var(--studio-spacing-2);
+    border-bottom: 1px solid var(--studio-border);
+  }
+
+  .backup-status__handoff-table th,
+  .backup-status__handoff-table td {
+    display: block;
+    padding: 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .backup-status__handoff-table td::before {
+    display: block;
+    color: var(--studio-text-secondary);
+  }
+
+  .backup-status__handoff-table td:first-of-type::before {
+    content: 'Last checked status';
+  }
+
+  .backup-status__handoff-table td:last-of-type::before {
+    content: 'Restore step';
+  }
+}

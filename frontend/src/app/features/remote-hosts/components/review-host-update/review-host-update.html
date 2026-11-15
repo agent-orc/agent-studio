@@ -1,0 +1,40 @@
+@if (active(); as host) {
+  <section class="update" data-testid="review-host-update" [attr.data-stage]="stage()">
+    <h4>Update review host</h4>
+    <p>Next: drain {{ host.name }}, wait for a quiet point, then follow the
+      <a data-testid="review-host-deploy-procedure" href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/deploy-drain-procedure.md"
+        target="_blank" rel="noopener noreferrer">supported deploy procedure</a>.</p>
+    <p class="update__target">Expected commit <code>{{ host.expectedCommit || 'not reported' }}</code>
+      · image <code data-testid="review-host-expected-digest">{{ host.expectedImageRef || 'not pinned' }}</code></p>
+    <ol class="update__steps" aria-label="Review host update progress">
+      <li [attr.data-state]="stepState(0)">Drain <span>{{ stepLabel(0) }}</span></li>
+      <li [attr.data-state]="stepState(1)">Quiet point <span>{{ stepLabel(1) }}</span></li>
+      <li [attr.data-state]="stepState(2)">Host switch <span>{{ stepLabel(2) }}</span></li>
+      <li [attr.data-state]="stepState(3)">Verification <span>{{ stepLabel(3) }}</span></li>
+      <li [attr.data-state]="stepState(4)">Resume <span>{{ stepLabel(4) }}</span></li>
+    </ol>
+    @if (message(); as note) { <p class="update__message" role="status" data-testid="review-host-update-message">{{ note }}</p> }
+    <div class="update__actions">
+      @switch (stage()) {
+        @case ('ready') { <button type="button" (click)="start()" [appPendingButton]="busy()" data-testid="review-host-update-start">Drain review host</button> }
+        @case ('draining') { <button type="button" [appPendingButton]="true" pendingLabel="Checking active work…">Drain review host</button> }
+        @case ('blocked') { <button type="button" (click)="checkQuiet()" [appPendingButton]="busy()" pendingLabel="Checking quiet point…">Check quiet point</button> }
+        @case ('quiet') { <button type="button" (click)="beginSwitch()" [appPendingButton]="busy()" pendingLabel="Checking active work…" data-testid="review-host-update-switch">I am starting the host switch</button> }
+        @case ('switching') { <button type="button" (click)="verify()" [appPendingButton]="busy()" data-testid="review-host-update-verify">Check new heartbeat</button> }
+        @case ('verifying') { <button type="button" [appPendingButton]="true" pendingLabel="Checking heartbeat…">Check new heartbeat</button> }
+        @case ('verified') { <button type="button" (click)="resume()" [appPendingButton]="busy()" data-testid="review-host-update-resume">Resume review host</button> }
+        @case ('resuming') { <button type="button" [appPendingButton]="true" pendingLabel="Resuming host…">Resume review host</button> }
+        @case ('aborting') { <button type="button" [appPendingButton]="true" pendingLabel="Resuming host…">Cancel update</button> }
+        @case ('error') {
+          @if (proofVerified()) { <button type="button" (click)="resume()" [appPendingButton]="busy()">Retry resume</button> }
+          @else if (switchStartedAt()) { <button type="button" (click)="verify()" [appPendingButton]="busy()">Retry verification</button> }
+          @else if (drainRequested()) { <button type="button" (click)="checkQuiet()" [appPendingButton]="busy()">Retry quiet point</button> }
+          @else { <button type="button" (click)="start()" [appPendingButton]="busy()">Retry drain</button> }
+        }
+      }
+      @if (drainRequested() && !switchStartedAt() && stage() !== 'aborting') {
+        <button type="button" class="update__secondary" (click)="cancel()" [appPendingButton]="busy()">Cancel and resume</button>
+      }
+    </div>
+  </section>
+}

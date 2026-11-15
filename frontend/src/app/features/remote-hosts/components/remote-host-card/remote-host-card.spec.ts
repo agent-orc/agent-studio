@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
+import { provideHttpClient } from '@angular/common/http';
 import { By } from '@angular/platform-browser';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
 import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-telemetry-history';
@@ -59,7 +60,7 @@ function mount(host: RemoteHost, expanded = true, expandSections = true) {
   TestBed.resetTestingModule();
   TestBed.configureTestingModule({
     imports: [RemoteHostCardComponent],
-    providers: [provideZonelessChangeDetection()],
+    providers: [provideZonelessChangeDetection(), provideHttpClient()],
   });
   const fixture = TestBed.createComponent(RemoteHostCardComponent);
   fixture.componentRef.setInput('host', host);
@@ -106,7 +107,7 @@ describe('RemoteHostCardComponent', () => {
     const review: RemoteHost = { ...HOST, id: 'review', serviceRole: 'review', roleMaxParallelism: 2,
       telemetry: { ...HOST.telemetry!, points: [{ ...HOST.telemetry!.points[0], activeSlots: 1 }] } };
     TestBed.resetTestingModule();
-    TestBed.configureTestingModule({ imports: [RemoteHostCardComponent], providers: [provideZonelessChangeDetection()] });
+    TestBed.configureTestingModule({ imports: [RemoteHostCardComponent], providers: [provideZonelessChangeDetection(), provideHttpClient()] });
     const fixture = TestBed.createComponent(RemoteHostCardComponent);
     fixture.componentRef.setInput('host', coding);
     fixture.componentRef.setInput('roles', [coding, review]);

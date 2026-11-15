@@ -287,4 +287,3 @@ After the change the initial total is 1,922,039 B in 110 files, 178,366 B
 shell, columns, cards, explorer tree and the always-open inline filter panel
 stay eager; the filter panel registers its Escape handler at startup, so
 deferring it would change Escape handling.
-
