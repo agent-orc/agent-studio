@@ -36,6 +36,13 @@ retry. The operator attention feed raises `batch.running-without-gate` once a
 persisted Running phase without a live flight exceeds the configured gate
 timeout plus the two-minute coordinator lease TTL. Recovery contention is
 logged once per batch and reason; the pilot retries on its 30-second tick.
+The same state read exposes `oldestFormed` with its formation age, and each
+batch's `lastProgressAtUtc`, active claim age, reservation wait, and phase-record
+member dispositions. Every nonterminal batch carries `nextAction` and
+`dueAtUtc`: an active claim uses its durable stage deadline, a running batch
+without a flight uses its recovery retry time, and other batches name the next
+pilot tick. These are observation deadlines, not a promise of publication.
+The batch panel shows these facts beside the flight queue and batch history.
 
 An interrupted deterministic red batch ends as `Paused` with reason
 `isolation interrupted` on the next pilot tick when unresolved members remain.

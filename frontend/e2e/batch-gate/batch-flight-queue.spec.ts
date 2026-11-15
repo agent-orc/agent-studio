@@ -38,16 +38,23 @@ const cards = [...formed.flatMap(batch => batch.taskKeys), 'AGT-10']
 const member = (taskKey: string) => ({ taskKey, replay: { outcome: 'admitted' }, released: false });
 
 const batchState = {
+  oldestFormed: { batchId: 'batch-31', formedAtUtc: '2026-11-10T03:47:00Z', ageMinutes: 85 },
   plan: { decision: 'wait', reason: 'formed batches wait for the running flight', targetSize: 0, closeAtUtc: null,
     proposedMembers: [], upcoming: [], advisor: null },
   pending: [],
   batches: [
     ...[...formed].reverse().map((batch, index) => ({
       batchId: batch.batchId, parentBatchId: null, phase: 'formed', phaseReason: null,
+      phaseAtUtc: batch.queuedSinceUtc, lastProgressAtUtc: batch.queuedSinceUtc,
+      nextAction: { action: 'Start the formed batch when its flight slot opens, or record a terminal reason',
+        dueAtUtc: '2026-11-10T05:12:30Z' },
       queuePosition: formed.length - index, baseSha: 'b'.repeat(40), candidateSha: null,
-      members: batch.taskKeys.map(member), runs: [],
+      members: batch.taskKeys.map(key => ({ ...member(key), disposition: 'claimed' })), runs: [],
     })),
     { batchId: 'batch-30', parentBatchId: null, phase: 'running', phaseReason: null, queuePosition: null,
+      phaseAtUtc: '2026-11-10T05:05:00Z', lastProgressAtUtc: '2026-11-10T05:06:00Z',
+      claimAgeMinutes: 7, reservationWaitMinutes: 1,
+      nextAction: { action: 'Advance or expire reserving flight claim', dueAtUtc: '2026-11-10T05:45:00Z' },
       baseSha: 'b'.repeat(40), candidateSha: 'c'.repeat(40), members: [member('AGT-10')],
       runs: [{ batchRunId: 'run-30', host: 'agent-runner-01', outcome: null, classification: null,
         startedAtUtc: '2026-11-10T05:05:00Z', finishedAtUtc: null }] },
@@ -108,6 +115,7 @@ test('batch panel lists three formed batches in flight queue order with their po
 
   const queue = panel.getByTestId('batch-flight-queue');
   await expect(queue.getByRole('heading')).toHaveText('Flight queue (3)');
+  await expect(queue.getByTestId('batch-oldest-formed')).toContainText('batch-31 · 1 h 25 min');
   const entries = queue.locator('li');
   await expect(entries).toHaveCount(3);
   for (const [index, batch] of formed.entries()) {
@@ -116,8 +124,13 @@ test('batch panel lists three formed batches in flight queue order with their po
     await expect(entry).toContainText(batch.taskKeys.join(', '));
     await expect(panel.locator(`#batch-${batch.batchId}`).getByTestId('batch-queue-position'))
       .toHaveText(`flight queue position ${index + 1} of 3`);
+    await expect(panel.locator(`#batch-${batch.batchId}`).getByTestId('batch-next-action'))
+      .toContainText('Start the formed batch');
+    await expect(panel.locator(`#batch-${batch.batchId}`)).toContainText('claimed');
   }
   await expect(panel.locator('#batch-batch-30').getByTestId('batch-queue-position')).toHaveCount(0);
+  await expect(panel.locator('#batch-batch-30').getByTestId('batch-claim-age'))
+    .toContainText('Flight claim: 7 min · reservation wait: 1 min');
 
   for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 900 });
