@@ -49,6 +49,16 @@ action offers a continue round. No provider credentials or external remote are
 used. These records are invented demo evidence, not a claim that a live gate
 ran during seeding.
 
+For an isolated owner-day browser scene, pass `--state-root <demo-root>/data`
+and set `XDG_DATA_HOME` to that same directory before starting the backend.
+The seed then writes the red batch manifest, phase, run and failed-test receipt
+into the instance-local batch store and enables the Demo App batch panel. Keep
+`DeliveryChain:Guarded=false`, the runner in manual mode, and the remote gate
+host on a `.invalid` name. This scene is inspectable but cannot run a gate.
+Use the backend's `Testing` environment for this frozen scene so its pilot does
+not repair the simulated red phase. The isolated `owner-day` Playwright profile
+sets that environment automatically.
+
 Each demo `WatchPaths` entry needs a `RootPath` (or `RepositoryPath`) pointing
 at its project folder, not only a `Path`. The seeded Wiki tree and the Dossier
 gallery live in `<RootPath>/docs`, and without that entry no repository root

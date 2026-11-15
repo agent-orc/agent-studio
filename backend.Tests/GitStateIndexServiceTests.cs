@@ -937,6 +937,153 @@ public sealed class GitStateIndexServiceTests : IDisposable
         Assert.True(process.ExitCode == 0, error);
     }
 
+    private static string GitOutput(string root, params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root, RedirectStandardOutput = true,
+            RedirectStandardError = true, UseShellExecute = false,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, error);
+        return output.Trim();
+    }
+
+    [Fact]
+    public async Task IndexRun_ThousandsOfRefs_UsesBoundedAncestrySpawns()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        Directory.Delete(Path.Combine(repoPath, ".git"), recursive: true);
+        RunGit(repoPath, "init", "-q");
+        RunGit(repoPath, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "base");
+        var baseSha = GitOutput(repoPath, "rev-parse", "HEAD");
+        RunGit(repoPath, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "tip");
+        var tip = GitOutput(repoPath, "rev-parse", "HEAD");
+        var refs = Path.Combine(repoPath, ".git", "refs", "remotes", "origin", "agent-studio");
+        Directory.CreateDirectory(refs);
+        for (var i = 0; i < 3_000; i++)
+            File.WriteAllText(Path.Combine(refs, $"result-{i:D4}"), (i % 2 == 0 ? baseSha : tip) + "\n");
+
+        var graphCache = new GitAncestryGraphCache();
+        Task<TaskListGitProjection> Build(IReadOnlyCollection<TaskInfo> _)
+        {
+            var graph = graphCache.Get(repoPath, tip);
+            var names = Directory.EnumerateFiles(refs).ToArray();
+            Assert.Equal(3_000, names.Length);
+            foreach (var name in names)
+                Assert.True(graph.IsAncestor(File.ReadAllText(name).Trim(), tip));
+            return Task.FromResult(TaskListGitProjection.Empty);
+        }
+        var completed = new TaskCompletionSource<GitIndexRunReport>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
+            new TaskListGitProjectionCache(), Build, _ => { }, NullLogger.Instance,
+            FastOptions(), NewClock());
+        service.RunCompleted += report => completed.TrySetResult(report);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            var report = await completed.Task.WaitAsync(IndexerProgressBudget);
+            Assert.Equal("published", report.Outcome);
+            Assert.InRange(report.Spawns, 1, 20);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public async Task IndexRun_Timeout_ReusesCompletedAncestryAndBacksOff()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        Directory.Delete(Path.Combine(repoPath, ".git"), recursive: true);
+        RunGit(repoPath, "init", "-q");
+        RunGit(repoPath, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "tip");
+        var tip = GitOutput(repoPath, "rev-parse", "HEAD");
+        var graphCache = new GitAncestryGraphCache();
+        GitAncestryGraph? firstGraph = null;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reports = new System.Collections.Concurrent.ConcurrentQueue<GitIndexRunReport>();
+        var calls = 0;
+        async Task<TaskListGitProjection> Build(IReadOnlyCollection<TaskInfo> _)
+        {
+            var graph = graphCache.Get(repoPath, tip);
+            Assert.True(graph.IsAncestor(tip, tip));
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                firstGraph = graph;
+                entered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, GitProcessBudget.Token);
+            }
+            else Assert.Same(firstGraph, graph);
+            return TaskListGitProjection.Empty;
+        }
+        var clock = NewClock();
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
+            new TaskListGitProjectionCache(), Build, _ => { }, NullLogger.Instance,
+            FastOptions() with { RunDeadline = TimeSpan.FromMilliseconds(300), MaxRetries = 0 }, clock);
+        service.RunCompleted += reports.Enqueue;
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await entered.Task.WaitAsync(IndexerProgressBudget);
+            clock.Advance(TimeSpan.FromMilliseconds(301));
+            await WaitUntilAsync(() => reports.Count >= 1 && !service.IsRunning("proj"));
+            Assert.Equal("failed", reports.First().Outcome);
+            Assert.Equal("timeout", service.GetRepositoryStatuses().Single().ReasonCode);
+            service.RequestRefresh("proj", "sweep");
+            await Task.Delay(100);
+            Assert.Equal(1, Volatile.Read(ref calls));
+
+            clock.Advance(TimeSpan.FromMinutes(2));
+            service.RequestRefresh("proj", "sweep");
+            await WaitUntilAsync(() => reports.Count >= 2 && !service.IsRunning("proj"));
+            Assert.Equal("published", reports.Last().Outcome);
+            Assert.True(reports.First().Spawns > reports.Last().Spawns);
+            Assert.Null(service.GetRepositoryStatuses().Single().ReasonCode);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public void VerificationGraph_MergeHistory_MatchesGitAncestry()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        Directory.Delete(Path.Combine(repoPath, ".git"), recursive: true);
+        RunGit(repoPath, "init", "-q");
+        RunGit(repoPath, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "base");
+        var baseSha = GitOutput(repoPath, "rev-parse", "HEAD");
+        var mainBranch = GitOutput(repoPath, "symbolic-ref", "--short", "HEAD");
+        RunGit(repoPath, "checkout", "-q", "-b", "side");
+        RunGit(repoPath, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "side");
+        var sideSha = GitOutput(repoPath, "rev-parse", "HEAD");
+        RunGit(repoPath, "checkout", "-q", mainBranch);
+        RunGit(repoPath, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "main");
+        var mainSha = GitOutput(repoPath, "rev-parse", "HEAD");
+        RunGit(repoPath, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "merge", "-q", "--no-ff", "side", "-m", "merge side");
+        var tip = GitOutput(repoPath, "rev-parse", "HEAD");
+        var graph = GitAncestryGraph.Read(repoPath, tip);
+        Assert.True(graph.IsAncestor(baseSha, tip));
+        Assert.True(graph.IsAncestor(sideSha, tip));
+        Assert.True(graph.IsAncestor(mainSha, tip));
+        Assert.False(graph.IsAncestor(sideSha, mainSha));
+        Assert.False(graph.IsAncestor(mainSha, sideSha));
+        Assert.False(graph.IsAncestor(tip, baseSha));
+    }
+
     [Fact]
     public async Task SafetySweep_MissingRepository_LogsTypedConfigFailureAndKeepsSweeping()
     {

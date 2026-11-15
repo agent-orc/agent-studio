@@ -157,9 +157,15 @@ case "${PW_E2E_PROFILE:-standard}" in
   # cards, so role-scoped card reads (AGT-3669) meet real Ready and Human
   # Review cards.
   demo|owner-day|public-demo|networked-https-demo)
-    seed_args=(--root "${PW_E2E_WORKSPACE}")
-    if [[ "${PW_E2E_PROFILE}" == owner-day ]]; then seed_args+=(--owner-day); fi
-    node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" "${seed_args[@]}"
+    if [[ "${PW_E2E_PROFILE}" == owner-day ]]; then
+      # The seeded ledger is a frozen owner scene. Suppress the pilot's repair
+      # and flight loop so it cannot change the red phase or contact a host.
+      export DOTNET_ENVIRONMENT=Testing
+      export ASPNETCORE_ENVIRONMENT=Testing
+      node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}" --owner-day --state-root "${XDG_DATA_HOME}"
+    else
+      node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
+    fi
     export WatchPaths__0__Name='Demo App'
     export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/demo-app"
     export WatchPaths__0__RootPath="${WatchPaths__0__Path}"
