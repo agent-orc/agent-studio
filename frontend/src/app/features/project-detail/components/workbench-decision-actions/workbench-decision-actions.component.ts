@@ -1,15 +1,6 @@
 import {
-  ChangeDetectionStrategy,
-  Component,
-  DestroyRef,
-  ElementRef,
-  computed,
-  effect,
-  inject,
-  input,
-  output,
-  signal,
-  untracked,
+  ChangeDetectionStrategy, Component, DestroyRef, ElementRef,
+  computed, effect, inject, input, output, signal, untracked,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { EMPTY, Observable, catchError, map, of, switchMap, tap, throwError } from 'rxjs';
