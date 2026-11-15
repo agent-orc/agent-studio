@@ -4911,6 +4911,61 @@ public partial class GitService
     }
 
     /// <summary>
+    /// A recorded Dossier choice changes only the workbench descriptor's
+    /// decision metadata. Inspect the full first-parent diff so a commit that
+    /// also edits Dossier content or implementation files still needs a gate.
+    /// </summary>
+    public bool IsWorkbenchOwnerDecisionCommit(string repoRoot, string sha, string parentSha)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(sha)
+            || !ReviewSubjectStore.IsValidResultSha(parentSha)) return false;
+        var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
+            "--format=%P%x1f%s", sha);
+        if (metadataCode != 0) return false;
+        var fields = metadata.Trim().Split('\x1f');
+        const string subjectPrefix = "chore(workbench): record decision for ";
+        if (fields.Length != 2
+            || !string.Equals(fields[0], parentSha, StringComparison.OrdinalIgnoreCase)
+            || !fields[1].StartsWith(subjectPrefix, StringComparison.Ordinal)) return false;
+
+        var (changes, _, changeCode) = RunGitArgs(repoRoot, "diff-tree", "--name-status",
+            "-r", "-z", parentSha, sha);
+        var (summary, _, summaryCode) = RunGitArgs(repoRoot, "diff-tree", "--summary",
+            "-r", parentSha, sha);
+        if (changeCode != 0 || summaryCode != 0 || !string.IsNullOrWhiteSpace(summary)) return false;
+        var entries = changes.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (entries.Length != 2 || entries[0] != "M") return false;
+        var path = entries[1];
+        if (!path.StartsWith("docs/", StringComparison.Ordinal)
+            || !path.EndsWith("/workbench.json", StringComparison.Ordinal)) return false;
+        var before = GetFileAtCommit(repoRoot, parentSha, path);
+        var after = GetFileAtCommit(repoRoot, sha, path);
+        if (before is null || after is null) return false;
+        try
+        {
+            if (JsonNode.Parse(before) is not JsonObject oldDescriptor
+                || JsonNode.Parse(after) is not JsonObject newDescriptor
+                || !string.Equals(newDescriptor["id"]?.GetValue<string>(),
+                    fields[1][subjectPrefix.Length..], StringComparison.Ordinal)
+                || newDescriptor["decision"] is not JsonObject decision
+                || !string.Equals(decision["outcome"]?.GetValue<string>(), "feature-spawn",
+                    StringComparison.Ordinal)
+                || JsonNode.DeepEquals(oldDescriptor["decision"], newDescriptor["decision"])) return false;
+            foreach (var field in new[] { "decision", "relatedTaskKeys", "status", "updatedAt",
+                "editedBy", "editedAt", "lifecycleState", "lifecycleHistory" })
+            {
+                oldDescriptor.Remove(field);
+                newDescriptor.Remove(field);
+            }
+            return JsonNode.DeepEquals(oldDescriptor, newDescriptor);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Commits reachable from <paramref name="toRef"/> but not
     /// <paramref name="fromRef"/> (<c>git log fromRef..toRef --no-merges</c>),
     /// newest first. This is the graph merge-set ASS-1724 displays: with

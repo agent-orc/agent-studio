@@ -33,7 +33,8 @@ public sealed partial class RemoteRunnerEndToEndTests
     [Trait("Category", "MachineBound")]
     public async Task Remote_concept_run_creates_dossier_parks_for_sight_review_and_promotes()
     {
-        var flow = await RunRemoteConceptAsync(touchProductCode: false);
+        var flow = await RunRemoteConceptAsync(touchProductCode: false,
+            withSalvageBranch: true, withAppendedExecutionIntent: true);
         using var factory = flow.Factory;
         using var http = flow.Http;
         var ct = CancellationToken.None;
@@ -42,6 +43,9 @@ public sealed partial class RemoteRunnerEndToEndTests
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var card = scanner.FindJob(flow.TaskKey, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, card.State);
+        var deliverables = File.ReadAllText(Path.Combine(TaskPaths.ResultsDir(card.FolderPath), "deliverables.md"));
+        Assert.Contains(ConceptEntrypoint, deliverables);
+        Assert.Contains("Salvage branch", deliverables);
 
         // The Dossier reached develop through the reviewed task-branch merge,
         // which lands on the Studio integration lane of the developer checkout.
@@ -130,7 +134,8 @@ public sealed partial class RemoteRunnerEndToEndTests
     /// with a stub CLI that writes the Dossier, and settle a passing Remote
     /// Review with the concept-fit verdict.
     /// </summary>
-    private async Task<RemoteConceptFlow> RunRemoteConceptAsync(bool touchProductCode)
+    private async Task<RemoteConceptFlow> RunRemoteConceptAsync(bool touchProductCode,
+        bool withSalvageBranch = false, bool withAppendedExecutionIntent = false)
     {
         var ct = CancellationToken.None;
         var origin = await SeedOriginAsync();
@@ -182,6 +187,15 @@ public sealed partial class RemoteRunnerEndToEndTests
             RunnerId, ProjectName, "concept-host", 4242, "remote-runner"));
         Assert.Equal(taskKey, claim.TaskKey);
         var lease = claim.Lease!;
+        if (withAppendedExecutionIntent)
+        {
+            var briefVersion = BriefVersionStore.ReadCurrent(card.FolderPath);
+            File.AppendAllText(Path.Combine(card.FolderPath, "prompt.md"),
+                "\n\nExecution intent: keep the recommended Dossier choices.\n");
+            Assert.Equal(briefVersion, BriefVersionStore.ReadCurrent(card.FolderPath));
+            Assert.NotEqual(briefVersion, AttemptAuthorityService.Hash(
+                File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md"))));
+        }
 
         // The agent step. The standalone runner executes its CLI in a detached
         // worker process, which cannot load from this test host's output
@@ -196,6 +210,9 @@ public sealed partial class RemoteRunnerEndToEndTests
         var resultSha = (await GitAsync(repository, "rev-parse", "HEAD")).StdOut.Trim();
         var immutableRef = Contract.FencedGitRefs.ImmutableResult(lease.AttemptId!, lease.FencingToken, resultSha);
         await GitAsync(repository, "push", "origin", $"HEAD:{immutableRef}");
+        const string salvageBranch = "refs/heads/agent-studio/salvage/concept-test";
+        if (withSalvageBranch)
+            await GitAsync(repository, "push", "origin", $"HEAD:{salvageBranch}");
         await GitAsync(repository, "checkout", "main");
         var completion = await client.CompleteRunAsync(new RRemoteComplete(
             taskKey,
@@ -212,7 +229,9 @@ public sealed partial class RemoteRunnerEndToEndTests
             BaseSha: baseSha,
             ImmutableResultRef: immutableRef,
             ArtifactManifestDigest: new string('a', 64),
-            IntegrationBranch: "refs/heads/develop"), ct);
+            IntegrationBranch: "refs/heads/develop",
+            SalvageBranch: withSalvageBranch ? salvageBranch : null,
+            SalvageCommitSha: withSalvageBranch ? resultSha : null), ct);
         Assert.Equal(TaskStates.AutoReview, completion!.TargetState);
         Assert.Equal(TaskStates.AutoReview, scanner.FindJob(taskKey, _watchPath)!.State);
 

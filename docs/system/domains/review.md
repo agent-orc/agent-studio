@@ -6,7 +6,9 @@ first-parent diff changes existing `docs/**/workbench.json` descriptors solely
 by adding `key`. New managed commits carry an operation trailer; legacy
 commits require the Agent Studio author and committer identity. Acceptance
 records the inspected commit SHA in the card's
-completion evidence. Every other later commit still needs a passed gate.
+completion evidence. A recorded owner decision is also gate-neutral when its
+first-parent diff modifies only one existing Dossier descriptor's decision
+metadata. Dossier content and implementation changes still need a passed gate.
 Batch candidates and direct integration merges assign keys to descriptors
 changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
@@ -49,9 +51,10 @@ Concept-fit review records the authored brief version from
 appended to `prompt.md` do not change it. The Task Server reads the mirrored
 version and falls back to a full prompt hash for older mirrors without that
 metadata.
-The review subject's `TaskRequirementsHash` still hashes the complete prompt:
-it identifies the exact instructions for that review attempt, including
-follow-up notes, and is distinct from the authored brief version.
+For a concept, the review subject's `TaskRequirementsHash` carries that
+authored brief version, matching the frozen `concept-fit` plan. Follow-up
+execution notes remain in the prompt and round evidence without invalidating
+the authored brief. Other task modes continue to hash the complete prompt.
 
 Concept-fit receives a bounded snapshot of the published Dossier index,
 `workbench.json`, and local files linked from them. Its round diff shows what

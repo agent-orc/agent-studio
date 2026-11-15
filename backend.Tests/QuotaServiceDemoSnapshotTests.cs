@@ -99,6 +99,20 @@ public sealed class QuotaServiceDemoSnapshotTests : IDisposable
         Assert.Empty(DemoQuotaSnapshots.For("gemini", now).Windows);
     }
 
+    [Fact]
+    public async Task EmptyFixtureSnapshot_NeverProbesAndLeavesAdmissionUncapped()
+    {
+        var probe = new CountingProbe();
+        var service = NewService(probe, "Quota:Mode", DemoQuotaSnapshots.EmptyFixtureMode);
+
+        var snapshot = await service.RefreshAsync("codex");
+
+        Assert.Equal(0, probe.Calls);
+        Assert.Equal("codex", snapshot!.CliType);
+        Assert.Equal(DemoQuotaSnapshots.Source, snapshot.Source);
+        Assert.Empty(snapshot.Windows);
+    }
+
     private static void AssertPinnedCodex(QuotaSnapshot snap)
     {
         Assert.Equal("codex", snap.CliType);
