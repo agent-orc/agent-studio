@@ -165,6 +165,8 @@ async function revealAction(page: Page, block: ScrollLogicalPosition = 'center')
 }
 
 async function capture(page: Page, name: string): Promise<void> {
+  const updateNotice = page.getByRole('status').filter({ hasText: 'Agent Studio was updated' });
+  if (await updateNotice.isVisible()) await updateNotice.getByRole('button', { name: 'Dismiss' }).click();
   const viewports = [{ suffix: '1280', width: 1280, height: 900 }, { suffix: '390', width: 390, height: 1200 }];
   for (const theme of ['light', 'dark'] as Theme[]) {
     await setTheme(page, theme);
