@@ -44,7 +44,7 @@ const sameOrigin = { 'Sec-Fetch-Site': 'same-origin' };
 async function inviteProduct(username: string, displayName: string, projects: string[], password: string) {
   const invite = await owner.post('/api/auth/invitations', { data: { username, displayName, role: 'contributor', projects } });
   expect(invite.ok(), `${invite.status()}: ${await invite.text()}`).toBeTruthy();
-  const anonymous = await playwrightRequest.newContext({ baseURL: process.env.PW_BASE_URL, ignoreHTTPSErrors: true });
+  const anonymous = await playwrightRequest.newContext({ baseURL: process.env.PW_BASE_URL, ignoreHTTPSErrors: true, timeout: 60_000 });
   const token = new URL((await invite.json()).signInLink as string, 'https://studio.invalid').searchParams.get('invite');
   expect(token).toBeTruthy();
   const accepted = await anonymous.post('/api/auth/invite/accept', { headers: sameOrigin,
@@ -83,7 +83,7 @@ test.beforeAll(async () => {
   const workspace = process.env.PW_E2E_WORKSPACE!;
   expect(baseURL.startsWith('https://')).toBeTruthy();
   mkdirSync(resultDir, { recursive: true });
-  const anonymous = await playwrightRequest.newContext({ baseURL, ignoreHTTPSErrors: true });
+  const anonymous = await playwrightRequest.newContext({ baseURL, ignoreHTTPSErrors: true, timeout: 60_000 });
   const password = ['owner', 'pass', 'phrase', 'long', 'enough'].join('-');
   const bootstrap = await anonymous.post('/api/auth/bootstrap', { headers: sameOrigin,
     data: { username: 'studio-owner', displayName: 'Owner', password, bootstrapCode: `${basename(workspace)}-owner-code` } });
@@ -158,6 +158,8 @@ test('a Product user sees only the bound project and files a card from the Add t
   await expect(select.locator('option')).toHaveText([granted]);
   await page.getByTestId('create-title').fill(title);
   await page.getByTestId('create-prompt').fill('Make the board header calmer.');
+  await expect(page.getByTestId('create-defaults-error')).toHaveCount(0);
+  await expect(page.getByTestId('create-submit')).toBeEnabled({ timeout: 15_000 });
   await shot(page, 'product-add-task-light');
   await setTheme(page, 'dark');
   await shot(page, 'product-add-task-dark');

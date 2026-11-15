@@ -20,6 +20,58 @@ public sealed class OneShotJobClientTests
     private static HttpResponseMessage EmptyClaim() => new(HttpStatusCode.OK)
     { Content = new StringContent("null", Encoding.UTF8, "application/json") };
 
+    [Theory]
+    [InlineData("combined")]
+    [InlineData("task-server")]
+    public async Task Idle_claim_from_either_route_is_null_and_silent(string route)
+    {
+        using var http = new HttpClient(new SequenceHandler(() => new HttpResponseMessage(HttpStatusCode.NoContent)))
+        { BaseAddress = new Uri($"http://{route}/") };
+        using var client = new TaskServerClient(http, "runner-a", runnerInstanceId: "instance-a");
+        Assert.Null(await client.ClaimOneShotJobAsync("runner-a", default));
+
+        using var stop = new CancellationTokenSource();
+        var logs = new List<string>();
+        var polls = 0;
+        var admission = new OneShotJobAdmission(PollOptions(), client, logs.Add, (interval, _) =>
+        {
+            Assert.Equal(TimeSpan.FromSeconds(3), interval);
+            if (++polls == 3) stop.Cancel();
+            return Task.CompletedTask;
+        });
+        await admission.PollAsync(stop.Token);
+        Assert.Empty(logs);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("bad-json")]
+    public async Task Malformed_claim_body_raises_and_is_logged_once_with_route_backoff(string body)
+    {
+        using var http = new HttpClient(new SequenceHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = new StringContent(body, Encoding.UTF8, "application/json") }))
+        { BaseAddress = new Uri("http://task-server/") };
+        using var client = new TaskServerClient(http, "runner-a", runnerInstanceId: "instance-a");
+        await Assert.ThrowsAsync<JsonException>(() => client.ClaimOneShotJobAsync("runner-a", default));
+
+        using var stop = new CancellationTokenSource();
+        var logs = new List<string>();
+        var delays = new List<TimeSpan>();
+        var route = new OneShotClaimRouteObservation();
+        var admission = new OneShotJobAdmission(PollOptions(), client, logs.Add, (interval, _) =>
+        {
+            delays.Add(interval);
+            if (delays.Count == 2) stop.Cancel();
+            return Task.CompletedTask;
+        }, route);
+        await admission.PollAsync(stop.Token);
+
+        Assert.Equal([TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5)], delays);
+        Assert.Single(logs);
+        Assert.Contains("condition=malformed-claim-response backoff=300s", logs[0]);
+        Assert.Equal(200, route.Current?.StatusCode);
+    }
+
     [Fact]
     public async Task Missing_claim_route_logs_once_and_retries_after_five_minutes()
     {

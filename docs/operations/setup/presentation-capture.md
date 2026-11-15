@@ -39,6 +39,16 @@ red batch are labelled simulated card evidence in the card results; they do
 not start a live batch gate. Re-seeding replaces this variant with the chosen
 variant. Use the default pinned variant for repeatable presentation captures.
 
+Owner-day also creates a disposable local Git origin for Demo App. DEMO-5,
+DEMO-6, and DEMO-14 have published delivery commits, simulated passing gate
+receipts, and current-brief content passes, so the real acceptance dry run
+lists them as ready and the normal Accept action can complete them. DEMO-19
+has the same integration evidence but a content concern: its delivery brief
+must name the result SHA and receive a new content review. Its Review concerns
+action offers a continue round. No provider credentials or external remote are
+used. These records are invented demo evidence, not a claim that a live gate
+ran during seeding.
+
 For an isolated owner-day browser scene, pass `--state-root <demo-root>/data`
 and set `XDG_DATA_HOME` to that same directory before starting the backend.
 The seed then writes the red batch manifest, phase, run and failed-test receipt

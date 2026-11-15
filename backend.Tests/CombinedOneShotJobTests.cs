@@ -68,6 +68,10 @@ public sealed class CombinedOneShotJobTests : IDisposable
 
         var queued = await PostJobAsync(http, request);
         Assert.Equal("pending", queued.Status);
+        using var idle = await http.PostAsJsonAsync("/api/v1/one-shot-jobs/claim",
+            new OneShotJobClaimRequest("runner-a", "instance-b"));
+        Assert.Equal(System.Net.HttpStatusCode.NoContent, idle.StatusCode);
+        Assert.Empty(await idle.Content.ReadAsStringAsync());
         using var wrongRunner = await http.PostAsJsonAsync("/api/v1/one-shot-jobs/claim",
             new OneShotJobClaimRequest("runner-b", "instance-a"));
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, wrongRunner.StatusCode);

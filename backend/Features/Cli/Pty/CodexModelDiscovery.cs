@@ -166,7 +166,8 @@ public sealed class CodexModelDiscovery
 
     public static List<CliModelInfo> ParseDebugModelsJson(string output, string? activeModel = null)
     {
-        var json = ExtractJsonObject(output);
+        var json = JsonReplyExtractor.ExtractJsonObject(output)
+            ?? throw new InvalidOperationException("Codex model catalog output did not contain JSON");
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("models", out var modelArray)
             || modelArray.ValueKind != JsonValueKind.Array)
@@ -450,15 +451,6 @@ public sealed class CodexModelDiscovery
         }
 
         return null;
-    }
-
-    private static string ExtractJsonObject(string output)
-    {
-        var start = output.IndexOf('{');
-        var end = output.LastIndexOf('}');
-        if (start < 0 || end <= start)
-            throw new InvalidOperationException("Codex model catalog output did not contain JSON");
-        return output[start..(end + 1)].Replace("\r", "");
     }
 
     private static string? GetString(JsonElement obj, string property)
