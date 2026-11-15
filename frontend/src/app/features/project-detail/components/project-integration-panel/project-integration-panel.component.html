@@ -55,7 +55,7 @@
           <div class="integration__row" role="row" [attr.data-status]="item.status" data-testid="integration-queue-row">
             <span class="integration__card" role="cell"><code>{{ item.taskKey }}</code><span>{{ item.title }}</span></span>
             <span role="cell">{{ when(item.stateSince) }}</span>
-            <span role="cell"><span class="integration__status" [attr.data-status]="item.status">{{ statusLabel(item.status) }}</span></span>
+            <span role="cell"><app-status-indicator [tone]="statusTone(item.status)" [label]="statusLabel(item.status)" [compact]="true" testId="integration-queue-status" /></span>
             <span class="integration__reason" role="cell">
               @if (item.mergeSha) {
                 <code [title]="item.mergeSha">{{ item.mergeSha.slice(0, 7) }}</code>

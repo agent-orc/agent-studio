@@ -1,5 +1,7 @@
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterRenderEffect, inject, input, output } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { resourcePhaseTone } from '../task-resource-status/resource-phase-tone';
 import { laneLabelFor } from '../../state/triage-actions.model';
 import type { TaskCore } from '../../../../models/task-core.model';
 import { resourceReasonLabel, type ResourceStates } from '../../state/task-resource-states';
@@ -29,6 +31,7 @@ interface LoadingSection {
 @Component({
   selector: 'app-task-detail-load-sections',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './task-detail-load-sections.component.html',
   styleUrl: './task-detail-load-sections.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -46,6 +49,7 @@ export class TaskDetailLoadSectionsComponent {
   readonly prev = output<void>();
   readonly laneLabel = laneLabelFor;
   readonly reasonLabel = resourceReasonLabel;
+  readonly phaseTone = resourcePhaseTone;
   readonly sections: readonly LoadingSection[] = [
     { id: 'context', label: 'Task context' },
     { id: 'activity', label: 'Activity and result' },

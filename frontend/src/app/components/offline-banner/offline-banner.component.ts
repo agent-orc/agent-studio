@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import { ConnectionStatusService } from '../../services/connection-status.service';
 
 /**
@@ -15,6 +16,7 @@ import { ConnectionStatusService } from '../../services/connection-status.servic
 @Component({
   selector: 'app-offline-banner',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './offline-banner.component.html',
   styleUrl: './offline-banner.component.scss',

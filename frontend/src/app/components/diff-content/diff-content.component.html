@@ -1,5 +1,7 @@
 @if (html(); as dh) {
   <div class="diff-content__render" data-testid="diff-content-render" [innerHTML]="dh"></div>
 } @else if (diffText()) {
-  <p class="diff-content__note" data-testid="diff-content-preparing">Preparing diff renderer...</p>
+  <p class="diff-content__note">
+    <app-status-indicator tone="running" label="Preparing diff renderer..." [compact]="true" testId="diff-content-preparing" />
+  </p>
 }

@@ -68,26 +68,10 @@
   user-select: none;
 }
 /* Small reload indicator shown while a pager/cursor step fetches a task
-   that wasn't pre-warmed. Mirrors the app's `spinner-ring` idiom. */
+   that wasn't pre-warmed: the shared running status indicator. */
 :host .detail__loading {
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-}
-:host .detail__loading-ring {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--studio-accent) 30%, transparent);
-  border-top-color: var(--studio-accent);
-  animation: detail-loading-spin 0.7s linear infinite;
-}
-@keyframes detail-loading-spin {
-  to { transform: rotate(360deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  :host .detail__loading-ring { animation-duration: 1.6s; }
+  display: inline-flex;
+  align-items: center;
 }
 /* Detail-header overflow menu (delete + extra lane actions) is now
    rendered via the shared <app-menu> popover anchored to the triage

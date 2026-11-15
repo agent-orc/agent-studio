@@ -8,53 +8,12 @@
   padding: var(--studio-spacing-3);
 }
 
-.prompt-review--stale {
-  border-color: color-mix(in srgb, var(--studio-accent-6) 34%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-accent-6) 8%, var(--studio-bg-surface));
-}
-
-.prompt-review--needs {
-  border-color: color-mix(in srgb, var(--studio-accent-warn) 34%, var(--studio-border));
-}
-
 .prompt-review__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--studio-spacing-2);
-}
-
-.prompt-review__pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 18px;
-  border: 1px solid color-mix(in srgb, var(--studio-fg-dim) 28%, transparent);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--studio-fg-dim) 10%, transparent);
-  color: var(--studio-fg-dim);
-  padding: 0 var(--studio-spacing-2);
-  font-size: 10.5px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.prompt-review__pill--ok {
-  border-color: color-mix(in srgb, var(--studio-accent-success) 34%, transparent);
-  background: color-mix(in srgb, var(--studio-accent-success) 12%, transparent);
-  color: var(--studio-accent-success-strong);
-}
-
-.prompt-review__pill--warn {
-  border-color: color-mix(in srgb, var(--studio-accent-warn) 36%, transparent);
-  background: color-mix(in srgb, var(--studio-accent-warn) 12%, transparent);
-  color: var(--studio-accent-warn-strong);
-}
-
-.prompt-review__pill--err {
-  border-color: color-mix(in srgb, var(--studio-accent-6) 36%, transparent);
-  background: color-mix(in srgb, var(--studio-accent-6) 12%, transparent);
-  color: var(--studio-accent-6-strong);
 }
 
 .prompt-review__muted { color: var(--studio-fg-muted); font-size: 11px; }
@@ -82,7 +41,7 @@
   list-style: none;
 }
 
-.prompt-review__findings li { display: flex; align-items: flex-start; gap: var(--studio-spacing-2); font-size: 12px; }
+.prompt-review__findings li { display: flex; align-items: baseline; gap: var(--studio-spacing-2); font-size: 12px; }
 
 .prompt-overrides {
   flex: 0 0 auto;
@@ -97,4 +56,4 @@
 .prompt-overrides pre { font-family: var(--font-mono); }
 .prompt-overrides summary { color: var(--studio-accent-strong); cursor: pointer; }
 .prompt-overrides pre { max-height: 18rem; overflow: auto; white-space: pre-wrap; color: var(--studio-fg-dim); font-size: 11px; }
-.prompt-overrides__diff { color: var(--studio-accent-warn-strong); font-family: var(--font-mono); }
+.prompt-overrides__diff { color: var(--studio-fg-muted); font-family: var(--font-mono); }

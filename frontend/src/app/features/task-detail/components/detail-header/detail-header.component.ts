@@ -3,12 +3,8 @@ import { ReviewerSession } from '../../../../services/reviewer-session.service';
 import { TaskInfo, TaskState } from '../../../../models/task.model';
 import { laneName, laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import {
-  formatDateTime as fmtDateTime,
-  formatRelativeShort as fmtRelativeShort,
-  stateLabel as fmtStateLabel,
-  cliTypeLabel,
-  taskModeIcon,
-  taskModeLabel,
+  formatDateTime as fmtDateTime, formatRelativeShort as fmtRelativeShort, stateLabel as fmtStateLabel,
+  cliTypeLabel, taskModeIcon, taskModeLabel,
 } from '../../../../services/format.util';
 import { NowTickService } from '../../../../services/now-tick.service';
 import { projectIdentity } from '../../../../services/project-identity.util';
@@ -38,6 +34,7 @@ import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { ExecutionLocationBadgeComponent } from '../../../../components/execution-location-badge/execution-location-badge.component';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { BatchGateService } from '../../../../services/batch-gate.service';
 import { batchIsolationHold } from '../../../../models/batch-isolation-hold';
 import { isHeldRequeue } from './isolation-requeue';
@@ -46,7 +43,7 @@ import { isHeldRequeue } from './isolation-requeue';
   selector: 'app-detail-header',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent],
+  imports: [ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent, StatusIndicatorComponent],
   templateUrl: './detail-header.component.html',
   styleUrl: './detail-header.component.scss'
 })

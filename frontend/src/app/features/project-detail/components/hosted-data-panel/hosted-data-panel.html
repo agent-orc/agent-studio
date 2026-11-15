@@ -26,7 +26,7 @@
           <button type="button" [disabled]="busy() || !environment.adapterReady" (click)="backup(environment.id, volume.name)">Back up now</button>
           @if (schedule(environment.id, volume.name); as current) {
             @if (current.lastAttemptAt) { <small>Last attempt {{ current.lastAttemptAt | date:'medium':'UTC' }} UTC</small> }
-            @if (current.lastError) { <small role="alert">{{ current.lastError }}</small> }
+            @if (current.lastError) { <small role="alert"><app-status-indicator tone="danger" [label]="current.lastError" [detail]="current.lastError" [compact]="true" testId="hosted-volume-last-error" /></small> }
             @for (backup of current.backups; track backup.id) {
               <div class="hosted-data__backup"><span>Backup {{ backup.createdAt | date:'medium':'UTC' }} UTC · {{ backup.bytes }} bytes · SHA-256 {{ backup.sha256.slice(0, 12) }}</span>
                 <button type="button" [disabled]="busy() || !environment.adapterReady"
@@ -45,7 +45,7 @@
       @if (environment.audit.length) {
         <h4>Data audit</h4>
         <ul>@for (entry of environment.audit; track entry.id) {
-          <li>{{ entry.at | date:'medium':'UTC' }} UTC · {{ entry.actor }} · {{ entry.action }} {{ entry.volume }} · {{ entry.outcome }}</li>
+          <li>{{ entry.at | date:'medium':'UTC' }} UTC · {{ entry.actor }} · {{ entry.action }} {{ entry.volume }} · <app-status-indicator [tone]="outcomeTone(entry.outcome)" [label]="entry.outcome" [compact]="true" testId="hosted-data-audit-outcome" /></li>
         }</ul>
       }
     </article>

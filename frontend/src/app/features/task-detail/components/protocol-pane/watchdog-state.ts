@@ -9,7 +9,10 @@ export type WatchdogPillState = 'healthy' | 'quiet' | 'suspicious' | 'hung' | 'i
 
 export interface WatchdogPill {
   state: WatchdogPillState;
-  /** Short label shown on the pill itself ("Live", "Quiet 30s", "Killed"). */
+  /**
+   * Short label shown on the pill itself ("Live", "Quiet 30s", "Killed").
+   * No leading glyph: the shared status indicator's tone icon carries it.
+   */
   label: string;
   /** Tooltip text with the full reasoning, shown on hover. */
   tooltip: string;
@@ -106,7 +109,7 @@ export function deriveWatchdogPill(input: {
   }
 
   if (!runStartedAt) {
-    return { state: 'healthy', label: '● Live', tooltip: 'Run starting...', visible: true };
+    return { state: 'healthy', label: 'Live', tooltip: 'Run starting...', visible: true };
   }
 
   // Backend's verdict (from the latest [watchdog] meta line) wins when
@@ -114,7 +117,7 @@ export function deriveWatchdogPill(input: {
   if (latestWatchdogText && KILL_PATTERNS.some((re) => re.test(latestWatchdogText!))) {
     return {
       state: 'hung',
-      label: '✕ Killed',
+      label: 'Killed',
       tooltip: latestWatchdogText,
       visible: true
     };
@@ -122,7 +125,7 @@ export function deriveWatchdogPill(input: {
   if (latestWatchdogText && RESUMED_PATTERNS.some((re) => re.test(latestWatchdogText!))) {
     return {
       state: 'healthy',
-      label: '● Live',
+      label: 'Live',
       tooltip: latestWatchdogText,
       visible: true
     };
@@ -139,7 +142,7 @@ export function deriveWatchdogPill(input: {
   if (ageSec < warmUp) {
     return {
       state: 'healthy',
-      label: '● Live',
+      label: 'Live',
       tooltip: `Run started ${Math.round(ageSec)}s ago, in warm-up grace.`,
       visible: true
     };
@@ -148,7 +151,7 @@ export function deriveWatchdogPill(input: {
   if (silenceSec >= hung) {
     return {
       state: 'hung',
-      label: '✕ Killed',
+      label: 'Killed',
       tooltip: `Silent for ${Math.round(silenceSec)}s; expected the watchdog to kill at ${hung}s.`,
       visible: true
     };
@@ -156,7 +159,7 @@ export function deriveWatchdogPill(input: {
   if (silenceSec >= suspicious) {
     return {
       state: 'suspicious',
-      label: `⚠ Watchdog ${Math.round(silenceSec)}s`,
+      label: `Watchdog ${Math.round(silenceSec)}s`,
       tooltip: watchdogSaysSuspicious
         ? latestWatchdogText!
         : `No streamed output for ${Math.round(silenceSec)}s. Watchdog will kill the run at ${hung}s if no signal arrives.`,
@@ -166,7 +169,7 @@ export function deriveWatchdogPill(input: {
   if (silenceSec >= quiet) {
     return {
       state: 'quiet',
-      label: `◐ Quiet ${Math.round(silenceSec)}s`,
+      label: `Quiet ${Math.round(silenceSec)}s`,
       tooltip: watchdogSaysQuiet
         ? latestWatchdogText!
         : `Agent has been quiet ${Math.round(silenceSec)}s. Watchdog warns at ${suspicious}s.`,
@@ -176,7 +179,7 @@ export function deriveWatchdogPill(input: {
 
   return {
     state: 'healthy',
-    label: '● Live',
+    label: 'Live',
     tooltip: `Streaming. Last frame ${Math.round(silenceSec)}s ago.`,
     visible: true
   };

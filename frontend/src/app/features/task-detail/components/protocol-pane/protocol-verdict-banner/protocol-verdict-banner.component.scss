@@ -32,16 +32,8 @@
     background: color-mix(in srgb, var(--severity-warn) 8%, transparent);
   }
 
-  &__emoji {
-    font-size: 14px;
-    line-height: 1;
-    flex: 0 0 auto;
-  }
-
   &__label {
-    font-weight: 600;
     flex: 0 0 auto;
-    color: var(--studio-fg-strong, var(--studio-fg-strong));
   }
 
   // The status line. Collapsed it is a single clamped line; expanded it wraps
@@ -56,7 +48,7 @@
     min-width: 0;
     gap: var(--studio-spacing-1);
     // Pull the control's own inset back so the marker sits on the row rhythm
-    // rather than pushing the sentence away from the emoji.
+    // rather than pushing the sentence away from the edge.
     margin: calc(-1 * var(--studio-spacing-1)) 0;
     padding: var(--studio-spacing-1);
     color: var(--studio-fg-dim, var(--lane-backlog));
@@ -84,7 +76,7 @@
   }
 
   // Expanded: the row grows to a block and the reason wraps in full instead of
-  // clipping to one line. Emoji/label stay top-aligned with the wrapped text.
+  // clipping to one line. The label stays top-aligned with the wrapped text.
   &--expanded {
     align-items: flex-start;
   }
@@ -183,22 +175,12 @@
 
   &__item {
     display: grid;
-    grid-template-columns: auto auto auto 1fr;
+    grid-template-columns: auto auto 1fr;
     align-items: baseline;
     gap: var(--studio-spacing-1);
     color: var(--studio-fg-dim);
     font-size: 11px;
   }
-
-  &__dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--severity-warn);
-  }
-
-  &__item[data-status='failed'] &__dot { background: var(--severity-high); }
-  &__item[data-status='succeeded'] &__dot { background: var(--studio-accent-success); }
 
   &__source {
     color: var(--studio-fg-muted);

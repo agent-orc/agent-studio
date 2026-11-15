@@ -1,13 +1,27 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
 import type { CliModelInfo } from '../../../../cli';
 import {
+  WikiGradingRunState,
   WikiGradingRunStatus,
   WikiPulseCritical,
   WikiPulseCriticalItem,
 } from '../../../../../models/project-docs.model';
 
 type WikiGradeTone = 'good' | 'info' | 'warn' | 'bad' | 'muted';
+
+/** Status-indicator tone of a grading run state; a state added later stays neutral. */
+const GRADING_STATE_TONES: Readonly<Record<WikiGradingRunState, StatusTone>> = {
+  running: 'running',
+  completed: 'success',
+  aborted: 'neutral',
+  failed: 'danger',
+};
+
+export function gradingStateTone(state: WikiGradingRunState | string | null | undefined): StatusTone {
+  return (state && GRADING_STATE_TONES[state as WikiGradingRunState]) || 'neutral';
+}
 
 /**
  * The wiki-grading trigger + critical-pages surface (AGT-2051), rendered under
@@ -20,7 +34,7 @@ type WikiGradeTone = 'good' | 'info' | 'warn' | 'bad' | 'muted';
 @Component({
   selector: 'app-wiki-grade-panel',
   standalone: true,
-  imports: [StudioIconComponent],
+  imports: [StatusIndicatorComponent, StudioIconComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './wiki-grade-panel.component.html',
   styleUrl: './wiki-grade-panel.component.scss',
@@ -76,6 +90,8 @@ export class WikiGradePanelComponent {
       default: return 'muted';
     }
   }
+
+  readonly gradingStateTone = gradingStateTone;
 
   /** Short human label for the current grading run state. */
   gradingStateLabel(): string {

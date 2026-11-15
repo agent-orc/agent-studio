@@ -8,6 +8,8 @@ import {
   triggerLabel,
   type EnvironmentCardView,
 } from '../../state/deploy-area.model';
+import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
@@ -17,7 +19,7 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, StatusIndicatorComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -46,10 +48,11 @@ export class DeployEnvironmentCardComponent {
     const count = newer.cardKeys.length;
     return `Release ${newer.version} is ready with ${count} ${count === 1 ? 'card' : 'cards'}`;
   });
-  readonly health = computed(() => {
+  readonly runTone = runStateTone;
+  readonly health = computed<{ tone: StatusTone; label: string }>(() => {
     const health = this.environment().health;
     if (health.status === 'no-checks') return { tone: 'neutral', label: 'No checks' };
-    return { tone: health.state, label: HEALTH_LABEL[health.state] };
+    return { tone: healthStateTone(health.state), label: HEALTH_LABEL[health.state] };
   });
   readonly lastRunLabel = computed(() => {
     const run = this.environment().lastRun;

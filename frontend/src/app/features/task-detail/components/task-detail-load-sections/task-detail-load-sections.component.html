@@ -70,11 +70,11 @@
     <section class="task-core__section" data-testid="task-core-resources">
       <h2>More detail</h2>
       @if (resources(); as states) {
-        <p>Documents: {{ states.documents.phase }}</p>
-        <p>Usage: {{ states.usage.phase }}@if (states.usage.reason) { · {{ reasonLabel(states.usage.reason) }} }</p>
-        <p>Git: {{ states.git.phase }}@if (states.git.reason) { · Git information unavailable: {{ reasonLabel(states.git.reason) }} }</p>
-        <p>Review: {{ states.review.phase }}</p>
-        <p>History: {{ states.history.phase }}</p>
+        <p>Documents: <app-status-indicator [tone]="phaseTone(states.documents.phase)" [label]="states.documents.phase" [compact]="true" testId="task-core-resource-documents" /></p>
+        <p>Usage: <app-status-indicator [tone]="phaseTone(states.usage.phase)" [label]="states.usage.phase" [compact]="true" testId="task-core-resource-usage" />@if (states.usage.reason) { · {{ reasonLabel(states.usage.reason) }} }</p>
+        <p>Git: <app-status-indicator [tone]="phaseTone(states.git.phase)" [label]="states.git.phase" [compact]="true" testId="task-core-resource-git" />@if (states.git.reason) { · Git information unavailable: {{ reasonLabel(states.git.reason) }} }</p>
+        <p>Review: <app-status-indicator [tone]="phaseTone(states.review.phase)" [label]="states.review.phase" [compact]="true" testId="task-core-resource-review" /></p>
+        <p>History: <app-status-indicator [tone]="phaseTone(states.history.phase)" [label]="states.history.phase" [compact]="true" testId="task-core-resource-history" /></p>
       }
     </section>
   </div>
@@ -86,10 +86,11 @@
              [attr.aria-busy]="errorMessage() ? 'false' : 'true'">
       <header class="task-load-section__header">
         <h2>{{ section.label }}</h2>
-        <span class="task-load-section__state">
-          <span class="task-load-section__state-dot" aria-hidden="true"></span>
-          {{ errorMessage() ? 'Unavailable' : 'Loading' }}
-        </span>
+        <app-status-indicator
+          [tone]="errorMessage() ? 'danger' : 'running'"
+          [label]="errorMessage() ? 'Unavailable' : 'Loading'"
+          [compact]="true"
+          [testId]="'task-detail-section-state-' + section.id" />
       </header>
 
       @if (errorMessage(); as message) {

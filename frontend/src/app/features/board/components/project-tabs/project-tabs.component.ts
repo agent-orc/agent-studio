@@ -2,7 +2,8 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
 import { projectIdentity } from '../../../../services/project-identity.util';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
-export interface ProjectRunnerIndicator { icon: string; cls: string; }
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+export interface ProjectRunnerIndicator { cls: 'running' | 'paused' | 'idle'; tone: StatusTone; label: string; }
 
 /**
  * Compact token rollup rendered next to the project name on the board's
@@ -44,7 +45,7 @@ export interface ProjectAutoInfo {
 @Component({
   selector: 'app-project-tabs',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-tabs.component.html'
 })

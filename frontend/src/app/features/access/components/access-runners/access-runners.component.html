@@ -71,14 +71,14 @@
             } @else {
               <span>{{ projectNames(runner.projects) }}</span>
               @if (runner.projectsNotice; as notice) {
-                <span class="access-badge" data-tone="muted" [attr.title]="notice">Before binding</span>
+                <app-status-indicator tone="neutral" label="Before binding" [detail]="notice" [compact]="true" />
                 <p class="access-hint">{{ notice }}</p>
               }
             }
           </td>
           <td class="access-numeric">{{ activeCredentials(runner) }}</td>
           <td [attr.data-testid]="'access-runner-expiry-' + runner.id">
-            @if (ends.label) { <span class="access-badge" [attr.data-tone]="ends.tone">{{ ends.label }}</span> }
+            @if (ends.tone) { <app-status-indicator [tone]="ends.tone" [label]="ends.label" [compact]="true" /> } @else if (ends.label) { <span>{{ ends.label }}</span> }
             @if (ends.notice; as notice) { <p class="access-hint">{{ notice }}</p> }
           </td>
           <td><app-status-indicator [tone]="runner.revokedAt ? 'neutral' : 'success'" [label]="runner.revokedAt ? 'Revoked' : 'Active'" testId="access-runner-status" /></td>

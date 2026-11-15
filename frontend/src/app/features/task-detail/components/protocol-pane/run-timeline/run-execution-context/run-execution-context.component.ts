@@ -1,11 +1,12 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent } from '../../../../../../components/status-indicator/status-indicator.component';
 import type { CliContextSource, CliExecutionContext, RunRecord } from '../../../../../../features/run-timeline';
 
 @Component({
   selector: 'app-run-execution-context',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './run-execution-context.component.html',
   styleUrl: './run-execution-context.component.scss',

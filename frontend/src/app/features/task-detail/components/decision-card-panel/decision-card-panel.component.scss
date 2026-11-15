@@ -40,35 +40,11 @@
   .decision-card[data-open='false'] & { color: var(--studio-fg-muted); }
 }
 
-.decision-card__stage {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--studio-accent-warn) 16%, transparent);
-  font-size: 0.68rem;
-  white-space: nowrap;
-
-  i {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--studio-accent-warn);
-  }
-
-  .decision-card[data-open='false'] & {
-    background: color-mix(in srgb, var(--studio-success) 10%, transparent);
-    i { background: var(--studio-success); }
-  }
-}
-
 .decision-card__meta {
   color: var(--studio-fg-muted);
   font-size: 0.72rem;
 
   strong { color: var(--studio-fg-strong); }
-  &[data-overdue='true'] { color: var(--studio-accent-warn-strong); font-weight: 700; }
 }
 
 .decision-card__num { font-variant-numeric: tabular-nums; }
@@ -181,11 +157,6 @@
   font-size: 0.66rem;
   font-weight: 700;
   white-space: nowrap;
-
-  &--chosen {
-    background: color-mix(in srgb, var(--studio-success) 16%, transparent);
-    color: var(--studio-success);
-  }
 }
 
 .decision-card__facets {

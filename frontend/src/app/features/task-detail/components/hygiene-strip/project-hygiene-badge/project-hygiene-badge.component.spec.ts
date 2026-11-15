@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { ProjectHygieneBadgeComponent } from './project-hygiene-badge.component';
+import { ProjectHygieneBadgeComponent, projectHygieneIndicator } from './project-hygiene-badge.component';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -40,5 +40,11 @@ describe('ProjectHygieneBadgeComponent (smoke)', () => {
       console.warn('[smoke] ProjectHygieneBadgeComponent initial render skipped:', (e as Error).message);
     }
     expect(fixture.componentInstance).toBeTruthy();
+  });
+
+  it('maps dirty and unpushed onto the shared status tones and hides when clean', () => {
+    expect(projectHygieneIndicator(true, 2)).toEqual({ tone: 'warning', label: 'dirty' });
+    expect(projectHygieneIndicator(false, 2)).toEqual({ tone: 'info', label: '2 unpushed' });
+    expect(projectHygieneIndicator(false, 0)).toBeNull();
   });
 });

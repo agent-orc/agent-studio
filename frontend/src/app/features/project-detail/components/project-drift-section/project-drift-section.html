@@ -61,13 +61,15 @@
           </header>
           <p class="pdrift__marble-role">{{ row.element.expectedRole }}</p>
           <footer>
-            <span class="pdrift__sev pdrift__sev--{{ band(row.element.severity) }}"
-                  [attr.data-testid]="'project-drift-severity-' + row.element.elementId">{{ titleCase(row.element.severity) }}</span>
+            <app-status-indicator [compact]="true" [tone]="severityTone(row.element.severity)"
+                                  [label]="titleCase(row.element.severity)"
+                                  [testId]="'project-drift-severity-' + row.element.elementId" />
             <span class="pdrift__cov" [cacTooltip]="'Source coverage (fraction of expected sources actually inspected)'">
               cov {{ formatCoverage(row.element.sourceCoverage) }}
             </span>
-            <span class="pdrift__status pdrift__status--{{ row.effectiveStatus.toLowerCase() }}"
-                  [attr.data-testid]="'project-drift-status-' + row.element.elementId">{{ titleCase(row.effectiveStatus) }}</span>
+            <app-status-indicator [compact]="true" [tone]="statusTone(row.effectiveStatus)"
+                                  [label]="titleCase(row.effectiveStatus)"
+                                  [testId]="'project-drift-status-' + row.element.elementId" />
           </footer>
         </button>
       }
@@ -94,9 +96,16 @@
         </header>
 
         <dl class="pdrift__panel-meta">
-          <div><dt>Score</dt><dd>{{ row.element.score }} ({{ titleCase(row.element.severity) }})</dd></div>
+          <div><dt>Score</dt><dd>
+            {{ row.element.score }}
+            <app-status-indicator [compact]="true" [tone]="severityTone(row.element.severity)"
+                                  [label]="titleCase(row.element.severity)" testId="project-drift-drilldown-severity" />
+          </dd></div>
           <div><dt>Source coverage</dt><dd>{{ formatCoverage(row.element.sourceCoverage) }}</dd></div>
-          <div><dt>Tracking</dt><dd>{{ titleCase(row.effectiveStatus) }}</dd></div>
+          <div><dt>Tracking</dt><dd>
+            <app-status-indicator [compact]="true" [tone]="statusTone(row.effectiveStatus)"
+                                  [label]="titleCase(row.effectiveStatus)" testId="project-drift-drilldown-status" />
+          </dd></div>
           <div><dt>Expected role</dt><dd>{{ row.element.expectedRole }}</dd></div>
         </dl>
 

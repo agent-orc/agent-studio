@@ -120,8 +120,6 @@
 
 .prompt-home__prompt-link > span:last-child { display: flex; flex-direction: column; gap: var(--studio-spacing-1); }
 .prompt-home__prompt-link strong { color: var(--studio-fg-strong); font-size: 11px; }
-.prompt-home__activity-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--studio-accent-success); }
-.prompt-home__activity-dot--dead { background: var(--studio-fg-muted); }
 .prompt-home__number { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .prompt-home__spark {
@@ -134,20 +132,6 @@
 }
 
 .prompt-home__spark span { min-height: 2px; border-radius: 1px 1px 0 0; background: var(--studio-accent-4); }
-
-.prompt-home__status {
-  display: inline-flex;
-  border: 1px solid var(--studio-border);
-  border-radius: 9px;
-  background: var(--studio-bg-surface);
-  color: var(--studio-fg-muted);
-  padding: 0 var(--studio-spacing-2);
-  white-space: nowrap;
-}
-
-.prompt-home__status--current { border-color: color-mix(in srgb, var(--studio-accent-success) 34%, var(--studio-border)); color: var(--studio-accent-success-strong); }
-.prompt-home__status--needs { border-color: color-mix(in srgb, var(--studio-accent-warn) 34%, var(--studio-border)); color: var(--studio-accent-warn-strong); }
-.prompt-home__status--stale { border-color: color-mix(in srgb, var(--studio-accent-6) 34%, var(--studio-border)); color: var(--studio-accent-6-strong); }
 
 .prompt-home__classes {
   display: grid;

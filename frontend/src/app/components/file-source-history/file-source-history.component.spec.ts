@@ -71,6 +71,9 @@ describe('FileSourceHistoryComponent', () => {
 
     expect(root.querySelector('[data-testid="file-source-history-timeline"]')?.textContent).toContain('Run #2');
     expect(root.querySelector('[data-testid="file-source-history-timeline"]')?.textContent).toContain('pass');
+    const verdicts = root.querySelectorAll('[data-testid="file-source-history-verdict"]');
+    expect(verdicts[0].getAttribute('data-tone')).toBe('success');
+    expect(verdicts[1].getAttribute('data-tone')).toBe('warning');
     expect(root.querySelector('[data-testid="file-source-version"]')?.textContent).toContain('Version 2');
     expect(root.querySelector('[data-testid="file-source-version-select"]')).toBeNull();
     expect(root.querySelector('[data-testid="file-source-diff-panel"]')).toBeNull();

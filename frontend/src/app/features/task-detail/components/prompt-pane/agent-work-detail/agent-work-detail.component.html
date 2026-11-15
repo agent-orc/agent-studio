@@ -12,13 +12,17 @@
 @if (open()) {
   <div class="awd-body" id="agent-work-detail-body" data-testid="agent-work-detail-body">
     @if (loading()) {
-      <p class="awd-note" data-testid="agent-work-detail-loading">Loading...</p>
+      <p class="awd-note" data-testid="agent-work-detail-loading">
+        <app-status-indicator tone="running" label="Loading..." [compact]="true" testId="agent-work-detail-loading-state" />
+      </p>
     } @else if (failed()) {
-      <p class="awd-note awd-note--error" data-testid="agent-work-detail-error">
-        Could not load tool detail.
+      <p class="awd-note" data-testid="agent-work-detail-error">
+        <app-status-indicator tone="danger" label="Could not load tool detail." [compact]="true" testId="agent-work-detail-error-state" />
       </p>
     } @else if (!hasGroups()) {
-      <p class="awd-note" data-testid="agent-work-detail-empty">No tool calls recorded.</p>
+      <p class="awd-note" data-testid="agent-work-detail-empty">
+        <app-status-indicator tone="neutral" label="No tool calls recorded." [compact]="true" testId="agent-work-detail-empty-state" />
+      </p>
     } @else {
       <ul class="awd-groups">
         @for (group of groups(); track group.tool) {
@@ -41,12 +45,11 @@
                       [cacTooltip]="callTooltip(call)"
                       tooltipPosition="top"
                       data-testid="agent-work-detail-call">
-                    <span class="awd-call__status"
-                          [class.awd-call__status--error]="call.isError"
-                          [class.awd-call__status--pending]="!call.completed"
-                          [attr.aria-label]="callStatusLabel(call)">
-                      {{ callStatusMarker(call) }}
-                    </span>
+                    <app-status-indicator class="awd-call__status"
+                                          [tone]="callStatusTone(call)"
+                                          [label]="callStatusLabel(call)"
+                                          [compact]="true"
+                                          testId="agent-work-detail-call-status" />
                     <span class="awd-call__arg">{{ argPreview(call) }}</span>
                     @if (call.ts) {
                       <span class="awd-call__time">{{ callTime(call.ts) }}</span>

@@ -73,6 +73,9 @@ describe('TaskReferenceMicrocardComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('a')).toBeNull();
     expect(fixture.nativeElement.querySelector('.task-ref--ghost')).toBeTruthy();
+    const ghost = fixture.nativeElement.querySelector('[data-testid="task-reference-microcard-ghost"]') as HTMLElement;
+    expect(ghost.getAttribute('data-tone')).toBe('neutral');
+    expect(ghost.textContent?.trim()).toBe('Deleted or unknown');
     expect(fixture.componentInstance.tooltipLabel()).toContain('Key: AGT-2050');
     expect(fixture.componentInstance.tooltipLabel()).toContain('State: Unknown or deleted task');
   });

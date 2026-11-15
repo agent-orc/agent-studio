@@ -2,12 +2,31 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { hostCapabilityWait, pickupHoldMechanismLabel, titleCaseToken } from '../../models/ready-wait-reason';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 import { NowTickService } from '../../services/now-tick.service';
 import { PickupHoldResolutionComponent } from '../pickup-hold-resolution/pickup-hold-resolution.component';
 import { RemoteHostsService } from '../../features/remote-hosts';
 import { effectivePickupHold } from './effective-pickup-hold';
 
 export type PickupHoldVariant = 'card' | 'detail';
+
+/** The hold tone the block exposes as `data-tone`. */
+export type PickupHoldTone = 'open' | 'stalled' | 'blocked';
+
+/**
+ * AGT-3403: hold tone to shared status tone. An honest wait is a fact worth
+ * noticing (info), a stalled prerequisite needs attention (warning), and a
+ * gate that can never open is blocked (danger).
+ */
+export const PICKUP_HOLD_TONES: Readonly<Record<PickupHoldTone, StatusTone>> = {
+  open: 'info',
+  stalled: 'warning',
+  blocked: 'danger',
+};
+
+export function pickupHoldIndicatorTone(tone: string | null | undefined): StatusTone {
+  return PICKUP_HOLD_TONES[tone as PickupHoldTone] ?? 'neutral';
+}
 
 /**
  * AGT-2818 - the sentence a card in a pickup lane was missing.
@@ -28,7 +47,7 @@ export type PickupHoldVariant = 'card' | 'detail';
   selector: 'app-pickup-hold',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [AppTooltipDirective, PickupHoldResolutionComponent],
+  imports: [AppTooltipDirective, PickupHoldResolutionComponent, StatusIndicatorComponent],
   templateUrl: './pickup-hold.component.html',
   styleUrl: './pickup-hold.component.scss',
 })
@@ -42,8 +61,10 @@ export class PickupHoldComponent {
     effectivePickupHold(this.task(), this.remoteHosts?.hosts() ?? []));
 
   /** `open` for an honest wait, `blocked` for a gate that can never open. */
-  readonly tone = computed(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'
+  readonly tone = computed<PickupHoldTone>(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'
     : this.hold()?.classification === 'stalled' ? 'stalled' : 'open'));
+
+  readonly indicatorTone = computed(() => pickupHoldIndicatorTone(this.tone()));
 
   readonly classificationLabel = computed(() => {
     const classification = this.hold()?.classification

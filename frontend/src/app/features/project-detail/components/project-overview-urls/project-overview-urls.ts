@@ -8,6 +8,7 @@ import {
   output,
   signal,
 } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import type { RegistryProjectUrl } from '../../../../models/task.model';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { ProjectUrlProbeService, ProjectUrlStatusLabelPipe, type ProjectUrlStatus } from '../../../../services/project-url-probe.service';
@@ -15,17 +16,33 @@ import { TaskService } from '../../../../services/task.service';
 
 type OverviewUrlStatus = ProjectUrlStatus | 'building';
 
+const URL_STATUS_TONES: Record<OverviewUrlStatus, StatusTone> = {
+  running: 'success',
+  building: 'running',
+  offline: 'neutral',
+  failed: 'danger',
+  blocked: 'warning',
+  'local-only': 'neutral',
+  unknown: 'neutral',
+};
+
+/** Tone of a project URL status; offline is a settled choice with a Start action, not a failure. */
+export function overviewUrlStatusTone(status: OverviewUrlStatus): StatusTone {
+  return URL_STATUS_TONES[status] ?? 'neutral';
+}
+
 /** Compact Project Overview projection over the existing registry, URL probe,
  * and start-in-place endpoint used by the full Project URLs panel. */
 @Component({
   selector: 'app-project-overview-urls',
   standalone: true,
-  imports: [ProjectUrlStatusLabelPipe],
+  imports: [ProjectUrlStatusLabelPipe, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-overview-urls.html',
   styleUrl: './project-overview-urls.scss',
 })
 export class ProjectOverviewUrlsComponent {
+  readonly statusTone = overviewUrlStatusTone;
   readonly projectName = input.required<string>();
   readonly openDetails = output<void>();
   readonly openPreview = output<RegistryProjectUrl>();

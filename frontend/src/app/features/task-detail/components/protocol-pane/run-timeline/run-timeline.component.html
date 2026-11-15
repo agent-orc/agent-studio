@@ -36,9 +36,12 @@
                 <span class="run-card__chip run-card__chip--intent" [attr.data-intent]="item.run.intent">
                   {{ intentLabel(item.run.intent) }}
                 </span>
-                <span class="run-card__chip run-card__chip--status" [attr.data-status]="item.run.status">
-                  {{ statusLabel(item.run) }}
-                </span>
+                <app-status-indicator
+                  [attr.data-status]="item.run.status"
+                  [tone]="statusTone(item.run)"
+                  [label]="statusLabel(item.run)"
+                  [compact]="true"
+                  [testId]="'run-status-' + item.run.index" />
               </span>
               <span class="prompt-entry__preview">
                 {{ item.entry.promptPreview || item.run.userFollowup || '(no follow-up)' }}

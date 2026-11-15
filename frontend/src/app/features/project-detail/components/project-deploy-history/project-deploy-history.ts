@@ -14,6 +14,8 @@ import {
   type DeployRun,
   type DeployRunFilter,
 } from '../../state/deploy-area.model';
+import { historyRunStateTone } from '../../state/deploy-status-tone';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 const PERIODS: readonly { value: DeployPeriod; label: string }[] = [
   { value: '24h', label: 'Last 24 hours' },
@@ -26,7 +28,7 @@ const PERIODS: readonly { value: DeployPeriod; label: string }[] = [
 @Component({
   selector: 'app-project-deploy-history',
   standalone: true,
-  imports: [DatePipe, EmptyStateComponent, LoadingSurfaceComponent],
+  imports: [DatePipe, EmptyStateComponent, LoadingSurfaceComponent, StatusIndicatorComponent],
   templateUrl: './project-deploy-history.html',
   styleUrl: './project-deploy-history.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -59,6 +61,8 @@ export class ProjectDeployHistoryComponent {
   protected readonly states = DEPLOYMENT_STATES;
   protected readonly periods = PERIODS;
   protected readonly stateLabel = RUN_STATE_LABEL;
+  /** A finished run in the list stays calm (R4): a past failure reads as warning. */
+  protected readonly runTone = historyRunStateTone;
   protected readonly triggerLabel = triggerLabel;
   protected readonly duration = formatDuration;
 

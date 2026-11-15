@@ -15,7 +15,7 @@
   @if (snapshot(); as snap) {
     <div class="logic__status" data-testid="orchestrator-logic-status">
       <span>Persisted in <code>{{ snap.overrideFilePath }}</code></span>
-      <span class="logic__pill logic__pill--ok">changes apply to runtime</span>
+      <app-status-indicator tone="success" label="changes apply to runtime" [compact]="true" testId="orchestrator-logic-runtime-status" />
     </div>
   }
 
@@ -47,9 +47,9 @@
                 <span class="logic__pill">override</span>
               }
               @if (opt.restartRequired) {
-                <span class="logic__pill logic__pill--warn">restart-only</span>
+                <app-status-indicator tone="warning" label="restart-only" [compact]="true" [testId]="'orchestrator-logic-reload-' + opt.key" />
               } @else {
-                <span class="logic__pill logic__pill--ok">hot</span>
+                <app-status-indicator tone="success" label="hot" [compact]="true" [testId]="'orchestrator-logic-reload-' + opt.key" />
               }
             </div>
           </div>

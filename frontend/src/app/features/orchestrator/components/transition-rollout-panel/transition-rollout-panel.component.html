@@ -17,25 +17,36 @@
       <section class="rollout__profile" [attr.data-testid]="'transition-profile-' + item.profile">
         <div>
           <h4>{{ item.profile === 'CodingCompletion' ? 'Coding completion' : item.profile === 'ReviewReport' ? 'Review report' : 'Gate or batch result' }}</h4>
-          <span class="rollout__state">{{ item.state }}</span>
+          <app-status-indicator [tone]="profileStateTone(item.state)" [label]="item.state" [compact]="true"
+                                [testId]="'transition-profile-state-' + item.profile" />
         </div>
         <p><span class="rollout__number">{{ item.streak }} / {{ item.threshold }}</span> matching shadow decisions ·
           <span class="rollout__number">{{ item.mismatchCount }}</span> mismatches</p>
         <dl class="rollout__checks">
           <dt>Applier contract</dt>
           <dd [attr.data-testid]="'applier-contract-' + item.profile">
+            @if (applierContractStatus(item.applierContract?.status); as contractState) {
+              <app-status-indicator [tone]="contractState.tone" [label]="contractState.label" [compact]="true" />
+            }
             @if (item.applierContract; as contract) {
-              {{ contract.status }} · <span class="rollout__number">{{ contract.actions.length }}</span> actions
+              · <span class="rollout__number">{{ contract.actions.length }}</span> actions
               @if (contract.uncovered.length) { · no effect for {{ contract.uncovered.join(', ') }} }
-            } @else { not reported }
+            }
           </dd>
           <dt>Applier canary</dt>
           <dd class="rollout__number" [attr.data-testid]="'applier-canary-' + item.profile">
-            {{ item.canary ? canaryText(item.canary) : 'not run' }}
+            @if (canaryStatus(item.canary?.status); as canaryState) {
+              <app-status-indicator [tone]="canaryState.tone" [label]="canaryState.label" [compact]="true" />
+            }
+            @if (item.canary; as canary) { {{ canaryDetail(canary) }} }
           </dd>
           <dt>Last effect check</dt>
           <dd [attr.data-testid]="'effect-check-' + item.profile" [attr.title]="item.lastEffectCheck?.evidence ?? null">
-            {{ item.lastEffectCheck ? effectText(item.lastEffectCheck) : 'none yet' }}
+            @if (item.lastEffectCheck; as check) { {{ check.action }} · }
+            @if (effectCheckStatus(item.lastEffectCheck); as effectState) {
+              <app-status-indicator [tone]="effectState.tone" [label]="effectState.label" [compact]="true" />
+            }
+            @if (item.lastEffectCheck; as check) { · {{ effectTime(check) }} }
           </dd>
         </dl>
         @if (item.lastMismatch; as mismatch) {
@@ -89,7 +100,10 @@
           <li class="rollout__decision" [attr.data-testid]="'shadow-decision-' + decision.receiptId">
             <span class="rollout__card">{{ decision.taskId ?? 'Periodic host occurrence' }}</span>
             <span>Model {{ decision.chosenAction || 'none' }}@if (decision.taskId) { · baseline {{ decision.deterministicAction }} }</span>
-            <span class="rollout__state">{{ decision.matchesDeterministic ? 'match' : decision.callStatus === 'completed' ? 'differs' : decision.callStatus }}</span>
+            @if (decisionMatchStatus(decision.matchesDeterministic, decision.callStatus); as match) {
+              <app-status-indicator [tone]="match.tone" [label]="match.label" [compact]="true"
+                                    [testId]="'shadow-decision-match-' + decision.receiptId" />
+            }
             <span>{{ decision.actor === 'ai-operator' ? 'AI Operator' : 'Decision step' }} · {{ decision.model ?? 'model unavailable' }}{{ decision.thinkingLevel ? ' / ' + decision.thinkingLevel : '' }}</span>
             <span class="rollout__number">{{ decision.inputTokens ?? decision.totalTokens }} input / {{ decision.outputTokens ?? 0 }} output tokens · {{ price(decision) }}</span>
             <a [href]="decision.evidenceRef" target="_blank" rel="noopener">Evidence</a>

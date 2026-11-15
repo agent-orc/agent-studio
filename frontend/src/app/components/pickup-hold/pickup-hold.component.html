@@ -6,8 +6,11 @@
            data-testid="pickup-hold"
            role="status">
     <div class="pickup-hold__head">
-      <span class="pickup-hold__dot" aria-hidden="true"></span>
-      <span class="pickup-hold__headline" data-testid="pickup-hold-headline">{{ headline() }}</span>
+      <app-status-indicator class="pickup-hold__headline"
+                            [tone]="indicatorTone()"
+                            [label]="headline()"
+                            [compact]="variant() === 'card'"
+                            testId="pickup-hold-headline" />
       <span class="pickup-hold__mechanism" data-testid="pickup-hold-mechanism">{{ mechanismLabel() }}</span>
       @if (held.mechanism === 'dependency-gate') {
         <span class="pickup-hold__mechanism" data-testid="pickup-hold-classification">{{ classificationLabel() }}</span>

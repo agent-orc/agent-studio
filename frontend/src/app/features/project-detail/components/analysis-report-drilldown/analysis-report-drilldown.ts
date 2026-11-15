@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, input, output, signal } from '@angular/core';
 import { AnalysisReportService } from '../../../../services/analysis-report.service';
 import { AnalysisReport, AnalysisReportReference } from '../../../../models/analysis-report.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { findingSeverityTone, parseStatusTone, reportSeverityTone } from './analysis-report-status';
 
 /**
  * Drill-down overlay for one analysis report. Renders the full Markdown body,
@@ -18,6 +20,7 @@ import { AnalysisReport, AnalysisReportReference } from '../../../../models/anal
 @Component({
   selector: 'app-analysis-report-drilldown',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './analysis-report-drilldown.html',
   styleUrl: './analysis-report-drilldown.scss'
@@ -28,6 +31,10 @@ export class AnalysisReportDrilldownComponent implements OnInit {
   readonly closeRequest = output<void>();
 
   private readonly svc = inject(AnalysisReportService);
+
+  readonly severityTone = reportSeverityTone;
+  readonly findingTone = findingSeverityTone;
+  readonly parseTone = parseStatusTone;
 
   readonly report = signal<AnalysisReport | null>(null);
   readonly markdown = signal<string | null>(null);

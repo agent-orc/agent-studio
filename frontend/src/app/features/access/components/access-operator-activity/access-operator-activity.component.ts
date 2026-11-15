@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { formatAccessTime } from '../../models/access.model';
 import {
   formatAuditTime,
@@ -21,6 +22,7 @@ import { OperatorAgentsService } from '../../services/operator-agents.service';
   selector: 'app-access-operator-activity',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [StatusIndicatorComponent],
   templateUrl: './access-operator-activity.component.html',
   styleUrl: './access-operator-activity.component.scss',
 })
@@ -70,8 +72,8 @@ export class AccessOperatorActivityComponent implements OnInit {
     return `Forwarded ${forwarding.forwardedSequence} of ${forwarding.headSequence} to ${forwarding.sinkKind}`;
   }
 
-  /** Dot tone: acute only on a server alert; a verified or fully forwarded chain is calm. */
-  tone(alert: boolean, healthy: boolean): 'alert' | 'ok' | 'neutral' {
-    return alert ? 'alert' : healthy ? 'ok' : 'neutral';
+  /** Acute only on a server alert; a verified or fully forwarded chain is calm. */
+  tone(alert: boolean, healthy: boolean): StatusTone {
+    return alert ? 'danger' : healthy ? 'success' : 'neutral';
   }
 }

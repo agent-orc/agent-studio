@@ -3,16 +3,37 @@ import type { ResultHistoryDocument, ResultHistoryEntry, ResultHistoryLegacyStat
 import { TaskService } from '../../../../../services/task.service';
 import { formatDateTimeUtc } from '../../../../../services/format.util';
 import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+
+/**
+ * Tone of a historical status.md result (AGT-3403). These are past results,
+ * so a failure reads as warning rather than an acute danger (R4).
+ */
+const PREVIOUS_RESULT_TONES: Readonly<Record<string, StatusTone>> = {
+  success: 'success',
+  noop: 'neutral',
+  failed: 'warning',
+  blocked: 'warning',
+  partial: 'warning',
+  'needs input': 'warning',
+  'needs-input': 'warning',
+};
+
+export function previousResultTone(result: string | null | undefined): StatusTone {
+  const key = (result ?? '').trim().toLowerCase();
+  return Object.hasOwn(PREVIOUS_RESULT_TONES, key) ? PREVIOUS_RESULT_TONES[key] : 'neutral';
+}
 
 @Component({
   selector: 'app-previous-results-control',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DisclosureMarkerComponent],
+  imports: [DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './previous-results-control.component.html',
   styleUrl: './previous-results-control.component.scss',
 })
 export class PreviousResultsControlComponent {
+  readonly resultTone = previousResultTone;
   private readonly tasks = inject(TaskService);
 
   readonly jobId = input.required<string>();

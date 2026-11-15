@@ -4,6 +4,7 @@ import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { deriveActiveTaskRun, isTaskRunActive, resolveRunActivityKind } from '../../services/run-activity.util';
 import { PickupHoldComponent } from '../pickup-hold/pickup-hold.component';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reason';
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
@@ -20,6 +21,8 @@ import {
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
+const LIVE_TONE_INDICATOR: Readonly<Record<LiveTone, StatusTone>> = { active: 'running', waiting: 'info', idle: 'neutral', stalled: 'warning' };
+export function liveIndicatorTone(tone: string | null | undefined): StatusTone { return LIVE_TONE_INDICATOR[tone as LiveTone] ?? 'neutral'; }
 
 interface LiveStatusView {
   tone: LiveTone;
@@ -42,7 +45,7 @@ const STALE_AFTER_MS = 10 * 60 * 1000;
   selector: 'app-task-live-status',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PickupHoldComponent],
+  imports: [PickupHoldComponent, StatusIndicatorComponent],
   templateUrl: './task-live-status.component.html',
   styleUrl: './task-live-status.component.scss',
 })
@@ -50,6 +53,7 @@ export class TaskLiveStatusComponent {
   readonly task = input.required<TaskInfo>();
   readonly variant = input<TaskLiveStatusVariant>('card');
   readonly dense = input(false);
+  readonly liveIndicatorTone = liveIndicatorTone;
   private readonly now = inject(NowTickService).now;
   private readonly injector = inject(Injector);
   private readonly tasks = inject(TaskService);

@@ -71,18 +71,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.board-source__badge {
-  border-radius: 999px;
-  padding: 0 var(--studio-spacing-2);
-  background: var(--studio-bg-surface);
-  border: 1px solid var(--studio-border);
-}
-
-.board-source__badge--ok {
-  border-color: color-mix(in srgb, var(--studio-accent-success) 34%, transparent);
-  background: color-mix(in srgb, var(--studio-accent-success) 12%, var(--studio-bg-surface));
-}
-
 .board-source__table {
   width: 100%;
   border-collapse: collapse;

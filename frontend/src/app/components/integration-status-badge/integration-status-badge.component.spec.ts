@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { vi } from 'vitest';
 import type { TaskIntegrationStatus, IntegrationStatusValue } from '../../features/git';
-import { IntegrationStatusBadgeComponent } from './integration-status-badge.component';
+import { IntegrationStatusBadgeComponent, integrationKindTone } from './integration-status-badge.component';
 import { TaskService } from '../../services/task.service';
 import { NotificationService } from '../../services/notification.service';
 
@@ -98,7 +98,7 @@ describe('IntegrationStatusBadgeComponent', () => {
       const badge = badgeOf(fixture);
 
       expect(badge.textContent).toContain('merged @deadbee · unverified');
-      expect(badge.textContent).toContain('!');
+      expect(badge.querySelector('[data-testid="integration-status-indicator"]')?.getAttribute('data-tone')).toBe('warning');
       expect(badge.dataset['kind']).toBe('unverified');
       expect(badge.dataset['integrationVerification']).toBe('integrated-unverified');
       expect(badge.classList.contains('integration-badge--acute')).toBe(true);
@@ -514,5 +514,20 @@ describe('IntegrationStatusBadgeComponent', () => {
     const fixture = render(integration('pending', { integrationBranch: 'trunk' }));
     expect(fixture.componentInstance.tooltip()).toContain('NOT integrated into trunk');
     expect(fixture.componentInstance.ariaLabel()).toContain('Not integrated into trunk');
+  });
+
+  it('maps every integration kind onto a shared status tone (AGT-3403)', () => {
+    expect(integrationKindTone('integrated')).toBe('success');
+    expect(integrationKindTone('unverified')).toBe('warning');
+    expect(integrationKindTone('partial')).toBe('warning');
+    expect(integrationKindTone('pending')).toBe('warning');
+    expect(integrationKindTone('conflict')).toBe('danger');
+    expect(integrationKindTone('no-branch')).toBe('neutral');
+    expect(integrationKindTone('something-new')).toBe('neutral');
+
+    const merged = render(integration('integrated', { sha: 'deadbee' }));
+    const indicator = merged.nativeElement.querySelector('[data-testid="integration-status-indicator"]') as HTMLElement;
+    expect(indicator.dataset['tone']).toBe('success');
+    expect(indicator.classList.contains('status-indicator--compact')).toBe(true);
   });
 });

@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 import {
   aspectVerdictLabel,
-  aspectVerdictTone,
+  aspectVerdictStatusTone,
   type AspectFinding,
-  type AspectVerdictTone,
 } from './aspect-findings.model';
 
 /**
@@ -17,13 +17,15 @@ import {
  * Reused across the Timeline reopen rows, the Overview completion-loop
  * strip, and (where the orchestrator chat shows aspect verdicts) the chat
  * log. Chip tones come exclusively from the central severity tokens
- * (ASS-737): concerns → warn, block → danger, pass → ok.
+ * (ASS-737): concerns → warning, block → danger, pass → success,
+ * rendered through the shared status indicator (AGT-3403).
  *
  *   <app-aspect-findings-list [findings]="findings" leadLabel="Gap" />
  */
 @Component({
   selector: 'app-aspect-findings-list',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './aspect-findings-list.component.html',
   styleUrl: './aspect-findings-list.component.scss',
@@ -34,8 +36,8 @@ export class AspectFindingsListComponent {
   /** Optional short lead label shown before the list (e.g. "Gap"). */
   readonly leadLabel = input<string | null>(null);
 
-  tone(verdict: string): AspectVerdictTone {
-    return aspectVerdictTone(verdict);
+  tone(verdict: string): StatusTone {
+    return aspectVerdictStatusTone(verdict);
   }
 
   chipLabel(verdict: string): string {

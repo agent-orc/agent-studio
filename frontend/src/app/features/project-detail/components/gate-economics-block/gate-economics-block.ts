@@ -3,17 +3,31 @@ import { ChangeDetectionStrategy, Component, OnDestroy, inject, output, signal }
 import { TaskService } from '../../../../services/task.service';
 import type { GateEconomicsResponse, PipelineBaseline } from '../../../task-pipeline/models/gate-economics.model';
 import { projectIdentity } from '../../../../services/project-identity.util';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Develop and nightly-guard gate states onto the shared tones (AGT-3403); unknown values stay neutral. */
+const GATE_STATE_TONE: Readonly<Record<string, StatusTone>> = { green: 'success', running: 'running', red: 'danger', skipped: 'neutral' };
+export function gateStateTone(state: string | null | undefined): StatusTone {
+  return state && Object.hasOwn(GATE_STATE_TONE, state) ? GATE_STATE_TONE[state] : 'neutral';
+}
+
+/** `lastNightlyGuard` reads "status · sha12"; the status is the first part. */
+export function nightlyGuardTone(guard: string | null | undefined): StatusTone {
+  return gateStateTone(guard?.split('·')[0].trim().toLowerCase());
+}
 
 @Component({
   selector: 'app-gate-economics-block',
   standalone: true,
-  imports: [SegmentedControlComponent],
+  imports: [SegmentedControlComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './gate-economics-block.html',
   styleUrl: './gate-economics-block.scss',
 })
 export class GateEconomicsBlockComponent implements OnDestroy {
   readonly windowOptions = [{ value: '7d', label: '7 days' }, { value: '30d', label: '30 days' }] as const;
+  readonly gateTone = gateStateTone;
+  readonly nightlyTone = nightlyGuardTone;
   private readonly tasks = inject(TaskService);
   readonly data = signal<GateEconomicsResponse | null>(null);
   readonly window = signal<'7d' | '30d'>('7d');

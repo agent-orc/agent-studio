@@ -35,5 +35,5 @@
   @if (!compact()) {
     <span class="dossier-ref__title">{{ reference().title }}</span>
   }
-  <span class="dossier-ref__status" [attr.data-status]="reference().status">{{ statusLabel() }}</span>
+  <app-status-indicator class="dossier-ref__status" [attr.data-status]="reference().status" [tone]="statusTone()" [label]="statusLabel()" [compact]="true" [testId]="testId() + '-status'" />
 </ng-template>

@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { CliConfigCardComponent } from './cli-config-card.component';
+import { CliConfigCardComponent, cliAvailabilityTone, cliTokenTone } from './cli-config-card.component';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -36,5 +36,29 @@ describe('CliConfigCardComponent (smoke)', () => {
       console.warn('[smoke] CliConfigCardComponent initial render skipped:', (e as Error).message);
     }
     expect(fixture.componentInstance).toBeTruthy();
+  });
+
+  it('shows availability and token state through the shared status indicator', async () => {
+    await TestBed.configureTestingModule({
+      imports: [CliConfigCardComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CliConfigCardComponent);
+    fixture.componentRef.setInput('status', { path: 'claude', available: false, version: null, hasToken: false });
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    const availability = host.querySelector('[data-testid="cli-config-availability"]');
+    expect(availability?.getAttribute('data-tone')).toBe('danger');
+    expect(availability?.textContent?.trim()).toBe('Not found at: claude');
+    const token = host.querySelector('[data-testid="cli-config-token"]');
+    expect(token?.getAttribute('data-tone')).toBe('warning');
+    expect(token?.textContent?.trim()).toBe('No token, CLI may fail to authenticate');
+  });
+
+  it('maps availability and token presence onto tones', () => {
+    expect(cliAvailabilityTone(true)).toBe('success');
+    expect(cliAvailabilityTone(false)).toBe('danger');
+    expect(cliTokenTone(true)).toBe('success');
+    expect(cliTokenTone(false)).toBe('warning');
   });
 });

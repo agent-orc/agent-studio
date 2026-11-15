@@ -20,6 +20,9 @@ describe('DetailLoadErrorComponent', () => {
 
     const root = fixture.nativeElement as HTMLElement;
     expect(root.textContent).toContain('WEB-10');
+    const state = root.querySelector('[data-testid="task-detail-load-error-state"]');
+    expect(state?.getAttribute('data-tone')).toBe('danger');
+    expect(state?.textContent?.trim()).toBe('Task detail unavailable');
     root.querySelector<HTMLButtonElement>('[data-testid="task-detail-load-retry"]')?.click();
     expect(retried).toHaveBeenCalledOnce();
   });

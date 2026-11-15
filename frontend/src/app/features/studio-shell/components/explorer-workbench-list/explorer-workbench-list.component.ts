@@ -1,3 +1,4 @@
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -39,7 +40,7 @@ interface WorkbenchNavigationGroup {
 @Component({
   selector: 'app-explorer-workbench-list',
   standalone: true,
-  imports: [TreeRowComponent, ExplorerWorkbenchHistoryComponent],
+  imports: [StatusIndicatorComponent, TreeRowComponent, ExplorerWorkbenchHistoryComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './explorer-workbench-list.component.html',
   styleUrl: './explorer-workbench-list.component.scss',

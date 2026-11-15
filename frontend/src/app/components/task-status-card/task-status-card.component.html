@@ -54,7 +54,7 @@
     @if (runStatus(); as rs) {
       <div class="task-status-card__fact">
         <dt>Run</dt>
-        <dd data-testid="task-status-card-run">{{ rs }}</dd>
+        <dd><app-status-indicator [tone]="runTone()" [label]="rs" [compact]="true" testId="task-status-card-run" /></dd>
       </div>
     }
   </dl>

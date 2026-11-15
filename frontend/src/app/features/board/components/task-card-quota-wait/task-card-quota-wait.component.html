@@ -1,10 +1,10 @@
 @if (badge(); as quotaWait) {
-  <span class="quota-wait-pill"
-        [cacTooltip]="quotaWait.tooltip"
-        [attr.data-minutes-left]="quotaWait.minutesLeft"
-        data-testid="task-card-quota-wait"
-        role="status">
-    <span aria-hidden="true">◴</span>
-    {{ quotaWait.label }}
-  </span>
+  <app-status-indicator [cacTooltip]="quotaWait.tooltip"
+                        [attr.data-minutes-left]="quotaWait.minutesLeft"
+                        data-testid="task-card-quota-wait"
+                        role="status"
+                        tone="warning"
+                        [label]="quotaWait.label"
+                        [compact]="true"
+                        testId="task-card-quota-wait-status" />
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildOrchestratorConversationEvents,
+  contextFreshnessTone,
   resolveAttachmentUrl,
   sameOrchestratorChatTurns,
   suppressLocalDuplicates,
@@ -17,6 +18,19 @@ import type { ChatEvent } from 'coding-agent-chat/core';
  * util file made them unit-addressable, so pin them here.
  */
 describe('orchestrator-side-sheet.util', () => {
+  describe('contextFreshnessTone', () => {
+    const base = { refreshing: false, error: false, loading: false, hasDigest: false };
+    it('maps every freshness state onto a status tone', () => {
+      expect(contextFreshnessTone({ ...base, refreshing: true, hasDigest: true })).toBe('running');
+      expect(contextFreshnessTone({ ...base, error: true, hasDigest: true })).toBe('danger');
+      expect(contextFreshnessTone({ ...base, error: true })).toBe('danger');
+      expect(contextFreshnessTone({ ...base, loading: true })).toBe('running');
+      expect(contextFreshnessTone({ ...base, loading: true, hasDigest: true })).toBe('success');
+      expect(contextFreshnessTone({ ...base, hasDigest: true })).toBe('success');
+      expect(contextFreshnessTone(base)).toBe('neutral');
+    });
+  });
+
   describe('parseBugHashtags', () => {
     it('collects hashtags at the start of a line and skips markdown headings', () => {
       expect(parseBugHashtags('#frontend #ux\nsome detail')).toEqual(['frontend', 'ux']);
