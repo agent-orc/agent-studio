@@ -167,9 +167,21 @@ for name, (caddyfile, allow_direct, public_edge, restart_policy) in expected.ite
     assert os.stat(os.path.join(data_dir, 'backups')).st_mode & 0o777 == 0o700
     assert api['environment']['Backup__KeyFile'] == '/run/secrets/studio-backup/backup.key', api['environment']
     assert api['environment']['Backup__Sources__stack__Exclude__0'] == 'keys', api['environment']
+    for source, host in (('quality-data', '/srv/agent-studio/quality/data'),
+                         ('quality-registry', '/srv/agent-studio/quality/registry')):
+        target = '/run/backup-sources/' + source
+        assert api_mounts[target]['source'] == host, (source, api_mounts)
+        assert api_mounts[target].get('read_only') is True, (source, api_mounts)
+        assert api['environment']['Backup__Sources__' + source + '__Path'] == target, api['environment']
+        assert api['environment']['Backup__Sources__' + source + '__Optional'] == 'true', api['environment']
     assert api['environment']['Backup__Target__Kind'] == 'none', api['environment']
 print('Compose render passed for public, Cloudflare, direct-access and private modes.')
 PY
+
+for source in quality-data quality-registry; do
+  grep -q -- "--target $source=/data/$source" "$stack/restore-backup.sh"
+  grep -q -- "/srv/agent-studio/quality/${source#quality-}:/data/$source" "$stack/restore-backup.sh"
+done
 
 # The API memory limit is one setting in .env.
 limit="$(STUDIO_API_MEMORY_LIMIT=24g docker compose --project-directory "$work/public/stack" -f "$work/public/stack/compose.yaml" \
