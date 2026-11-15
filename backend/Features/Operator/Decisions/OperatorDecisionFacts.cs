@@ -231,7 +231,7 @@ public static class OperatorDecisionFacts
             return "Cannot be accepted: brief changed.";
         var grade = task.Tags.FirstOrDefault(tag => tag.StartsWith("code-review:grade-", StringComparison.OrdinalIgnoreCase));
         var letter = grade is null ? null : grade["code-review:grade-".Length..].ToUpperInvariant();
-        if (letter is null) return "Ready for human review.";
+        if (letter is null) return "Needs human review. Check acceptance readiness before accepting.";
         var concerns = GradeFindings(task.FolderPath);
         return concerns is { } count
             ? $"Grade {letter} · {count} {(count == 1 ? "concern" : "concerns")}."

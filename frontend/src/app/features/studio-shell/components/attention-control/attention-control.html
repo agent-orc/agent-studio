@@ -21,6 +21,17 @@
             <span>{{ group.spec.label }}</span>
             <span class="attention-list__group-count" data-testid="attention-count-in-group">{{ group.items.length }}</span>
           </h3>
+          @if (group.spec.key === 'human-review') {
+            <p class="attention-list__review-count" data-testid="attention-review-ready-count">
+              @if (attention.readinessChecked()) {
+                {{ attention.readyCount() }} of {{ group.items.length }} ready to accept
+              } @else if (attention.readinessError()) {
+                Acceptance readiness unavailable. Try reopening the list.
+              } @else {
+                Checking acceptance readiness…
+              }
+            </p>
+          }
           <ul class="attention-list__rows">
             @for (item of group.items; track item.id) {
               <li class="attention-list__row" data-testid="attention-row" [attr.data-attention-type]="item.type">
@@ -31,7 +42,20 @@
                     @if (item.project) { <span class="attention-list__project">{{ item.project }}</span> }
                     <span class="attention-list__age">{{ age(item) }}</span>
                   </div>
-                  <p class="attention-list__reason" data-testid="attention-row-reason" [attr.title]="item.reason">{{ item.reason }}</p>
+                  @if (item.type === 'human-review.ready') {
+                    @if (attention.readinessFor(item); as readiness) {
+                      <app-status-indicator [tone]="readinessPresentation(readiness.readiness).tone"
+                                            [label]="readiness.headline" [compact]="true" [wrap]="true"
+                                            testId="attention-review-status" />
+                      <p class="attention-list__reason" data-testid="attention-row-reason">{{ readiness.reason }}</p>
+                    } @else {
+                      <app-status-indicator [tone]="attention.readinessError() || attention.readinessChecked() ? 'warning' : 'running'"
+                                            [label]="attention.readinessError() || attention.readinessChecked() ? 'Readiness unavailable' : 'Checking acceptance readiness'"
+                                            [compact]="true" [wrap]="true" testId="attention-review-status" />
+                    }
+                  } @else {
+                    <p class="attention-list__reason" data-testid="attention-row-reason" [attr.title]="item.reason">{{ item.reason }}</p>
+                  }
                 </div>
                 <button type="button" class="attention-list__action" data-testid="attention-row-action"
                         (click)="act(item, group.spec)">{{ actionLabel(item, group.spec) }}</button>
