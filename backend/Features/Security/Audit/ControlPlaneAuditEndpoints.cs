@@ -48,7 +48,7 @@ public static class ControlPlaneAuditEndpoints
                     monitor.Integrity, monitor.Forwarding));
             })).RequirePermission(IamPermissions.AccessRead);
 
-        // AGT-3737: backup create, upload, verify, retention, and the offline decrypt and restore, by any actor.
+        // Backup management reads and operations, by any actor.
         audit.MapGet("/backups", (HttpContext context, AccessSecurityStore store, ControlPlaneAuditMonitor monitor, int? limit)
             => AccessSecurityEndpoints.Execute(() =>
             {

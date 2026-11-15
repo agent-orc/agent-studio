@@ -204,6 +204,51 @@ test('owner-day seeds 30 or more recent cards and owner triage scenes', () => {
   }
 });
 
+test('isolated owner-day seed writes a readable red batch ledger beside its disposable state', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-batch-state-'));
+  try {
+    execFileSync(process.execPath, [SEED, '--root', root, '--owner-day', '--state-root', join(root, 'data')],
+      { windowsHide: true });
+    const identity = readFileSync(join(root, '.batch-state-installation-id'), 'utf8').trim();
+    const store = join(root, 'data', 'agentstudio', 'instances', identity, 'batch-gates');
+    const folder = readdirSync(store).find(name =>
+      readJson(join(store, name, 'manifest.json')).batchId === 'demo-report-batch-1');
+    assert.ok(folder);
+    const batch = join(store, folder);
+    const manifest = readJson(join(batch, 'manifest.json'));
+    assert.equal(manifest.scope.project, 'Demo App');
+    assert.deepEqual(manifest.members.map(member => member.taskKey), ['DEMO-20', 'DEMO-24']);
+    const state = readJson(join(batch, 'state', '00000002.json'));
+    assert.equal(state.phase, 7);
+    assert.match(state.reason, /isolation|triage/i);
+    const run = readJson(join(batch, 'runs', 'demo-report-run-1.json'));
+    assert.equal(run.host, 'demo-gate.invalid');
+    const verdictFile = readdirSync(join(batch, 'runs')).find(name => name.endsWith('.verdict.json'));
+    assert.ok(verdictFile);
+    assert.equal(readJson(join(batch, 'runs', verdictFile)).outcome, 'red');
+    assert.equal(readJson(join(batch, 'runs', verdictFile)).classification, 'DeterministicSuiteRed');
+    const findingsFolder = join(store, 'isolation-findings');
+    const findings = readdirSync(join(findingsFolder, readdirSync(findingsFolder)[0]))
+      .map(name => readJson(join(findingsFolder, readdirSync(findingsFolder)[0], name)));
+    assert.deepEqual(findings.map(finding => finding.status).sort(), ['proven-green', 'proven-red']);
+    assert.equal(readJson(join(root, 'project-settings.json'))['Demo App'].BatchGate.Enabled, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('owner-day gate state cannot be directed outside the demo workspace', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-batch-boundary-'));
+  try {
+    assert.throws(() => execFileSync(process.execPath,
+      [SEED, '--root', root, '--owner-day', '--state-root', tmpdir()], { stdio: 'pipe', windowsHide: true }),
+    /Command failed/);
+    assert.equal(readdirSync(root).length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('every board lane is discoverable on disk', () => {
   withSeed((root) => {
     const lanes = new Set();

@@ -97,6 +97,7 @@ export default defineConfig({
           : profile === 'networked-checkout' ? '**/security/networked-project-checkout.spec.ts'
           : profile === 'networked-https-demo' ? '**/security/product-card-detail.spec.ts'
           : profile === 'operator-cli' ? '**/operator/studio-op-operator-cli.spec.ts'
+          : profile === 'owner-day' ? '**/batch-gate/owner-day-real-backend.spec.ts'
           : profile === 'demo' ? ['**/usage-cockpit/cockpit-integration-matrix.spec.ts', '**/project/dossier-decision-live.spec.ts', '**/visual-evidence/demo-result-image.spec.ts']
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'

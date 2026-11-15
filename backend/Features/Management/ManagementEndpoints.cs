@@ -57,22 +57,41 @@ public static class ManagementEndpoints
         group.MapGet("/backups", (HttpContext context, StudioBackupService backups, IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            return Results.Ok(backups.Overview());
+            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
+            try
+            {
+                var overview = backups.Overview();
+                backups.AuditRead(actor!, BackupAudit.InventoryRead, null, BackupAudit.Succeeded, "Viewed backup inventory.");
+                return Results.Ok(overview);
+            }
+            catch
+            {
+                backups.AuditRead(actor!, BackupAudit.InventoryRead, null, BackupAudit.Failed, "Backup inventory could not be read.");
+                throw;
+            }
         });
         group.MapGet("/backups/{id}/contents", (HttpContext context, string id,
             StudioBackupService backups, IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
             try
             {
                 var contents = backups.ReadContents(id);
+                backups.AuditRead(actor!, BackupAudit.ContentsRead, BackupAudit.ArchiveTarget(id),
+                    contents is null ? BackupAudit.Failed : BackupAudit.Succeeded,
+                    contents is null ? "Archive content list was not found." : "Viewed archive content list.");
                 return contents is null ? Results.NotFound() : Results.Ok(contents);
             }
             catch (Exception ex) when (ex is BackupException or IOException or UnauthorizedAccessException)
             {
+                backups.AuditRead(actor!, BackupAudit.ContentsRead, BackupAudit.ArchiveTarget(id), BackupAudit.Failed, "Archive content list could not be read.");
                 return Results.Problem("The archive content list could not be read.", statusCode: 422);
+            }
+            catch
+            {
+                backups.AuditRead(actor!, BackupAudit.ContentsRead, BackupAudit.ArchiveTarget(id), BackupAudit.Failed, "Archive content list could not be read.");
+                throw;
             }
         });
         group.MapGet("/diagnostics", (HttpContext context, ManagementService service, IConfiguration configuration) =>
