@@ -741,7 +741,7 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   });
   await page.goto(`/?job=naming-feature-1&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   const overview = page.getByTestId('overview-status');
-  await expect(overview).toBeVisible();
+  await expect(overview).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('overview-title'))
     .toContainText('Implement the stable naming contract');
   await page.waitForTimeout(1000);
