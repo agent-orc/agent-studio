@@ -149,6 +149,7 @@ describe('WorkbenchViewerHeaderComponent', () => {
           provide: TaskService,
           useValue: {
             getReferenceStatuses,
+            getCliModelCatalog: () => of({ models: [] }),
             taskEvents: EMPTY,
           },
         },
@@ -264,7 +265,11 @@ describe('WorkbenchViewerHeaderComponent', () => {
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
-        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), taskEvents: EMPTY } },
+        { provide: TaskService, useValue: {
+          getReferenceStatuses: () => of([]),
+          getCliModelCatalog: () => of({ models: [] }),
+          taskEvents: EMPTY,
+        } },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(WorkbenchViewerHeaderComponent);

@@ -4,6 +4,7 @@
       <div>
         <h3 id="operations-backups-title">Installation backups</h3>
         <p>Encrypted backups of the whole installation, verified by a restore and copied off this host.</p>
+        <p data-testid="operations-backups-recovery-dependency">Quality Studio data and registry are included when present. Recovery still needs the escrowed backup and secret store keys, the Quality Studio image, and repository remotes to restore the checkouts.</p>
         <a data-testid="operations-backups-content-list" href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/setup/studio-backup-restore.md#credential-content-list" target="_blank" rel="noopener noreferrer">Archive credential content list</a>
       </div>
       <button type="button" class="backup-status__refresh" data-testid="operations-backups-refresh" (click)="load()">Refresh</button>
@@ -81,6 +82,27 @@
           <dd>@if (o.secretKeyId) { <code>{{ o.secretKeyId }}</code> } @else { None }</dd>
         </div>
       </dl>
+      <section class="backup-status__block" data-testid="operations-backups-handoff" aria-labelledby="operations-backups-handoff-title">
+        <h4 id="operations-backups-handoff-title">Fresh-host recovery handoff</h4>
+        <p>Do not start the stack before restore. Fetch the archive with an account that can read the off-host target. Keep escrowed keys out of the live API.</p>
+        <p>These are the last checks known to this installation. Check the owner-held copies, CA and Git access separately before host loss.</p>
+        <div class="backup-status__table-wrap">
+          <table class="backup-status__handoff-table">
+            <thead><tr><th scope="col">Recovery input</th><th scope="col">Last checked status</th><th scope="col">Restore step</th></tr></thead>
+            <tbody>
+              @for (input of recoveryInputs(o); track input.name) {
+                <tr>
+                  <th scope="row">{{ input.name }}</th>
+                  <td>{{ input.status }}</td>
+                  <td><a [href]="input.href" target="_blank" rel="noopener noreferrer">{{ input.step }}</a></td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p><a href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/setup/studio-backup-restore.md#restore-onto-a-new-host" target="_blank" rel="noopener noreferrer">Open the complete fresh-host restore sequence</a></p>
+        <button type="button" class="backup-status__refresh" (click)="downloadHandoff(o)">Download owner handoff</button>
+      </section>
       @if (o.lastRestore; as restore) {
         <section class="backup-status__block" data-testid="operations-backups-restore" aria-labelledby="operations-backups-restore-title">
           <h4 id="operations-backups-restore-title">Restored from a backup</h4>

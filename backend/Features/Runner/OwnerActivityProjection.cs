@@ -44,16 +44,17 @@ public static class OwnerActivityProjection
                     _ => null,
                 };
                 if (topic is null) continue;
-                var summary = $"{task.TaskKey}: {evt.Summary}";
+                var displayKey = task.Key ?? task.Id;
+                var summary = $"{displayKey}: {evt.Summary}";
                 if (evt.Kind == TimelineEventKinds.PromptCreated)
-                    summary = $"Created {task.TaskKey}: {task.Title}";
+                    summary = $"Created {displayKey}: {task.Title}";
                 else if (evt.Kind == TimelineEventKinds.LaneChanged
                          && evt.Details?.GetValueOrDefault("to") == TaskStates.Completed)
-                    summary = $"Accepted {task.TaskKey}: {evt.Summary}";
+                    summary = $"Accepted {displayKey}: {evt.Summary}";
                 else if (evt.Kind == TimelineEventKinds.LaneChanged
                          && evt.Details?.GetValueOrDefault("to") == TaskStates.Ready
                          && evt.Details?.GetValueOrDefault("from") is TaskStates.HumanReview or TaskStates.Escalated)
-                    summary = $"Reissued {task.TaskKey}: {evt.Summary}";
+                    summary = $"Reissued {displayKey}: {evt.Summary}";
                 yield return new Entry(task.ProjectName, task.WatchPath, evt.Ts,
                     "owner_action", topic, summary,
                     evt.Details?.GetValueOrDefault("reason") ?? evt.Details?.GetValueOrDefault("rationale"),

@@ -19,8 +19,15 @@ public static class ArticlePatterns
 /// <summary>One implementation card proposed by a concept Workbench.</summary>
 public sealed record ConceptImplementationTask
 {
+    /// <summary>Slice id, unique within the descriptor. Required when another slice depends on it.</summary>
     public string? Id { get; init; }
     public string Title { get; init; } = "";
+    /// <summary>
+    /// Ids of earlier slices in the same descriptor that must be delivered
+    /// first. Promotion turns each into a plain <c>dependsOn</c> edge between
+    /// the implementation cards; the concept card stays a related link.
+    /// </summary>
+    public List<string> DependsOn { get; init; } = [];
     public string PromptMarkdown { get; init; } = "";
     /// <summary>Optional source section and decision identifiers shown on the card.</summary>
     public string? Section { get; init; }
@@ -95,6 +102,16 @@ public sealed record PromoteConceptResponse
     public string TargetState { get; init; } = TaskStates.Preparation;
     public string WatchPath { get; init; } = "";
     public string ProjectName { get; init; } = "";
+    public ConceptPromotionRecovery? Recovery { get; init; }
+}
+
+/// <summary>Durable promotion progress returned after failures and on later plan reads.</summary>
+public sealed record ConceptPromotionRecovery
+{
+    public string Phase { get; init; } = "creating-cards";
+    public List<string> Reasons { get; init; } = [];
+    public List<PromotedConceptTask> Created { get; init; } = [];
+    public string NextAction { get; init; } = "Retry promotion. Existing cards will be reused.";
 }
 
 public sealed record PromoteConceptRequest

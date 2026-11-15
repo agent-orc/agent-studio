@@ -11,6 +11,9 @@
   <div class="access-row">
     <button type="button" data-testid="access-invite-submit" [disabled]="!canInvite()" (click)="invite()">Create invitation</button>
   </div>
+  @if (pending(); as invitee) {
+    <p role="status" data-testid="access-invite-pending">Creating invitation for {{ invitee.username }} with {{ invitee.role }} role…</p>
+  }
   @if (link(); as created) {
     <div class="invite__link" data-testid="access-invite-link">
       <p>Send this invitation only to <strong>{{ created.username }}</strong>. It works once and expires at {{ created.expiresAt }}. {{ created.factor }}</p>

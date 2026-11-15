@@ -148,6 +148,7 @@
     strong { @include section.heading; }
   }
 
+
   &__delivery-lines {
     display: inline-flex;
     flex-wrap: wrap;
@@ -174,11 +175,6 @@
     }
   }
 
-  &__empty {
-    margin: 0;
-    color: var(--studio-fg-dim);
-    font-size: 11px;
-  }
 
   &__needs-input {
     display: flex;

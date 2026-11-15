@@ -167,6 +167,12 @@
           </div>
         }
 
+        <app-escalation-evidence-availability
+          [batch]="v.batchDiagnostic" [job]="detail().info"
+          [showAvailability]="(v.gateSource === 'none' || v.gateSource === 'batch-diagnostic') && !detail().info.needsInput"
+          [hasReviewArtifacts]="codeReviews().length > 0 || !!followUpMarkdown()"
+          [hasDelivery]="v.delivery.commitCount > 0 || v.delivery.filesChanged > 0" />
+
         <app-escalation-details
           [job]="detail().info"
           [reviews]="codeReviews()"
@@ -175,18 +181,6 @@
           [gateSource]="v.gateSource"
           [reissues]="v.reissues" />
 
-        @if (
-          v.gateItems.length === 0 &&
-          codeReviews().length === 0 &&
-          !followUpMarkdown() &&
-          v.delivery.commitCount === 0 &&
-          v.delivery.filesChanged === 0
-          && !detail().info.needsInput
-        ) {
-          <p class="escalation__empty" data-testid="escalation-context-empty">
-            No structured findings, review artifacts, or delivery context were recorded.
-          </p>
-        }
       </div>
     }
   </section>

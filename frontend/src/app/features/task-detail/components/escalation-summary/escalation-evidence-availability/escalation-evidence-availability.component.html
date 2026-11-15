@@ -1,0 +1,19 @@
+@if (batch(); as diagnostic) {
+  <div class="batch" data-testid="escalation-batch-diagnostic">
+    <strong>Batch {{ diagnostic.batchId }} failed</strong>
+    <span>Failing test: {{ diagnostic.failingTest }}</span>
+    <span>Members: {{ diagnostic.members.join(', ') }}</span>
+    @if (artifactUrl(); as url) {
+      <a [href]="url" target="_blank" rel="noopener noreferrer"
+        data-testid="escalation-batch-artifact">Open results/batch-diagnostic.json</a>
+    }
+  </div>
+}
+@if (showAvailability()) {
+  <p data-testid="escalation-context-empty">
+    Structured review findings are missing.
+    {{ batch() ? 'Batch diagnostic exists.' : 'Batch diagnostic is missing.' }}
+    {{ hasReviewArtifacts() ? 'Review artifacts exist.' : 'Review artifacts are missing.' }}
+    {{ hasDelivery() ? 'Delivery context exists.' : 'Delivery context is missing.' }}
+  </p>
+}

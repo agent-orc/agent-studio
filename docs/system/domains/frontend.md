@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-11-09
+Version: 2026-11-14
 Status: System-of-record map for frontend changes.
 
 Concept cards and detail views show the dossier and review state without code
@@ -406,6 +406,15 @@ members, batch phases, test runs, candidate and publication evidence. It also
 offers confirmed close and eject actions. `BatchGateService` owns all calls and
 shares one 15-second state poll per visible project. Unsupported or malformed
 responses hide the feature and back off to a five-minute retry while visible.
+On a pending member of an active red isolation, the task detail round and move
+surfaces show the flight before submission, link to the batch panel's Eject
+action, and hold continue, steer and requeue. The current flight claim supplies
+its stage deadline when available; the next stage has no scheduled time until
+the current stage finishes. The shared state poll clears the preview when the
+flight ends or the member leaves. The batch panel shows the member's Eject
+control disabled until isolation ends, matching the server's eject guard.
+Mutation endpoints still return 409 if
+isolation begins after the last poll.
 
 The task card's CURRENT and NEXT rows use the same lane, hold, review queue,
 and batch member facts. A Ready card names runner pickup before its pipeline
@@ -521,9 +530,12 @@ Owner actions join the workspace chronology from the task timeline and Dossier
 decision descriptor. The Owner actions class includes accepted and reissued
 lane moves, refused moves with their reason, decision cards, created cards, and
 confirmed Dossier decisions. Card rows open the task and Dossier rows link to
-the Dossier. The Day picker limits the stream and its class counts to a chosen
-local calendar day; clearing it restores the full history. Refused owner moves
-are appended to the card timeline at the move boundary.
+the Dossier. Card summaries use the display key (`key`, falling back to `id`)
+beside the project short-code chip; the task link keeps its project watch path
+so repeated task IDs still open the right card. The Day picker limits the stream
+and its class counts to a chosen local calendar day; clearing it restores the
+full history. Refused owner moves are appended to the card timeline at the move
+boundary.
 
 D10 steering feedback uses the same task timeline poll as the Overview status
 row and the Timeline tab. Overview shows only a fact marked current by the
@@ -959,7 +971,17 @@ occur. It is not a claim about tunnel transfer time.
   mutations use the two-phase decision gate. Unfinished feature preparation
   retains its title, goal, actor, option responses, comments, and operation id
   for the browser session. The details panel shows that retained state and an
-  explicit discard action. A decided item
+  explicit discard action. Request rework opens a form with a free-text
+  request field and names the source concept card that runs the revision
+  (`revisionCard` on the Dossier document); the model the picker marks as
+  default is preselected. Confirm records the pending receipt (with `request`
+  and `revisionTaskKey`) and starts or queues an ordinary follow-up round on
+  that card through the task continue admission; the receipt shows whether
+  the round started or why it queued. Without a source card the action stays
+  disabled with the reason, and confirm writes nothing. After the revision
+  lands, the Dossier opens on the owner's recorded selections wherever the
+  revised markup still offers them, not on the authored defaults (AGT-3703).
+  A decided item
   remains current while its referenced cards are still moving. References are
   derived from the Slice-1 `references.workbenches` index, with descriptor
   `sourceTaskKeys`, `relatedTaskKeys`, and decision receipts retained as
@@ -1107,7 +1129,9 @@ occur. It is not a claim about tunnel transfer time.
   service accounts with one `api.` token), role bindings per scope, runner
   enrollments, and enrolled runners from `GET /api/auth/iam`,
   `/api/auth/runner-enrollments`, and `/api/auth/runners`. It invites through
-  the existing `POST /api/auth/invitations` with one initial binding, resets
+  the existing `POST /api/auth/invitations` with one initial binding, clears
+  the previous one-use link as soon as another invite is submitted, and names
+  the pending invitee and role until that request settles. It resets
   passwords, disables users with a `{ disabled }` PUT that leaves bindings
   alone, shows a service-account token or enrollment code once, and reloads
   after every change. Expiry math reads the injectable `ACCESS_CLOCK`. Its

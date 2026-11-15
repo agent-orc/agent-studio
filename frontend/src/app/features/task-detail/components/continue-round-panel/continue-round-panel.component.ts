@@ -10,6 +10,9 @@ import {
 } from '../../../../components/segmented-control/segmented-control.component';
 import { serverErrorMessage } from '../../../../utils/server-error-message';
 import { ContinueModeRefusalComponent } from './continue-mode-refusal/continue-mode-refusal.component';
+import { BatchGateService } from '../../../../services/batch-gate.service';
+import { batchIsolationHold } from '../../../../models/batch-isolation-hold';
+import { IsolationHoldComponent } from '../../../batch-gate/isolation-hold/isolation-hold';
 
 type RoundMode = Extract<ContinueMode, 'continue' | 'steer' | 'extend'>;
 type BaseRead = { state: 'loading' } | { state: 'ready'; base: ContinueRoundBase | null } | { state: 'error' };
@@ -42,7 +45,7 @@ const BASE_SOURCES: Record<string, string> = {
   selector: 'app-continue-round-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PendingButtonDirective, SegmentedControlComponent, ContinueModeRefusalComponent],
+  imports: [PendingButtonDirective, SegmentedControlComponent, ContinueModeRefusalComponent, IsolationHoldComponent],
   templateUrl: './continue-round-panel.component.html',
   styleUrl: './continue-round-panel.component.scss',
 })
@@ -72,9 +75,12 @@ export class ContinueRoundPanelComponent {
     return read.state === 'ready' ? read.base : null;
   });
   readonly canSubmit = computed(() =>
-    !this.busy() && this.prompt().trim().length > 0 && this.reason().trim().length > 0);
+    !this.busy() && !this.isolationHold() && this.prompt().trim().length > 0 && this.reason().trim().length > 0);
 
   private readonly tasks = inject(TaskService);
+  private readonly batchGate = inject(BatchGateService);
+  readonly isolationHold = computed(() => batchIsolationHold(this.batchGate.state(this.job().projectName)(),
+    this.job().taskKey, this.job().key, this.job().displayKey, this.job().id));
   private readonly notifications = inject(NotificationService);
 
   baseSource(base: ContinueRoundBase): string {

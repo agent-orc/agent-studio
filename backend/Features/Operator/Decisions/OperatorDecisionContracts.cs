@@ -62,7 +62,7 @@ public static class OperatorOperations
     public static IReadOnlyList<string> For(string type) => type switch
     {
         OperatorDecisionTypes.EscalationOpened => [CardInspect, CardContinue, CardMove],
-        OperatorDecisionTypes.HumanReviewReady => [CardInspect, CardAccept, CardContinue],
+        OperatorDecisionTypes.HumanReviewReady => [CardInspect, CardContinue],
         // Decision cards stay with the owner (OA-D5).
         OperatorDecisionTypes.DecisionCardOpened => [CardInspect, OwnerDecide],
         OperatorDecisionTypes.BackendStalled => [StallsInspect, CapacityRead],

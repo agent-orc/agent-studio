@@ -12,6 +12,7 @@ import { HostReleaseIdentityComponent } from '../host-release-identity/host-rele
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
 import { HostCredentialsComponent } from '../host-credentials/host-credentials';
 import { ReviewRestartHistoryComponent } from '../review-restart-history/review-restart-history';
+import { ReviewHostUpdateComponent } from '../review-host-update/review-host-update';
 import { roleSlotTotal } from '../../models/role-slots';
 import {
   RuntimeCapacityEditorComponent,
@@ -41,6 +42,7 @@ import {
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
 import { claimLoadGateLabel } from '../../models/claim-load-gate';
 import { reviewImageComparison, shortImageDigest, type ReviewImageComparison, type StableReleaseIdentity } from '../../models/host-release-drift';
+import { reviewUpdateTarget } from '../../models/review-host-update';
 import {
   claudeSignInTarget,
   providerAuthBadgesForHost,
@@ -89,6 +91,7 @@ interface Meter {
     HostCredentialBadgeComponent,
     StatusIndicatorComponent,
     ReviewRestartHistoryComponent,
+    ReviewHostUpdateComponent,
   ],
   templateUrl: './remote-host-card.html',
   styleUrl: './remote-host-card.scss',
@@ -131,6 +134,8 @@ export class RemoteHostCardComponent {
       ?? (host.serviceRole === 'review' ? host : null);
     return role ? reviewImageComparison(role.release, role.releaseDrift) : null;
   });
+  readonly reviewUpdate = computed(() => reviewUpdateTarget(
+    this.host().serviceRole === 'review' ? [this.host()] : this.roles(), this.stableRelease()));
   readonly shortImageDigest = shortImageDigest;
   reviewImageTone(image: ReviewImageComparison): StatusTone {
     return image.state === 'matches' ? 'success' : image.state === 'differs' ? 'warning' : 'neutral';

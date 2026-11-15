@@ -195,7 +195,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
 - `references.workbenches` carries typed card-to-Dossier links.
   `task.json.dossier` now identifies the one primary Dossier for board grouping
   and implementation progress. It stores the repository entry path and optional
-  source section, decision, and zero-based implementation slice index. Other
+  source section, decision, zero-based implementation slice index, and the
+  slice count when the card was cut. The board card and the detail title line
+  render that as one `Slice n of m · Dossier <key>` link to the Dossier view,
+  and the Dossier board lists cards in slice order. Other
   `references.workbenches` entries remain links. Concept promotion and decision
   apply inherit this primary association. Writable Dossier catalogue discovery
   backfills unassigned cards only when descriptor keys, legacy
@@ -234,7 +237,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   relates them to the source concept. Each `implementationTasks` entry is one
   independently reviewable slice and becomes one card with a bounded
   `acceptanceScope`. Promotion rejects an open-ended entry such as `implement
-  all recommendations`; use one entry per slice.
+  all recommendations`; use one entry per slice. An entry's `dependsOn` slice
+  ids become plain `dependsOn` edges to the predecessor slice cards (not
+  `requiresCompletion` edges on the concept), and promoting a slice also
+  promotes its predecessors first.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
   code-change request. The `message` names the card's mode and the two ways
@@ -1720,6 +1726,14 @@ so every card passes the full completion again and may still be refused; the
 lane lists each card's result and checks again. "Send a round to close the
 gap" opens the prefilled prompt and result ref for editing, and nothing is
 sent until the owner confirms it through `POST .../continue` with `baseRef`.
+
+The Needs you list keeps its Human Review lane facts in the published operator
+stream, but lane membership is not an acceptance verdict. While the list is
+open, it sends the visible card keys to the same readiness POST as the board.
+It shows each completion headline and full reason, plus the count ready to
+accept among those cards, and refreshes on the attention poll. An unavailable
+preview is labelled unavailable rather than ready. The background operator
+fact sweep does not run completion checks or Git.
 
 ## Task-tab refinement projection
 

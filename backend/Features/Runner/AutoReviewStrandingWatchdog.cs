@@ -103,6 +103,20 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     lastBatchEvent, latest?.DecidedAtUtc);
                 var infraFailure = currentReview is
                     { State: AttemptLifecycleState.Failed, Outcome: ReviewTerminalOutcome.InfrastructureFailure };
+                var waitingCapability = TaskModes.IsReportOnly(card.Mode)
+                    ? _pipeline.Read(card.FolderPath)?.Steps
+                        .FirstOrDefault(step => step.StepId == PipelineCatalogue.RequirementFitStepId
+                            && step.Status == PipelineStepStatus.Pending
+                            && step.Reason?.StartsWith("waiting for a host with ", StringComparison.Ordinal) == true)
+                        ?.Reason?["waiting for a host with ".Length..]
+                    : null;
+                var waitingHostAvailable = waitingCapability is not null
+                    && _reviewExecutors?.ListCapabilitySnapshots().Any(snapshot =>
+                        snapshot.Status == "active"
+                        && snapshot.Capabilities.Any(capability =>
+                            capability.Key == waitingCapability && capability.IsFresh
+                            && capability.AdvertisedStatus == "ready"
+                            && capability.HealthState == "healthy")) == true;
                 var facts = new AutoReviewStrandingFacts(withoutOwner, threshold,
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
                         || IntegrationGateJournal.Read(card.FolderPath) is not null
@@ -130,7 +144,9 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     infraFailure,
                     infraFailure && _authority.HasReviewInfrastructureRetryBudget(currentReview!.AttemptId),
                     infraFailure && _authority.HasScheduledReviewInfrastructureRetry(currentReview!.AttemptId),
-                    hostCapacityHeld);
+                    hostCapacityHeld,
+                    waitingCapability is not null,
+                    waitingHostAvailable);
                 var action = MonolithTransitionAdapter.AutoReviewStranding(facts);
                 var route = new AutoReviewBatchRouteFacts(
                     currentReview?.Subject.Plan?.BuildTestDeferredToBatch == true,

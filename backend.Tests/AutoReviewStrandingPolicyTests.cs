@@ -19,6 +19,21 @@ public sealed class AutoReviewStrandingPolicyTests
             AutoReviewStrandingPolicy.Decide(Stranded() with { HostCapacityHeld = true }));
 
     [Fact]
+    public void Report_waits_for_model_host_then_restarts_review_when_capability_returns()
+    {
+        var waiting = Stranded() with
+        {
+            ReportOnly = true,
+            StartedStepBefore = true,
+            HostCapabilityWait = true,
+        };
+        Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(waiting));
+        Assert.Equal(AutoReviewStrandingAction.StartStep,
+            AutoReviewStrandingPolicy.Decide(waiting with { HostCapabilityAvailable = true }));
+    }
+
+    [Fact]
     public void Older_run_review_cannot_reenter_batch_for_a_new_delivery()
     {
         const string oldSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

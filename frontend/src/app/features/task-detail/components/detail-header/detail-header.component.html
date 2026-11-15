@@ -168,7 +168,7 @@
                 [attr.data-git-loading]="primaryAwaitingGit() ? 'true' : null"
                 [class.detail__triage-primary--acting]="triageActingId() === primary.id"
                 [class.detail__triage-primary--loading]="primaryAwaitingGit()"
-                [disabled]="mutationsBlocked() || triageActingId() !== null || primaryAwaitingGit() || primaryBlockedByIntegration() || !!primaryDecisionRefusal()"
+                [disabled]="primaryDisabled(primary)"
                 [appPendingButton]="triageActingId() === primary.id" [pendingLabel]="primaryLabel() + '…'"
                 [cacTooltip]="primaryTooltip()"
                 (click)="onPrimaryClick()">
@@ -208,8 +208,7 @@
     [items]="titleCtxMenuItems()"
     [open]="titleContextMenu() !== null"
     [position]="titleContextMenu()"
-    testIdPrefix="detail-title-ctx"
-    ariaLabel="Copy task info"
+    testIdPrefix="detail-title-ctx" ariaLabel="Copy task info"
     [minWidth]="180"
     (itemClick)="onTitleCtxMenuItemClick($event)"
     (closeRequest)="closeTitleContextMenu()" />

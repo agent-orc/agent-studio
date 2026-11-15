@@ -309,20 +309,16 @@ public sealed class TaskIntegrationStatusService
                 if (crossesMappedTree) mappedBatchGate = batchGate;
             }
             var neutralCommits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var neutralKeyCommits = new List<string>();
-            var neutralDecisionCommits = new List<string>();
             var decision = IntegrationPublicationGatePolicy.Check(verification.Sha!, tip!,
                 laterCommits, publications);
             var laterByCommit = laterCommits.ToDictionary(item => item.Sha,
                 item => item.ParentSha, StringComparer.OrdinalIgnoreCase);
             while (!decision.Verified && decision.MissingTree is { } missing
-                && laterByCommit.TryGetValue(missing, out var parent))
+                && laterByCommit.TryGetValue(missing, out var parent)
+                && (_git.IsManagedDocumentKeyCommit(root, missing, parent)
+                    || _git.IsManagedDecisionReceiptCommit(root, missing, parent)))
             {
-                var isKey = _git.IsManagedDocumentKeyCommit(root, missing, parent);
-                if (!isKey && !_git.IsWorkbenchOwnerDecisionCommit(root, missing, parent)) break;
                 neutralCommits.Add(missing);
-                if (isKey) neutralKeyCommits.Add(missing);
-                else neutralDecisionCommits.Add(missing);
                 decision = IntegrationPublicationGatePolicy.Check(verification.Sha!, tip!,
                     laterCommits, publications, neutralCommits);
             }
@@ -356,10 +352,8 @@ public sealed class TaskIntegrationStatusService
                     UncoveredPublication = named,
                 } };
             }
-            var neutralEvidence = (neutralKeyCommits.Count == 0 ? string.Empty
-                    : $" Gate-neutral document-key commits: {string.Join(", ", neutralKeyCommits.Order(StringComparer.OrdinalIgnoreCase))}.")
-                + (neutralDecisionCommits.Count == 0 ? string.Empty
-                    : $" Gate-neutral owner-decision commits: {string.Join(", ", neutralDecisionCommits.Order(StringComparer.OrdinalIgnoreCase))}.");
+            var neutralEvidence = neutralCommits.Count == 0 ? string.Empty
+                : $" Gate-neutral Dossier descriptor commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
             if (decision.CoveringPublication is { } covering)
                 return status with { Verification = verification with
                 {

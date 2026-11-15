@@ -4861,33 +4861,12 @@ public partial class GitService
     /// </summary>
     public bool IsManagedDocumentKeyCommit(string repoRoot, string sha, string parentSha)
     {
-        if (!ReviewSubjectStore.IsValidResultSha(sha)
-            || !ReviewSubjectStore.IsValidResultSha(parentSha)) return false;
-        var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
-            "--format=%P%x1f%s%x1f%ae%x1f%ce%x1f%B", sha);
-        if (metadataCode != 0) return false;
-        var fields = metadata.Trim().Split('\x1f');
-        const string serverEmail = "agent-studio@users.noreply.github.com";
-        if (fields.Length != 5
-            || !string.Equals(fields[0], parentSha, StringComparison.OrdinalIgnoreCase)
-            || fields[1] != "chore(workbench): assign document keys"
-            || !((fields[2] == serverEmail && fields[3] == serverEmail)
-                || fields[4].Split('\n').Any(line =>
-                    line.Trim() == ManagedRepositoryMutationService.DocumentKeyCommitTrailer))) return false;
-
-        var (changes, _, changeCode) = RunGitArgs(repoRoot, "diff-tree", "--name-status",
-            "-r", "-z", parentSha, sha);
-        if (changeCode != 0) return false;
-        var (summary, _, summaryCode) = RunGitArgs(repoRoot, "diff-tree", "--summary",
-            "-r", parentSha, sha);
-        if (summaryCode != 0 || !string.IsNullOrWhiteSpace(summary)) return false;
-        var entries = changes.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        if (entries.Length == 0 || entries.Length % 2 != 0) return false;
-        for (var i = 0; i < entries.Length; i += 2)
+        var paths = ManagedDescriptorCommitPaths(repoRoot, sha, parentSha,
+            subject => subject == "chore(workbench): assign document keys",
+            ManagedRepositoryMutationService.DocumentKeyCommitTrailer);
+        if (paths is null) return false;
+        foreach (var path in paths)
         {
-            var path = entries[i + 1];
-            if (entries[i] != "M" || !path.StartsWith("docs/", StringComparison.Ordinal)
-                || !path.EndsWith("/workbench.json", StringComparison.Ordinal)) return false;
             var before = GetFileAtCommit(repoRoot, parentSha, path);
             var after = GetFileAtCommit(repoRoot, sha, path);
             if (before is null || after is null) return false;
@@ -4911,33 +4890,28 @@ public partial class GitService
     }
 
     /// <summary>
-    /// A recorded Dossier choice changes only the workbench descriptor's
-    /// decision metadata. Inspect the full first-parent diff so a commit that
-    /// also edits Dossier content or implementation files still needs a gate.
+    /// Descriptor members a server Dossier decision write may change: the
+    /// receipt itself and its lifecycle bookkeeping (AGT-3703).
     /// </summary>
-    public bool IsWorkbenchOwnerDecisionCommit(string repoRoot, string sha, string parentSha)
-    {
-        if (!ReviewSubjectStore.IsValidResultSha(sha)
-            || !ReviewSubjectStore.IsValidResultSha(parentSha)) return false;
-        var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
-            "--format=%P%x1f%s", sha);
-        if (metadataCode != 0) return false;
-        var fields = metadata.Trim().Split('\x1f');
-        const string subjectPrefix = "chore(workbench): record decision for ";
-        if (fields.Length != 2
-            || !string.Equals(fields[0], parentSha, StringComparison.OrdinalIgnoreCase)
-            || !fields[1].StartsWith(subjectPrefix, StringComparison.Ordinal)) return false;
+    private static readonly string[] DecisionReceiptMembers =
+        ["decision", "relatedTaskKeys", "lifecycleState", "lifecycleHistory",
+         "editedBy", "editedAt", "status", "updatedAt"];
 
-        var (changes, _, changeCode) = RunGitArgs(repoRoot, "diff-tree", "--name-status",
-            "-r", "-z", parentSha, sha);
-        var (summary, _, summaryCode) = RunGitArgs(repoRoot, "diff-tree", "--summary",
-            "-r", parentSha, sha);
-        if (changeCode != 0 || summaryCode != 0 || !string.IsNullOrWhiteSpace(summary)) return false;
-        var entries = changes.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        if (entries.Length != 2 || entries[0] != "M") return false;
-        var path = entries[1];
-        if (!path.StartsWith("docs/", StringComparison.Ordinal)
-            || !path.EndsWith("/workbench.json", StringComparison.Ordinal)) return false;
+    /// <summary>
+    /// Recognizes a server Dossier decision-receipt mutation with the same
+    /// per-blob check as <see cref="IsManagedDocumentKeyCommit"/>: exactly one
+    /// descriptor changes, it gains a receipt object, history only grows, and
+    /// no other descriptor value changes. The Dossier HTML, code, and tests
+    /// stay byte-identical, so the commit cannot change what a gate tested.
+    /// </summary>
+    public bool IsManagedDecisionReceiptCommit(string repoRoot, string sha, string parentSha)
+    {
+        var paths = ManagedDescriptorCommitPaths(repoRoot, sha, parentSha,
+            subject => subject.StartsWith("chore(workbench): request revision for ", StringComparison.Ordinal)
+                || subject.StartsWith("chore(workbench): record decision for ", StringComparison.Ordinal)
+                || subject.StartsWith("chore(workbench): archive ", StringComparison.Ordinal),
+            ManagedRepositoryMutationService.DecisionReceiptCommitTrailer);
+        if (paths is not [var path]) return false;
         var before = GetFileAtCommit(repoRoot, parentSha, path);
         var after = GetFileAtCommit(repoRoot, sha, path);
         if (before is null || after is null) return false;
@@ -4945,17 +4919,16 @@ public partial class GitService
         {
             if (JsonNode.Parse(before) is not JsonObject oldDescriptor
                 || JsonNode.Parse(after) is not JsonObject newDescriptor
-                || !string.Equals(newDescriptor["id"]?.GetValue<string>(),
-                    fields[1][subjectPrefix.Length..], StringComparison.Ordinal)
-                || newDescriptor["decision"] is not JsonObject decision
-                || !string.Equals(decision["outcome"]?.GetValue<string>(), "feature-spawn",
-                    StringComparison.Ordinal)
-                || JsonNode.DeepEquals(oldDescriptor["decision"], newDescriptor["decision"])) return false;
-            foreach (var field in new[] { "decision", "relatedTaskKeys", "status", "updatedAt",
-                "editedBy", "editedAt", "lifecycleState", "lifecycleHistory" })
+                || newDescriptor["decision"] is not JsonObject receipt
+                || receipt["outcome"] is not JsonValue outcome
+                || !outcome.TryGetValue<string>(out var outcomeValue)
+                || outcomeValue is not ("rework" or "feature-spawn" or "archive")) return false;
+            if (!GrowsOnly(oldDescriptor["lifecycleHistory"], newDescriptor["lifecycleHistory"])
+                || !GrowsOnly(oldDescriptor["relatedTaskKeys"], newDescriptor["relatedTaskKeys"])) return false;
+            foreach (var member in DecisionReceiptMembers)
             {
-                oldDescriptor.Remove(field);
-                newDescriptor.Remove(field);
+                oldDescriptor.Remove(member);
+                newDescriptor.Remove(member);
             }
             return JsonNode.DeepEquals(oldDescriptor, newDescriptor);
         }
@@ -4963,6 +4936,58 @@ public partial class GitService
         {
             return false;
         }
+    }
+
+    /// <summary>The new array keeps every old element in order and only appends.</summary>
+    private static bool GrowsOnly(JsonNode? before, JsonNode? after)
+    {
+        if (before is null) return after is null or JsonArray;
+        if (before is not JsonArray oldItems || after is not JsonArray newItems
+            || newItems.Count < oldItems.Count) return false;
+        for (var i = 0; i < oldItems.Count; i++)
+            if (!JsonNode.DeepEquals(oldItems[i], newItems[i])) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// The shared metadata check of the managed descriptor rules: one parent,
+    /// the expected subject, the server identity or the operation trailer, and
+    /// only in-place modifications of <c>docs/**/workbench.json</c>. Returns the
+    /// changed descriptor paths, or null when the commit is not such a commit.
+    /// </summary>
+    private IReadOnlyList<string>? ManagedDescriptorCommitPaths(
+        string repoRoot, string sha, string parentSha, Func<string, bool> subjectMatches, string trailer)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(sha)
+            || !ReviewSubjectStore.IsValidResultSha(parentSha)) return null;
+        var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
+            "--format=%P%x1f%s%x1f%ae%x1f%ce%x1f%B", sha);
+        if (metadataCode != 0) return null;
+        var fields = metadata.Trim().Split('\x1f');
+        const string serverEmail = "agent-studio@users.noreply.github.com";
+        if (fields.Length != 5
+            || !string.Equals(fields[0], parentSha, StringComparison.OrdinalIgnoreCase)
+            || !subjectMatches(fields[1])
+            || !((fields[2] == serverEmail && fields[3] == serverEmail)
+                || fields[4].Split('\n').Any(line => line.Trim() == trailer))) return null;
+
+        var (changes, _, changeCode) = RunGitArgs(repoRoot, "diff-tree", "--name-status",
+            "-r", "-z", parentSha, sha);
+        if (changeCode != 0) return null;
+        var (summary, _, summaryCode) = RunGitArgs(repoRoot, "diff-tree", "--summary",
+            "-r", parentSha, sha);
+        if (summaryCode != 0 || !string.IsNullOrWhiteSpace(summary)) return null;
+        var entries = changes.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (entries.Length == 0 || entries.Length % 2 != 0) return null;
+        var paths = new List<string>();
+        for (var i = 0; i < entries.Length; i += 2)
+        {
+            var path = entries[i + 1];
+            if (entries[i] != "M" || !path.StartsWith("docs/", StringComparison.Ordinal)
+                || !path.EndsWith("/workbench.json", StringComparison.Ordinal)) return null;
+            paths.Add(path);
+        }
+        return paths;
     }
 
     /// <summary>

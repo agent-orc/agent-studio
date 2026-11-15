@@ -92,6 +92,7 @@ public static class EndpointMapping
         if (mapsLocalV1)
         {
             app.MapV1ReviewPlaneEndpoints();
+            app.MapCombinedOneShotJobEndpoints();
             app.MapReviewPackagePlaneEndpoints();
             app.MapMonolithOrchestrationEndpoints();
             app.MapMonolithGateEndpoints();

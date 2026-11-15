@@ -260,6 +260,32 @@ test('Owner actions show accepted, refused and decided records by day in light, 
   await page.screenshot({ path: join(evidenceDir(testInfo), 'owner-actions-390px.png'), fullPage: true });
 });
 
+test('Created and reissued owner rows show project codes and display keys at 1280 and 390', async ({ page }, testInfo) => {
+  const now = new Date().toISOString();
+  const ownerEntries = [
+    { ts: now, kind: 'owner_action', topic: 'card-created', summary: 'Created AGT-20: Demo card',
+      project: 'Agent Studio', watchPath: '/tmp/agent-studio', jobId: 'shared-id' },
+    { ts: now, kind: 'owner_action', topic: 'lane-move', summary: 'Reissued RUN-20: review requested changes',
+      project: 'Runbook', watchPath: '/tmp/runbook', jobId: 'shared-id' },
+  ];
+  await mockStudio(page, () => [], ownerEntries);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/#/feed', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+  await page.getByTestId('feed-kind-owner_action').click();
+  const rows = page.getByTestId('orchestrator-feed-entry');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0).getByTestId('orchestrator-entry-project')).toHaveText('AGT');
+  await expect(rows.nth(0).getByTestId('orchestrator-entry-summary')).toHaveText('Created AGT-20: Demo card');
+  await expect(rows.nth(1).getByTestId('orchestrator-entry-project')).toHaveText('RUN');
+  await expect(rows.nth(1).getByTestId('orchestrator-entry-summary')).toHaveText('Reissued RUN-20: review requested changes');
+  await expect(page.getByTestId('orchestrator-feed')).not.toContainText('/tmp/');
+  await page.screenshot({ path: join(evidenceDir(testInfo), 'owner-created-reissued-1280.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(rows).toHaveCount(2);
+  await page.screenshot({ path: join(evidenceDir(testInfo), 'owner-created-reissued-390.png'), fullPage: true });
+});
+
 test('Activity shortcut focuses the workspace tab and clears its badge', async ({ page }, testInfo) => {
   const entries = buildEntries().slice(0, 3);
   await page.addInitScript(() => {

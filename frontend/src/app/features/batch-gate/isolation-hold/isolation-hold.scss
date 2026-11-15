@@ -1,0 +1,14 @@
+.isolation-hold {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  overflow-wrap: anywhere;
+}
+.isolation-hold strong { color: var(--studio-fg-strong); }
+.isolation-hold time { font-variant-numeric: tabular-nums; }
+.isolation-hold button { justify-self: start; }

@@ -82,6 +82,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+.attention-list__review-count {
+  margin: 0;
+  color: var(--studio-fg-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .attention-list__rows {
   display: flex;
   flex-direction: column;
@@ -145,6 +152,13 @@
 
 // A stranded batch needs its recovery blocker and next retry visible in the list.
 .attention-list__row[data-attention-type='batch.running-without-gate'] .attention-list__reason {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
+// Completion refusals are actionable prose, including on narrow phones.
+.attention-list__row[data-attention-type='human-review.ready'] .attention-list__reason {
   display: block;
   overflow: visible;
   -webkit-line-clamp: unset;

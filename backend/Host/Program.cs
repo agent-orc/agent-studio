@@ -991,12 +991,15 @@ builder.Services.AddSingleton<AgentStudio.Runner.ILoadThrottleGate>(sp =>
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Runner.SystemLoadThrottle>());
 builder.Services.AddSingleton<AgentStudio.Cli.ClaudeOneShot>();
 builder.Services.AddSingleton<AgentStudio.Cli.CodexOneShot>();
+builder.Services.AddSingleton<AgentStudio.Cli.CombinedOneShotJobs>();
 builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
     new AgentStudio.Cli.PromptLoggingCliOneShot(
         !SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
         ? new AgentStudio.Cli.RemoteCliOneShot(CliTypes.Claude,
             sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IConfiguration>(),
-            sp.GetService<AdHocUsageRecorder>())
+            sp.GetService<AdHocUsageRecorder>(), combinedJobs:
+                TaskServerPlaneProxy.IsConfigured(sp.GetRequiredService<IConfiguration>())
+                    ? null : sp.GetRequiredService<AgentStudio.Cli.CombinedOneShotJobs>())
         :
         new AgentStudio.Cli.LoadAwareCliOneShot(
             sp.GetRequiredService<AgentStudio.Cli.ClaudeOneShot>(),
@@ -1008,7 +1011,9 @@ builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
         !SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
         ? new AgentStudio.Cli.RemoteCliOneShot(CliTypes.Codex,
             sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IConfiguration>(),
-            sp.GetService<AdHocUsageRecorder>())
+            sp.GetService<AdHocUsageRecorder>(), combinedJobs:
+                TaskServerPlaneProxy.IsConfigured(sp.GetRequiredService<IConfiguration>())
+                    ? null : sp.GetRequiredService<AgentStudio.Cli.CombinedOneShotJobs>())
         :
         new AgentStudio.Cli.LoadAwareCliOneShot(
             sp.GetRequiredService<AgentStudio.Cli.CodexOneShot>(),
@@ -1568,6 +1573,7 @@ builder.Services.AddSingleton<DossierMaintenanceService>();
 builder.Services.AddSingleton<WorkbenchChangeNotifier>();
 builder.Services.AddSingleton<IWorkbenchSpawnedCardCleanup, WorkbenchSpawnedCardCleanup>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();
+builder.Services.AddSingleton<WorkbenchRevisionRoundService>();
 builder.Services.AddSingleton<WorkbenchReviewService>();
 // AGT-2803: the classification vocabulary. The areas registry merges the
 // product defaults with the project additions from the workspace project

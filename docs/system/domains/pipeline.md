@@ -804,6 +804,12 @@ only a tested fast-forward candidate; it does not synthesize a merge commit
 after the gate. A dirty or stale local checkout cannot hold the verified remote
 publication in `Publishing`; local sync is best effort. Ejected and unresolved
 members start per-card fallbacks after the project batch reservation is released.
+The periodic recovery pass also checks every unresolved pending generation.
+It restores a missing ownership marker or one that names a missing batch,
+reports an unowned generation past its maximum wait with reason and age, and
+resumes a paused batch's durable per-task fallback handoff after a restart.
+Red parents with unresolved members pause when isolation stops; a Green
+isolation child that lost a review generation retires before parent handoff.
 Publication recovery isolates errors by manifest so damaged evidence in one
 batch cannot stop formation or release for other batches. A deferred review
 whose outcome is `IntegrationBranchDefect` can release on the same verified
@@ -1628,7 +1634,14 @@ comparison before Quality Studio's verdict contract can decide a review.
   reviewed task-branch merge integrates it after a pre-merge Dossier placement
   check. The post-steps verify the source-card key plus `decision-pending`
   status and task-file links, wait for human sight review, then create coding
-  cards from the descriptor.
+  cards from the descriptor. Promotion writes a durable intent in the source
+  card's `.metadata/concept-promotion.json` before creating children. Each
+  child has a stable identity and creation source, so a retry recovers a card
+  created before its spawn-ledger row. The state records `creating-cards`,
+  `cards-recorded`, `dossier-accepted`, or `completed`, plus created keys.
+  Promotion conflicts and later plan reads return that state and a safe retry
+  action. A successful retry repairs source relations, accepts the Dossier,
+  and completes the concept.
 - `backend/Features/Docs/DossierMaintenanceService.cs` and
   `DossierImplementationContract.cs`: resolve a delivery card's Dossiers from
   `references.workbenches` or descriptor `sourceTaskKeys`, frame the CORE run,
@@ -2916,7 +2929,10 @@ operator changes cause the step to fail before its writer runs.
   `workbench.json.implementationTasks` entry carries, or is normalized to, a
   `bounded-slice` acceptance scope. Promotion rejects a single open-ended
   `implement all recommendations` entry. Multi-slice work uses separate entries
-  in the Dossier with one card per slice; see
+  in the Dossier with one card per slice. An entry names the slice ids it
+  depends on in `dependsOn`; concept review accepts only ids of earlier
+  entries, and promotion writes them as `dependsOn` edges between the cards;
+  see
   [workflow-sized task cutting](../../operations/workflow-sized-task-cutting.md).
 - `PipelineHealthService` is the visibility-only sensor for pipeline-wide
   failure modes. `BuildTestGateRunner` reports acquired/completed pairs into
