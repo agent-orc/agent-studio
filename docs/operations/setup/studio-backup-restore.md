@@ -156,8 +156,6 @@ Check a new target with the management command `backup-upload` (below); it copie
 
 **Settings → Operations** shows one **Installation backups** panel to owners and operators: the state, the last good backup with its time, age and size, the last restore verification, the off-host copy state and target, the schedule and the recent archives. Project Operations pages link to this installation view. When the backup key is absent, the warning links this runbook. The key file and API configuration require host access; Studio does not create or escrow a backup key through the browser. The panel warns when:
 
-The **Fresh-host recovery handoff** in that panel lists the archive and checksum, escrowed backup and secret store key copies, escrowed host CA private and public keys, project Git remotes, and the excluded Operations Server and optional Quality Studio. It shows the last check this installation can substantiate. Escrowed copies, CA material and remote read access say **Not checked by Studio** even after an owner checks them outside the host; a successful staging verification does not change that status. Record the external check date and result with the escrow records. Each row links to its exact restore or escrow step. **Download owner handoff** writes a text snapshot of those statuses and the runbook links for storage away from the host. The file contains archive metadata and key fingerprints, never key bytes. Download it after a new backup and keep it with the owner's recovery records, separate from the escrowed keys.
-
 | Code | Meaning |
 |---|---|
 | `backup-stale` | The newest good backup is older than 12 hours (`Backup__StaleAfterHours`, `STUDIO_BACKUP_STALE_AFTER_HOURS`). Also a `backup-stale` health reason in `GET /api/v1/management/status`. |
@@ -167,6 +165,8 @@ The **Fresh-host recovery handoff** in that panel lists the archive and checksum
 | `verification-failed`, `verification-overdue` | The last restore verification failed, or none ran within two verification intervals. |
 | `offhost-not-configured`, `offhost-invalid`, `offhost-pending`, `offhost-failed` | The newest backup is not, or not yet, off the host. |
 | `host-ca-mismatch` | The configured host CA differs from the fingerprint in host certificate state, its public key is unreadable, or older issued state has no recorded fingerprint. Install the escrowed CA before issuing certificates. |
+
+The **Fresh-host recovery handoff** in that panel lists the archive and checksum, escrowed backup and secret store key copies, escrowed host CA private and public keys, project Git remotes, and the excluded Operations Server and optional Quality Studio. It shows the last check this installation can substantiate. Escrowed copies, CA material and remote read access say **Not checked by Studio** even after an owner checks them outside the host; a successful staging verification does not change that status. Record the external check date and result with the escrow records. Each row links to its exact restore or escrow step. **Download owner handoff** writes a text snapshot of those statuses and the runbook links for storage away from the host. The file contains archive metadata and key fingerprints, never key bytes. Download it after a new backup and keep it with the owner's recovery records, separate from the escrowed keys.
 
 The panel also shows (AGT-3734):
 
