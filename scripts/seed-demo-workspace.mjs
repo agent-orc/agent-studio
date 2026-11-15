@@ -9,7 +9,7 @@
 // statistics views have data.
 //
 // Usage:
-//   node scripts/seed-demo-workspace.mjs [--root <path>] [--owner-day]
+//   node scripts/seed-demo-workspace.mjs [--root <path>] [--owner-day] [--state-root <path>]
 //
 // Default root: C:\Projects\agent-taskboard-workspace-demo
 //   (override with --root <path> or the ATP_DEMO_ROOT env var).
@@ -21,10 +21,11 @@
 // with the same short codes as the cards and Dossiers.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const DEFAULT_ROOT = 'C:\\Projects\\agent-taskboard-workspace-demo';
 const OWNER = 'local-default';
@@ -34,14 +35,18 @@ const OWNER = 'local-default';
 const PROVENANCE = 'pinned-demo-simulated';
 
 function parseArgs(argv) {
-  const args = { root: process.env.ATP_DEMO_ROOT || DEFAULT_ROOT, ownerDay: false };
+  const args = { root: process.env.ATP_DEMO_ROOT || DEFAULT_ROOT, ownerDay: false, stateRoot: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--root') args.root = argv[++i];
     else if (argv[i] === '--owner-day') args.ownerDay = true;
+    else if (argv[i] === '--state-root') args.stateRoot = argv[++i];
     else throw new Error(`Unknown seed option: ${argv[i]}`);
   }
   if (!args.root) throw new Error('--root requires a path');
   args.root = resolve(args.root);
+  if (args.stateRoot) args.stateRoot = resolve(args.stateRoot);
+  if (args.stateRoot && (!args.ownerDay || !args.stateRoot.startsWith(args.root + sep)))
+    throw new Error('--state-root requires --owner-day and a directory inside --root');
   return args;
 }
 
@@ -798,6 +803,8 @@ function writeWorkspaceRootFiles(root) {
       IntegrationBranch: 'develop',
       IntegrationStrategy: 'direct-merge',
       CliModes: null,
+      ...(ARGS.ownerDay && ARGS.stateRoot && p.name === 'Demo App'
+        ? { BatchGate: { Enabled: true, Scope: 'code', DocumentationOnly: false } } : {}),
     };
   }
   writeJson(join(root, 'project-settings.json'), settings);
@@ -1267,6 +1274,72 @@ function stampTree(root) {
   stamp(root);
 }
 
+// This receipt belongs to the disposable backend instance, outside the task
+// repository. The fixed identity lets backend startup locate the same ledger.
+function writeOwnerDayBatchState(root, stateRoot) {
+  const digest = (value) => createHash('sha256').update(value).digest('hex');
+  const identity = digest(root).slice(0, 32);
+  writeText(join(root, '.batch-state-installation-id'), identity + '\n');
+  const batchId = 'demo-report-batch-1';
+  const folder = join(stateRoot, 'agentstudio', 'instances', identity, 'batch-gates', digest(batchId));
+  rmSync(folder, { recursive: true, force: true });
+  const at = recentIso(3);
+  const scope = { project: 'Demo App', repository: join(root, 'projects', 'demo-app'),
+    integrationBranch: 'develop', gateProfile: 'demo-only', gateProfileDigest: digest('demo-only'),
+    platformVersion: PROVENANCE };
+  const sha = digest('demo-report-batch-candidate');
+  const members = ['DEMO-20', 'DEMO-24'].map((taskKey, index) => ({ taskKey, ...scope,
+    resultRef: `refs/heads/demo/results/${taskKey}`, resultSha: digest(taskKey),
+    runAttempt: `demo-${taskKey}`, deliveryEpoch: 1, fencingToken: 1,
+    reviewSubjectSha: digest(taskKey), settledEnvelope: true, modelReviewPassed: true,
+    buildTestDeferredToBatch: true, currentGeneration: true, activePerTaskGate: false,
+    owningBatchId: batchId, documentationOnly: false, reviewCompletedAtUtc: at,
+    enqueueSequence: index + 1 }));
+  const membershipDigest = digest(members.map(member => member.taskKey).join(','));
+  writeJson(join(folder, 'manifest.json'), { batchId, scope, baseSha: digest('demo-report-base'),
+    membershipDigest, closedAtUtc: at, members, exclusions: [],
+    eligibleKeys: members.map(member => member.taskKey), formationReason: 'Simulated owner-day report batch.' });
+  for (const [index, phase, reason] of [[1, 0, null], [2, 7, 'Focused report test failed; owner triage and isolation are waiting.']]) {
+    writeJson(join(folder, 'state', `0000000${index}.json`), { batchId, membershipDigest,
+      phase, candidateSha: phase === 0 ? null : sha, coordinatorFence: 1,
+      recordedAtUtc: at, reason, batchRunId: phase === 7 ? 'demo-report-run-1' : null });
+  }
+  const evidencePath = join(folder, 'runs', 'demo-report-run-1.log');
+  writeText(evidencePath, 'Pinned demo gate only. ReportExportTests.EmptyReportKeepsExportDisabled failed.\n');
+  writeJson(join(folder, 'runs', 'demo-report-run-1.json'), {
+    batchRunId: 'demo-report-run-1', batchId, membershipDigest,
+    baseSha: digest('demo-report-base'), candidateSha: sha, gateProfile: 'demo-only',
+    gateProfileDigest: scope.gateProfileDigest, host: 'demo-gate.invalid', coordinatorFence: 1,
+    commands: ['simulated focused report test'], startedAtUtc: at, evidencePath,
+  });
+  writeJson(join(folder, 'runs', digest('demo-report-run-1') + '.verdict.json'), {
+    batchRunId: 'demo-report-run-1', batchId, membershipDigest, testedCandidateSha: sha,
+    gateProfileDigest: scope.gateProfileDigest, outcome: 'red', classification: 'DeterministicSuiteRed',
+    evidencePath, completedAtUtc: at,
+  });
+  const failureEvidence = join(folder, 'runs', 'demo-report-run-1.evidence.jsonl');
+  writeJsonl(failureEvidence, [{ gateRunId: 'demo-report-run-1', testedSha: sha,
+    gateCompletedAtUtc: at, recordedFailedTests: ['ReportExportTests.EmptyReportKeepsExportDisabled'],
+    output: 'ReportExportTests.EmptyReportKeepsExportDisabled failed in the simulated report suite.' }]);
+  writeJson(join(stateRoot, 'agentstudio', 'instances', identity, 'batch-gates', 'executions', 'demo-report-run-1.json'), {
+    project: 'Demo App', batchId, batchRunId: 'demo-report-run-1', testedSha: sha,
+    outcome: 'red', host: 'demo-gate.invalid', startedAtUtc: at, completedAtUtc: at,
+    queueWaitMs: 0, overloadMinutes: 0, evidencePath: failureEvidence,
+    memberKeys: members.map(member => member.taskKey), evidenceGateRunId: 'demo-report-run-1',
+  });
+  const findings = join(stateRoot, 'agentstudio', 'instances', identity, 'batch-gates',
+    'isolation-findings', digest('Demo App'));
+  for (const [member, status] of members.map((item, index) =>
+    [item, index === 0 ? 'proven-red' : 'proven-green'])) {
+    writeJson(join(findings, digest(member.taskKey) + '.json'), {
+      project: 'Demo App', parentBatchId: batchId, taskKey: member.taskKey,
+      runAttempt: member.runAttempt, resultSha: member.resultSha,
+      baseSha: digest('demo-report-base'), status, evidencePath: failureEvidence,
+      recordedAtUtc: at, provingBatchId: batchId, provingRunId: 'demo-report-run-1',
+    });
+  }
+}
+
 function main() {
   const { root } = ARGS;
   const productionGuard = root.replace(/[\\/]+$/, '').toLowerCase();
@@ -1288,6 +1361,7 @@ function main() {
   stampTree(root);
   writeProjectRegistry(root);
   commitProjectContents(root);
+  if (ARGS.ownerDay && ARGS.stateRoot) writeOwnerDayBatchState(root, ARGS.stateRoot);
 
   const perLane = TASKS.reduce((acc, t) => ((acc[t.state] = (acc[t.state] || 0) + 1), acc), {});
   const perStatus = DOSSIERS.items.reduce((acc, d) => ((acc[d.status] = (acc[d.status] || 0) + 1), acc), {});

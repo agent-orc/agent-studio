@@ -18,7 +18,7 @@ public static class ControlPlaneAuditStreams
     public const string BreakGlass = "break-glass";
     /// <summary>Human Review decisions: accept and send back (AGT-3670).</summary>
     public const string Review = "review";
-    /// <summary>Installation backups: create, upload, verify, retention, and the offline decrypt and restore (AGT-3737).</summary>
+    /// <summary>Installation backups: management reads and backup operations.</summary>
     public const string Backup = "backup";
 }
 

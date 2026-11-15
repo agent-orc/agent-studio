@@ -1,6 +1,6 @@
 @for (project of projects(); track project) {
   @if (stateFor(project); as batch) {
-    @if (batch.plan.decision !== 'disabled') {
+    @if (batch.plan.decision !== 'disabled' || batch.perTaskGates?.length) {
       @let alert = alertFor(project);
       <button type="button" class="batch-lane-indicator" data-testid="batch-lane-indicator" (click)="panelProject.set(project)"
         [attr.data-batch-alert]="alert?.state ?? null" [attr.data-batch-id]="alert?.batchId ?? null"
@@ -11,8 +11,10 @@
             [compact]="true" testId="batch-lane-alert" />
           @if (alert.culprits.length) { {{ alert.culprits.join(', ') }} proven red · }
         }
-        Batch: {{ waitingFor(project) }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running
-        @if (batch.perTaskGates?.length) { · Per-task gates: {{ perTaskFor(project).queued }} queued · {{ perTaskFor(project).running }} running }
+        @if (batch.plan.decision !== 'disabled') {
+          Batch: {{ waitingFor(project) }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running
+        }
+        @if (batch.perTaskGates?.length) { @if (batch.plan.decision !== 'disabled') { · } Per-task gates: {{ perTaskFor(project).queued }} queued · {{ perTaskFor(project).running }} running }
       </button>
     }
   }

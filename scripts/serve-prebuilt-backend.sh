@@ -158,7 +158,11 @@ case "${PW_E2E_PROFILE:-standard}" in
   # Review cards.
   demo|owner-day|public-demo|networked-https-demo)
     if [[ "${PW_E2E_PROFILE}" == owner-day ]]; then
-      node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}" --owner-day
+      # The seeded ledger is a frozen owner scene. Suppress the pilot's repair
+      # and flight loop so it cannot change the red phase or contact a host.
+      export DOTNET_ENVIRONMENT=Testing
+      export ASPNETCORE_ENVIRONMENT=Testing
+      node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}" --owner-day --state-root "${XDG_DATA_HOME}"
     else
       node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
     fi

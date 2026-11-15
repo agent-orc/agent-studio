@@ -2,7 +2,7 @@ import type { AuditIntegrity } from './operator-agent.model';
 
 /**
  * Backup records of the control plane audit chain (AGT-3737,
- * `GET /api/auth/audit/backups`): create, upload, restore verification,
+ * `GET /api/auth/audit/backups`): management reads, create, upload, verification,
  * retention, and the offline decrypt and restore, each with its actor
  * (`schedule` for the scheduler) and outcome. Owner only.
  */
@@ -34,6 +34,8 @@ const OPERATION_LABELS: Readonly<Record<string, string>> = {
   'backup.retention': 'Retention',
   'backup.decrypt': 'Offline decrypt',
   'backup.restore': 'Offline restore',
+  'backup.inventory.read': 'View backup inventory',
+  'backup.contents.read': 'View archive contents',
 };
 
 export function backupOperationLabel(operation: string): string {
