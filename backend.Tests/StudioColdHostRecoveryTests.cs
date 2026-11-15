@@ -102,6 +102,17 @@ public sealed class StudioColdHostRecoveryTests
             Assert.True(File.Exists(Path.Combine(fixture.OffHost, record.FileName + ".sha256")));
         }
 
+        var cardBytes = expected.Where(pair => pair.Key.StartsWith("card:", StringComparison.Ordinal))
+            .ToDictionary(pair => pair.Value, pair => File.ReadAllBytes(Path.Combine(fixture.Workspace, pair.Value)));
+        var projectMetadata = File.ReadAllBytes(Path.Combine(fixture.Workspace, ".metadata", "projects.json"));
+        var recordBytes = records.ToDictionary(record => record,
+            record => File.ReadAllBytes(Path.Combine(fixture.Home, ".local", "share", "agentstudio", record)));
+        var recordDigests = recordBytes.ToDictionary(pair => pair.Key,
+            pair => Convert.ToHexStringLower(SHA256.HashData(pair.Value)));
+        Directory.Delete(fixture.Workspace, recursive: true);
+        Directory.Delete(fixture.Home, recursive: true);
+        Directory.Delete(fixture.Projects, recursive: true);
+
         var lossAt = clock.GetUtcNow().AddMinutes(3);
         var recoveryTimer = Stopwatch.StartNew();
         var host = Path.Combine(fixture.Root, "fresh-host");
@@ -123,14 +134,11 @@ public sealed class StudioColdHostRecoveryTests
         foreach (var project in projects)
             Assert.Equal(expected["checkout:" + project.Id],
                 CheckoutFileFixture.Git(Path.Combine(destinations["projects"], project.Name), "rev-parse", "HEAD").Trim());
-        foreach (var relative in expected.Where(pair => pair.Key.StartsWith("card:", StringComparison.Ordinal)).Select(pair => pair.Value))
-            Assert.Equal(File.ReadAllBytes(Path.Combine(fixture.Workspace, relative)),
-                File.ReadAllBytes(Path.Combine(destinations["workspace"], relative)));
-        foreach (var record in records)
-            Assert.Equal(File.ReadAllBytes(Path.Combine(fixture.Home, ".local", "share", "agentstudio", record)),
-                File.ReadAllBytes(Path.Combine(destinations["home"], ".local", "share", "agentstudio", record)));
-        Assert.Equal(File.ReadAllBytes(Path.Combine(fixture.Workspace, ".metadata", "projects.json")),
-            File.ReadAllBytes(Path.Combine(destinations["workspace"], ".metadata", "projects.json")));
+        foreach (var (relative, content) in cardBytes)
+            Assert.Equal(content, File.ReadAllBytes(Path.Combine(destinations["workspace"], relative)));
+        foreach (var (record, content) in recordBytes)
+            Assert.Equal(content, File.ReadAllBytes(Path.Combine(destinations["home"], ".local", "share", "agentstudio", record)));
+        Assert.Equal(projectMetadata, File.ReadAllBytes(Path.Combine(destinations["workspace"], ".metadata", "projects.json")));
         Assert.True(File.Exists(Path.Combine(destinations["workspace"], "projects", "PROJ-A", "Active",
             "PROJ-A-Active", "progress.json")));
 
@@ -154,13 +162,16 @@ public sealed class StudioColdHostRecoveryTests
         Assert.Equal(Encoding.UTF8.GetBytes(secretValue),
             await reopenedSecrets.ReadValueAsync(SecretScope.Workspace, "recovery-probe", 1, default));
 
-        // Reopening recovered state must preserve the durable work identifiers and publication count.
-        var beforeRestart = records.ToDictionary(record => record,
-            record => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(destinations["home"],
-                ".local", "share", "agentstudio", record)))));
-        foreach (var (record, digest) in beforeRestart)
+        // Compare against the source snapshot, then reopen the restored stores. File equality alone
+        // does not prove that a live scheduler would avoid replaying work after a process restart.
+        foreach (var (record, digest) in recordDigests)
             Assert.Equal(digest, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(destinations["home"],
                 ".local", "share", "agentstudio", record)))));
+        Assert.Single(Directory.GetFiles(Path.Combine(destinations["home"], ".local", "share", "agentstudio", "attempts")));
+        Assert.Single(Directory.GetFiles(Path.Combine(destinations["home"], ".local", "share", "agentstudio", "reviews")));
+        Assert.Single(Directory.GetFiles(Path.Combine(destinations["home"], ".local", "share", "agentstudio", "batches", "published")));
+        Assert.ThrowsAny<Exception>(() => BackupRestore.Restore(archive, BackupKey.Load(fixture.KeyFile),
+            new BackupRestorePlan(destinations, CloneCheckouts: true)));
 
         var evidence = new
         {
@@ -170,7 +181,7 @@ public sealed class StudioColdHostRecoveryTests
             restoredArchive = restored.Manifest.Id,
             projectIds = projects.Select(project => project.Id).ToArray(),
             cardIds = expected.Keys.Where(key => key.StartsWith("card:", StringComparison.Ordinal)).ToArray(),
-            recordDigests = beforeRestart,
+            recordDigests,
             userIds = reopenedAccess.ListUsers().Select(user => user.Id).ToArray(),
             tokenId = token.Token.Id,
             secretId = secret.Id,
@@ -178,6 +189,7 @@ public sealed class StudioColdHostRecoveryTests
             measuredRecoveryPointSeconds = (lossAt - DateTimeOffset.Parse(manual.CreatedAt)).TotalSeconds,
             measuredRecoveryTimeSeconds = recoveryTimer.Elapsed.TotalSeconds,
             recoveryTimeBasis = "archive fetch from local off-host directory through files restored and key installed",
+            liveRestartDeduplicationProved = false,
         };
         if (Environment.GetEnvironmentVariable("JOB_RESULTS_DIR") is { Length: > 0 } results)
         {
