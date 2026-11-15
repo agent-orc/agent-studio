@@ -20,6 +20,9 @@ stop() {
   if (( backend_started )); then
     "${REPO_ROOT}/api.sh" stop || true
   fi
+  if declare -F e2e_networked_https_key_cleanup >/dev/null; then
+    e2e_networked_https_key_cleanup
+  fi
   git -C "${REPO_ROOT}" worktree remove --force "${PW_E2E_CHECKOUT}" || true
 }
 trap stop EXIT
@@ -105,6 +108,8 @@ case "${PW_E2E_PROFILE:-standard}" in
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    source "${REPO_ROOT}/scripts/networked-https-e2e-key.sh"
+    e2e_networked_https_key_prepare
     restricted_repo="${PW_E2E_WORKSPACE}/projects/restricted-fixture"
     mkdir -p "${restricted_repo}"
     git -C "${restricted_repo}" init -q
