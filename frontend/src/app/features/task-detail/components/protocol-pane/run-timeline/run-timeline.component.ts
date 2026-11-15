@@ -9,6 +9,8 @@ import { ExecutionLocationBadgeComponent } from '../../../../../components/execu
 import { RunExecutionContextComponent } from './run-execution-context/run-execution-context.component';
 import { ReviewAttemptHistoryComponent } from './review-attempt-history/review-attempt-history.component';
 import { runTriggerLabel, runTriggerReportHref } from './run-trigger-presentation.util';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { runCardStatusLabel, runCardStatusTone } from './run-timeline-status';
 /**
  * Run timeline panel rendered above the activity log in the protocol
  * pane. Each card represents one CLI invocation between user inputs
@@ -34,7 +36,7 @@ import { runTriggerLabel, runTriggerReportHref } from './run-trigger-presentatio
 @Component({
   selector: 'app-run-timeline',
   standalone: true,
-  imports: [TooltipDirective, ExecutionLocationBadgeComponent, RunExecutionContextComponent, ReviewAttemptHistoryComponent],
+  imports: [TooltipDirective, ExecutionLocationBadgeComponent, RunExecutionContextComponent, ReviewAttemptHistoryComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './run-timeline.component.html',
   styleUrl: './run-timeline.component.scss'
@@ -303,15 +305,12 @@ export class RunTimelineComponent {
     }
   }
 
-  statusLabel(r: RunRecord): string {
-    if (r.status === 'running') return 'running';
-    if (r.status === 'completed') return 'completed';
-    if (r.status === 'failed') return 'failed';
-    // 'stopped' is the deliberate-kill status (user pause, Pause-&-Send,
-    // watchdog). Legacy run records may still carry 'cancelled'.
-    if (r.status === 'stopped' || r.status === 'cancelled') return 'stopped';
-    return r.status || 'unknown';
+  statusTone(r: RunRecord): StatusTone {
+    const runs = this.visibleRuns();
+    return runCardStatusTone(r.status, runs.length > 0 && runs[runs.length - 1].index === r.index);
   }
+
+  statusLabel(r: RunRecord): string { return runCardStatusLabel(r.status); }
 
   formatDuration(seconds: number): string {
     if (seconds < 1) return '<1s';

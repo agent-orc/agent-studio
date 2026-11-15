@@ -10,6 +10,7 @@ import {
   recommendedOption,
 } from '../../../../models/decision-card-presentation';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ClientService } from '../../../../services/client.service';
 import { formatDateTimeUtc } from '../../../../services/format.util';
 import { NotificationService } from '../../../../services/notification.service';
@@ -24,6 +25,18 @@ interface DecisionHistoryRow {
   actor: string;
   at: string;
   text: string | null;
+}
+
+interface DecisionIndicator {
+  tone: StatusTone;
+  label: string;
+}
+
+/** Open decisions wait on the decider (warning); a decided card is settled (success). */
+export function decisionStageIndicator(open: boolean): DecisionIndicator {
+  return open
+    ? { tone: 'warning', label: 'Waiting for the decider' }
+    : { tone: 'success', label: 'Decided' };
 }
 
 /**
@@ -41,7 +54,7 @@ interface DecisionHistoryRow {
   selector: 'app-decision-card-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PendingButtonDirective],
+  imports: [PendingButtonDirective, StatusIndicatorComponent],
   templateUrl: './decision-card-panel.component.html',
   styleUrl: './decision-card-panel.component.scss',
 })
@@ -79,6 +92,14 @@ export class DecisionCardPanelComponent {
     return decision ? isDecisionOverdue(decision) : false;
   });
   readonly dueLabel = computed(() => formatDateTimeUtc(this.decision()?.dueDate));
+  /** Stage, due date and dependants line as shared status indicators (AGT-3403). */
+  readonly stage = computed(() => decisionStageIndicator(this.open()));
+  readonly dueState = computed<DecisionIndicator>(() => this.overdue()
+    ? { tone: 'warning', label: `Overdue since ${this.dueLabel()}` }
+    : { tone: 'neutral', label: `Due ${this.dueLabel()}` });
+  readonly blocksState = computed<DecisionIndicator>(() => this.open()
+    ? { tone: 'warning', label: 'Blocks' }
+    : { tone: 'success', label: 'Unblocked' });
   readonly recommended = computed<DecisionOption | null>(() => {
     const decision = this.decision();
     return decision ? recommendedOption(decision) : null;

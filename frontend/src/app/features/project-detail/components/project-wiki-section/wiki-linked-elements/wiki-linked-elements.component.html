@@ -20,7 +20,8 @@
           <span class="linked-element__kind">{{ linkKindLabel(link.kind) }}</span>
           <span class="linked-element__label">{{ link.label }}</span>
           @if (linkedElementState(link) === 'missing') {
-            <span class="linked-element__status">Missing</span>
+            <app-status-indicator tone="danger" label="Missing" [compact]="true"
+                                  testId="project-wiki-linked-element-missing" />
           }
           <code>{{ link.target }}</code>
         </a>

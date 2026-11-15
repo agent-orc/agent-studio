@@ -13,6 +13,7 @@ import { firstValueFrom } from 'rxjs';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { InfoButtonMarkdownBodyComponent } from './info-button-markdown-body/info-button-markdown-body.component';
 import { DialogComponent } from '../dialog/dialog.component';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import { ModalStackService } from '../../services/modal-stack.service';
 
 interface ConceptDocPayload {
@@ -36,7 +37,7 @@ interface ConceptDocPayload {
 @Component({
   selector: 'app-info-button',
   standalone: true,
-  imports: [TooltipDirective, InfoButtonMarkdownBodyComponent, DialogComponent],
+  imports: [TooltipDirective, InfoButtonMarkdownBodyComponent, DialogComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './info-button.component.html',
   styleUrl: './info-button.component.scss'

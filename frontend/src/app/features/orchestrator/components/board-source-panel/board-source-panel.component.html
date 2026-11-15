@@ -29,12 +29,15 @@
         <dt>Mirror</dt>
         <dd data-testid="board-source-sync">
           @if (s.sync.syncedGeneration !== null) {
-            generation {{ s.sync.syncedGeneration }} at {{ s.sync.syncedAt | date:'HH:mm:ss' }}
+            <app-status-indicator [tone]="mirrorSyncTone(s)" [compact]="true" testId="board-source-sync-state"
+                                  [label]="'generation ' + s.sync.syncedGeneration + ' at ' + (s.sync.syncedAt | date:'HH:mm:ss')" />
           } @else {
-            {{ s.mirroring ? 'not synced yet' : 'off' }}
+            <app-status-indicator [tone]="mirrorSyncTone(s)" [compact]="true" testId="board-source-sync-state"
+                                  [label]="s.mirroring ? 'not synced yet' : 'off'" />
           }
           @if (s.sync.lastError) {
-            <span class="board-source__muted" [title]="s.sync.lastError">· last error {{ s.sync.lastErrorAt | date:'HH:mm:ss' }}</span>
+            <app-status-indicator tone="danger" [compact]="true" testId="board-source-sync-error"
+                                  [label]="'last error ' + (s.sync.lastErrorAt | date:'HH:mm:ss')" [detail]="s.sync.lastError" />
           }
         </dd>
       </div>
@@ -49,7 +52,7 @@
       <div>
         <dt>Cutover</dt>
         <dd data-testid="board-source-readiness">
-          <span class="board-source__badge" [class.board-source__badge--ok]="s.readiness.ready">{{ readinessLabel(s.readiness.state) }}</span>
+          <app-status-indicator [tone]="readinessTone(s.readiness.state)" [label]="readinessLabel(s.readiness.state)" testId="board-source-readiness-state" />
           @if (s.readiness.cleanSince) {
             {{ s.readiness.cleanDays | number:'1.1-1' }} of {{ s.readiness.requiredDays }} days clean
           }

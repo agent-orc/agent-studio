@@ -36,6 +36,7 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  oldestFormed?: { batchId: string; formedAtUtc: string; ageMinutes: number } | null;
   flightClaim?: { batchId: string; stage: string; stageDeadlineUtc: string; end?: unknown | null } | null;
   ejectRequests?: { project: string; taskKey: string; actor: string; reason: string;
     requestedAtUtc: string; status: 'pending' | 'released'; releasedAtUtc?: string | null }[];
@@ -74,6 +75,10 @@ export interface BatchGateState {
     parentBatchId?: string | null;
     phase: string;
     phaseAtUtc?: string | null;
+    lastProgressAtUtc?: string | null;
+    claimAgeMinutes?: number | null;
+    reservationWaitMinutes?: number | null;
+    nextAction?: { action: string; dueAtUtc: string } | null;
     liveFlight?: boolean;
     recoveryStatus?: { reason: string; nextRetryAtUtc: string } | null;
     phaseReason?: string | null;
@@ -86,7 +91,7 @@ export interface BatchGateState {
     exclusions?: { taskKey: string; reason: string; detail?: string | null }[];
     baseSha: string;
     candidateSha?: string | null;
-    members: { taskKey: string; replay: BatchReplay; released: boolean }[];
+    members: { taskKey: string; disposition?: string; replay: BatchReplay; released: boolean }[];
     runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; hang?: string | null; evidenceAvailable?: boolean; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
     publication?: BatchPublication | null;
   }[];

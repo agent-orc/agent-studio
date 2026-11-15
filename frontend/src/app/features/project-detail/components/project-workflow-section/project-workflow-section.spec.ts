@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { of } from 'rxjs';
-import { ProjectWorkflowSectionComponent } from './project-workflow-section';
+import { ProjectWorkflowSectionComponent, switchTone } from './project-workflow-section';
 import { TaskService } from '../../../../services/task.service';
 
 /**
@@ -99,6 +99,14 @@ describe('ProjectWorkflowSectionComponent', () => {
     expect(
       el.querySelector('[data-testid="workflow-transition-state-auto-push"]')?.textContent?.trim(),
     ).toBe('On completed');
+    const tones = ['auto-commit', 'attribution', 'gates', 'auto-push'].map(
+      (key) => (el.querySelector(`[data-testid="workflow-transition-state-${key}"]`) as HTMLElement | null)?.dataset['tone'],
+    );
+    expect(tones).toEqual(['success', 'success', 'success', 'success']);
+  });
+
+  it('maps an effective transition state to a tone', () => {
+    expect([true, false, null, undefined].map(switchTone)).toEqual(['success', 'neutral', 'running', 'running']);
   });
 
   it('shows per-lane sort controls inside the board-order rows', async () => {

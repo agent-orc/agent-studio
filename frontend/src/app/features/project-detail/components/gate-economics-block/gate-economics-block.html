@@ -10,13 +10,13 @@
         @for (row of projection.rows; track row.project) {
           <tr [attr.data-project]="row.project" [attr.data-testid]="row.project === 'All projects' ? 'gate-economics-all' : 'gate-economics-project'">
             <th scope="row"><span class="ge__project">@if (row.project !== 'All projects') { <i class="ge__mark" [style.background]="row.projectColor || color(row.project)" aria-hidden="true"></i><span class="ge__code">{{ row.projectShortCode || '?' }}</span> }<span>{{ row.project }}</span></span></th>
-            <td>{{ row.developState || 'Unknown' }} @if (row.lastGreenSha) { · {{ row.lastGreenSha.slice(0, 12) }} }</td>
+            <td><app-status-indicator [tone]="gateTone(row.developState)" [label]="row.developState || 'Unknown'" [compact]="true" testId="gate-economics-develop-state" /> @if (row.lastGreenSha) { · {{ row.lastGreenSha.slice(0, 12) }} }</td>
             <td>{{ row.gatedMerges }}</td>
             <td>{{ format(row.gateMinutesMedian, ' min') }} / {{ format(row.gateMinutesP90, ' min') }}</td>
             <td>{{ minutes(row.queueWaitP90Ms) }}</td>
             <td>{{ percent(row.exactReuseRate) }} / {{ percent(row.disjointReuseRate) }}</td>
             <td>{{ percent(row.fullSuiteShare) }}</td><td>{{ percent(row.sameShaRetestRate) }}</td>
-            <td>{{ row.lastNightlyGuard || 'Not available' }}</td>
+            <td><app-status-indicator [tone]="nightlyTone(row.lastNightlyGuard)" [label]="row.lastNightlyGuard || 'Not available'" [compact]="true" testId="gate-economics-nightly-guard" /></td>
             <td>{{ format(row.deliveryLagP50Minutes, ' min') }} / {{ format(row.deliveryLagP95Minutes, ' min') }}</td>
             <td>{{ format(row.oldestWaitingMinutes, ' min') }}</td>
             <td>{{ row.gateGreen }} / {{ row.gateRed }} / {{ row.gateCancelled }}</td>

@@ -27,39 +27,6 @@
 
   &__verdict {
     display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-    font-weight: 700;
-    padding: 2px 10px;
-    border-radius: 999px;
-    background: var(--studio-bg-hover);
-    color: var(--studio-fg-strong);
-
-    &--ok {
-      background: color-mix(in srgb, var(--lane-completed) 18%, transparent);
-      color: var(--lane-completed);
-    }
-
-    &--warn {
-      background: color-mix(in srgb, var(--severity-warn) 18%, transparent);
-      color: var(--severity-warn);
-    }
-
-    &--danger {
-      background: color-mix(in srgb, var(--severity-high) 18%, transparent);
-      color: var(--severity-high);
-    }
-
-    &--neutral {
-      background: var(--studio-bg-hover);
-      color: var(--studio-fg-dim);
-    }
-  }
-
-  &__glyph {
-    font-size: 0.95em;
-    line-height: 1;
   }
 
   &__attempt {

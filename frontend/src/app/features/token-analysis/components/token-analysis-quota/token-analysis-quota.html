@@ -35,7 +35,7 @@
         <tbody>
           @for (row of rows(); track row.key) {
             <tr [class.qc__row--open]="row.open">
-              <td>{{ row.label }} @if (row.open) { <span class="qc__badge">running</span> }</td>
+              <td>{{ row.label }} @if (row.open) { <app-status-indicator tone="running" label="running" [compact]="true" testId="token-analysis-quota-open" /> }</td>
               <td>{{ row.from | date: 'MMM d, HH:mm' }}</td>
               <td>{{ row.to | date: 'MMM d, HH:mm' }}</td>
               <td class="qc__num">{{ row.delta }} pt</td>

@@ -135,25 +135,10 @@
 .wdash__status {
   display: inline-flex;
   align-items: center;
-  gap: var(--studio-spacing-1);
   padding-left: var(--studio-spacing-3);
   border-left: 1px solid var(--pwiki-paper-border);
-  color: var(--pwiki-paper-muted);
-  font-size: 0.72rem;
-  font-weight: 650;
   white-space: nowrap;
 }
-
-.wdash__status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--pwiki-paper-border);
-}
-
-.wdash__status-dot[data-tone='good'] { background: var(--studio-success); }
-.wdash__status-dot[data-tone='warn'] { background: var(--studio-warn); }
-.wdash__status-dot[data-tone='bad'] { background: var(--studio-error); }
 
 /* ---- card grid ---- */
 

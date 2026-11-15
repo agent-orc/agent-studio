@@ -1,3 +1,4 @@
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -54,7 +55,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
 @Component({
   selector: 'app-task-column, app-job-column',
   standalone: true,
-  imports: [
+  imports: [StatusIndicatorComponent,
     TaskCardComponent,
     LaneCardWindowComponent,
     LaneGroupHeadComponent,

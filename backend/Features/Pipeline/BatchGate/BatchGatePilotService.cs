@@ -149,6 +149,9 @@ public sealed partial class BatchGatePilotService
     public async Task<BatchGatePendingRecord> EnqueueAsync(TaskInfo task, ReviewAttemptDto review,
         RunAttemptDto sourceRun, DateTimeOffset reviewedAtUtc, CancellationToken ct)
     {
+        if (!HasAttributedCurrentDelivery(task, sourceRun))
+            throw new InvalidOperationException(
+                "Commit attribution is missing for this reviewed delivery. The card cannot enter a batch.");
         var priorOwnership = BatchGateOwnershipStore.Read(task.FolderPath);
         if (task.State == TaskStates.AutoReview
             && priorOwnership?.ReviewAttemptId == review.AttemptId
@@ -180,11 +183,24 @@ public sealed partial class BatchGatePilotService
     {
         if (task.State != TaskStates.AutoReview) return;
         var pending = BuildPending(task, review, sourceRun, reviewedAtUtc);
+        if (!HasAttributedCurrentDelivery(task, sourceRun))
+        {
+            await EscalateFallbackAsync(task, pending,
+                "Commit attribution is missing for this reviewed delivery. Check the run completion warning before retrying the batch.",
+                infrastructure: false, recordInStore: false, ct,
+                resolution: "release-unattributed").ConfigureAwait(false);
+            return;
+        }
         await RunPerTaskFallbackAsync(pending, ct, new PerTaskFallbackCause(
                 PerTaskFallbackRules.EmergencyAdmission,
                 "batch admission failed when the review settled"), recordInStore: false)
             .ConfigureAwait(false);
     }
+
+    private static bool HasAttributedCurrentDelivery(TaskInfo task, RunAttemptDto sourceRun)
+        => sourceRun.ResultEnvelope is { } envelope && task.Commits.Any(commit =>
+            string.Equals(commit.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(commit.ResultSha, envelope.ResultSha, StringComparison.OrdinalIgnoreCase));
 
     public void ReportAdmissionFailure(TaskInfo task, ReviewAttemptDto review, string reason)
         => _healthAlerts?.BatchAdmissionFailed(task.ProjectName, task.WatchPath,
@@ -562,6 +578,7 @@ public sealed partial class BatchGatePilotService
                 await HandOffProvenRedsAsync(project, ct).ConfigureAwait(false);
             await ResolvePausedAsync(fetchedBases, ct).ConfigureAwait(false);
             await RecoverPublishedAsync(ct).ConfigureAwait(false);
+            await RepairPublishedUnattributedAsync(ct).ConfigureAwait(false);
             await ReconcilePassedAutoReviewsAsync(ct).ConfigureAwait(false);
             foreach (var manifest in _store.ListManifests().Where(item =>
                          _store.LatestState(item.BatchId) is

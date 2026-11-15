@@ -1,6 +1,7 @@
 import type { OrchestratorChatTurn } from '../../../../features/orchestrator';
 import type { ChatEvent, ConversationEvent, RawLineRange } from 'coding-agent-chat/core';
 import { adaptChatTurnMetadata, chatMetadataLibraryEnabled } from '../../chat-turn-metadata.adapter';
+import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 /**
  * Pure helpers for the orchestrator side sheet. Extracted from the
@@ -321,4 +322,25 @@ export function resolveAttachmentUrl(projectName: string | null, relativePath: s
     ? relativePath.substring('chat-attachments/'.length)
     : relativePath;
   return `/api/v1/studio/runner/${encodeURIComponent(projectName)}/orchestrator-chat/attachments/${encodeURIComponent(fileName)}`;
+}
+
+/** Inputs of the context freshness line in the side-sheet scope row. */
+export interface ContextFreshnessInput {
+  refreshing: boolean;
+  error: boolean;
+  loading: boolean;
+  hasDigest: boolean;
+}
+
+/**
+ * Context freshness to indicator tone, in the same precedence as the
+ * digest service's `statusText()`: refreshing or first load is running, a
+ * failed refresh or unavailable context is danger, a captured digest is
+ * success and "Context not loaded" stays neutral.
+ */
+export function contextFreshnessTone(state: ContextFreshnessInput): StatusTone {
+  if (state.refreshing) return 'running';
+  if (state.error) return 'danger';
+  if (state.loading && !state.hasDigest) return 'running';
+  return state.hasDigest ? 'success' : 'neutral';
 }

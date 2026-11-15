@@ -86,6 +86,9 @@ describe('OrchestratorContextHeaderComponent', () => {
 
     expect(fixture.nativeElement.querySelector('[data-testid="orch-context-run"]')).not.toBeNull();
     expect(text(fixture, 'orch-context-run-model')).toBe('opus 4.8');
+    const runState = fixture.nativeElement.querySelector('[data-testid="orch-context-run-state"]') as HTMLElement;
+    expect(runState.dataset['tone']).toBe('running');
+    expect(runState.textContent?.trim()).toBe('Live');
     // 90s elapsed -> "1m" bucket.
     expect(text(fixture, 'orch-context-run-duration')).toBe('1m');
   });
@@ -104,6 +107,8 @@ describe('OrchestratorContextHeaderComponent', () => {
     fixture.componentRef.setInput('pinned', true);
     fixture.detectChanges();
     expect(text(fixture, 'orch-context-pin')).toContain('Pinned');
+    const pin = fixture.nativeElement.querySelector('[data-testid="orch-context-pin"]') as HTMLElement;
+    expect(pin.dataset['tone']).toBe('info');
     const headerPinned = fixture.nativeElement.querySelector('[data-testid="orch-context-header"]');
     expect(headerPinned.getAttribute('data-pinned')).toBe('true');
   });

@@ -21,16 +21,6 @@
     .obs__icon { font-size: 1rem; }
     .obs__sub { margin: 4px 0 0; color: var(--studio-fg-muted); font-size: 0.82rem; }
     .obs__spacer { flex: 1; }
-    .obs__chip {
-      padding: 2px 8px;
-      border-radius: 999px;
-      background: var(--studio-card-muted-bg);
-      color: var(--studio-fg-dim);
-      font-size: 0.72rem;
-      letter-spacing: 0.02em;
-    }
-    .obs__chip--info { color: var(--studio-accent-teal); background: color-mix(in srgb, var(--studio-accent-teal) 12%, transparent); }
-    .obs__chip--fixture { color: var(--studio-accent-strong); background: color-mix(in srgb, var(--studio-accent-strong) 14%, transparent); }
     .obs__refresh {
       background: var(--studio-card-muted-bg);
       color: var(--studio-fg);
@@ -358,9 +348,6 @@
     .obs__kind-badge--advisory { background: color-mix(in srgb, var(--studio-accent-strong) 18%, transparent); color: var(--studio-accent-strong); }
     .obs__kind-badge--lifecycle { background: color-mix(in srgb, var(--studio-fg-dim) 14%, transparent); color: var(--studio-fg-dim); }
     .obs__kind-badge--heartbeat { background: color-mix(in srgb, var(--studio-fg-dim) 14%, transparent); color: var(--studio-fg-dim); }
-    .obs__sev { color: var(--studio-fg-dim); font-size: 0.74rem; }
-    .obs__sev--warn { color: var(--severity-warn); }
-    .obs__sev--high { color: var(--severity-high); font-weight: 600; }
 
     .obs__detail {
       @include m.deck-panel;

@@ -93,11 +93,6 @@
   white-space: nowrap;
 }
 
-.enrichment-report__summary-copy strong {
-  color: var(--studio-fg-strong);
-  font-weight: 650;
-}
-
 .enrichment-report__summary-separator {
   padding-inline: var(--studio-spacing-2);
   color: var(--studio-fg-muted);
@@ -146,14 +141,6 @@
   margin-top: var(--studio-spacing-1);
   color: var(--studio-fg-strong);
   font-size: 0.9rem;
-}
-
-.enrichment-report__dot {
-  width: var(--studio-spacing-2);
-  height: var(--studio-spacing-2);
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--report-tone);
 }
 
 .enrichment-report__tokens {

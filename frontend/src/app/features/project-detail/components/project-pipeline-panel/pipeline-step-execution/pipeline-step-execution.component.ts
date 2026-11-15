@@ -2,10 +2,21 @@ import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angu
 import { TaskService } from '../../../../../services/task.service';
 import type { PipelineStepProbeResult } from '../../../../task-pipeline';
 import type { PipelineAdminRow } from '../pipeline-config.util';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+
+/** Probe result status onto the shared tones (AGT-3403); unknown values stay neutral. */
+const PROBE_STATUS_TONE: Readonly<Record<string, StatusTone>> = {
+  passed: 'success', failed: 'danger', skipped: 'neutral', 'not-applicable': 'neutral', unavailable: 'warning',
+};
+
+export function probeStatusTone(status: string): StatusTone {
+  return Object.hasOwn(PROBE_STATUS_TONE, status) ? PROBE_STATUS_TONE[status] : 'neutral';
+}
 
 @Component({
   selector: 'app-pipeline-step-execution',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './pipeline-step-execution.component.html',
   styleUrl: './pipeline-step-execution.component.scss',
@@ -13,6 +24,7 @@ import type { PipelineAdminRow } from '../pipeline-config.util';
 export class PipelineStepExecutionComponent {
   readonly projectName = input.required<string>();
   readonly step = input.required<PipelineAdminRow>();
+  readonly probeTone = probeStatusTone;
   private readonly taskService = inject(TaskService);
 
   readonly busy = signal(false);

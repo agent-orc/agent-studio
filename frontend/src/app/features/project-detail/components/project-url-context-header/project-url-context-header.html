@@ -7,13 +7,16 @@
       <code data-testid="url-preview-branch">{{ context.branch || 'Branch unavailable' }}</code>
       <code class="context__sha" data-testid="url-preview-head"
             [title]="context.headSha || 'HEAD unavailable'">{{ context.headShortSha || 'No HEAD' }}</code>
-      @if (context.isDirty) { <span class="context__badge">Uncommitted</span> }
+      @if (context.isDirty) {
+        <app-status-indicator class="context__badge" tone="warning" label="Uncommitted" [compact]="true" testId="url-preview-uncommitted" />
+      }
     </div>
 
     <div class="context__integration" data-testid="url-preview-integration"
-         [title]="context.error || integrationSummary()">
+         [title]="context.error || integration().label">
       <span class="context__label">Integration</span>
-      <strong>{{ context.error ? 'Unavailable' : integrationSummary() }}</strong>
+      <app-status-indicator class="context__integration-state" [tone]="integration().tone" [label]="integration().label"
+                            [compact]="true" testId="url-preview-integration-state" />
     </div>
   } @else {
     <div class="context__identity" data-testid="url-preview-context-loading">

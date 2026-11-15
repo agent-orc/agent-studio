@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { HostedDataPanelComponent } from './hosted-data-panel';
+import { HostedDataPanelComponent, auditOutcomeTone } from './hosted-data-panel';
 
 describe('HostedDataPanelComponent', () => {
   const stageList = { environments: [{ declaration: { id: 'stage', name: 'Stage' } }] };
@@ -114,5 +114,12 @@ describe('HostedDataPanelComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).not.toContain('Backup completed.');
     http.verify();
+  });
+
+  it('maps audit outcomes onto calm history tones', () => {
+    expect(auditOutcomeTone('succeeded')).toBe('success');
+    expect(auditOutcomeTone('OK')).toBe('success');
+    expect(auditOutcomeTone('failed')).toBe('warning');
+    expect(auditOutcomeTone('queued')).toBe('neutral');
   });
 });

@@ -6,10 +6,11 @@
     <h3 class="usage-detail__title" tabindex="-1" [id]="sectionId() + '-title'">Cost, USD token-ledger estimate</h3>
     <p class="usage-detail__meta">
       @if (c.stateLabel) {
-        <span class="usage-detail__badge" [attr.data-state]="c.state" data-testid="usage-detail-cost-state">{{ c.stateLabel }}</span>
+        <app-status-indicator [tone]="stateTone(c.state)" [label]="c.stateLabel" [attr.data-state]="c.state"
+                              testId="usage-detail-cost-state" />
         @if (c.coverageReason) { <span>{{ c.coverageReason }}</span> }
       } @else {
-        <span>Coverage complete</span>
+        <app-status-indicator tone="success" label="Coverage complete" testId="usage-detail-cost-complete" />
       }
       @if (c.latestReceipt; as r) {
         <span>Latest receipt <time [attr.datetime]="r.iso">{{ r.local }}</time> <span class="usage-detail__utc">({{ r.utc }})</span></span>
@@ -47,7 +48,10 @@
           <tr [attr.data-project]="p.key" data-testid="usage-detail-project-row">
             <th scope="row">
               <a [href]="p.todayHref" [attr.aria-label]="'Open token ledger for ' + p.name + ', today'">{{ p.name }}</a>
-              @if (p.coverageLabel) { <span class="usage-detail__badge" data-state="partial">{{ p.coverageLabel }}</span> }
+              @if (p.coverageLabel) {
+                <app-status-indicator tone="warning" [label]="p.coverageLabel" [compact]="true"
+                                      testId="usage-detail-project-coverage" />
+              }
             </th>
             <td class="usage-detail__num" data-testid="usage-detail-project-today">{{ p.today }}</td>
             <td class="usage-detail__num" data-testid="usage-detail-project-week">{{ p.week }}</td>
@@ -96,7 +100,8 @@
                 } @else { <span class="usage-detail__muted">Not reported</span> }
               </td>
               <td class="usage-detail__num" [class.usage-detail__muted]="r.pending">{{ r.spend }}</td>
-              <td><span class="usage-detail__badge" [attr.data-state]="r.included ? 'normal' : 'partial'" data-testid="usage-detail-included">{{ r.inclusion }}</span></td>
+              <td><app-status-indicator [tone]="inclusionTone(r.included)" [label]="r.inclusion" [compact]="true"
+                                        testId="usage-detail-included" /></td>
             </tr>
           }
         </tbody>

@@ -23,9 +23,6 @@
 .activity__line strong { color: var(--studio-fg-strong); font-weight: 600; }
 .activity__meta { color: var(--studio-fg-dim); }
 .activity__action { margin-left: auto; }
-.activity__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--studio-fg-dim); }
-.activity__dot[data-tone='ok'] { background: var(--studio-success); }
-.activity__dot[data-tone='alert'] { background: var(--severity-high); }
 
 .activity__body { display: grid; grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr); gap: var(--studio-spacing-4); align-items: start; }
 .activity__sessions { display: flex; flex-direction: column; gap: var(--studio-spacing-1); min-width: 0; }

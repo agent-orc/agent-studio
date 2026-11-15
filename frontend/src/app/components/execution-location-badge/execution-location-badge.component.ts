@@ -1,11 +1,31 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { TaskExecutionLocation } from '../../models/task.model';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
+
+type ExecutionState = TaskExecutionLocation['state'];
+
+/** Live execution state to shared status tone (AGT-3403); unknown states are neutral. */
+const EXECUTION_STATE_TONES: Readonly<Partial<Record<ExecutionState, StatusTone>>> = {
+  'local-running': 'running',
+  'remote-running': 'running',
+  'queued-remote': 'neutral',
+  'recovering': 'info',
+  'remote-disconnected': 'danger',
+  'remote-stale': 'danger',
+  'no-active-execution': 'neutral',
+};
+
+/** Tone for an execution location; a historical attribution stays neutral (R4). */
+export function executionLocationTone(value: TaskExecutionLocation | null | undefined): StatusTone {
+  if (!value || value.historical) return 'neutral';
+  return EXECUTION_STATE_TONES[value.state] ?? 'neutral';
+}
 
 @Component({
   selector: 'app-execution-location-badge',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './execution-location-badge.component.html',
   styleUrl: './execution-location-badge.component.scss',
@@ -18,6 +38,7 @@ export class ExecutionLocationBadgeComponent {
     const state = this.execution()?.state;
     return (state === 'remote-disconnected' || state === 'remote-stale') && !this.execution()?.historical;
   });
+  readonly tone = computed(() => executionLocationTone(this.execution()));
   readonly label = computed(() => {
     const value = this.execution();
     if (!value) return '';

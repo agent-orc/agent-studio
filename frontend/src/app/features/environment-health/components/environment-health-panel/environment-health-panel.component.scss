@@ -42,30 +42,6 @@
   div { display: grid; gap: var(--studio-spacing-1); }
   small { color: var(--studio-text-secondary); }
 }
-.environment-health__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  font-size: 0.8rem;
-  border: 1px solid var(--studio-border);
-  border-radius: 999px;
-}
-.environment-health__dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--studio-text-secondary);
-}
-.environment-health__badge[data-status='up'] .environment-health__dot,
-.environment-health__dot[data-status='up'] { background: var(--studio-success); }
-.environment-health__badge[data-status='degraded'] .environment-health__dot,
-.environment-health__badge[data-status='invalid'] .environment-health__dot,
-.environment-health__dot[data-status='degraded'],
-.environment-health__dot[data-status='invalid'] { background: var(--studio-warn); }
-.environment-health__badge[data-status='down'] .environment-health__dot,
-.environment-health__dot[data-status='down'] { background: var(--studio-error); }
 .environment-health__incident { font-weight: 600; }
 .environment-health__quiet { color: var(--studio-text-secondary); font-size: 0.85rem; }
 .environment-health__metrics {
@@ -95,7 +71,6 @@
   small { color: var(--studio-text-secondary); }
 }
 .environment-health__result { font-size: 0.85rem; white-space: nowrap; }
-.environment-health__warn { color: var(--studio-warn); font-weight: 600; }
 @media (max-width: 900px) {
   .environment-health__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .environment-health__checks li { grid-template-columns: auto minmax(0, 1fr); }

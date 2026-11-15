@@ -23,19 +23,8 @@
   background: color-mix(in srgb, var(--studio-accent-6) 10%, var(--studio-bg-subtle));
 }
 
-.runtime-verdict__pill,
-.runtime-terminal {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  padding: 0 var(--studio-spacing-2);
-  border-radius: 999px;
-  background: var(--studio-bg-elevated);
-  color: var(--studio-fg-strong);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.runtime-verdict__status {
+  flex: 0 0 auto;
 }
 
 .runtime-verdict__content {
@@ -47,5 +36,4 @@
 
 .runtime-terminal {
   margin-top: var(--studio-spacing-2);
-  border: 1px solid var(--studio-border);
 }

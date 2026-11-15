@@ -42,7 +42,7 @@
           <div class="weekly__head">
             <span class="weekly__label">{{ row.window.label }}</span>
             @if (row.warn) {
-              <span class="weekly__badge" data-testid="quota-forecast-badge">Full before reset</span>
+              <app-status-indicator tone="warning" label="Full before reset" testId="quota-forecast-badge" />
             }
           </div>
           <dl class="weekly__stats">
@@ -56,10 +56,10 @@
           <app-quota-curve [window]="row.window" [from]="card.from" [to]="card.to" />
 
           @if (row.fallback; as fb) {
-            <div class="fallback" data-testid="quota-fallback" [attr.data-armed]="fb.armed">
-              <span class="fallback__badge" [attr.data-state]="fb.engaged ? 'engaged' : fb.armed ? 'armed' : 'unarmed'">
-                {{ fb.engaged ? 'Engaged' : fb.armed ? 'Armed' : 'Not armed' }}
-              </span>
+            @let fbState = fallbackState(fb);
+            @let fbStatus = fallbackIndicator(fbState);
+            <div class="fallback" data-testid="quota-fallback" [attr.data-armed]="fb.armed" [attr.data-state]="fbState">
+              <app-status-indicator class="fallback__state" [tone]="fbStatus.tone" [label]="fbStatus.label" [compact]="true" testId="quota-fallback-state" />
               <span class="fallback__text">
                 Fallback:
                 <strong data-testid="quota-fallback-target">{{ fb.target ?? 'none' }}</strong>

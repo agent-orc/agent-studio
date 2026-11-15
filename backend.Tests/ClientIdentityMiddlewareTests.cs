@@ -135,6 +135,17 @@ public class ClientIdentityMiddlewareTests : IDisposable
     }
 
     [Fact]
+    public async Task PullGateMutation_UsesItsServiceCredentialWithoutClientHeader()
+    {
+        var (mw, _, called) = BuildMiddleware();
+        var ctx = BuildContext("POST", "/api/pull-gates/register", clientId: null);
+        await mw.InvokeAsync(ctx);
+
+        Assert.True(called.Value);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+    }
+
+    [Fact]
     public async Task NonApiPath_PassesThrough()
     {
         var (mw, _, called) = BuildMiddleware();

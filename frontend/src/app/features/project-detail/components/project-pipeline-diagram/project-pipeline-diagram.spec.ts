@@ -84,6 +84,7 @@ describe('ProjectPipelineDiagramComponent', () => {
 
     expect(root.querySelector('[data-testid="pipeline-node-production"]')?.getAttribute('data-issues')).toBe('true');
     expect(root.querySelector('[data-testid="pipeline-node-production"]')?.textContent).toContain('1 issue');
+    expect(root.querySelector<HTMLElement>('[data-testid="pipeline-node-production"] [data-testid="pipeline-node-issues"]')?.dataset['tone']).toBe('warning');
     expect(root.querySelector('[data-testid="pipeline-node-staging"]')?.getAttribute('data-issues')).toBe('false');
     expect(root.querySelector('[data-testid="pipeline-node-artifacts"]')?.getAttribute('data-issues')).toBe('true');
   });

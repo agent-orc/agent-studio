@@ -58,7 +58,10 @@
               <span class="git-view__ladder-arrow">→</span>
               <span class="git-view__ladder-name">{{ prov.ladder.integrationBranch }}</span>
               <span class="git-view__ladder-sha">{{ short(prov.ladder.integrationHead) }}</span>
-              <span class="git-view__ladder-flag">{{ prov.ladder.mergedToIntegration ? 'merged' : 'pending' }}</span>
+              <app-status-indicator [tone]="ladderTone(prov.ladder.mergedToIntegration)"
+                                    [label]="prov.ladder.mergedToIntegration ? 'merged' : 'pending'"
+                                    [compact]="true"
+                                    testId="git-ladder-integration-state" />
             </li>
             <li class="git-view__ladder-rung"
                 [class.git-view__ladder-rung--reached]="prov.ladder.releasedToRelease"
@@ -67,7 +70,10 @@
               <span class="git-view__ladder-arrow">→</span>
               <span class="git-view__ladder-name">{{ prov.ladder.releaseBranch }}</span>
               <span class="git-view__ladder-sha">{{ short(prov.ladder.releaseHead) }}</span>
-              <span class="git-view__ladder-flag">{{ prov.ladder.releasedToRelease ? 'released' : 'pending' }}</span>
+              <app-status-indicator [tone]="ladderTone(prov.ladder.releasedToRelease)"
+                                    [label]="prov.ladder.releasedToRelease ? 'released' : 'pending'"
+                                    [compact]="true"
+                                    testId="git-ladder-release-state" />
             </li>
           </ol>
         </section>
@@ -109,13 +115,15 @@
             <span class="git-view__commit-when">{{ c.at | date:'medium' }}</span>
             @if (git.commitReview(); as review) {
               <button type="button"
-                      class="git-view__commit-review git-view__commit-review--{{ reviewTone(review.verdict) }}"
+                      class="git-view__commit-review"
                       data-testid="git-commit-review-badge"
                       [attr.data-verdict]="reviewTone(review.verdict)"
                       [cacTooltip]="reviewTooltip(review)"
                       (click)="openCodeReview()">
-                <span class="git-view__commit-review-glyph" aria-hidden="true">{{ reviewGlyph(review.verdict) }}</span>
-                <span class="git-view__commit-review-label">{{ reviewLabel(review.verdict) }}</span>
+                <app-status-indicator [tone]="reviewStatusTone(review.verdict)"
+                                      [label]="reviewLabel(review.verdict)"
+                                      [compact]="true"
+                                      testId="git-commit-review-state" />
               </button>
             }
             <button type="button"

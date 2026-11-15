@@ -4,6 +4,7 @@ import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import type { CliSessionInfo, CliUsageReport, CliUsageSection } from '../../../../features/cli';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 interface ProjectCliEnvironmentPaths {
   path: string;
@@ -55,7 +56,7 @@ interface ProjectCliOnboardingTile {
 @Component({
   selector: 'app-project-cli-environment-section',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   templateUrl: './project-cli-environment-section.html',
   styleUrl: './project-cli-environment-section.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -190,9 +191,10 @@ export class ProjectCliEnvironmentSectionComponent implements OnInit {
     });
   }
 
-  statusLabel(row: ProjectCliEnvironmentRow): string {
-    if (row.available) return 'Ready';
-    return row.error ? 'Issue' : 'Not detected';
+  /** Per-CLI availability: ready, an issue reported by the probe, or not detected. */
+  availabilityStatus(row: Pick<ProjectCliEnvironmentRow, 'available' | 'error'>): { label: string; tone: StatusTone } {
+    if (row.available) return { label: 'Ready', tone: 'success' };
+    return row.error ? { label: 'Issue', tone: 'danger' } : { label: 'Not detected', tone: 'neutral' };
   }
 
   modeLabel(mode: string | null | undefined): string {

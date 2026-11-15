@@ -12,7 +12,6 @@
 .access-badge[data-tier='T0'] { background: var(--studio-surface-muted); color: var(--studio-fg); }
 .access-badge[data-tier='T1'] { background: color-mix(in srgb, var(--studio-accent-teal) 18%, transparent); color: var(--studio-fg-strong); }
 .access-badge[data-tier='T2'] { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-fg-strong); }
-.access-badge[data-tone='active'] { background: color-mix(in srgb, var(--studio-success) 16%, transparent); color: var(--studio-fg-strong); }
 .grants__scroll { overflow-x: auto; }
 .grants__reason { max-width: 18rem; }
 .grants__create { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }

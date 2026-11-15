@@ -74,6 +74,8 @@ describe('BackupStatusPanelComponent', () => {
       expect(handoff.textContent).toContain(name);
     }
     expect(handoff.textContent).toContain('Not checked by Studio');
+    expect(handoff.textContent).toContain('Confirm this archive includes operations/; offline fencing required');
+    expect(handoff.textContent).not.toContain('rebootstrap required');
     expect(handoff.textContent).toContain('Data and registry archived when present');
     expect(handoff.textContent).toContain('image and repository checkouts required');
     expect(handoff.textContent).toContain('studio-backup-20261109T060000Z-abc123');
@@ -149,6 +151,25 @@ describe('BackupStatusPanelComponent', () => {
     expect(receipt?.textContent).toContain('host-a');
     expect(receipt?.textContent).toContain('a1b2c3d4e5f60718');
     expect(host.querySelector('[data-testid="operations-backups-restore-loss"]')?.textContent).toContain('is not in this installation');
+  });
+
+  it('identifies every outstanding remote re-enrolment and revocation check', async () => {
+    const host = await render(overview({ operationsRecovery: {
+      backupId: 'backup-a', fencedAt: '2026-11-15T00:00:00Z', items: [
+        { kind: 'reenrol', id: 'host-a', complete: false, oldPrincipalIds: ['old-a'] },
+        { kind: 'agent-revocation', id: 'host-a', complete: false, oldPrincipalIds: ['old-a'] },
+        { kind: 'reenrol', id: 'host-b', complete: true, oldPrincipalIds: ['old-b'] },
+        { kind: 'host-certificate-revocations', id: 'installation', complete: false, oldPrincipalIds: [] },
+        { kind: 'operator-revocations', id: 'installation', complete: false, oldPrincipalIds: [] },
+      ],
+    } }));
+    const checks = host.querySelectorAll('[data-testid="operations-recovery-checks"] li');
+    expect(checks.length).toBe(5);
+    expect([...checks].filter(item => item.getAttribute('data-complete') === 'false').length).toBe(4);
+    expect(host.textContent).toContain('Re-enrol remote agent host-a');
+    expect(host.textContent).toContain('Check old credentials are revoked for host-a');
+    expect(host.textContent).toContain('Check host certificate revocations');
+    expect(host.textContent).toContain('Check operator principal revocations');
   });
 
   it('lists off-host archives the local catalog does not know, or says it cannot list (AGT-3734)', async () => {

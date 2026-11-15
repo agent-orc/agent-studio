@@ -43,7 +43,7 @@ public sealed class HostRevocationStore(string directory)
             try
             {
                 var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Options = FileOptions.WriteThrough };
-                if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+                if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
                 using (var stream = new FileStream(temporary, options))
                 {
                     JsonSerializer.Serialize(stream, list, OperationsProtocol.Json);

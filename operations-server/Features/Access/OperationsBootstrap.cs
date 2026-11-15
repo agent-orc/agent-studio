@@ -23,18 +23,26 @@ public static class OperationsBootstrap
         foreach (var directory in new[] { principalsDirectory, agentDirectory, clientDirectory })
         {
             Directory.CreateDirectory(directory);
-            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute);
         }
         if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(clientDirectory,
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
             | UnixFileMode.GroupRead | UnixFileMode.GroupExecute);
         if (principalsExist && !OperatingSystem.IsWindows()) File.SetUnixFileMode(clientPath,
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        if (principalsExist && !OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+            File.SetUnixFileMode(agentPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        }
         GrantStudioGroup(clientDirectory, clientPath, principalsExist);
         if (principalsExist) return;
 
         var agent = Credential(agentPath);
         var client = Credential(clientPath);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(agentPath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
         if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(clientPath,
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
         GrantStudioGroup(clientDirectory, clientPath, true);
@@ -47,6 +55,8 @@ public static class OperationsBootstrap
                     "host.logs.collect", "host.configuration.apply"], ["container-agent"], []),
         ]);
         WriteNew(path, JsonSerializer.Serialize(principals, OperationsProtocol.Json));
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
     }
 
     private static void ValidateCredential(OperationsAccess access, string path, string principalId, string kind)

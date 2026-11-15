@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, input, signal } from '@angular/core';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   PipelineDefinitionIssue,
   PipelineDefinitionResponse,
@@ -7,6 +8,12 @@ import {
   ProjectPipelineDefinitionService,
 } from '../../services/project-pipeline-definition.service';
 import { ProjectPipelineDiagramComponent } from '../project-pipeline-diagram/project-pipeline-diagram';
+
+/** Validation state of the pipeline definition: valid, or the number of issues to fix. */
+export function pipelineValidationStatus(valid: boolean, issueCount: number): { label: string; tone: StatusTone } {
+  if (valid) return { label: 'Valid', tone: 'success' };
+  return { label: `${issueCount} ${issueCount === 1 ? 'issue' : 'issues'}`, tone: 'warning' };
+}
 
 /**
  * Settings section for the project.yml pipeline: the parsed diagram, the
@@ -17,12 +24,13 @@ import { ProjectPipelineDiagramComponent } from '../project-pipeline-diagram/pro
 @Component({
   selector: 'app-project-pipeline-definition',
   standalone: true,
-  imports: [PendingButtonDirective, ProjectPipelineDiagramComponent],
+  imports: [PendingButtonDirective, ProjectPipelineDiagramComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-pipeline-definition.html',
   styleUrl: './project-pipeline-definition.scss',
 })
 export class ProjectPipelineDefinitionComponent implements OnInit {
+  readonly validationStatus = pipelineValidationStatus;
   readonly projectName = input.required<string>();
 
   private readonly definitions = inject(ProjectPipelineDefinitionService);

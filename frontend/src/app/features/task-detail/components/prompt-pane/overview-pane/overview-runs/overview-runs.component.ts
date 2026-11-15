@@ -8,14 +8,37 @@ import {
 } from '../../../../../../services/format.util';
 import { formatDuration, formatTokens } from '../overview-pane-formatters';
 import { runTriggerLabel, runTriggerReportHref } from '../../../protocol-pane/run-timeline/run-trigger-presentation.util';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../../components/status-indicator/status-indicator.component';
 
 const KNOWN_CLIS: readonly CliType[] = ['claude', 'codex', 'gemini'];
+
+const RUN_RESULT_TONES: Readonly<Record<string, StatusTone>> = {
+  completed: 'success',
+  failed: 'danger',
+  running: 'running',
+  cancelled: 'warning',
+  stopped: 'warning',
+  unknown: 'neutral',
+};
+
+/**
+ * Tone of a run row from its record status (AGT-3403). Only the latest run is
+ * current truth: an older failure is history and drops to warning (R4).
+ * Unknown statuses and unrecorded legacy runs stay neutral.
+ */
+export function overviewRunResultTone(status: string, latest: boolean, legacyUnrecorded = false): StatusTone {
+  if (legacyUnrecorded) return 'neutral';
+  const key = status.trim().toLowerCase();
+  const tone = Object.hasOwn(RUN_RESULT_TONES, key) ? RUN_RESULT_TONES[key] : 'neutral';
+  return tone === 'danger' && !latest ? 'warning' : tone;
+}
 
 interface OverviewRunVm {
   record: RunRecord;
   startedAt: string | null;
   trigger: string;
   result: string;
+  resultTone: StatusTone;
   duration: string;
   engine: string | null;
   tokens: string | null;
@@ -26,6 +49,7 @@ interface OverviewRunVm {
 @Component({
   selector: 'app-overview-runs',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './overview-runs.component.html',
   styleUrl: './overview-runs.component.scss',
@@ -45,11 +69,12 @@ export class OverviewRunsComponent {
   readonly rows = computed<OverviewRunVm[]>(() =>
     [...this.runs()]
       .sort((left, right) => right.index - left.index)
-      .map((run) => ({
+      .map((run, position) => ({
         record: run,
         startedAt: this.startedAtLabel(run),
         trigger: runTriggerLabel(run),
         result: this.resultLabel(run),
+        resultTone: overviewRunResultTone(run.status, position === 0, this.isLegacyUnrecorded(run)),
         duration: this.durationLabel(run),
         engine: this.engineLabel(run),
         tokens: this.tokenLabel(run),

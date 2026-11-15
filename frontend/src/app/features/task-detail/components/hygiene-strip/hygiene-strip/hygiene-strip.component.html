@@ -29,9 +29,12 @@
 
     @if (hygiene()?.job?.acceptedTaskUncommitted && isActiveJob()) {
       <div class="hygiene-strip__warning" data-testid="hygiene-warning-dirty-after-accept">
-        <span class="hygiene-strip__warning-icon" aria-hidden="true">⚠</span>
         <div class="hygiene-strip__warning-body">
-          <strong>Accepted task work is sitting uncommitted.</strong>
+          <div class="hygiene-strip__warning-state">
+            <app-status-indicator tone="warning"
+                                  label="Accepted task work is sitting uncommitted."
+                                  testId="hygiene-warning-dirty-after-accept-state" />
+          </div>
           The task moved to <code>{{ hygiene()!.job!.state }}</code> but the
           working tree still has changes that aren't recorded on this task.
           Commit them now so the evidence travels with the task.
