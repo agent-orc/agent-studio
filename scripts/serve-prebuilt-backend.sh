@@ -156,8 +156,10 @@ case "${PW_E2E_PROFILE:-standard}" in
   # networked-https-demo: the networked-https stack seeded with the demo
   # cards, so role-scoped card reads (AGT-3669) meet real Ready and Human
   # Review cards.
-  demo|public-demo|networked-https-demo)
-    node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
+  demo|owner-day|public-demo|networked-https-demo)
+    seed_args=(--root "${PW_E2E_WORKSPACE}")
+    if [[ "${PW_E2E_PROFILE}" == owner-day ]]; then seed_args+=(--owner-day); fi
+    node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" "${seed_args[@]}"
     export WatchPaths__0__Name='Demo App'
     export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/demo-app"
     export WatchPaths__0__RootPath="${WatchPaths__0__Path}"
@@ -168,6 +170,9 @@ case "${PW_E2E_PROFILE:-standard}" in
     export WatchPaths__1__RepositoryPath="${WatchPaths__1__Path}"
     export DeliveryChain__Guarded=false
     export ReviewDecisionOrchestrator__BootDelaySeconds=3600
+    if [[ "${PW_E2E_PROFILE}" == owner-day ]]; then
+      export AcceptanceRail__Enabled=false
+    fi
     if [[ "${PW_E2E_PROFILE}" == public-demo ]]; then
       export Security__Profile=public-demo-readonly
       export Security__TrustedProxyAddresses=127.0.0.1
