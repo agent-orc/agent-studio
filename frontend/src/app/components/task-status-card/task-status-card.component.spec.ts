@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { describe, expect, it } from 'vitest';
-import { TaskStatusCardComponent } from './task-status-card.component';
+import { TaskStatusCardComponent, runStatusTone } from './task-status-card.component';
 import type { TaskInfo } from '../../models/task.model';
 
 function fixtureJob(overrides: Partial<TaskInfo> = {}): TaskInfo {
@@ -98,5 +98,17 @@ describe('TaskStatusCardComponent', () => {
 
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('[data-testid="task-status-card-run"]')).toBeNull();
+  });
+});
+
+describe('runStatusTone', () => {
+  it('maps execution statuses and falls back to neutral', () => {
+    expect(runStatusTone('running')).toBe('running');
+    expect(runStatusTone('completed')).toBe('success');
+    expect(runStatusTone('failed')).toBe('danger');
+    expect(runStatusTone('stopped')).toBe('neutral');
+    expect(runStatusTone('cancelled')).toBe('neutral');
+    expect(runStatusTone('paused-later')).toBe('neutral');
+    expect(runStatusTone(null)).toBe('neutral');
   });
 });

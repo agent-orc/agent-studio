@@ -85,21 +85,8 @@
   min-width: 0;
 }
 
-.panel-head__status-dot {
-  width: 7px;
-  height: 7px;
+.panel-head__status {
   flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--studio-fg-muted);
-}
-
-.panel-head__status-dot[data-state='ready'] {
-  background: var(--studio-success);
-}
-
-.panel-head__status-dot[data-state='active'] {
-  background: var(--studio-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-accent) 18%, transparent);
 }
 
 .panel-head__execution-copy {

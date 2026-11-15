@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.Shared;
+using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -9,6 +10,101 @@ namespace AgentStudio.Tests;
 
 public sealed class BatchGatePilotOrphanRecoveryTests : BatchGatePilotServiceTests
 {
+    [Fact]
+    public async Task Restart_resumes_a_durable_fallback_handoff_after_the_batch_retired()
+    {
+        using (var original = BuildFactory())
+        {
+            _ = original.CreateClient();
+            EnableBatchGate(original, closeSize: 2);
+            SeedMember(original, "DOC-HANDOFF-A", "docs/handoff-a.md");
+            SeedMember(original, "DOC-HANDOFF-B", "docs/handoff-b.md");
+            var manifest = ClosePendingBatch(original);
+            var store = original.Services.GetRequiredService<BatchGateStore>();
+            foreach (var item in store.ListPending())
+            {
+                store.RecordFallbackCause(new BatchGateFallbackCause(ProjectName,
+                    item.Subject.TaskKey, item.ReviewAttemptId, item.Subject.RunAttempt,
+                    PerTaskFallbackRules.BatchPaused, "paused batch handoff", manifest.BatchId, _clock));
+                BatchGateOwnershipStore.Write(item.JobFolderPath,
+                    new BatchGateOwnership(item.ReviewAttemptId,
+                        item.Subject with { OwningBatchId = null }));
+            }
+            store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+                BatchPhase.Paused, null, 1, _clock, "gate interrupted"));
+            store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+                BatchPhase.Abandoned, null, 1, _clock, "paused-to-per-task-gate"));
+        }
+
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 2);
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        var pilot = restarted.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+
+        AssertLane("DOC-HANDOFF-A", TaskStates.HumanReview);
+        AssertLane("DOC-HANDOFF-B", TaskStates.HumanReview);
+        Assert.True(_gate.FallbackRuns > 0);
+    }
+
+    [Fact]
+    public async Task Reconciler_restores_a_missing_pending_marker()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 3);
+        var member = SeedMember(factory, "DOC-MISSING-MARKER", "docs/missing-marker.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var item = Assert.Single(store.ListPending());
+        File.Delete(Path.Combine(TaskPaths.LogsDir(item.JobFolderPath),
+            "batch-gate-ownership.json"));
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var missing = Assert.Single((await pilot.CheckInvariantsAsync(ProjectName, CancellationToken.None)).Findings);
+        Assert.Equal("restore-queued-marker", missing.Repair);
+        Assert.Equal(member.ReviewAttemptId, missing.ReviewAttemptId);
+
+        await pilot.TickAsync(CancellationToken.None);
+        Assert.Equal(member.ReviewAttemptId,
+            BatchGateOwnershipStore.Read(item.JobFolderPath)?.ReviewAttemptId);
+    }
+
+    [Fact]
+    public async Task Invariant_report_names_the_age_of_an_overdue_unowned_generation()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 3);
+        SeedMember(factory, "DOC-AGED-PENDING", "docs/aged-pending.md");
+        _clock = _clock.AddMinutes(Settings(factory).MaximumWaitMinutes + 1);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var aged = Assert.Single((await pilot.CheckInvariantsAsync(ProjectName, CancellationToken.None)).Findings);
+        Assert.Equal("retry-planner", aged.Repair);
+        Assert.True(aged.AgeMs >= TimeSpan.FromMinutes(Settings(factory).MaximumWaitMinutes).TotalMilliseconds);
+    }
+
+    [Fact]
+    public async Task Unreadable_manifest_does_not_release_its_member_to_a_new_batch()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var a = SeedMember(factory, "DOC-QUARANTINED-A", "docs/quarantined-a.md");
+        SeedMember(factory, "DOC-QUARANTINED-B", "docs/quarantined-b.md");
+        var manifest = ClosePendingBatch(factory);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        File.WriteAllText(Path.Combine(Assert.Single(store.ListManifestFolders()), "manifest.json"), "{");
+        Assert.True(store.HasManifest(manifest.BatchId));
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        Assert.Equal(manifest.BatchId, Ownership(a.Key)?.BatchId);
+        Assert.Single(store.ListManifestFolders());
+        Assert.Empty(store.ListManifests());
+    }
+
     [Fact]
     public async Task Tick_recovers_a_formed_manifest_missing_from_the_pilots_flights()
     {
@@ -27,6 +123,13 @@ public sealed class BatchGatePilotOrphanRecoveryTests : BatchGatePilotServiceTes
         _gate.Batch = request => Green(request.ExpectedSha);
 
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        using (var before = System.Text.Json.JsonDocument.Parse(
+                   System.Text.Json.JsonSerializer.Serialize(pilot.State(ProjectName, history: 0))))
+        {
+            var batch = Assert.Single(before.RootElement.GetProperty("batches").EnumerateArray());
+            Assert.Equal(formed.BatchId, batch.GetProperty("BatchId").GetString());
+            Assert.NotEqual(System.Text.Json.JsonValueKind.Null, batch.GetProperty("nextAction").ValueKind);
+        }
         await pilot.TickAsync(CancellationToken.None);
         await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
 

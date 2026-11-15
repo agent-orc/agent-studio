@@ -160,10 +160,6 @@
     font-weight: 600;
   }
 
-  &[data-status="failed"] &__title {
-    color: var(--severity-high);
-  }
-
   &__close {
     flex: 0 0 auto;
     border: none;
@@ -205,21 +201,6 @@
  * failed states are now signalled on the Protocol / Activity tab
  * pills via the shared `<app-pane-tabs>` `indicator` prop.
  */
-
-.spinner-ring {
-  width: 12px;
-  height: 12px;
-  border: 2px solid color-mix(in srgb, var(--studio-accent) 25%, transparent);
-  border-top-color: var(--studio-accent);
-  border-radius: 50%;
-  animation: spinner-ring-spin 0.8s linear infinite;
-
-  &--lg {
-    width: 22px;
-    height: 22px;
-    border-width: 3px;
-  }
-}
 
 /*
  * Inspector tabs (Protocol / Activity) now ride on `<app-pane-tabs
@@ -272,15 +253,9 @@
   gap: 8px;
 }
 
-.summary-error__icon {
-  font-size: 1.1em;
-}
-
 .summary-error__title {
   margin: 0;
   font-size: 0.95em;
-  font-weight: 600;
-  color: var(--severity-high);
 }
 
 .summary-error__body {
@@ -444,54 +419,6 @@
   50%      { transform: rotate(8deg) scale(1.15); opacity: 1; }
 }
 
-/* Session continuity chip — green when a CLI session was successfully
- * resumed/started, amber when continue had to fall back to a recovery
- * (session lost; reconstructed from job folder). The tooltip carries the
- * full event detail. Keeping it in the same row as the existing
- * .pane__telemetry chips so the header layout stays compact. */
-/*
- * Watchdog chip in the protocol-pane header. State-tinted: green when
- * the agent is streaming, yellow when quiet for 30s+, orange at 60s+
- * (suspicious - kill threatens), red when killed at 120s+. Visible only
- * while the run is active (driven by `isRunning`). Tooltip carries the
- * full reasoning so a curious user can confirm what the chip means
- * without leaving the page.
- */
-.pane__watchdog {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.78em;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  white-space: nowrap;
-  cursor: help;
-  font-variant-numeric: tabular-nums;
-
-  &[data-state="healthy"] {
-    background: color-mix(in srgb, var(--severity-pass) 10%, transparent);
-    border-color: color-mix(in srgb, var(--severity-pass) 32%, transparent);
-    color: var(--severity-pass);
-  }
-  &[data-state="quiet"] {
-    background: color-mix(in srgb, var(--severity-warn) 12%, transparent);
-    border-color: color-mix(in srgb, var(--severity-warn) 40%, transparent);
-    color: var(--severity-warn);
-  }
-  &[data-state="suspicious"] {
-    background: color-mix(in srgb, var(--studio-accent) 14%, transparent);
-    border-color: color-mix(in srgb, var(--studio-accent) 48%, transparent);
-    color: var(--studio-accent);
-  }
-  &[data-state="hung"] {
-    background: color-mix(in srgb, var(--severity-high) 18%, transparent);
-    border-color: color-mix(in srgb, var(--severity-high) 55%, transparent);
-    color: var(--severity-high);
-    font-weight: 600;
-  }
-}
-
 .pane__outcome-issue {
   display: inline-flex;
   align-items: center;
@@ -518,34 +445,6 @@
 }
 .pane__outcome-issue:hover {
   filter: brightness(1.08);
-}
-
-.pane__session-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.78em;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  white-space: nowrap;
-  cursor: help;
-
-  &--continued {
-    background: color-mix(in srgb, var(--severity-pass) 10%, transparent);
-    border-color: color-mix(in srgb, var(--severity-pass) 40%, transparent);
-    color: var(--severity-pass);
-  }
-  &--fresh {
-    background: color-mix(in srgb, var(--studio-accent) 10%, transparent);
-    border-color: color-mix(in srgb, var(--studio-accent) 40%, transparent);
-    color: var(--studio-accent);
-  }
-  &--lost {
-    background: rgba(245, 158, 11, 0.12);
-    border-color: rgba(245, 158, 11, 0.50);
-    color: #fcd34d;
-  }
 }
 
 .outcome-dialog-backdrop {
@@ -740,9 +639,6 @@
   }
 }
 
-@keyframes spinner-ring-spin {
-  to { transform: rotate(360deg); }
-}
 
 /* Secondary follow-up actions. Outcome semantics live only in the banner. */
 .auto-eval {

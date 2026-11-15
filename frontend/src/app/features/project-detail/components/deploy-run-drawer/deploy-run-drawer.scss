@@ -11,7 +11,6 @@
 }
 
 .run-drawer__outcome { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-2); margin: 0; }
-.run-drawer__badge { @include deploy.tone-badge; }
 .run-drawer__facts { @include deploy.fact-list; }
 .run-drawer__muted { @include deploy.muted; }
 .run-drawer__numeric { @include deploy.numeric; }
@@ -25,7 +24,7 @@
   list-style: none;
 
   > li { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--studio-spacing-2); align-items: start; }
-  > li > .run-drawer__badge { justify-self: start; }
+  > li > app-status-indicator { justify-self: start; }
   > li > div { display: flex; flex-direction: column; gap: var(--studio-spacing-1); min-width: 0; }
 }
 

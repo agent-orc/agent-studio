@@ -3,6 +3,7 @@ import type { ProjectUrlDiagnostic, ProjectUrlDiagnosisClass } from '../../../..
 import {
   diagnosticText,
   presentProjectUrlDiagnosis,
+  projectUrlDiagnosisTone,
   redactDiagnosticValue,
   safePreviewUrl,
 } from './project-url-diagnostic.model';
@@ -24,6 +25,15 @@ describe('URL Preview diagnosis presentation', () => {
     ['invalid-configuration', 'settings'], ['running', 'retry'],
   ] as const)('maps %s to its recovery action', (classification, action) => {
     expect(presentProjectUrlDiagnosis(diagnostic(classification)).primaryAction).toBe(action);
+  });
+
+  it.each([
+    ['not-started', 'neutral'], ['starting', 'running'], ['command-unavailable', 'danger'],
+    ['invalid-cwd', 'warning'], ['process-exited', 'danger'], ['port-in-use', 'warning'], ['port-never-opened', 'warning'],
+    ['timeout', 'warning'], ['http-error-response', 'danger'], ['content-not-renderable', 'warning'],
+    ['invalid-configuration', 'warning'], ['running', 'success'], ['local-only', 'info'],
+  ] as const)('maps %s to the %s status tone', (classification, tone) => {
+    expect(projectUrlDiagnosisTone(diagnostic(classification))).toBe(tone);
   });
 
   it('builds copyable diagnostics from bounded structured evidence', () => {

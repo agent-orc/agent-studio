@@ -361,6 +361,8 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('workspace-operations')).toBeVisible();
     const backups = page.getByTestId('operations-backups');
     await expect(backups.getByTestId('operations-backups-content-list')).toHaveAttribute('href', /studio-backup-restore\.md#credential-content-list$/);
+    await expect(backups.getByTestId('operations-backups-recovery-dependency')).toContainText('Quality Studio data and registry are included when present');
+    await expect(backups.getByTestId('operations-backups-recovery-dependency')).toContainText('repository remotes');
     await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'failing');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="backup-stale"]')).toContainText('26 hours old');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="host-ca-mismatch"]')).toContainText('escrowed CA');
@@ -385,7 +387,8 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(handoff).toContainText('Quality Studio');
     await expect(handoff.getByRole('link', { name: 'Fetch both files from the off-host target' }))
       .toHaveAttribute('href', /#fresh-host-step-2$/);
-    await expect(handoff.getByRole('link', { name: 'Re-enrol remote agents and review revocations' }))
+    await expect(handoff).toContainText('Confirm this archive includes operations/; offline fencing required');
+    await expect(handoff.getByRole('link', { name: 'Restore authority, re-enrol remote agents and check revocations' }))
       .toHaveAttribute('href', /#fresh-host-step-8$/);
     const downloadPromise = page.waitForEvent('download');
     await handoff.getByRole('button', { name: 'Download owner handoff' }).click();
@@ -474,8 +477,19 @@ test.describe('Project Deploy area (mocked)', () => {
         restoredAt: '2026-11-10T08:40:00+00:00', restoredBy: 'owner@studio-host-b', keyId: '3f2a9c0d11e4b7a8',
         secretKeyId: '0b1c2d3e4f5a6b7c', secretKeyCopyId: '0b1c2d3e4f5a6b7c', filesRestored: 18_240, checkoutsCloned: 3, skippedSources: [],
       },
+      operationsRecovery: { backupId: restored, fencedAt: '2026-11-10T08:41:00+00:00', items: [
+        { kind: 'reenrol', id: 'host-a', complete: false, oldPrincipalIds: ['old-a'] },
+        { kind: 'agent-revocation', id: 'host-a', complete: false, oldPrincipalIds: ['old-a'] },
+        { kind: 'reenrol', id: 'host-b', complete: false, oldPrincipalIds: ['old-b'] },
+        { kind: 'agent-revocation', id: 'host-b', complete: false, oldPrincipalIds: ['old-b'] },
+        { kind: 'host-certificate-revocations', id: 'installation', complete: false, oldPrincipalIds: [] },
+        { kind: 'operator-revocations', id: 'installation', complete: false, oldPrincipalIds: [] },
+      ] },
     }));
+    await page.route('**/api/security/posture', route => route.fulfill(json({ error: 'permission-denied' }, 403)));
     await page.getByTestId('deploy-tab-operations').click();
+    await page.getByTestId('project-operations').getByRole('link', { name: 'Settings → Operations' }).click();
+    await expect(page.getByTestId('workspace-operations')).toBeVisible();
     const backups = page.getByTestId('operations-backups');
     const receipt = backups.getByTestId('operations-backups-restore');
     await expect(receipt).toContainText('owner@studio-host-b');
@@ -487,12 +501,18 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(backups.getByTestId('operations-backups-offhost-unknown').locator('tbody tr')).toHaveCount(3);
     await expect(backups.getByTestId('operations-backups-verification-proved')).toContainText('key on this host');
     await expect(backups.getByTestId('operations-backups-verification-not-proved')).toContainText('backup-key.sh id');
+    const recoverySection = backups.getByTestId('operations-recovery');
+    const recoveryChecks = recoverySection.getByTestId('operations-recovery-checks').locator('li');
+    await expect(recoveryChecks).toHaveCount(6);
+    await expect(backups.getByTestId('operations-recovery-checks').locator('li[data-complete="false"]')).toHaveCount(6);
+    await expect(backups.getByTestId('operations-recovery')).toContainText('Re-enrol remote agent host-b');
     fs.mkdirSync(results, { recursive: true });
     // Tall viewports, so the screenshots hold the whole panel instead of the scrolled part.
     await page.setViewportSize({ width: 1280, height: 1800 });
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await backups.screenshot({ path: path.join(results, `operations-backups-restored-${theme}--mocked.png`) });
+      await recoverySection.screenshot({ path: path.join(results, `operations-recovery-checks-${theme}--mocked.png`) });
     }
     await page.setViewportSize({ width: 390, height: 3000 });
     await expect(receipt).toBeVisible();

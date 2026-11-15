@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { CompletionLoopIndicatorComponent } from './completion-loop-indicator.component';
+import { CompletionLoopIndicatorComponent, completionLoopVerdictTone } from './completion-loop-indicator.component';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
 import { TIMELINE_KIND, type TaskTimelineEvent } from '../../models/task-timeline.model';
 
@@ -53,6 +53,9 @@ describe('CompletionLoopIndicatorComponent', () => {
     const verdict = html.querySelector('[data-testid="overview-loop-verdict"]');
     expect(verdict).not.toBeNull();
     expect(verdict!.getAttribute('data-verdict')).toBe('reopened');
+    const indicator = verdict!.querySelector('[data-testid="overview-loop-verdict-status"]');
+    expect(indicator?.getAttribute('data-tone')).toBe('warning');
+    expect(indicator?.textContent?.trim()).toBe('Re-opened');
     expect(html.querySelector('[data-testid="overview-loop-attempt"]')?.textContent).toContain('2 / 3');
     expect(html.querySelector('[data-testid="overview-loop-reason"]')?.textContent).toContain('button still misaligned');
   });
@@ -75,14 +78,14 @@ describe('CompletionLoopIndicatorComponent', () => {
     expect(html.querySelector('[data-testid="overview-loop-verdict"]')?.getAttribute('data-verdict')).toBe('accepted');
   });
 
-  it('verdict helpers map to stable labels / glyphs / tones', async () => {
+  it('verdict helpers map to stable labels and status tones', async () => {
     const c = (await build([])).componentInstance;
     expect(c.verdictLabel('accepted')).toBe('Accepted');
     expect(c.verdictLabel('escalated')).toBe('Escalated to human');
-    expect(c.verdictGlyph('reopened')).toBe('↻');
-    expect(c.verdictTone('accepted')).toBe('ok');
-    expect(c.verdictTone('reopened')).toBe('warn');
-    expect(c.verdictTone('escalated')).toBe('danger');
-    expect(c.verdictTone(null)).toBe('neutral');
+    expect(c.verdictStatusTone('accepted')).toBe('success');
+    expect(c.verdictStatusTone('reopened')).toBe('warning');
+    expect(c.verdictStatusTone('escalated')).toBe('danger');
+    expect(c.verdictStatusTone(null)).toBe('running');
+    expect(completionLoopVerdictTone('later' as never)).toBe('neutral');
   });
 });

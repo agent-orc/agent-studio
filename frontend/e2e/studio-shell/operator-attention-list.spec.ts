@@ -314,6 +314,19 @@ test.describe('Operator attention list', () => {
     await page.route('**/api/operator/attention', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({ items, count: items.length }),
     }));
+    let decisionRecorded = false;
+    await page.route('**/api/tasks/acceptance-readiness', route => {
+      const requested = (route.request().postDataJSON() as { items: { jobId: string }[] }).items;
+      const review = requested.map(({ jobId }) => {
+        const ready = jobId === 'DEMO-1' || (decisionRecorded && jobId === 'DEMO-2');
+        return { taskKey: jobId, key: jobId, projectName: 'Owner day', readiness: ready ? 'ready' : 'no-content-verdict',
+          headline: ready ? 'Ready to accept' : 'No content verdict',
+          reason: ready ? 'All completion checks pass.' : 'The review has no content verdict. Add a settled content review before accepting.' };
+      });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        checkedAtUtc: new Date().toISOString(), counts: { ready: review.filter(item => item.readiness === 'ready').length }, items: review,
+      }) });
+    });
     await page.route('**/api/operator/backups', route => route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({ state: 'disabled', stale: false, generatedAt: observedAt,
@@ -335,12 +348,25 @@ test.describe('Operator attention list', () => {
         await expect(list.getByTestId('attention-group-dossier')).toContainText('2 open decisions');
         await expect(list.getByTestId('attention-group-installation')).toContainText('Backups off');
         await expect(list.getByTestId('attention-row-title').filter({ hasText: 'Blocked deployment' })).toBeVisible();
-        await expect(list.getByTestId('attention-row-reason').filter({ hasText: 'brief changed' })).toBeVisible();
+        await expect(list.getByTestId('attention-review-ready-count')).toHaveText(/1 of 8 ready to accept/);
+        const reviewRows = list.getByTestId('attention-group-human-review').getByTestId('attention-row');
+        await expect(reviewRows.first().getByTestId('attention-review-status')).toContainText('Ready to accept');
+        await expect(reviewRows.nth(1).getByTestId('attention-review-status')).toContainText('No content verdict');
+        await expect(reviewRows.nth(1).getByTestId('attention-row-reason')).toContainText('Add a settled content review');
+        if (viewport.width === 390) {
+          await reviewRows.nth(1).scrollIntoViewIfNeeded();
+          expect(await reviewRows.nth(1).getByTestId('attention-row-reason').evaluate(element =>
+            element.scrollHeight <= element.clientHeight + 1)).toBe(true);
+        }
         await screenshot(page, `owner-day-${viewport.width}-${theme}`);
         await list.getByTestId('attention-group-installation').scrollIntoViewIfNeeded();
         await screenshot(page, `owner-day-installation-${viewport.width}-${theme}`);
         await page.keyboard.press('Escape');
       }
     }
+    decisionRecorded = true;
+    await openAndReconcile(page);
+    await expect(page.getByTestId('attention-review-ready-count')).toHaveText(/2 of 8 ready to accept/);
+    await page.keyboard.press('Escape');
   });
 });

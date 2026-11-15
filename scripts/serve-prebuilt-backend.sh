@@ -14,11 +14,14 @@ fi
 
 backend_started=0
 stop() {
-  if [[ "${PW_E2E_PROFILE:-}" == first-run ]] && declare -F first_run_stop_runners >/dev/null; then
+  if [[ "${PW_E2E_PROFILE:-}" == first-run || "${PW_E2E_PROFILE:-}" == concept-remote ]] && declare -F first_run_stop_runners >/dev/null; then
     first_run_stop_runners
   fi
   if (( backend_started )); then
     "${REPO_ROOT}/api.sh" stop || true
+  fi
+  if declare -F e2e_networked_https_key_cleanup >/dev/null; then
+    e2e_networked_https_key_cleanup
   fi
   git -C "${REPO_ROOT}" worktree remove --force "${PW_E2E_CHECKOUT}" || true
 }
@@ -105,6 +108,8 @@ case "${PW_E2E_PROFILE:-standard}" in
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    source "${REPO_ROOT}/scripts/networked-https-e2e-key.sh"
+    e2e_networked_https_key_prepare
     restricted_repo="${PW_E2E_WORKSPACE}/projects/restricted-fixture"
     mkdir -p "${restricted_repo}"
     git -C "${restricted_repo}" init -q
@@ -151,8 +156,16 @@ case "${PW_E2E_PROFILE:-standard}" in
   # networked-https-demo: the networked-https stack seeded with the demo
   # cards, so role-scoped card reads (AGT-3669) meet real Ready and Human
   # Review cards.
-  demo|public-demo|networked-https-demo)
-    node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
+  demo|owner-day|public-demo|networked-https-demo)
+    if [[ "${PW_E2E_PROFILE}" == owner-day ]]; then
+      # The seeded ledger is a frozen owner scene. Suppress the pilot's repair
+      # and flight loop so it cannot change the red phase or contact a host.
+      export DOTNET_ENVIRONMENT=Testing
+      export ASPNETCORE_ENVIRONMENT=Testing
+      node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}" --owner-day --state-root "${XDG_DATA_HOME}"
+    else
+      node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
+    fi
     export WatchPaths__0__Name='Demo App'
     export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/demo-app"
     export WatchPaths__0__RootPath="${WatchPaths__0__Path}"
@@ -180,12 +193,18 @@ case "${PW_E2E_PROFILE:-standard}" in
     source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
     first_run_prepare
     ;;
+  concept-remote)
+    source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
+    first_run_prepare
+    source "${REPO_ROOT}/scripts/concept-e2e-fixture.sh"
+    concept_e2e_prepare
+    ;;
   *) echo "Unknown PW_E2E_PROFILE: ${PW_E2E_PROFILE}" >&2; exit 2 ;;
 esac
 
 "${REPO_ROOT}/api.sh" start
 backend_started=1
-if [[ "${PW_E2E_PROFILE:-}" == first-run ]]; then
+if [[ "${PW_E2E_PROFILE:-}" == first-run || "${PW_E2E_PROFILE:-}" == concept-remote ]]; then
   first_run_start_runners
 fi
 failures=0

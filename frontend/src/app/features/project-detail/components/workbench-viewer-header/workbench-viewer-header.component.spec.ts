@@ -149,6 +149,7 @@ describe('WorkbenchViewerHeaderComponent', () => {
           provide: TaskService,
           useValue: {
             getReferenceStatuses,
+            getCliModelCatalog: () => of({ models: [] }),
             taskEvents: EMPTY,
           },
         },
@@ -234,6 +235,8 @@ describe('WorkbenchViewerHeaderComponent', () => {
     expect(popover.querySelector('[data-testid="workbench-decision-panel"]')).toBeTruthy();
     expect(popover.querySelector('[data-testid="workbench-viewer-connection-state"]')?.textContent)
       .toContain('Connected since');
+    expect(popover.querySelector('[data-testid="workbench-viewer-connection-state"]')?.getAttribute('data-tone'))
+      .toBe('success');
     expect(popover.querySelector('[data-testid="workbench-viewer-manual-refresh"]')).toBeNull();
     expect(header.querySelector('[data-testid="workbench-viewer-refresh"]')).toBeNull();
     expect(header.querySelector('[data-testid="workbench-viewer-stale-as-of"]')).toBeNull();
@@ -245,6 +248,8 @@ describe('WorkbenchViewerHeaderComponent', () => {
 
     expect(header.querySelector('[data-testid="workbench-viewer-stale-as-of"]')?.textContent)
       .toContain('Updates paused · as of');
+    expect(header.querySelector('[data-testid="workbench-viewer-stale-state"]')?.getAttribute('data-tone'))
+      .toBe('warning');
     expect(popover.querySelector('[data-testid="workbench-viewer-connection-state"]')?.textContent)
       .toContain('Disconnected since');
     const fallback = popover.querySelector(
@@ -264,7 +269,11 @@ describe('WorkbenchViewerHeaderComponent', () => {
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
-        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), taskEvents: EMPTY } },
+        { provide: TaskService, useValue: {
+          getReferenceStatuses: () => of([]),
+          getCliModelCatalog: () => of({ models: [] }),
+          taskEvents: EMPTY,
+        } },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(WorkbenchViewerHeaderComponent);

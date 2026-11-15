@@ -6,6 +6,19 @@ if (args is ["bootstrap", var principals, var agent, var client])
     return;
 }
 
+if (args is ["recover", var root, var marker, var backupId])
+{
+    var recovery = AgentStudio.Operations.Server.Features.Access.OperationsRecovery.Fence(root, marker, backupId);
+    Console.WriteLine($"Fenced restored Operations credentials; {recovery.Items.Length} checks remain.");
+    return;
+}
+if (args is ["recovery-complete", var recoveryRoot, var kind, var id])
+{
+    AgentStudio.Operations.Server.Features.Access.OperationsRecovery.Complete(recoveryRoot, kind, id);
+    Console.WriteLine($"Completed Operations recovery check {kind}: {id}.");
+    return;
+}
+
 // Security model SM-2, out of band: revokes operator principals in the
 // principal file and cancels their operations when the control plane cannot
 // reach this server. Without operator agent ids it revokes every principal

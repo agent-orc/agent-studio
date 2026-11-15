@@ -79,6 +79,34 @@ from its recorded passing run on the next tick, as isolation children already
 did. A live batch (a flight of this host, or a held coordinator lease on its
 scope) has no findings.
 
+The periodic pass also repairs a current pending generation whose ownership
+marker is missing or names a manifest that does not exist. An unresolved
+pending generation beyond the project's maximum batch wait appears as
+`orphaned-pending-member` with its age in `ageMs`, the reason and the next
+repair. Every batch finding carries its age since the manifest closed. A
+`BatchPendingRecoveryPolicy` decision chooses one pending action from the
+immutable generation, marker, owner, fallback cause and age before the host
+applies that action. The same rule powers the repair, restart handoff and
+invariant report.
+
+A formed batch with a member that left the queue retires even when its other
+members still have correct ownership markers. A Red parent with pending
+members pauses after isolation stops, including members already on queued
+markers. A Green isolation child that lost an immutable review generation
+retires so the parent can hand off its remaining members.
+If a Publishing batch has no queued member from which to locate the remote,
+the invariant report names the missing proof source and its age; it does not
+guess a publication outcome.
+
+The paused-batch route records each per-task fallback cause before its
+terminal phase change. A restart resumes an unresolved handoff from that
+record after the batch releases ownership; unresolved causes are retained
+until their generations settle, even if the historical display limit is
+reached. A repeated tick joins an existing fallback flight for that review
+attempt. The publication journal remains the authority for a child already
+Green, Publishing or Published, so a parent pause does not start a competing
+per-task gate for it.
+
 The tick ends with the check. `GET /api/projects/{project}/batch-gate/state`
 shows the last one under `invariants` (`checkedAtUtc` and `findings` with
 `kind`, `batchId`, `phase`, `taskKey`, `reviewAttemptId`, `detail` and

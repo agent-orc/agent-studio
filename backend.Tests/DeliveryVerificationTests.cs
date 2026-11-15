@@ -223,7 +223,8 @@ public sealed class DeliveryVerificationTests
         {
             var previousSalvage = DivergentSha(repo, fixture);
             var range = git.InspectRemoteDeliveryCommitRange(
-                repo, DeliveryBranch, fixture.Tip, "refs/heads/develop", previousSalvage);
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/develop", previousSalvage,
+                taskKey: "AGT-9999");
 
             Assert.False(range.Success);
             Assert.Equal(DeliveryVerificationStatus.BaseNotAncestor, range.Verification);

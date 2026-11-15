@@ -84,7 +84,7 @@ describe('ProjectOverviewUrlsComponent', () => {
     const pill = host.querySelector('[data-testid="project-overview-url-status-preview"]');
     expect(pill?.textContent?.trim()).toBe('local only');
     expect(pill?.getAttribute('data-status')).toBe('local-only');
-    expect(pill?.classList.contains('overview-urls__pill--offline')).toBe(false);
+    expect(pill?.querySelector('[data-testid="status-indicator"]')?.getAttribute('data-tone')).toBe('neutral');
     expect(host.querySelector('[data-testid="project-overview-url-start-preview"]')).toBeNull();
   });
 

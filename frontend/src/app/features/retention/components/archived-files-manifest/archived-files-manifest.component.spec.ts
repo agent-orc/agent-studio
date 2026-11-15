@@ -14,5 +14,8 @@ describe('ArchivedFilesManifestComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('cli-output.log');
     expect(fixture.nativeElement.textContent).toContain('abc123');
     expect(fixture.nativeElement.textContent).toContain('Hot Markdown excerpts appear below');
+    const state = fixture.nativeElement.querySelector('[data-testid="archived-files-manifest-state"]') as HTMLElement;
+    expect(state.dataset['tone']).toBe('info');
+    expect(state.textContent?.trim()).toBe('cold');
   });
 });

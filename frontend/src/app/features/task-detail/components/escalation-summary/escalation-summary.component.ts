@@ -1,12 +1,7 @@
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  effect,
-  inject,
-  input,
-  output,
-  signal,
+  ChangeDetectionStrategy, Component, computed, effect,
+  inject, input, output, signal,
 } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 
@@ -17,6 +12,7 @@ import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
 import { BatchGateService } from '../../../../services/batch-gate.service';
 import { EscalationGateActions } from './escalation-gate-actions';
+import { EscalationEvidenceAvailabilityComponent } from './escalation-evidence-availability/escalation-evidence-availability.component';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import {
@@ -37,30 +33,26 @@ import {
 } from '../../state/triage-actions.model';
 import {
   buildEscalationSummaryView,
+  parseBatchDiagnostic,
+  type EscalationRecommendation,
+  type EscalationHeadKind,
+  ESCALATION_RECOMMENDATION_TONES,
+  ESCALATION_HEAD_TONES,
   type EscalationSummaryView,
 } from './escalation-summary.util';
 
-/**
- * Escalation summary panel (AGT-2019). Renders — prominently, above the panes —
- * for a `5e-escalated` card the four things an operator needs to make the call
- * that the thin last-run status protocol never showed: the open gate points,
- * the code-review verdict, the delivery context (already in develop?), and the
- * gate's recommendation. Pure display aggregation of existing artifacts; see
- * {@link buildEscalationSummaryView} for the source-priority rules.
- *
- * The panel owns two cheap fetches (the code-review grade list and the reissue
- * follow-up file) and reads the already-polled task timeline for the steering
- * event; everything else comes off `detail()`. A NeedsInput panel also owns
- * the bounded answer submission through the existing steer continuation API.
- */
+/** Escalation decision panel. Aggregates the task detail, timeline, review files,
+ * and attached batch diagnostic; see {@link buildEscalationSummaryView} for
+ * evidence priority. It also handles bounded answers to agent questions. */
 @Component({
   selector: 'app-escalation-summary',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [
+  imports: [StatusIndicatorComponent,
     TooltipDirective,
     PendingButtonDirective,
     EscalationDetailsComponent,
+    EscalationEvidenceAvailabilityComponent,
     DisclosureMarkerComponent,
     GateQueueReleaseComponent,
     ServerCheckoutRemedyComponent,
@@ -99,6 +91,10 @@ export class EscalationSummaryComponent {
     '',
     ...(this.selectedFindings().length ? ['Selected escalation findings:',
       ...this.selectedFindings().map(item => `- [ ] ${item}`)] : []),
+    ...(this.view().batchDiagnostic && this.view().gateSource !== 'batch-diagnostic' ? [
+      '', 'Batch diagnostic:',
+      `- [ ] Batch ${this.view().batchDiagnostic!.batchId} failed: ${this.view().batchDiagnostic!.failingTest}. Members: ${this.view().batchDiagnostic!.members.join(', ')}. Diagnostic: results/batch-diagnostic.json`,
+    ] : []),
     ...(this.ownerNote().trim() ? ['', 'Owner note:',
       this.selectedFindings().length ? this.ownerNote().trim() : `- [ ] ${this.ownerNote().trim()}`] : []),
   ].join('\n'));
@@ -143,6 +139,8 @@ export class EscalationSummaryComponent {
   readonly codeReviews = signal<CodeReviewListEntry[]>([]);
   /** Body of `orchestrator-follow-up.md`, or null when the file is absent. */
   readonly followUpMarkdown = signal<string | null>(null);
+  readonly batchDiagnosticBody = signal<string | null>(null);
+  readonly batchDiagnostic = computed(() => parseBatchDiagnostic(this.batchDiagnosticBody()));
   /** Which job the current fetch results belong to, to drop stale responses. */
   private fetchedJobId: string | null = null;
 
@@ -184,6 +182,7 @@ export class EscalationSummaryComponent {
       this.codeReviews.set([]);
       this.codeReviewsLoaded.set(false);
       this.followUpMarkdown.set(null);
+      this.batchDiagnosticBody.set(null);
 
       this.jobs.listCodeReviews(info.id, info.watchPath).subscribe({
         next: (resp) => {
@@ -211,6 +210,18 @@ export class EscalationSummaryComponent {
           this.followUpMarkdown.set(null);
         },
       });
+
+      this.jobs.readTaskResult(info.id, 'batch-diagnostic.json', info.watchPath).subscribe({
+        next: body => {
+          if (this.fetchedJobId !== info.id) return;
+          this.batchDiagnosticBody.set(body);
+          if (this.decisionDialog() === 'reissue' && !this.selectionTouched) this.seedSelectedFindings();
+        },
+        error: () => {
+          if (this.fetchedJobId !== info.id) return;
+          this.batchDiagnosticBody.set(null);
+        },
+      });
     });
   }
 
@@ -232,6 +243,7 @@ export class EscalationSummaryComponent {
     buildEscalationSummaryView({
       info: this.detail().info,
       reviewEvidence: this.detail().reviewEvidence ?? [],
+      batchDiagnostic: this.batchDiagnostic(),
       codeReviews: this.codeReviews(),
       steering: this.steering(),
       statusMarkdown: this.detail().statusMarkdown,
@@ -251,7 +263,11 @@ export class EscalationSummaryComponent {
       : this.watchdogPark() ? 'Review recovery'
       : this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
   );
-
+  readonly headKind = computed<EscalationHeadKind>(() => this.detail().info.needsInput
+    ? (this.hasQueuedAnswer() ? 'answer-queued' : 'needs-input')
+    : (this.view().escalation?.kind === 'gave-up' ? 'gave-up' : 'needs-review'));
+  readonly headTone = computed(() => ESCALATION_HEAD_TONES[this.headKind()]);
+  readonly recommendationTone = (tone: EscalationRecommendation['tone']) => ESCALATION_RECOMMENDATION_TONES[tone];
   readonly hasQueuedAnswer = computed(() =>
     this.detail().info.pendingIntent?.mode === 'steer'
       && !!this.detail().info.pendingIntent?.prompt?.trim(),

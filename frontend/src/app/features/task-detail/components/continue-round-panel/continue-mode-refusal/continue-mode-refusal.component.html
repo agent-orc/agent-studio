@@ -12,10 +12,24 @@
           <li>{{ item.title }}</li>
         }
       </ol>
+      @if (recovery(); as progress) {
+        <p class="refusal__note" data-testid="continue-mode-promote-recovery">
+          Promotion is incomplete ({{ progress.phase }}).
+          @if (progress.created.length > 0) {
+            Cards already created: @for (card of progress.created; track card.jobId) {
+              {{ card.taskKey || card.jobId }}{{ $last ? '.' : ',' }}
+            }
+          }
+          {{ progress.nextAction }}
+        </p>
+      }
+      @if (promoteError(); as failure) {
+        <p class="refusal__error" data-testid="continue-mode-promote-error">{{ failure }}</p>
+      }
       <div class="round__actions">
         <button type="button" class="round__button round__button--primary" data-testid="continue-mode-promote-confirm"
           [disabled]="working()" [appPendingButton]="creating()" pendingLabel="Creating…"
-          (click)="createCards()">Create {{ plan.items.length }} implementation {{ plan.items.length === 1 ? 'card' : 'cards' }}</button>
+          (click)="createCards()">{{ confirmLabel() }}</button>
         <button type="button" class="round__button round__button--ghost" data-testid="continue-mode-promote-back"
           [disabled]="creating()" (click)="back()">Back</button>
       </div>

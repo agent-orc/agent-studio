@@ -68,24 +68,11 @@
   flex: 1 1 auto;
 }
 
-/* MC-2: pinned marker. Sits at the trailing edge of the primary row so the
-   frozen-context state is visible without competing with the project/task
-   chips. Quiet by default (muted), tinted with the accent to echo the
-   toolbar's pinned button. */
+/* MC-2: pinned marker (shared status indicator, info tone). Sits at the
+   trailing edge of the primary row. */
 .octx__pin {
   flex: 0 0 auto;
   margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  padding: calc(var(--studio-spacing-1) * 0.75) var(--studio-spacing-2);
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, var(--studio-accent) 40%, transparent);
-  background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
-  color: var(--studio-fg-strong);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
 }
 
 .octx__chip--board {
@@ -151,39 +138,16 @@
   color: var(--studio-accent-success-strong);
 }
 
-/* Live-run telemetry — the only animated element in the header. */
+/* Live-run telemetry: the running status indicator carries the motion. */
 .octx__run {
   display: inline-flex;
   align-items: center;
   gap: var(--studio-spacing-1);
   margin-left: auto;
-  padding:
-    calc(var(--studio-spacing-1) / 2)
-    calc(var(--studio-spacing-2) + (var(--studio-spacing-1) / 2))
-    calc(var(--studio-spacing-1) / 2)
-    var(--studio-spacing-2);
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--studio-accent-3) 40%, transparent);
-  background: var(--studio-bg-running);
   color: var(--studio-fg-strong);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-}
-
-.octx__run-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--studio-accent-3-strong);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 60%, transparent);
-  animation: octx-pulse 1.8s ease-out infinite;
-}
-
-.octx__run-label {
-  color: var(--studio-accent-3-strong);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .octx__run-sep {
@@ -197,22 +161,4 @@
 .octx__run-dur {
   font-variant-numeric: tabular-nums;
   color: var(--studio-fg-muted);
-}
-
-@keyframes octx-pulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 55%, transparent);
-  }
-  70% {
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--studio-accent-3) 0%, transparent);
-  }
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 0%, transparent);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .octx__run-pulse {
-    animation: none;
-  }
 }

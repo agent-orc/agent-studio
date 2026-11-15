@@ -1238,7 +1238,7 @@ export function buildPhaseBadge(
   return { label, tone: pill.tone, tooltip: pill.tooltip };
 }
 
-export interface ExecutionBadge { label: string; tone: 'running' | 'failed' | 'cancelled'; }
+export interface ExecutionBadge { label: string; tone: 'running' | 'failed' | 'noop' | 'blocked' | 'needs-input' | 'stopped'; }
 
 export function buildExecutionBadge(job: TaskInfo): ExecutionBadge | null {
   // Lane wins over execution-status. The backend overlay already clears
@@ -1264,15 +1264,15 @@ export function buildExecutionBadge(job: TaskInfo): ExecutionBadge | null {
   }
 
   if (execution.runOutcome === 'noop') {
-    return { label: 'NoOp', tone: 'cancelled' };
+    return { label: 'NoOp', tone: 'noop' };
   }
 
   if (execution.runOutcome === 'blocked') {
-    return { label: 'Blocked', tone: 'cancelled' };
+    return { label: 'Blocked', tone: 'blocked' };
   }
 
   if (execution.runOutcome === 'needs-input') {
-    return { label: 'Needs input', tone: 'cancelled' };
+    return { label: 'Needs input', tone: 'needs-input' };
   }
 
   // 'stopped' is the new deliberate-kill status from the backend (user pause,
@@ -1280,7 +1280,7 @@ export function buildExecutionBadge(job: TaskInfo): ExecutionBadge | null {
   // failure. Legacy 'cancelled' value stays supported so older in-memory
   // CliExecution records keep rendering.
   if (execution.status === 'stopped' || execution.status === 'cancelled') {
-    return { label: 'Stopped', tone: 'cancelled' };
+    return { label: 'Stopped', tone: 'stopped' };
   }
 
   return null;
@@ -1358,7 +1358,7 @@ export function buildCooldownRetryBanner(job: TaskInfo, nowMs: number): Cooldown
   };
 }
 
-export interface ReviewBadge { label: string; tone: 'generating' | 'ready' | 'failed'; tooltip: string; }
+export interface ReviewBadge { label: string; tone: 'generating' | 'ready' | 'failed' | 'degraded'; tooltip: string; }
 
 /**
  * Post-run summary descriptor. The card stays quiet after the summary settles.
@@ -1378,7 +1378,7 @@ export function buildReviewBadge(summaryState: TaskInfo['summaryState']): Review
       const attempts = summaryState.attempt && summaryState.maxAttempts
         ? ` after ${summaryState.attempt}/${summaryState.maxAttempts} summary attempts`
         : '';
-      return { label: 'result degraded', tone: 'failed',
+      return { label: 'result degraded', tone: 'degraded',
                tooltip: `Result summary degraded${attempts}. The completed core run remains reviewable. ${summaryState.errorMessage ?? ''}`.trim() };
     }
     default:

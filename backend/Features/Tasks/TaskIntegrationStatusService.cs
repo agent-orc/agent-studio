@@ -73,6 +73,7 @@ public sealed class TaskIntegrationStatusService
     private readonly ProjectRegistry? _registry;
     private readonly Func<string, string?> _readOriginUrl;
     private readonly GitReachabilityIndex? _reachability;
+    private readonly GitAncestryGraphCache _verificationGraphs = new();
     private readonly BatchGateStore _batchGates;
     private readonly TaskScannerService? _scanner;
 
@@ -315,7 +316,8 @@ public sealed class TaskIntegrationStatusService
                 item => item.ParentSha, StringComparer.OrdinalIgnoreCase);
             while (!decision.Verified && decision.MissingTree is { } missing
                 && laterByCommit.TryGetValue(missing, out var parent)
-                && _git.IsManagedDocumentKeyCommit(root, missing, parent))
+                && (_git.IsManagedDocumentKeyCommit(root, missing, parent)
+                    || _git.IsManagedDecisionReceiptCommit(root, missing, parent)))
             {
                 neutralCommits.Add(missing);
                 decision = IntegrationPublicationGatePolicy.Check(verification.Sha!, tip!,
@@ -352,7 +354,7 @@ public sealed class TaskIntegrationStatusService
                 } };
             }
             var neutralEvidence = neutralCommits.Count == 0 ? string.Empty
-                : $" Gate-neutral document-key commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
+                : $" Gate-neutral Dossier descriptor commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
             if (decision.CoveringPublication is { } covering)
                 return status with { Verification = verification with
                 {
@@ -761,9 +763,15 @@ public sealed class TaskIntegrationStatusService
                 || !ReviewSubjectStore.IsValidResultSha(currentDeliverySha)) return projected;
             var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
             if (root is null) return projected;
+            // Every verification tree below is checked against branchHistory,
+            // so the published tip covers it. Keep this graph by tip SHA across
+            // index runs, including runs that later reach their deadline.
+            bool ContainsInTree(string ancestor, string tree)
+                => currentIntegrationSha is not null
+                    && VerificationGraph(root, currentIntegrationSha).IsAncestor(ancestor, tree);
             bool TreeContainsDelivery(string tree)
             {
-                if (_git.IsAncestor(root, currentDeliverySha!, tree)) return true;
+                if (ContainsInTree(currentDeliverySha!, tree)) return true;
                 // Use the commit memberships that produced the card's integrated
                 // and superseded detail. The review result can be a later fence
                 // snapshot while its effective delivery commits are in a merge.
@@ -773,9 +781,9 @@ public sealed class TaskIntegrationStatusService
                     .ToArray();
                 return current.Length > 0 && current.All(commit =>
                     ReviewSubjectStore.IsValidResultSha(commit.Sha)
-                    && (commit.OnIntegrationBranch && _git.IsAncestor(root, commit.Sha, tree)
+                    && (commit.OnIntegrationBranch && ContainsInTree(commit.Sha, tree)
                         || ReviewSubjectStore.IsValidResultSha(commit.SupersededBySha)
-                            && _git.IsAncestor(root, commit.SupersededBySha!, tree)));
+                            && ContainsInTree(commit.SupersededBySha!, tree)));
             }
 
             if (ownRecord is { State: IntegrationVerificationStates.Verified }
@@ -791,7 +799,7 @@ public sealed class TaskIntegrationStatusService
             var external = ExternalPublishedVerificationStore.Read(job.WatchPath)
                 .FirstOrDefault(record => IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, currentIntegrationBranch)
                     && branchHistory(record.CandidateSha)
-                    && _git.IsAncestor(root, currentDeliverySha!, record.CandidateSha));
+                    && ContainsInTree(currentDeliverySha!, record.CandidateSha));
             if (external is not null)
                 return new TaskIntegrationVerification
                 {
@@ -806,7 +814,7 @@ public sealed class TaskIntegrationStatusService
                 PublishedGateEvidenceStore.Read(job.WatchPath),
                 currentIntegrationBranch,
                 branchHistory,
-                tree => _git.IsAncestor(root, currentDeliverySha!, tree));
+                tree => ContainsInTree(currentDeliverySha!, tree));
             if (publishedGate is not null)
                 return IntegrationVerificationProjection.FromPublishedGate(
                     publishedGate, currentIntegrationBranch, currentIntegrationSha);
@@ -820,6 +828,10 @@ public sealed class TaskIntegrationStatusService
                         batch, currentIntegrationBranch, currentIntegrationSha);
             }
             return projected;
+        }
+        catch (OperationCanceledException) when (GitProcessBudget.Token.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -1875,6 +1887,9 @@ public sealed class TaskIntegrationStatusService
     private bool TryGetAncestors(string root, IReadOnlyCollection<string> refs, out HashSet<string> ancestors)
         => _reachability is not null && _reachability.TryUnion(root, refs, out ancestors)
             || _git.TryGetAncestorShaSet(root, refs, out ancestors);
+
+    private GitAncestryGraph VerificationGraph(string root, string tip)
+        => _verificationGraphs.Get(root, tip);
 
     private string ConfiguredIntegrationBranch(TaskInfo task)
     {

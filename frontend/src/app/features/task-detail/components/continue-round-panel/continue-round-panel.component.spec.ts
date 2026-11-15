@@ -230,6 +230,48 @@ describe('ContinueRoundPanelComponent (AGT-3582)', () => {
       expect(byId('continue-round-form')).toBeNull();
     });
 
+    it('shows created keys and retries an incomplete promotion', async () => {
+      const promoteConcept = vi.fn()
+        .mockImplementationOnce(() => throwError(() => ({ status: 409, error: {
+          error: 'concept-promotion-incomplete', message: 'Dossier write failed.',
+          recovery: { phase: 'cards-recorded', created: [
+            { jobId: 'first-slice', taskKey: 'AGT-9001' },
+          ], nextAction: 'Retry promotion. Existing cards will be reused.' },
+        } })))
+        .mockImplementationOnce(() => of({ source: PLAN.source, created: [
+          { jobId: 'first-slice', taskKey: 'AGT-9001', title: 'Rename result files' },
+        ] }));
+      const { byId, fill, click, refresh } = await mount(
+        '5-human-review', vi.fn(() => throwError(guardRefusal)), undefined,
+        { mode: 'concept', promoteConcept });
+      fill(PROMPT);
+      click('continue-round-submit');
+      click('continue-mode-promote');
+      click('continue-mode-promote-confirm');
+      expect(byId('continue-mode-promote-recovery')?.textContent).toContain('AGT-9001');
+      expect(byId('continue-mode-promote-recovery')?.textContent).toContain('Retry promotion');
+      expect(byId('continue-mode-promote-error')?.textContent).toContain('Dossier write failed');
+      click('continue-mode-promote-confirm');
+      expect(promoteConcept).toHaveBeenCalledTimes(2);
+      expect(refresh).toHaveBeenCalledWith(true);
+    });
+
+    it('loads durable promotion progress when the concept panel is reopened', async () => {
+      const getPromoteConcept = vi.fn(() => of({ ...PLAN, recovery: {
+        phase: 'dossier-accepted', created: [
+          { jobId: 'first-slice', taskKey: 'AGT-9001', title: 'Rename result files' },
+        ], nextAction: 'Retry promotion. Existing cards will be reused.',
+      } }));
+      const { byId, fill, click } = await mount(
+        '5-human-review', vi.fn(() => throwError(guardRefusal)), undefined,
+        { mode: 'concept', getPromoteConcept });
+      fill(PROMPT);
+      click('continue-round-submit');
+      click('continue-mode-promote');
+      expect(byId('continue-mode-promote-recovery')?.textContent).toContain('AGT-9001');
+      expect(byId('continue-mode-promote-confirm')?.textContent).toContain('Retry promotion');
+    });
+
     it('shows why a concept card cannot be promoted yet and keeps the keep-and-send choice', async () => {
       const getPromoteConcept = vi.fn(() => throwError(() => ({
         status: 409, error: { error: 'The concept Dossier is missing or did not pass concept review.' },

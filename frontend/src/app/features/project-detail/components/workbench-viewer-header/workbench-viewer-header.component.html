@@ -59,9 +59,8 @@
       class="viewer-head__implementation-status"
       role="status"
       data-testid="workbench-viewer-implementation-status"
-    >
-      {{ implementationLabel }}
-    </span>
+    ><app-status-indicator tone="info" [label]="implementationLabel" [compact]="true"
+                           testId="workbench-viewer-implementation-state" /></span>
   }
 
   @if (taskStatusesLoading() || taskStatuses().length > 0) {
@@ -110,8 +109,8 @@
       [appTooltip]="liveStatusTooltip()"
       data-testid="workbench-viewer-stale-as-of"
     >
-      <i aria-hidden="true"></i>
-      {{ staleAsOfLabel() }}
+      <app-status-indicator tone="warning" [label]="staleAsOfLabel()" [compact]="true"
+                            testId="workbench-viewer-stale-state" />
     </span>
   }
 
@@ -145,13 +144,15 @@
         data-testid="workbench-viewer-live-status"
       >
         <div class="viewer-details__live-heading">
-          <i aria-hidden="true"></i>
           <strong>Live updates</strong>
         </div>
         <dl>
           <div>
             <dt>Connection</dt>
-            <dd data-testid="workbench-viewer-connection-state">{{ connectionLabel() }}</dd>
+            <dd>
+              <app-status-indicator [tone]="liveConnected() ? 'success' : 'warning'" [label]="connectionLabel()"
+                                    [compact]="true" testId="workbench-viewer-connection-state" />
+            </dd>
           </div>
           <div>
             <dt>Last update</dt>

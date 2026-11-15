@@ -13,6 +13,7 @@ import { AcceptanceRefusalStore } from './acceptance-refusal.model';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { NotificationService } from '../../../services/notification.service';
+import { UndoController } from '../../../services/undo.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
 import type { RegistryWorkspaceListItem, TaskInfo, TaskDetail } from '../../../models/task.model';
 import type { TaskCore } from '../../../models/task-core.model';
@@ -205,12 +206,39 @@ describe('TriageController · optimistic navigation on Accept', () => {
     vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
     const movePost = new Subject<object>();
     vi.spyOn(jobService, 'moveJob').mockReturnValue(movePost.asObservable());
+    const undo = vi.spyOn(TestBed.inject(UndoController), 'offerLaneRevert');
+    const notifications = TestBed.inject(NotificationService);
 
     ctrl.move(taskA, { targetState: '2-ready', actionId: 'reissue-escalated' });
     expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
+    expect(selection.selected()?.info.state).toBe('5e-escalated');
+    expect(jobService.applyOptimisticMove).not.toHaveBeenCalled();
+    expect(undo).not.toHaveBeenCalled();
+    expect(notifications.notifications().some(n => n.message.includes('Reissuing'))).toBe(true);
     movePost.next({});
     expect(selection.selected()?.info).toMatchObject({ id: 'task-a', state: '2-ready' });
     expect(selection.triageLaneState).toBe('2-ready');
+    expect(TestBed.inject(LanePagerService).snapshot()?.lane).toBe('2-ready');
+    expect(jobService.applyOptimisticMove).toHaveBeenCalledOnce();
+    expect(undo).toHaveBeenCalledOnce();
+    expect(notifications.notifications().some(n => n.message.includes('Reissuing'))).toBe(false);
+  });
+
+  it('keeps pending reissue feedback after navigation and does not reopen the task on failure', () => {
+    const taskA = makeJob('task-a', '5e-escalated');
+    const taskB = makeJob('task-b', '2-ready');
+    selection.selected.set(makeDetail('task-a', '5e-escalated'));
+    const movePost = new Subject<object>();
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(movePost.asObservable());
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+    vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
+    const notifications = TestBed.inject(NotificationService);
+    ctrl.move(taskA, { targetState: '2-ready', actionId: 'reissue-escalated' });
+    selection.selected.set(makeDetail('task-b', '2-ready'));
+    expect(notifications.notifications().some(n => n.message.includes('Reissuing'))).toBe(true);
+    movePost.error({ status: 500, message: 'boom' });
+    expect(selection.selected()?.info.taskKey).toBe(taskB.taskKey);
+    expect(notifications.notifications().some(n => n.message.includes('Reissuing'))).toBe(false);
   });
 
   it('paints the prefetched core of the next peer synchronously without the legacy detail route', () => {

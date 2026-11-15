@@ -1,17 +1,30 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ProjectGitService } from '../../../../services/project-git.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { formatCompactDateTime } from '../../../../services/format.util';
 import type { GitFileChange, GitGraphCommit, GitTaskBadge } from '../../../git';
 
+/** Integration presence of a commit: integrated, not integrated, or not recorded. */
+export function commitIntegrationStatus(
+  presence: Pick<NonNullable<GitGraphCommit['presence']>, 'inIntegration' | 'integrationBranch'> | null | undefined,
+): { label: string; tone: StatusTone } {
+  if (!presence) return { label: 'Not recorded', tone: 'neutral' };
+  return presence.inIntegration
+    ? { label: `Integrated · ${presence.integrationBranch}`, tone: 'success' }
+    : { label: `Not integrated · ${presence.integrationBranch}`, tone: 'neutral' };
+}
+
 @Component({
   selector: 'app-project-git-commit-details',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-git-commit-details.component.html',
   styleUrl: './project-git-commit-details.component.scss',
 })
 export class ProjectGitCommitDetailsComponent {
+  readonly integrationStatus = commitIntegrationStatus;
   private readonly git = inject(ProjectGitService);
   private readonly tasks = inject(TaskReferenceNavigationService);
   readonly projectName = input.required<string>();

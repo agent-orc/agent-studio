@@ -20,6 +20,14 @@
 # website already running on this host is not touched.
 set -euo pipefail
 
+# This inventory is intentionally available on runner hosts without Docker.
+if [ "${1:-}" = --plan ]; then
+  cat <<'JSON'
+{"schema":"agent-studio.networked-recovery-plan/v1","requires":["docker","age","age-keygen","git","curl","python3","openssl"],"conditionalRequires":{"JOB_RESULTS_DIR":["node","frontend npm dependencies","Playwright Chromium"]},"checks":["isolated-source-stack","scheduled-backup","manual-backup","off-host-encrypted-archive","two-project-checkouts","empty-host-restore","restored-login","sealed-secret","checkout-refs","task-storage","restored-work-inventory","no-duplicate-work-records"],"runningWorkRequirement":"Set STUDIO_RUNNING_TEAM_SEED_HOOK to an API seeding script and STUDIO_REQUIRE_RUNNING_WORK=1 to require active coding, review, red batch and publication records.","scope":"operator host with Docker"}
+JSON
+  exit 0
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 stack="$repo_root/deploy/compose/monolith-networked"
 version="$(tr -d '\r\n' < "$repo_root/VERSION")"
@@ -34,9 +42,12 @@ chmod 755 "$work"
 project_a="studio-backup-drill-a-$$"
 project_b="studio-backup-drill-b-$$"
 
-for tool in age age-keygen git curl python3 docker; do
+for tool in age age-keygen git curl python3 docker openssl; do
   command -v "$tool" > /dev/null || { echo "$tool is required" >&2; exit 1; }
 done
+if [ -n "${JOB_RESULTS_DIR:-}" ]; then
+  command -v node > /dev/null || { echo 'node is required when JOB_RESULTS_DIR is set' >&2; exit 1; }
+fi
 
 compose_in() {
   local dir="$1" project="$2"
@@ -185,6 +196,11 @@ csrf="$(sign_in "$work/a/jar")"
 probe_value="drill-$(openssl rand -hex 12)"
 curl "${curl_base[@]}" --fail -b "$work/a/jar" -H 'Content-Type: application/json' -H "Origin: $url" -H "X-CSRF-Token: $csrf" \
   -d "{\"name\":\"backup-drill\",\"value\":\"$probe_value\"}" "$url/api/secrets/workspace" > /dev/null
+if [ -n "${JOB_RESULTS_DIR:-}" ]; then
+  mkdir -p "$JOB_RESULTS_DIR"
+  node "$repo_root/scripts/monolith-networked-backup-browser-capture.cjs" \
+    "https://studio.test:$port/" "$work/a/jar" "$JOB_RESULTS_DIR/recovery-source.png"
+fi
 
 # backup_overview <cookie-jar> <file>: the Operations page backup panel data.
 backup_overview() {
@@ -239,6 +255,11 @@ git -C "$work/seed" add README.md
 git -C "$work/seed" -c user.name=Drill -c user.email=drill@example.invalid commit -q -m 'Add readme'
 git -C "$work/seed" push -q origin HEAD:main
 git --git-dir "$work/remote.git" symbolic-ref HEAD refs/heads/main
+git init -q --bare "$work/remote-b.git"
+git clone -q "$work/remote-b.git" "$work/seed-b"
+git -C "$work/seed-b" -c user.name=Drill -c user.email=drill@example.invalid commit -q --allow-empty -m 'Second project history'
+git -C "$work/seed-b" push -q origin HEAD:main
+git --git-dir "$work/remote-b.git" symbolic-ref HEAD refs/heads/main
 studio_ref="$(in_api_image -v "$work/a/data/projects:/data/projects" -v "$work/remote.git:$work/remote.git:ro" "$api_image" -c "
   set -e
   git clone -q '$work/remote.git' /data/projects/demo
@@ -249,6 +270,18 @@ studio_ref="$(in_api_image -v "$work/a/data/projects:/data/projects" -v "$work/r
   mkdir -p /data/projects/.task-storage/PROJ-1
   echo 'task card' > /data/projects/.task-storage/PROJ-1/AGT-1.md
   echo \$commit")"
+in_api_image -v "$work/a/data/projects:/data/projects" -v "$work/remote-b.git:$work/remote-b.git:ro" "$api_image" -c "
+  set -e
+  git clone -q '$work/remote-b.git' /data/projects/demo-b
+  mkdir -p /data/projects/.task-storage/PROJ-2
+  echo 'second task card' > /data/projects/.task-storage/PROJ-2/AGT-2.md"
+
+# An operator can populate real running work through the disposable stack's
+# application API before the archive is captured. The hook receives the source
+# data root, HTTPS URL and Owner cookie jar; it must not mutate another host.
+if [ -n "${STUDIO_RUNNING_TEAM_SEED_HOOK:-}" ]; then
+  bash "$STUDIO_RUNNING_TEAM_SEED_HOOK" "$work/a/data" "$url" "$work/a/jar"
+fi
 
 # Settings > Task Server > Create backup, as the browser sends it.
 idempotency="drill-$(openssl rand -hex 8)"
@@ -295,10 +328,11 @@ head -c 21 "$archive" | grep -q '^age-encryption.org/v1' || { echo 'The archive 
 age --decrypt --identity "$work/offline/identity.txt" "$archive" > "$work/plain.tar.gz"
 tar -tzf "$work/plain.tar.gz" > "$work/members"
 for member in studio-backup/manifest.env studio-backup/checkouts.tsv studio-backup/bundles/1.bundle \
-  workspace/.security/access-state.json projects/.task-storage/PROJ-1/AGT-1.md; do
+  workspace/.security/access-state.json projects/.task-storage/PROJ-1/AGT-1.md \
+  projects/.task-storage/PROJ-2/AGT-2.md; do
   grep -qx "$member" "$work/members" || { echo "The archive lacks $member" >&2; exit 1; }
 done
-if grep -Eq '^(keys/|projects/demo/|projects/demo-worktree/)' "$work/members"; then
+if grep -Eq '^(keys/|projects/demo/|projects/demo-b/|projects/demo-worktree/)' "$work/members"; then
   echo 'The archive holds checkout content or the secret store key' >&2
   exit 1
 fi
@@ -326,15 +360,14 @@ fi
 grep -q "needs $key_id" "$work/b/wrong-key.log"
 (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --identity "$work/offline/identity.txt" \
   --secret-key "$work/offline/secrets.kek" "$archive")
-node -e '
-  const fs = require("node:fs");
-  const path = require("node:path");
-  const folder = process.argv[1];
-  const state = JSON.parse(fs.readFileSync(path.join(folder, "access-state.json"), "utf8"));
-  const notice = JSON.parse(fs.readFileSync(path.join(folder, "restore-notice.json"), "utf8"));
-  if (state.Sessions?.length !== 0 || notice.ArchiveId !== process.argv[2] || !notice.ArchiveCreatedAt)
-    process.exit(1);
-' "$work/b/data/workspace/.security" "$(basename "$archive")"
+python3 - "$work/b/data/workspace/.security" "$(basename "$archive")" <<'PY'
+import json, pathlib, sys
+folder = pathlib.Path(sys.argv[1])
+state = json.loads((folder / 'access-state.json').read_text())
+notice = json.loads((folder / 'restore-notice.json').read_text())
+assert state.get('Sessions') == []
+assert notice.get('ArchiveId') == sys.argv[2] and notice.get('ArchiveCreatedAt')
+PY
 if (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --identity "$work/offline/identity.txt" \
   --secret-key "$work/offline/secrets.kek" "$archive") > /dev/null 2> "$work/b/again.log"; then
   echo 'restore.sh restored into a stack that is not empty' >&2
@@ -342,11 +375,29 @@ if (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --id
 fi
 grep -q 'not empty' "$work/b/again.log"
 
+# Snapshot the restored stores before the API can resume. The work checker reads
+# the authority journal and batch records from these same paths after startup.
+mkdir -p "$work/b/before/workspace" "$work/b/before/home/.local/share"
+if [ -d "$work/b/data/workspace/.metadata" ]; then
+  cp -a "$work/b/data/workspace/.metadata" "$work/b/before/workspace/"
+fi
+if [ -d "$work/b/data/home/.local/share/agentstudio" ]; then
+  cp -a "$work/b/data/home/.local/share/agentstudio" "$work/b/before/home/.local/share/"
+fi
+
 compose_in "$work/b/stack" "$project_b" up -d --no-build
 wait_ready
+running_work_flag=()
+if [ "${STUDIO_REQUIRE_RUNNING_WORK:-0}" = 1 ]; then running_work_flag=(--require-running-work); fi
+python3 "$repo_root/scripts/monolith-networked-backup-work-verify.py" \
+  "$work/b/before" "$work/b/data" "${running_work_flag[@]}" > "$work/b/work-check.json"
 [ "$(json_field "$work/status.json" bootstrapRequired)" = False ] || { cat "$work/status.json" >&2; exit 1; }
 csrf="$(sign_in "$work/b/jar")"
 [ -n "$csrf" ] || { echo 'Sign-in to the restored stack failed' >&2; exit 1; }
+if [ -n "${JOB_RESULTS_DIR:-}" ]; then
+  node "$repo_root/scripts/monolith-networked-backup-browser-capture.cjs" \
+    "https://studio.test:$port/" "$work/b/jar" "$JOB_RESULTS_DIR/recovery-restored.png"
+fi
 curl "${curl_base[@]}" --fail -b "$work/b/jar" "$url/api/secrets/workspace/backup-drill" > "$work/b/secret.json"
 # Rotating seals a new version, which needs the restored key.
 curl "${curl_base[@]}" --fail -b "$work/b/jar" -H 'Content-Type: application/json' -H "Origin: $url" -H "X-CSRF-Token: $csrf" \
@@ -357,8 +408,11 @@ in_api_image -v "$work/b/data/projects:/data/projects:ro" "$api_image" -c "
   test \"\$(git -C /data/projects/demo config --get remote.origin.url)\" = '$work/remote.git'
   test \"\$(git -C /data/projects/demo symbolic-ref --short HEAD)\" = main
   test -f /data/projects/demo/README.md
+  test \"\$(git -C /data/projects/demo-b config --get remote.origin.url)\" = '$work/remote-b.git'
+  test \"\$(git -C /data/projects/demo-b symbolic-ref --short HEAD)\" = main
   test ! -e /data/projects/demo-worktree
-  grep -qx 'task card' /data/projects/.task-storage/PROJ-1/AGT-1.md"
+  grep -qx 'task card' /data/projects/.task-storage/PROJ-1/AGT-1.md
+  grep -qx 'second task card' /data/projects/.task-storage/PROJ-2/AGT-2.md"
 echo 'Restored stack signs in, opens the sealed secret, and has the Studio ref and task storage back.'
 
 message='Backup and restore drill passed: off state reported, scheduled and on-demand in-app backups, encrypted write-only backup, restore into an empty stack, sign-in.'
@@ -366,4 +420,5 @@ echo "$message"
 if [ -n "${JOB_RESULTS_DIR:-}" ]; then
   mkdir -p "$JOB_RESULTS_DIR"
   printf '%s\n' "$message" > "$JOB_RESULTS_DIR/backup-restore-drill.txt"
+  cp "$work/b/work-check.json" "$JOB_RESULTS_DIR/backup-restore-work-check.json"
 fi

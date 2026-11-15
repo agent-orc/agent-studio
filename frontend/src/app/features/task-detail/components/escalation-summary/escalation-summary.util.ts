@@ -46,6 +46,7 @@ import {
   type AspectFinding,
   type AspectVerdictTone,
 } from '../../../../components/aspect-findings';
+import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import type { SteeringInfo } from '../../../../components/steering-detail';
 import { buildMergeSignal, type MergeSignalView } from '../../../board';
 import type { TaskTimelineEvent } from '../../../task-timeline';
@@ -69,7 +70,45 @@ export interface EscalationGateItem {
 }
 
 /** Where {@link EscalationSummaryView.gateItems} was sourced from. */
-export type EscalationGateSource = 'council-reaction' | 'gate-evidence' | 'review-evidence' | 'none';
+export type EscalationGateSource = 'council-reaction' | 'gate-evidence' | 'review-evidence' | 'batch-diagnostic' | 'none';
+
+export interface BatchDiagnostic {
+  batchId: string;
+  failingTest: string;
+  members: string[];
+}
+
+/** Accept only a complete batch diagnostic; incomplete files stay available as artifacts. */
+export function parseBatchDiagnostic(body: string | null | undefined): BatchDiagnostic | null {
+  if (!body) return null;
+  try {
+    const value: unknown = JSON.parse(body);
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record['batchId'] !== 'string' || !record['batchId'].trim()
+      || typeof record['failingTest'] !== 'string' || !record['failingTest'].trim()
+      || !Array.isArray(record['members']) || record['members'].length === 0
+      || !record['members'].every(member => typeof member === 'string' && member.trim())) return null;
+    return {
+      batchId: record['batchId'].trim(),
+      failingTest: record['failingTest'].trim(),
+      members: record['members'].map(member => member.trim()),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function batchDiagnosticFinding(diagnostic: BatchDiagnostic): EscalationGateItem {
+  return {
+    id: `batch-${diagnostic.batchId}`,
+    text: `Batch ${diagnostic.batchId} failed: ${diagnostic.failingTest}`,
+    detail: `Members: ${diagnostic.members.join(', ')}. Diagnostic: results/batch-diagnostic.json`,
+    checked: false,
+    verdict: 'failed',
+    tone: 'danger',
+  };
+}
 
 /** Compact review-verdict head, from the newest code-review grade file. */
 export interface EscalationReviewHead {
@@ -279,6 +318,28 @@ export interface EscalationRecommendation {
   tone: 'ok' | 'warn' | 'danger';
 }
 
+/** Header state of the escalation panel (AGT-3403). */
+export type EscalationHeadKind = 'needs-review' | 'gave-up' | 'needs-input' | 'answer-queued';
+
+/**
+ * Header state to shared status tone: a quality escalation a human must judge
+ * is danger; a system give-up or an agent question needs an operator step
+ * (warning); a queued answer is an informative fact.
+ */
+export const ESCALATION_HEAD_TONES: Readonly<Record<EscalationHeadKind, StatusTone>> = {
+  'needs-review': 'danger',
+  'gave-up': 'warning',
+  'needs-input': 'warning',
+  'answer-queued': 'info',
+};
+
+/** Recommendation pill tone to shared status tone. */
+export const ESCALATION_RECOMMENDATION_TONES: Readonly<Record<EscalationRecommendation['tone'], StatusTone>> = {
+  ok: 'success',
+  warn: 'warning',
+  danger: 'danger',
+};
+
 /** The full aggregated view model the panel renders. */
 export interface EscalationSummaryView {
   /**
@@ -295,6 +356,7 @@ export interface EscalationSummaryView {
   gateItems: EscalationGateItem[];
   /** Which artifact the gate items came from. */
   gateSource: EscalationGateSource;
+  batchDiagnostic: BatchDiagnostic | null;
   /** Compact review-verdict head, or null when no grade/verdict exists. */
   review: EscalationReviewHead | null;
   /** Delivery context (merge status + commit / file counts). */
@@ -356,6 +418,7 @@ export function latestParkedAttempt(
 export interface EscalationSummaryInputs {
   info: TaskInfo;
   reviewEvidence: readonly ReviewEvidenceEntry[];
+  batchDiagnostic?: BatchDiagnostic | null;
   codeReviews: readonly CodeReviewListEntry[];
   /** Latest escalate/reissue steering info from the timeline, or null. */
   steering: SteeringInfo | null;
@@ -442,7 +505,7 @@ export function gateItemsFromEvidence(entries: readonly ReviewEvidenceEntry[]): 
 
 /** Choose findings from typed sources only, newest council reaction first. */
 export function resolveGateItems(
-  inputs: Pick<EscalationSummaryInputs, 'codeReviews' | 'steering' | 'reviewEvidence'>,
+  inputs: Pick<EscalationSummaryInputs, 'codeReviews' | 'steering' | 'reviewEvidence' | 'batchDiagnostic'>,
 ): { items: EscalationGateItem[]; source: EscalationGateSource } {
   const newest = newestCodeReview(inputs.codeReviews);
   const council = gateItemsFromCouncil(newest?.councilReaction?.assessments ?? []);
@@ -453,6 +516,10 @@ export function resolveGateItems(
 
   const evidence = gateItemsFromEvidence(inputs.reviewEvidence);
   if (evidence.length > 0) return { items: evidence, source: 'review-evidence' };
+
+  if (inputs.batchDiagnostic) return {
+    items: [batchDiagnosticFinding(inputs.batchDiagnostic)], source: 'batch-diagnostic',
+  };
 
   return { items: [], source: 'none' };
 }
@@ -744,6 +811,7 @@ export function buildEscalationSummaryView(inputs: EscalationSummaryInputs): Esc
     cause: causeOf(inputs.steering),
     gateItems: items,
     gateSource: source,
+    batchDiagnostic: inputs.batchDiagnostic ?? null,
     review: pickReviewHead(inputs.codeReviews),
     delivery,
     recommendation: deriveRecommendation(

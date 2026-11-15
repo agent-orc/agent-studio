@@ -1,7 +1,30 @@
 # Tasks Domain Map
 
-Version: 2026-11-09
+Version: 2026-11-15
 Status: System-of-record map for task storage, lanes, and API mutation changes.
+
+## Fenced remote delivery attribution and published repair
+
+The server first verifies the immutable result ref and exact result SHA. It
+normally attributes the fenced base to result commit range. If a continue
+round rebased away the runner's local start merge, the server uses the result's
+merge-base with the integration line and attributes only commits carrying this
+card's `Agent-Studio-Task` trailer. The existing foreign subject guard still
+rejects an owned commit whose subject names another card. The run timeline
+records the missing base and fallback. A delivery without attributed commits
+cannot enter a batch; its completion warning is shown on Auto Review and the
+card is escalated before a gate runs.
+An available fenced base that is not in the result remains a recoverable
+salvage refusal and requests a merge round.
+
+On batch pilot ticks, a card escalated with `release-unattributed` can be
+repaired from its existing published member receipt. The published batch's
+pre-tip SHA preserves the integration line at publication time, so attribution
+does not collapse after the candidate lands on develop. Recovery verifies the
+published candidate, gate verdict, current review generation, and every
+replacement source before recording attribution, replacement mapping, and
+integration evidence. It then moves the card to Human Review. It creates no
+delivery or integration commit and does not accept the card.
 
 Use this when a change touches job folders, lane states, task metadata,
 workspace registry records, task CRUD, ordering, review evidence, run timeline,
@@ -241,6 +264,18 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   ids become plain `dependsOn` edges to the predecessor slice cards (not
   `requiresCompletion` edges on the concept), and promoting a slice also
   promotes its predecessors first.
+- Promotion and acceptance are separate actions (AGT-3701).
+  `POST /api/tasks/{id}/promote-concept` (from Human review or Accepted) only
+  creates the selected slices (`itemIndexes`, empty for all), records the
+  `post-concept-promotion` step, and returns the created cards with their slice
+  index. It never moves the concept card, so a refused acceptance cannot hide
+  created cards behind an error status. `GET` returns the slices plus
+  `promoted`, the slices that already have a card. Accepting the concept later
+  marks the Dossier accepted and keeps that step passed; it is marked skipped
+  only when no slice was promoted. Promotion leaves the Dossier lifecycle alone.
+  The Studio offers this as **Create implementation cards** on the Dossier view
+  (through the Dossier's source concept card) and on the concept card's
+  Overview. The Dossier's **Start one combined task** stays the single-card path.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
   code-change request. The `message` names the card's mode and the two ways
@@ -1727,6 +1762,14 @@ lane lists each card's result and checks again. "Send a round to close the
 gap" opens the prefilled prompt and result ref for editing, and nothing is
 sent until the owner confirms it through `POST .../continue` with `baseRef`.
 
+The Needs you list keeps its Human Review lane facts in the published operator
+stream, but lane membership is not an acceptance verdict. While the list is
+open, it sends the visible card keys to the same readiness POST as the board.
+It shows each completion headline and full reason, plus the count ready to
+accept among those cards, and refreshes on the attention poll. An unavailable
+preview is labelled unavailable rather than ready. The background operator
+fact sweep does not run completion checks or Git.
+
 ## Task-tab refinement projection
 
 The task-detail inspector orders its tabs as `Task | Activity | Result`.
@@ -2075,9 +2118,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   option IDs, rationale, operator and decision time, but projects no settled
   promotion decision. The descriptor keeps its current status, and the normal
   prepare and confirm path remains available for a later promotion decision.
-  Concept promotion marks the descriptor `decided` after creating its slice
-  cards, retains those recorded choices, and can be retried without duplicating
-  the cards or lifecycle transition.
+  Concept promotion creates slice cards without changing the descriptor status.
+  Concept acceptance marks the descriptor `decided` and retains those recorded
+  choices. Promotion can be retried without duplicating cards.
 - A delivering card resolved through `references.workbenches` or a descriptor
   `sourceTaskKeys` back edge receives the Dossier maintenance prompt contract.
   It appends only its own dated implementation entry between the canonical log
@@ -2200,10 +2243,17 @@ their authoritative checks; display state never grants permission to mutate.
   version key an immutable snapshot. An input change during computation
   discards the result and queues one rerun. A failed run retains the last
   successful snapshot, marked stale with a bounded reason. Git children have
-  deadlines and are killed on timeout; failed runs back off with at most five
-  automatic retries. Later safety sweeps retry a failed repository even when
-  its inputs are unchanged, and only a successful publication clears stale
-  state. A repository computation runs at most four Git children at once.
+  deadlines and are killed on timeout; ordinary failed runs back off with at
+  most five automatic retries. A run deadline sets a cooldown of two minutes,
+  doubled on consecutive deadline failures up to 30 minutes. Coalesced
+  triggers and safety sweeps respect that cooldown; the sweep retries after it
+  even when inputs are unchanged. The last successful generation remains
+  available with one timeout health reason until a successful publication
+  clears stale state. A repository computation runs at most four Git children
+  at once. Verification ancestry below a published integration tip uses one
+  read of a parent graph and membership checks in memory for all cards. Completed
+  graphs are cached by tip SHA across runs, including a run that later reaches
+  its deadline.
   One Git config command per index run supplies both the effective
   config signature and primary origin. The 45 s sweep checks effective config
   separately. Both publish that capture into the process-wide `GitOriginStore`,

@@ -394,6 +394,7 @@ describe('GitPaneComponent', () => {
     expect(badge).not.toBeNull();
     expect(badge?.getAttribute('data-verdict')).toBe('concerns');
     expect(badge?.textContent).toContain('Concerns');
+    expect(badge?.querySelector('[data-testid="git-commit-review-state"]')?.getAttribute('data-tone')).toBe('warning');
 
     // Clicking asks the shared layout service to reveal + focus the Code
     // Review tab of the prompt pane.

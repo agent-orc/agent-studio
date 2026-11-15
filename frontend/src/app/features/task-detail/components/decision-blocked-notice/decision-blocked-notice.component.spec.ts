@@ -36,6 +36,7 @@ describe('DecisionBlockedNoticeComponent (AGT-2795)', () => {
     });
     const notice = host.querySelector('[data-testid="decision-blocked-notice"]');
     expect(notice?.textContent).toContain('Blocked by');
+    expect(notice?.querySelector('[data-testid="decision-blocked-state"]')?.getAttribute('data-tone')).toBe('warning');
     expect(notice?.textContent).toContain('Stable release contract');
     expect(notice?.textContent).toContain('cannot be claimed or moved to Ready or In Progress');
     const link = host.querySelector('[data-testid="decision-blocked-link"]') as HTMLButtonElement;

@@ -162,6 +162,9 @@ describe('CodeReviewPanelComponent', () => {
     expect(list?.querySelectorAll('.cr-row').length).toBe(2);
     const verdicts = Array.from(list?.querySelectorAll('.cr-verdict') ?? []).map((el) => el.textContent?.trim());
     expect(verdicts).toEqual(['pass', 'concerns']);
+    const tones = Array.from(list?.querySelectorAll('[data-testid="code-review-row-verdict"]') ?? [])
+      .map((el) => el.getAttribute('data-tone'));
+    expect(tones).toEqual(['success', 'warning']);
     const provenance = root.querySelector('[data-testid="code-review-provenance"]');
     expect(provenance?.textContent).toContain('claude / claude-haiku-4-5');
     expect(provenance?.textContent).toContain('125 tokens');
@@ -468,7 +471,9 @@ describe('CodeReviewPanelComponent', () => {
     const body = root.querySelector('[data-testid="code-review-body"]');
     expect(body).toBeTruthy();
     expect(body?.querySelector('.cr-body-header')?.textContent).toContain('Helper duplicated.');
-    expect(body?.querySelector('.cr-body-chip--concerns')?.textContent?.trim()).toBe('concerns');
+    const bodyVerdict = body?.querySelector('[data-testid="code-review-body-verdict"]');
+    expect(bodyVerdict?.textContent?.trim()).toBe('concerns');
+    expect(bodyVerdict?.getAttribute('data-tone')).toBe('warning');
     // No raw <pre> dark blob; the canonical markdown surface rendered structure.
     expect(body?.querySelector('pre')).toBeNull();
     expect(body?.querySelector('cac-markdown')).toBeTruthy();

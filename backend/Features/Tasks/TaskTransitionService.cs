@@ -676,7 +676,7 @@ public sealed class TaskTransitionService
                 && fromState == TaskStates.HumanReview
                 && targetState == TaskStates.Completed)
             {
-                RecordConceptSightReviewCompletion(info, watchPath, cause);
+                RecordConceptSightReviewCompletion(info, watchPath);
             }
 
             if (fromState == TaskStates.HumanReview && targetState == TaskStates.Completed)
@@ -1846,7 +1846,7 @@ public sealed class TaskTransitionService
             {
                 Evidence = $"{contentClaim.Evidence} {gateName}"
                     + (gate.GateNeutralCommits.Count == 0 ? string.Empty
-                        : $" Gate-neutral document-key commits: {string.Join(", ", gate.GateNeutralCommits)}."),
+                        : $" Gate-neutral Dossier descriptor commits: {string.Join(", ", gate.GateNeutralCommits)}."),
             };
         }
         var boundCompletionClaim = contentClaim is null
@@ -2509,8 +2509,7 @@ public sealed class TaskTransitionService
 
     private void RecordConceptSightReviewCompletion(
         TaskInfo original,
-        string? watchPath,
-        string? cause)
+        string? watchPath)
     {
         var moved = _scanner.FindJob(original.Id, watchPath);
         var folder = moved?.FolderPath;
@@ -2527,7 +2526,9 @@ public sealed class TaskTransitionService
             Verdict = "sight-review-approved",
             VerdictSummary = "Human sight review approved the concept.",
         });
-        if (!string.Equals(cause, "concept-sight-review-approved", StringComparison.Ordinal))
+        // Promotion is its own action and records the promotion step itself.
+        // Only an acceptance with no promoted slice marks the step skipped.
+        if (!AgentStudio.Pipeline.ConceptPromotionService.HasPromotedSlices(folder, _logger))
         {
             _pipelineLog?.RecordStep(folder, new PipelineStepExecution
             {
@@ -2544,6 +2545,21 @@ public sealed class TaskTransitionService
         _pipelineLog?.Complete(folder, now);
         SteerPendingMarker.Clear(folder, _logger);
         _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(folder));
+        // A successful lane move owns acceptance. Promotion can happen earlier
+        // and must not mark the Dossier accepted while the concept stays in review.
+        if (_scanner.BuildPromoteConceptPlan(original.Id, watchPath) is { } plan)
+        {
+            try
+            {
+                _services?.GetService<AgentStudio.Pipeline.ConceptPromotionService>()
+                    ?.MarkDossierAccepted(moved ?? original, plan);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Concept Dossier acceptance update failed after the card moved: {JobId}", original.Id);
+            }
+        }
     }
 
     private bool CanCompleteEscalatedJob(TaskInfo info, ProjectSettings settings)

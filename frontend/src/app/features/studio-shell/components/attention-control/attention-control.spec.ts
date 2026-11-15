@@ -23,7 +23,8 @@ const items: OperatorAttentionItem[] = [
 describe('AttentionControlComponent', () => {
   afterEach(() => TestBed.resetTestingModule());
 
-  async function setup(backupState: 'ok' | 'disabled' = 'ok', dossierCount = 0) {
+  async function setup(backupState: 'ok' | 'disabled' = 'ok', dossierCount = 0,
+    attentionItems: OperatorAttentionItem[] = items) {
     const openReferenceOrNotify = vi.fn(() => true);
     const overlays = { open: vi.fn() };
     await TestBed.configureTestingModule({
@@ -45,7 +46,7 @@ describe('AttentionControlComponent', () => {
     } }] : [] });
     http.expectOne('/api/operator/backups').flush({ state: backupState, stale: false,
       generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
-    http.expectOne('/api/operator/attention').flush({ items, count: items.length });
+    http.expectOne('/api/operator/attention').flush({ items: attentionItems, count: attentionItems.length });
     await fixture.whenStable();
     return { fixture, http, openReferenceOrNotify, overlays, openTab };
   }
@@ -54,6 +55,54 @@ describe('AttentionControlComponent', () => {
     return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="attention-row"]'));
   }
 
+  function flushReadiness(http: HttpTestingController): void {
+    http.expectOne('/api/tasks/acceptance-readiness').flush({
+      checkedAtUtc: '2026-11-09T09:01:00Z', counts: { 'no-content-verdict': 1 }, items: [{
+        taskKey: 'AGT-2', projectName: 'alpha', readiness: 'no-content-verdict',
+        headline: 'No content verdict', reason: 'The review has no content verdict.',
+      }],
+    });
+  }
+
+  it('shows completion readiness for each review card and updates the ready count after a decision', async () => {
+    const reviewItems = [items[0], { ...items[0], id: 'h2', cardKey: 'AGT-4', cards: ['AGT-4'] }];
+    const { fixture, http } = await setup('ok', 0, reviewItems);
+    const trigger = (fixture.nativeElement as HTMLElement)
+      .querySelector('[data-testid="studio-attention-trigger"]') as HTMLButtonElement;
+
+    trigger.click();
+    http.expectOne('/api/operator/attention').flush({ items: reviewItems, count: reviewItems.length });
+    const check = http.expectOne('/api/tasks/acceptance-readiness');
+    expect(check.request.method).toBe('POST');
+    expect(check.request.body.items).toEqual([
+      { jobId: 'AGT-2', project: 'alpha' }, { jobId: 'AGT-4', project: 'alpha' },
+    ]);
+    check.flush({ checkedAtUtc: '2026-11-09T09:01:00Z', counts: { ready: 1, 'no-content-verdict': 1 }, items: [
+      { taskKey: 'AGT-2', projectName: 'alpha', readiness: 'no-content-verdict',
+        headline: 'No content verdict', reason: 'The review has no content verdict.' },
+      { taskKey: 'AGT-4', projectName: 'alpha', readiness: 'ready',
+        headline: 'Ready to accept', reason: 'All completion checks pass.' },
+    ] });
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid="attention-review-ready-count"]')?.textContent).toContain('1 of 2 ready to accept');
+    expect(rows()[0].textContent).toContain('No content verdict');
+    expect(rows()[0].textContent).toContain('The review has no content verdict.');
+    expect(rows()[1].textContent).toContain('Ready to accept');
+
+    trigger.click();
+    trigger.click();
+    http.expectOne('/api/operator/attention').flush({ items: reviewItems, count: reviewItems.length });
+    http.expectOne('/api/tasks/acceptance-readiness').flush({
+      checkedAtUtc: '2026-11-09T09:02:00Z', counts: { ready: 2 }, items: [
+        { taskKey: 'AGT-2', projectName: 'alpha', readiness: 'ready', headline: 'Ready to accept', reason: 'Decision recorded.' },
+        { taskKey: 'AGT-4', projectName: 'alpha', readiness: 'ready', headline: 'Ready to accept', reason: 'All completion checks pass.' },
+      ],
+    });
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid="attention-review-ready-count"]')?.textContent).toContain('2 of 2 ready to accept');
+    expect(rows()[0].textContent).toContain('Decision recorded.');
+  });
+
   it('counts exactly the rows the list shows, grouped in class order', async () => {
     const { fixture, http } = await setup();
     const host = fixture.nativeElement as HTMLElement;
@@ -61,6 +110,7 @@ describe('AttentionControlComponent', () => {
 
     (host.querySelector('[data-testid="studio-attention-trigger"]') as HTMLButtonElement).click();
     http.expectOne('/api/operator/attention').flush({ items, count: items.length });
+    flushReadiness(http);
     await fixture.whenStable();
 
     expect(rows()).toHaveLength(3);
@@ -88,6 +138,7 @@ describe('AttentionControlComponent', () => {
     http.expectOne('/api/operator/backups').flush({ state: 'disabled', stale: false,
       generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
     http.expectOne('/api/operator/attention').flush({ items, count: items.length });
+    flushReadiness(http);
     await fixture.whenStable();
     const group = document.querySelector('[data-testid="attention-group-installation"]') as HTMLElement;
     expect(group.querySelector('[data-testid="attention-count-in-group"]')?.textContent?.trim()).toBe('2');
@@ -108,6 +159,7 @@ describe('AttentionControlComponent', () => {
     http.expectOne('/api/operator/backups').flush({ state: 'ok', stale: false,
       generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
     http.expectOne('/api/operator/attention').flush({ items, count: items.length });
+    flushReadiness(http);
     await fixture.whenStable();
     const group = document.querySelector('[data-testid="attention-group-dossier"]') as HTMLElement;
     expect(group.textContent).toContain('2 open decisions');
@@ -123,6 +175,7 @@ describe('AttentionControlComponent', () => {
 
     trigger.click();
     http.expectOne('/api/operator/attention').flush({ items, count: items.length });
+    flushReadiness(http);
     await fixture.whenStable();
     (rows()[1].querySelector('[data-testid="attention-row-action"]') as HTMLButtonElement).click();
     await fixture.whenStable();
@@ -131,6 +184,7 @@ describe('AttentionControlComponent', () => {
 
     trigger.click();
     http.expectOne('/api/operator/attention').flush({ items, count: items.length });
+    flushReadiness(http);
     await fixture.whenStable();
     (rows()[2].querySelector('[data-testid="attention-row-action"]') as HTMLButtonElement).click();
     expect(overlays.open).toHaveBeenCalledWith('remote-hosts');

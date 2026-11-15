@@ -381,10 +381,10 @@
   outline-offset: 1px;
 }
 
-// Commit-row code-review rating badge (AGT-1995): a compact, tinted pill
-// that surfaces the review verdict for the shown commit and jumps to the
-// Code Review tab on click. It is the successor to the token chip AGT-1990
-// removed from this same line. Tone colours mirror the Code Review tab.
+// Commit-row code-review rating badge (AGT-1995): a compact button that
+// surfaces the review verdict for the shown commit and jumps to the Code
+// Review tab on click. The verdict is the shared status indicator inside it
+// (AGT-3403); the button keeps only its control chrome.
 .git-view__commit-review {
   display: inline-flex;
   align-items: center;
@@ -407,29 +407,6 @@
   outline: 2px solid var(--studio-accent);
   outline-offset: 1px;
 }
-.git-view__commit-review-glyph {
-  font-weight: 700;
-}
-.git-view__commit-review-label {
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.git-view__commit-review--pass {
-  color: var(--severity-pass);
-  border-color: color-mix(in srgb, var(--severity-pass) 55%, var(--studio-border));
-}
-.git-view__commit-review--concerns {
-  color: var(--severity-warn);
-  border-color: color-mix(in srgb, var(--severity-warn) 55%, var(--studio-border));
-}
-.git-view__commit-review--block {
-  color: var(--severity-high);
-  border-color: color-mix(in srgb, var(--severity-high) 55%, var(--studio-border));
-}
-.git-view__commit-review--unknown {
-  color: var(--studio-fg-dim);
-}
-
 /* Maximized panes place the file tree beside the diff. */
 .git-view__split-body {
   display: flex;
@@ -590,13 +567,6 @@
   font-family: var(--font-mono, monospace);
   color: var(--studio-accent);
 }
-.git-view__ladder-flag {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--studio-fg-muted);
-}
-.git-view__ladder-rung--reached .git-view__ladder-flag { color: var(--severity-pass); }
 
 /* AGT-2006: landed-ladder loading placeholder. Occupies the ladder's slot with
    shimmer bars while the graph-derived provenance resolves, so the git-status

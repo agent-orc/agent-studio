@@ -535,7 +535,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
 
   test('confirms selected reissue findings and owner note before moving', async ({ page }, testInfo) => {
     await openDetail(page, '5e-escalated');
-    const moves: Array<{ targetState: string; reissueInstructions: { findings: string[]; note: string } }> = [];
+    const moves: { targetState: string; reissueInstructions: { findings: string[]; note: string } }[] = [];
     await page.route(/\/move(\?|$)/, async route => {
       moves.push(route.request().postDataJSON());
       await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
@@ -575,6 +575,60 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     expect(moves[0].reissueInstructions.note).toBe('Keep the retry bounded.');
     expect(moves[0].reissueInstructions.findings).toHaveLength(3);
     expect(moves[0].reissueInstructions.findings.join(' ')).not.toContain('Render every grade document.');
+  });
+
+  test('keeps reissue pending across navigation and updates the open card after the POST resolves', async ({ page }, testInfo) => {
+    await openDetail(page, '5e-escalated');
+    let releaseMove: (() => void) | undefined;
+    const moveHeld = new Promise<void>(resolve => { releaseMove = resolve; });
+    let moved = false;
+    await page.route(/\/move(\?|$)/, async route => {
+      await moveHeld;
+      moved = true;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), route =>
+      route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify(buildDetail(moved ? '2-ready' : '5e-escalated')) }));
+    await page.route('**/api/v1/studio/board**', route => {
+      const info = buildInfo(moved ? '2-ready' : '5e-escalated');
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        backlog: [], preparation: [], orchestratorPrep: [],
+        ready: moved ? [info] : [], progress: [], failedPickup: [],
+        codeNotComplete: [], review: [], autoReview: [], humanReview: [],
+        escalated: moved ? [] : [info], completed: [], archive: [],
+      }) });
+    });
+    await page.getByTestId('escalation-action-reissue-escalated').click();
+    await page.getByTestId('escalation-confirm-submit').click();
+    await expect(page.getByText(/Reissuing .* to Ready/)).toBeVisible();
+    await expect(page.getByTestId('studio-lane-select')).toHaveValue('5e-escalated');
+    await expect(page.getByTestId('overview-title-lane')).toContainText('Escalated');
+    await page.setViewportSize({ width: 1024, height: 800 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const name = `reissue-pending-${theme}.png`;
+      const shot = await page.screenshot();
+      await saveShot(testInfo, name, shot);
+      writeFileSync(path.join(SHOTS_DIR, name), shot);
+    }
+    await page.getByTestId('studio-tab-board:__all__').click();
+    await expect(page.getByText(/Reissuing .* to Ready/)).toBeVisible();
+    await expect(page.getByText(/Requeued .* to Ready/)).toHaveCount(0);
+    await expect(page.getByTestId('task-card').filter({ hasText: 'Result-Templates Teil 2' })).toHaveClass(/task-card--5e-escalated/);
+    releaseMove?.();
+    await expect(page.getByText(/Reissuing .* to Ready/)).toHaveCount(0);
+    await expect(page.getByTestId('task-card').filter({ hasText: 'Result-Templates Teil 2' })).toHaveClass(/task-card--2-ready/);
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+    await expect(page.getByTestId('studio-lane-select')).toHaveValue('2-ready');
+    await expect(page.getByTestId('overview-title-lane')).toContainText('Ready');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const name = `reissue-resolved-${theme}.png`;
+      const shot = await page.screenshot();
+      await saveShot(testInfo, name, shot);
+      writeFileSync(path.join(SHOTS_DIR, name), shot);
+    }
   });
 
   test('shows the latest continued attempt in the parked header', async ({ page }, testInfo) => {
@@ -629,7 +683,8 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await expect(page.locator('[data-testid="escalation-gate-items"] li')).toHaveCount(4);
     await expect(page.getByTestId('escalation-gate-source')).toContainText('Council reaction');
     // AGT-3578: the camelCase wire action `escalate` renders as an open danger chip, not "accepted".
-    const chips = page.locator('[data-testid="escalation-gate-items"] .escalation-details__verdict');
+    // AGT-3403: the verdict is the shared status indicator; its inner element carries the tone.
+    const chips = page.locator('[data-testid="escalation-gate-items"] [data-testid="escalation-finding-verdict"]');
     await expect(chips).toHaveText(['escalate', 'escalate', 'escalate', 'escalate']);
     await expect(chips.first()).toHaveAttribute('data-tone', 'danger');
     await expect(page.getByTestId('escalation-gate-count')).toHaveText('4 open');
@@ -691,7 +746,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await expect(page.getByTestId('escalation-essence')).not.toContainText('Council finding 1');
     const mergeSegments = page.getByTestId('escalation-merge-segment');
     await expect(mergeSegments).toHaveCount(1);
-    await expect(mergeSegments).toHaveText('main ✓ merged');
+    await expect(mergeSegments).toHaveText('main merged');
     await expect(mergeSegments).toHaveAttribute('data-state', 'merged');
     // Recommendation stays on the header.
     await expect(page.getByTestId('escalation-recommendation')).toHaveText('Needs decision');
@@ -828,8 +883,11 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await expect(page.getByTestId('escalation-essence')).toContainText(
       '3 review rounds · Reissue budget exhausted',
     );
-    await expect(page.getByTestId('escalation-context-empty')).toHaveText(
-      'No structured findings, review artifacts, or delivery context were recorded.',
+    await expect(page.getByTestId('escalation-context-empty')).toContainText(
+      'Structured review findings are missing.',
+    );
+    await expect(page.getByTestId('escalation-context-empty')).toContainText(
+      'Review artifacts are missing.',
     );
     await expect(page.getByTestId('escalation-gate-items')).toHaveCount(0);
     await expect(page.getByTestId('escalation-grade-documents')).toHaveCount(0);
@@ -840,6 +898,46 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     expect(height).toBeLessThan(300);
     await dismissAppErrorDialog(page);
     await shootBothThemes(page, testInfo, 'escalation-empty-context');
+  });
+
+  test('owner-day red batch exposes the failing test in the summary and Continue preview', async ({ page }, testInfo) => {
+    const diagnostic = {
+      batchId: 'demo-report-batch-1', phase: 'red', outcome: 'failed',
+      members: ['DEMO-20', 'DEMO-24'],
+      failingTest: 'ReportExportTests.EmptyReportKeepsExportDisabled',
+    };
+    await openDetail(page, '5e-escalated', true, false, undefined, async () => {
+      await page.route('**/results/batch-diagnostic.json**', route => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(diagnostic),
+      }));
+    });
+    const summary = page.getByTestId('escalation-summary');
+    await expect(summary.getByTestId('escalation-batch-diagnostic'))
+      .toContainText('ReportExportTests.EmptyReportKeepsExportDisabled');
+    await expect(summary.getByTestId('escalation-batch-diagnostic')).toContainText('demo-report-batch-1');
+    await expect(summary.getByTestId('escalation-batch-diagnostic')).toContainText('DEMO-20, DEMO-24');
+    await expect(summary.getByTestId('escalation-batch-artifact'))
+      .toHaveAttribute('href', /\/results\/batch-diagnostic\.json/);
+    await expect(summary.getByTestId('escalation-context-empty'))
+      .toContainText('Structured review findings are missing');
+    await summary.getByTestId('escalation-action-reissue-escalated').click();
+    await expect(page.getByTestId('reissue-instructions-preview'))
+      .toContainText('ReportExportTests.EmptyReportKeepsExportDisabled');
+    await expect(page.getByTestId('reissue-instructions-preview'))
+      .toContainText('demo-report-batch-1');
+    await expect(page.getByTestId('reissue-instructions-preview'))
+      .toContainText('DEMO-20, DEMO-24');
+    await expect(page.getByTestId('reissue-instructions-preview'))
+      .toContainText('results/batch-diagnostic.json');
+    await expect(page.getByTestId('escalation-confirm-submit')).toBeEnabled();
+    mkdirSync(SHOTS_DIR, { recursive: true });
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      const shot = await page.screenshot();
+      const name = `owner-day-batch-continue-${theme}--mocked.png`;
+      writeFileSync(path.join(SHOTS_DIR, name), shot);
+      await testInfo.attach(name, { body: shot, contentType: 'image/png' });
+    }
   });
 });
 

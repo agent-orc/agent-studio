@@ -34,6 +34,7 @@ describe('PipelineStepExecutionComponent', () => {
     expect(output?.getAttribute('data-status')).toBe('passed');
     expect(output?.textContent).toContain('stylelint passed');
     expect(output?.textContent).toContain('lock wait 7 ms');
+    expect(output?.querySelector<HTMLElement>('[data-testid="pipeline-step-probe-status"]')?.dataset['tone']).toBe('success');
   });
 
   it('keeps an inapplicable framework-specific step visible', async () => {

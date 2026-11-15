@@ -11,6 +11,7 @@ import type { AgentWorkCall, AgentWorkDetail } from '../../../../session-events'
 import { TaskService } from '../../../../../services/task.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
 
 /**
  * Drill-down for the Overview "Agent Work" block: a grouped, expandable view
@@ -23,7 +24,7 @@ import { DisclosureMarkerComponent } from '../../../../../components/disclosure-
   selector: 'app-agent-work-detail',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, DisclosureMarkerComponent],
+  imports: [TooltipDirective, DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './agent-work-detail.component.html',
   styleUrl: './agent-work-detail.component.scss',
 })
@@ -81,10 +82,11 @@ export class AgentWorkDetailComponent implements OnInit {
     return 'Done';
   }
 
-  callStatusMarker(call: AgentWorkCall): string {
-    if (call.isError) return '!';
-    if (!call.completed) return '...';
-    return 'ok';
+  /** Tool call state as a shared status tone (AGT-3403): Done, Open (still running), Error. */
+  callStatusTone(call: AgentWorkCall): StatusTone {
+    if (call.isError) return 'danger';
+    if (!call.completed) return 'running';
+    return 'success';
   }
 
   /** HTML tooltip: full argument in a code block + the captured result line. */

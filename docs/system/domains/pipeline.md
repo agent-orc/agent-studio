@@ -36,6 +36,13 @@ retry. The operator attention feed raises `batch.running-without-gate` once a
 persisted Running phase without a live flight exceeds the configured gate
 timeout plus the two-minute coordinator lease TTL. Recovery contention is
 logged once per batch and reason; the pilot retries on its 30-second tick.
+The same state read exposes `oldestFormed` with its formation age, and each
+batch's `lastProgressAtUtc`, active claim age, reservation wait, and phase-record
+member dispositions. Every nonterminal batch carries `nextAction` and
+`dueAtUtc`: an active claim uses its durable stage deadline, a running batch
+without a flight uses its recovery retry time, and other batches name the next
+pilot tick. These are observation deadlines, not a promise of publication.
+The batch panel shows these facts beside the flight queue and batch history.
 
 An interrupted deterministic red batch ends as `Paused` with reason
 `isolation interrupted` on the next pilot tick when unresolved members remain.
@@ -80,8 +87,14 @@ start time while its flight is active. The board uses this projection for the
 card CURRENT line and lane counts. Each member receives a full suite as a gate
 slot opens; a red gate escalates that card, and a green gate integrates it. The
 batch panel lists the queue in order and excludes its members from cards waiting
-for another batch. The handoff writes one operator-feed event per paused batch
-with its members.
+for another batch. A remaining fallback handoff keeps the lane indicator and
+panel accessible even if the batch planner is disabled. Each panel row shows the
+per-task admission capacity and last recorded handoff progress time. It explains
+that a start estimate is unavailable
+because full-suite duration has no reliable bound, or that no per-task slot is
+available. The state refreshes with the project state feed every 15 seconds
+while visible and watched. The handoff writes one operator-feed event per paused
+batch with its members.
 
 A per-task gate with a completed parsed test report is a card code failure when
 the integration baseline passes and a clean repeat reproduces the failed tests.
@@ -804,6 +817,12 @@ only a tested fast-forward candidate; it does not synthesize a merge commit
 after the gate. A dirty or stale local checkout cannot hold the verified remote
 publication in `Publishing`; local sync is best effort. Ejected and unresolved
 members start per-card fallbacks after the project batch reservation is released.
+The periodic recovery pass also checks every unresolved pending generation.
+It restores a missing ownership marker or one that names a missing batch,
+reports an unowned generation past its maximum wait with reason and age, and
+resumes a paused batch's durable per-task fallback handoff after a restart.
+Red parents with unresolved members pause when isolation stops; a Green
+isolation child that lost a review generation retires before parent handoff.
 Publication recovery isolates errors by manifest so damaged evidence in one
 batch cannot stop formation or release for other batches. A deferred review
 whose outcome is `IntegrationBranchDefect` can release on the same verified
@@ -1119,7 +1138,9 @@ Task Server gate protocol remains the target for admission of these subjects.
 The outbound pull worker uses an exclusively scoped `gate.execute` Runner
 credential and starts the release-pinned backend binary with
 `--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
-on that host. The worker registers, claims from `/api/pull-gates`, downloads
+on that host. Pull gate mutations authenticate this service bearer directly;
+they do not require a browser `X-Client-Id` header. The worker registers,
+claims from `/api/pull-gates`, downloads
 the exact source bundle, heartbeats its lease, streams progress through those
 heartbeats, and uploads the result and files from its `artifacts/` run folder.
 The server refuses uploads after lease expiry or replacement. Completed
@@ -1626,7 +1647,14 @@ comparison before Quality Studio's verdict contract can decide a review.
   reviewed task-branch merge integrates it after a pre-merge Dossier placement
   check. The post-steps verify the source-card key plus `decision-pending`
   status and task-file links, wait for human sight review, then create coding
-  cards from the descriptor.
+  cards from the descriptor. Promotion writes a durable intent in the source
+  card's `.metadata/concept-promotion.json` before creating children. Each
+  child has a stable identity and creation source, so a retry recovers a card
+  created before its spawn-ledger row. The state records `creating-cards`,
+  `cards-recorded`, `dossier-accepted`, or `completed`, plus created keys.
+  Promotion conflicts and later plan reads return that state and a safe retry
+  action. A successful retry repairs source relations, accepts the Dossier,
+  and completes the concept.
 - `backend/Features/Docs/DossierMaintenanceService.cs` and
   `DossierImplementationContract.cs`: resolve a delivery card's Dossiers from
   `references.workbenches` or descriptor `sourceTaskKeys`, frame the CORE run,

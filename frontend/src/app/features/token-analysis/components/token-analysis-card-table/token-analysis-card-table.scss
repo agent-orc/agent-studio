@@ -64,17 +64,13 @@
 .tt__key { @include ta.numeric; flex: 0 0 auto; color: var(--studio-fg-strong); font-weight: 600; }
 .tt__title { overflow: hidden; color: var(--studio-fg-dim); text-overflow: ellipsis; }
 
-.tt__badge {
-  display: inline-block;
-  margin-right: var(--studio-spacing-1);
-  padding: 0 var(--studio-spacing-1);
-  border: 1px solid var(--studio-border);
-  border-radius: 4px;
-  color: var(--studio-fg-dim);
+.tt__states {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-1);
   font-size: 0.68rem;
 }
 
-.tt__badge--live { background: var(--studio-bg-running); }
 .tt__split { min-width: 72px; }
 
 .tt__bar {

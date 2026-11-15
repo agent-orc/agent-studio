@@ -21,6 +21,8 @@ describe('PipelineHistoryNoticeComponent', () => {
     ) as HTMLElement;
 
     expect(notice.textContent).toContain('Attempt #2 · superseded');
+    const state = notice.querySelector('[data-testid="overview-pipeline-superseded-state"]') as HTMLElement;
+    expect(state.dataset['tone']).toBe('neutral');
     expect(notice.textContent).toContain('Current status colours belong to Attempt #3');
   });
 });

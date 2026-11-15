@@ -1,8 +1,9 @@
 @use '../../../../../styles/mixins' as m;
 
 // The host carries the shell's `.lane-group` container class; this file only
-// styles what the Delivery group renders inside it. Status is encoded by
-// background tint, pill and dot (R1: no coloured side stripes).
+// styles what the Delivery group renders inside it. Run state, health,
+// approval and rollback use the shared status indicator; the attention column
+// keeps a background tint (R1: no coloured side stripes).
 
 :host {
   min-width: 0;
@@ -11,10 +12,7 @@
 [data-delivery-tone] {
   --delivery-tone-fg: var(--studio-fg-muted);
 }
-[data-delivery-tone='ok'] { --delivery-tone-fg: var(--studio-success); }
-[data-delivery-tone='active'] { --delivery-tone-fg: var(--studio-accent); }
 [data-delivery-tone='attention'] { --delivery-tone-fg: var(--studio-warn); }
-[data-delivery-tone='danger'] { --delivery-tone-fg: var(--studio-error); }
 
 .delivery__count,
 .delivery-column__count {
@@ -206,38 +204,6 @@
 .delivery-release__version {
   color: var(--studio-fg-strong);
   font-weight: 600;
-}
-
-.delivery-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  padding: 0 var(--studio-spacing-2);
-  border-radius: var(--studio-card-pill-radius, 999px);
-  background: color-mix(in srgb, var(--delivery-tone-fg) 16%, transparent);
-  color: var(--delivery-tone-fg);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 18px;
-  white-space: nowrap;
-}
-
-.delivery-pill--strong {
-  background: color-mix(in srgb, var(--delivery-tone-fg) 26%, transparent);
-  color: var(--studio-fg-strong);
-}
-
-.delivery-health {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-}
-
-.delivery-health__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--delivery-tone-fg);
 }
 
 .delivery-column__body {

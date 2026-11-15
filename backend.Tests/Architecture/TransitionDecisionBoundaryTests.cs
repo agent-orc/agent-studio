@@ -33,7 +33,7 @@ public sealed class TransitionDecisionBoundaryTests
         "GateQueueStallPolicy",
         "RedDevelopRepairPolicy",
         // AGT-3563: batch phase changes and the batch claim invariants.
-        "BatchPhaseTransitionPolicy", "BatchGateInvariantPolicy",
+        "BatchPhaseTransitionPolicy", "BatchGateInvariantPolicy", "BatchPendingRecoveryPolicy",
         // AGT-3562: batch flight start order and pre-lease deadline.
         "BatchGateStartPolicy",
         // AGT-3569: the durable flight claim of a batch scope.
@@ -58,6 +58,7 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Equal(assembly, typeof(AutoReviewStrandingPolicy).Assembly);
         Assert.Equal(assembly, typeof(AcceptanceRailDecisionPolicy).Assembly);
         Assert.Equal(assembly, typeof(RedDevelopRepairPolicy).Assembly);
+        Assert.Equal(assembly, typeof(BatchPendingRecoveryPolicy).Assembly);
         var referenced = assembly.GetReferencedAssemblies().Select(item => item.Name!).ToArray();
         Assert.DoesNotContain(referenced, name => name is "OrchestratorApi" or "task-server" or "orchestrator-engine"
             || name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)

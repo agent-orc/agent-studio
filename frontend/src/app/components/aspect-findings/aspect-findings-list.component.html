@@ -7,10 +7,11 @@
       @for (f of findings(); track $index) {
         <li class="aspect-findings__item" data-testid="aspect-finding">
           <span class="aspect-findings__aspect">{{ f.aspect }}</span>
-          <span class="aspect-findings__chip"
-                [class]="'aspect-findings__chip--' + tone(f.verdict)"
-                data-testid="aspect-finding-chip"
-                [attr.data-tone]="tone(f.verdict)">{{ chipLabel(f.verdict) }}</span>
+          <app-status-indicator class="aspect-findings__chip"
+                                [tone]="tone(f.verdict)"
+                                [label]="chipLabel(f.verdict)"
+                                [compact]="true"
+                                testId="aspect-finding-chip" />
           @if (f.reason) {
             <span class="aspect-findings__reason">{{ f.reason }}</span>
           }

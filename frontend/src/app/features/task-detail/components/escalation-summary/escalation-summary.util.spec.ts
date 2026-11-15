@@ -3,6 +3,8 @@ import type { TaskInfo, ReviewEvidenceEntry, ReviewProjectionView, ReviewAttempt
 import type { CodeReviewListEntry } from '../../../../services/task.service';
 import type { SteeringInfo } from '../../../../components/steering-detail';
 import {
+  ESCALATION_HEAD_TONES,
+  ESCALATION_RECOMMENDATION_TONES,
   buildDelivery,
   buildEscalationEssence,
   buildEscalationSummaryView,
@@ -16,9 +18,27 @@ import {
   gradeTone,
   latestParkedAttempt,
   parseStatusStubEscalation,
+  parseBatchDiagnostic,
   pickReviewHead,
   resolveGateItems,
 } from './escalation-summary.util';
+
+describe('batch diagnostic fallback', () => {
+  it('parses the owner-day artifact only when the decision fields are complete', () => {
+    const diagnostic = parseBatchDiagnostic(JSON.stringify({
+      batchId: 'demo-report-batch-1', phase: 'red',
+      failingTest: 'ReportExportTests.EmptyReportKeepsExportDisabled',
+      members: ['DEMO-20', 'DEMO-24'],
+    }));
+    expect(diagnostic).toEqual({
+      batchId: 'demo-report-batch-1',
+      failingTest: 'ReportExportTests.EmptyReportKeepsExportDisabled',
+      members: ['DEMO-20', 'DEMO-24'],
+    });
+    expect(parseBatchDiagnostic('{invalid')).toBeNull();
+    expect(parseBatchDiagnostic('{"batchId":"b","members":["DEMO-20"]}')).toBeNull();
+  });
+});
 
 describe('latestParkedAttempt', () => {
   const timeline = [
@@ -726,5 +746,17 @@ describe('deriveEscalationClass', () => {
         ...noSteer,
       }),
     ).toBeNull();
+  });
+});
+
+describe('escalation status tones (AGT-3403)', () => {
+  it('maps header states and recommendations onto the shared status tones', () => {
+    expect(ESCALATION_HEAD_TONES).toEqual({
+      'needs-review': 'danger',
+      'gave-up': 'warning',
+      'needs-input': 'warning',
+      'answer-queued': 'info',
+    });
+    expect(ESCALATION_RECOMMENDATION_TONES).toEqual({ ok: 'success', warn: 'warning', danger: 'danger' });
   });
 });

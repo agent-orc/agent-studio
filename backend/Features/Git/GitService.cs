@@ -4861,33 +4861,12 @@ public partial class GitService
     /// </summary>
     public bool IsManagedDocumentKeyCommit(string repoRoot, string sha, string parentSha)
     {
-        if (!ReviewSubjectStore.IsValidResultSha(sha)
-            || !ReviewSubjectStore.IsValidResultSha(parentSha)) return false;
-        var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
-            "--format=%P%x1f%s%x1f%ae%x1f%ce%x1f%B", sha);
-        if (metadataCode != 0) return false;
-        var fields = metadata.Trim().Split('\x1f');
-        const string serverEmail = "agent-studio@users.noreply.github.com";
-        if (fields.Length != 5
-            || !string.Equals(fields[0], parentSha, StringComparison.OrdinalIgnoreCase)
-            || fields[1] != "chore(workbench): assign document keys"
-            || !((fields[2] == serverEmail && fields[3] == serverEmail)
-                || fields[4].Split('\n').Any(line =>
-                    line.Trim() == ManagedRepositoryMutationService.DocumentKeyCommitTrailer))) return false;
-
-        var (changes, _, changeCode) = RunGitArgs(repoRoot, "diff-tree", "--name-status",
-            "-r", "-z", parentSha, sha);
-        if (changeCode != 0) return false;
-        var (summary, _, summaryCode) = RunGitArgs(repoRoot, "diff-tree", "--summary",
-            "-r", parentSha, sha);
-        if (summaryCode != 0 || !string.IsNullOrWhiteSpace(summary)) return false;
-        var entries = changes.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        if (entries.Length == 0 || entries.Length % 2 != 0) return false;
-        for (var i = 0; i < entries.Length; i += 2)
+        var paths = ManagedDescriptorCommitPaths(repoRoot, sha, parentSha,
+            subject => subject == "chore(workbench): assign document keys",
+            ManagedRepositoryMutationService.DocumentKeyCommitTrailer);
+        if (paths is null) return false;
+        foreach (var path in paths)
         {
-            var path = entries[i + 1];
-            if (entries[i] != "M" || !path.StartsWith("docs/", StringComparison.Ordinal)
-                || !path.EndsWith("/workbench.json", StringComparison.Ordinal)) return false;
             var before = GetFileAtCommit(repoRoot, parentSha, path);
             var after = GetFileAtCommit(repoRoot, sha, path);
             if (before is null || after is null) return false;
@@ -4908,6 +4887,107 @@ public partial class GitService
             }
         }
         return true;
+    }
+
+    /// <summary>
+    /// Descriptor members a server Dossier decision write may change: the
+    /// receipt itself and its lifecycle bookkeeping (AGT-3703).
+    /// </summary>
+    private static readonly string[] DecisionReceiptMembers =
+        ["decision", "relatedTaskKeys", "lifecycleState", "lifecycleHistory",
+         "editedBy", "editedAt", "status", "updatedAt"];
+
+    /// <summary>
+    /// Recognizes a server Dossier decision-receipt mutation with the same
+    /// per-blob check as <see cref="IsManagedDocumentKeyCommit"/>: exactly one
+    /// descriptor changes, it gains a receipt object, history only grows, and
+    /// no other descriptor value changes. The Dossier HTML, code, and tests
+    /// stay byte-identical, so the commit cannot change what a gate tested.
+    /// </summary>
+    public bool IsManagedDecisionReceiptCommit(string repoRoot, string sha, string parentSha)
+    {
+        var paths = ManagedDescriptorCommitPaths(repoRoot, sha, parentSha,
+            subject => subject.StartsWith("chore(workbench): request revision for ", StringComparison.Ordinal)
+                || subject.StartsWith("chore(workbench): record decision for ", StringComparison.Ordinal)
+                || subject.StartsWith("chore(workbench): archive ", StringComparison.Ordinal),
+            ManagedRepositoryMutationService.DecisionReceiptCommitTrailer);
+        if (paths is not [var path]) return false;
+        var before = GetFileAtCommit(repoRoot, parentSha, path);
+        var after = GetFileAtCommit(repoRoot, sha, path);
+        if (before is null || after is null) return false;
+        try
+        {
+            if (JsonNode.Parse(before) is not JsonObject oldDescriptor
+                || JsonNode.Parse(after) is not JsonObject newDescriptor
+                || newDescriptor["decision"] is not JsonObject receipt
+                || receipt["outcome"] is not JsonValue outcome
+                || !outcome.TryGetValue<string>(out var outcomeValue)
+                || outcomeValue is not ("rework" or "feature-spawn" or "archive")) return false;
+            if (!GrowsOnly(oldDescriptor["lifecycleHistory"], newDescriptor["lifecycleHistory"])
+                || !GrowsOnly(oldDescriptor["relatedTaskKeys"], newDescriptor["relatedTaskKeys"])) return false;
+            foreach (var member in DecisionReceiptMembers)
+            {
+                oldDescriptor.Remove(member);
+                newDescriptor.Remove(member);
+            }
+            return JsonNode.DeepEquals(oldDescriptor, newDescriptor);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The new array keeps every old element in order and only appends.</summary>
+    private static bool GrowsOnly(JsonNode? before, JsonNode? after)
+    {
+        if (before is null) return after is null or JsonArray;
+        if (before is not JsonArray oldItems || after is not JsonArray newItems
+            || newItems.Count < oldItems.Count) return false;
+        for (var i = 0; i < oldItems.Count; i++)
+            if (!JsonNode.DeepEquals(oldItems[i], newItems[i])) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// The shared metadata check of the managed descriptor rules: one parent,
+    /// the expected subject, the server identity or the operation trailer, and
+    /// only in-place modifications of <c>docs/**/workbench.json</c>. Returns the
+    /// changed descriptor paths, or null when the commit is not such a commit.
+    /// </summary>
+    private IReadOnlyList<string>? ManagedDescriptorCommitPaths(
+        string repoRoot, string sha, string parentSha, Func<string, bool> subjectMatches, string trailer)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(sha)
+            || !ReviewSubjectStore.IsValidResultSha(parentSha)) return null;
+        var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
+            "--format=%P%x1f%s%x1f%ae%x1f%ce%x1f%B", sha);
+        if (metadataCode != 0) return null;
+        var fields = metadata.Trim().Split('\x1f');
+        const string serverEmail = "agent-studio@users.noreply.github.com";
+        if (fields.Length != 5
+            || !string.Equals(fields[0], parentSha, StringComparison.OrdinalIgnoreCase)
+            || !subjectMatches(fields[1])
+            || !((fields[2] == serverEmail && fields[3] == serverEmail)
+                || fields[4].Split('\n').Any(line => line.Trim() == trailer))) return null;
+
+        var (changes, _, changeCode) = RunGitArgs(repoRoot, "diff-tree", "--name-status",
+            "-r", "-z", parentSha, sha);
+        if (changeCode != 0) return null;
+        var (summary, _, summaryCode) = RunGitArgs(repoRoot, "diff-tree", "--summary",
+            "-r", parentSha, sha);
+        if (summaryCode != 0 || !string.IsNullOrWhiteSpace(summary)) return null;
+        var entries = changes.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (entries.Length == 0 || entries.Length % 2 != 0) return null;
+        var paths = new List<string>();
+        for (var i = 0; i < entries.Length; i += 2)
+        {
+            var path = entries[i + 1];
+            if (entries[i] != "M" || !path.StartsWith("docs/", StringComparison.Ordinal)
+                || !path.EndsWith("/workbench.json", StringComparison.Ordinal)) return null;
+            paths.Add(path);
+        }
+        return paths;
     }
 
     /// <summary>
@@ -4995,7 +5075,9 @@ public partial class GitService
         string expectedResultSha,
         string? recordedIntegrationBranch,
         string? expectedBaseSha,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? taskKey = null,
+        string? fallbackIntegrationBaseSha = null)
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
             return Failed("Repository root does not exist.");
@@ -5030,6 +5112,7 @@ public partial class GitService
                 DeliveryVerificationStatus.ShaMismatch);
         }
 
+        string? missingBaseWarning = null;
         if (!string.IsNullOrWhiteSpace(expectedBaseSha))
         {
             var baseSha = expectedBaseSha.Trim();
@@ -5037,29 +5120,28 @@ public partial class GitService
                 return Failed("Remote delivery has no valid fenced base SHA.");
             var (_, baseError, baseCode) = RunGitArgs(
                 repoRoot, "rev-parse", "--verify", $"{baseSha}^{{commit}}");
-            if (baseCode != 0)
-                return Failed($"Fenced delivery base {AbbreviateSha(baseSha)} is not a commit: {baseError.Trim()}");
-            var (_, ancestorError, ancestorCode) = RunGitArgs(
-                repoRoot, "merge-base", "--is-ancestor", baseSha, deliveryRef);
-            if (ancestorCode != 0)
+            if (baseCode == 0)
+            {
+                var (_, ancestorError, ancestorCode) = RunGitArgs(
+                    repoRoot, "merge-base", "--is-ancestor", baseSha, deliveryRef);
+                if (ancestorCode == 0)
+                {
+                    var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch)
+                        ?? TaskIntegrationBranch.NormalizeRef("main");
+                    var exactCommits = WithMessagesAtRoot(repoRoot,
+                        GetCommitsInRangeAtRoot(repoRoot, baseSha, deliveryRef));
+                    exactCommits.Reverse();
+                    return new RemoteDeliveryCommitRange(true, integrationBranch, baseSha, tip,
+                        exactCommits, null, DeliveryVerificationStatus.Verified);
+                }
                 return Failed(
                     $"Fenced delivery base {AbbreviateSha(baseSha)} is not an ancestor of result {AbbreviateSha(tip)}: {ancestorError.Trim()}",
                     DeliveryVerificationStatus.BaseNotAncestor);
-
-            var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch);
-            if (integrationBranch is null)
-                integrationBranch = TaskIntegrationBranch.NormalizeRef("main");
-            var exactCommits = WithMessagesAtRoot(repoRoot,
-                GetCommitsInRangeAtRoot(repoRoot, baseSha, deliveryRef));
-            exactCommits.Reverse();
-            return new RemoteDeliveryCommitRange(
-                true,
-                integrationBranch,
-                baseSha,
-                tip,
-                exactCommits,
-                null,
-                DeliveryVerificationStatus.Verified);
+            }
+            else
+                missingBaseWarning = $"Fenced delivery base {AbbreviateSha(baseSha)} is not a commit: {baseError.Trim()}";
+            if (string.IsNullOrWhiteSpace(taskKey))
+                return Failed(missingBaseWarning, DeliveryVerificationStatus.BaseNotAncestor);
         }
 
         var candidates = string.IsNullOrWhiteSpace(recordedIntegrationBranch)
@@ -5074,7 +5156,15 @@ public partial class GitService
             var (_, _, fetchCode) = RunGitArgs(
                 repoRoot, cancellationToken, "fetch", "--no-tags", "origin", fetchIntegration);
             if (fetchCode != 0) continue;
-            var mergeBase = GetMergeBase(repoRoot, integrationRef, deliveryRef);
+            var baseRef = integrationRef;
+            if (missingBaseWarning is not null && !string.IsNullOrWhiteSpace(fallbackIntegrationBaseSha))
+            {
+                var (baseOutput, _, baseCode) = RunGitArgs(repoRoot, "rev-parse", "--verify",
+                    $"{fallbackIntegrationBaseSha}^{{commit}}");
+                if (baseCode != 0) continue;
+                baseRef = baseOutput.Trim();
+            }
+            var mergeBase = GetMergeBase(repoRoot, baseRef, deliveryRef);
             if (string.IsNullOrWhiteSpace(mergeBase)) continue;
             var (distanceText, _, distanceCode) = RunGitArgs(
                 repoRoot, "rev-list", "--count", $"{mergeBase}..{deliveryRef}", RevisionsOnly);
@@ -5087,18 +5177,28 @@ public partial class GitService
             .ThenBy(candidate => string.Equals(candidate.Branch, "main", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .FirstOrDefault();
         if (string.IsNullOrWhiteSpace(selected.Branch))
-            return Failed("No recorded main/develop base line shares history with the remote delivery.");
+            return Failed(missingBaseWarning is null
+                ? "No recorded main/develop base line shares history with the remote delivery."
+                : missingBaseWarning + " No integration merge-base is available for task-owned fallback.");
 
         var commits = WithMessagesAtRoot(repoRoot,
             GetCommitsInRangeAtRoot(repoRoot, selected.Base, deliveryRef));
         commits.Reverse();
+        if (missingBaseWarning is not null)
+        {
+            commits = commits.Where(commit =>
+                RemoteCommitAttributionGuard.IsOwnedFallbackCommit(commit, taskKey!)).ToList();
+            if (commits.Count == 0)
+                return Failed(missingBaseWarning + " Integration merge-base fallback found no commits with this task's Agent-Studio-Task trailer.");
+        }
         return new RemoteDeliveryCommitRange(
             true,
             TaskIntegrationBranch.NormalizeRef(selected.Branch),
             selected.Base,
             tip,
             commits,
-            null,
+            missingBaseWarning is null ? null : missingBaseWarning
+                + $" Used task-owned commits after integration merge-base {AbbreviateSha(selected.Base)}.",
             DeliveryVerificationStatus.Verified);
 
         RemoteDeliveryCommitRange Failed(

@@ -4,7 +4,7 @@ import type {
   PipelineStepExecution,
 } from '../../../../../task-pipeline/models/task-pipeline.model';
 import { summarizeDecisionCost } from '../../../../../task-pipeline/decision-cost.util';
-import { buildDecisionTransitions, decisionCost } from './decision-chain.util';
+import { buildDecisionTransitions, decisionCost, decisionVerdictTone, operatorIntentOutcome } from './decision-chain.util';
 
 function step(partial: Partial<PipelineStepExecution> & Pick<PipelineStepExecution, 'stepId' | 'kind'>): PipelineStepExecution {
   return {
@@ -125,5 +125,22 @@ describe('summarizeDecisionCost', () => {
     })!;
     expect(summary.decidingText).toBe('no price data');
     expect(summary.decidingShare).toBeNull();
+  });
+});
+
+describe('decision chain status tones', () => {
+  it.each([
+    ['pass', 'success'], ['accept', 'success'], ['reissue', 'warning'], ['escalate', 'warning'],
+    ['block', 'danger'], ['loop-detected', 'danger'], ['n/a', 'neutral'], [null, 'neutral'], ['later', 'neutral'],
+  ])('maps transition verdict %s to %s', (verdict, tone) => {
+    expect(decisionVerdictTone(verdict)).toBe(tone);
+  });
+
+  it('words and tones recorded operator intent outcomes', () => {
+    expect(operatorIntentOutcome('applied:run-limit:120')).toEqual({ label: 'applied to the card', tone: 'success' });
+    expect(operatorIntentOutcome('applied:stopped-and-held')).toEqual({ label: 'run stopped and card held', tone: 'warning' });
+    expect(operatorIntentOutcome('applied:run-finished-held')).toEqual({ label: 'card held after the run finished', tone: 'warning' });
+    expect(operatorIntentOutcome('recorded, not applied until the run ends')).toEqual({ label: 'recorded, not applied', tone: 'info' });
+    expect(operatorIntentOutcome('something else')).toEqual({ label: 'something else', tone: 'neutral' });
   });
 });

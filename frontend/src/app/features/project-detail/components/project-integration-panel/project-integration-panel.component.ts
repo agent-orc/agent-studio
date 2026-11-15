@@ -3,11 +3,26 @@ import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../com
 import { ProjectGitService } from '../../../../services/project-git.service';
 import { formatCompactDateTime } from '../../../../services/format.util';
 import type { IntegrationQueueState, ProjectIntegrationView } from '../../../git';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Integration queue outcome on the shared indicator (AGT-3403); unknown states stay neutral. */
+export const INTEGRATION_STATUS_TONE: Readonly<Record<IntegrationQueueState, StatusTone>> = {
+  merged: 'success',
+  waiting: 'info',
+  conflict: 'danger',
+  skipped: 'neutral',
+  'legacy-unverifiable': 'neutral',
+  superseded: 'neutral',
+};
+
+export function integrationStatusTone(status: string): StatusTone {
+  return Object.hasOwn(INTEGRATION_STATUS_TONE, status) ? INTEGRATION_STATUS_TONE[status as IntegrationQueueState] : 'neutral';
+}
 
 @Component({
   selector: 'app-project-integration-panel',
   standalone: true,
-  imports: [LoadingSurfaceComponent, PendingButtonDirective],
+  imports: [LoadingSurfaceComponent, PendingButtonDirective, StatusIndicatorComponent],
   templateUrl: './project-integration-panel.component.html',
   styleUrl: './project-integration-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -16,6 +31,7 @@ export class ProjectIntegrationPanelComponent {
   private readonly git = inject(ProjectGitService);
 
   readonly projectName = input.required<string>();
+  readonly statusTone = integrationStatusTone;
   readonly view = signal<ProjectIntegrationView | null>(null);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);

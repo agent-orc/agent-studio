@@ -181,6 +181,15 @@ public sealed class OperatorDecisionPolicyTests
         finally { Directory.Delete(folder, true); }
     }
 
+    [Fact]
+    public void Human_review_lane_alone_does_not_claim_acceptance_readiness()
+    {
+        var fact = OperatorDecisionFacts.FromTasks([Card("A-2", TaskStates.HumanReview)], _ => null).Single();
+
+        Assert.Equal("Needs human review. Check acceptance readiness before accepting.", fact.Reason);
+        Assert.DoesNotContain(OperatorOperations.CardAccept, OperatorOperations.For(fact.Type));
+    }
+
     [Theory]
     [InlineData("host-offline", OperatorDecisionTypes.BackendStalled)]
     [InlineData("claim-refusal", OperatorDecisionTypes.BackendStalled)]

@@ -8,7 +8,7 @@
   @include section.surface(var(--studio-warn));
   font-size: 0.75rem;
 }
-.dead-end > strong { @include section.heading; }
+.dead-end > app-status-indicator { justify-self: start; }
 .dead-end p { margin: 0; overflow-wrap: anywhere; }
 .dead-end__evidence {
   max-height: 12rem;

@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import { firstValueFrom } from 'rxjs';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ProjectGitService } from '../../../../services/project-git.service';
 import type {
   BranchSweepCandidate,
@@ -24,6 +25,21 @@ type LoadState = 'idle' | 'loading' | 'loaded' | 'error';
 
 /** Rows rendered at once; a repository can carry thousands of refs. */
 const VISIBLE_ROW_LIMIT = 200;
+
+const MODE_TONES: Record<BranchSweepMode, StatusTone> = {
+  'report-only': 'info',
+  reclaim: 'warning',
+};
+
+/** Tone of the sweep mode: report-only only reads, reclaim deletes refs. */
+export function branchSweepModeTone(mode: BranchSweepMode): StatusTone {
+  return MODE_TONES[mode] ?? 'neutral';
+}
+
+/** Tone of a retention decision: an eligible ref is up for deletion. */
+export function branchSweepDecisionTone(eligible: boolean): StatusTone {
+  return eligible ? 'warning' : 'neutral';
+}
 
 /**
  * Stale-branch sweep panel for the Project Hub Git-Management surface
@@ -47,7 +63,7 @@ const VISIBLE_ROW_LIMIT = 200;
   selector: 'app-project-branch-sweep',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SegmentedControlComponent, DisclosureMarkerComponent, InfoButtonComponent],
+  imports: [SegmentedControlComponent, DisclosureMarkerComponent, InfoButtonComponent, StatusIndicatorComponent],
   templateUrl: './project-branch-sweep.component.html',
   styleUrl: './project-branch-sweep.component.scss',
 })
@@ -63,6 +79,8 @@ export class ProjectBranchSweepComponent {
   readonly reportError = signal<string | null>(null);
   readonly stale = signal(false);
   readonly mode = signal<BranchSweepMode>('report-only');
+  readonly modeTone = branchSweepModeTone;
+  readonly decisionTone = branchSweepDecisionTone;
   readonly busy = signal(false);
   readonly showAll = signal(false);
 

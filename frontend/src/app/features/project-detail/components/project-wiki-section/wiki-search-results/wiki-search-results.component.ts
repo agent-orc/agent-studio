@@ -13,6 +13,7 @@ import {
   SegmentedControlComponent,
   SegmentedOption,
 } from '../../../../../components/segmented-control/segmented-control.component';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { WikiSearchResponse, WikiSearchResult } from '../../../../../models/project-docs.model';
@@ -87,7 +88,7 @@ export type WikiSearchRow =
 @Component({
   selector: 'app-wiki-search-results',
   standalone: true,
-  imports: [NgTemplateOutlet, SegmentedControlComponent, StudioIconComponent, TooltipDirective],
+  imports: [NgTemplateOutlet, SegmentedControlComponent, StatusIndicatorComponent, StudioIconComponent, TooltipDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './wiki-search-results.component.html',
   styleUrl: './wiki-search-results.component.scss',

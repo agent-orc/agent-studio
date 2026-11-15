@@ -4,6 +4,7 @@
       <div>
         <h3 id="operations-backups-title">Installation backups</h3>
         <p>Encrypted backups of the whole installation, verified by a restore and copied off this host.</p>
+        <p data-testid="operations-backups-recovery-dependency">Quality Studio data and registry are included when present. Recovery still needs the escrowed backup and secret store keys, the Quality Studio image, and repository remotes to restore the checkouts.</p>
         <a data-testid="operations-backups-content-list" href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/setup/studio-backup-restore.md#credential-content-list" target="_blank" rel="noopener noreferrer">Archive credential content list</a>
       </div>
       <button type="button" class="backup-status__refresh" data-testid="operations-backups-refresh" (click)="load()">Refresh</button>
@@ -119,6 +120,25 @@
             <div><dt>Files restored</dt><dd>{{ restore.filesRestored }}</dd></div>
             <div><dt>Checkouts cloned</dt><dd>{{ restore.checkoutsCloned }}</dd></div>
           </dl>
+        </section>
+      }
+      @if (o.operationsRecovery; as recovery) {
+        <section class="backup-status__block" data-testid="operations-recovery" aria-labelledby="operations-recovery-title">
+          <h4 id="operations-recovery-title">Operations recovery</h4>
+          <p>Old Operations credentials were fenced after restoring {{ recovery.backupId }}. Commands remain blocked while checks are outstanding.</p>
+          <ul class="backup-status__recovery-list" data-testid="operations-recovery-checks">
+            @for (item of recovery.items; track item.kind + ':' + item.id) {
+              <li [attr.data-kind]="item.kind" [attr.data-id]="item.id" [attr.data-complete]="item.complete">
+                @switch (item.kind) {
+                  @case ('reenrol') { Re-enrol remote agent {{ item.id }} }
+                  @case ('agent-revocation') { Check old credentials are revoked for {{ item.id }} }
+                  @case ('host-certificate-revocations') { Check host certificate revocations since the archive }
+                  @case ('operator-revocations') { Check operator principal revocations since the archive }
+                }
+                <app-status-indicator [compact]="true" [tone]="item.complete ? 'neutral' : 'warning'" [label]="item.complete ? 'Complete' : 'Outstanding'" />
+              </li>
+            }
+          </ul>
         </section>
       }
       @if (o.lastVerification; as v) {

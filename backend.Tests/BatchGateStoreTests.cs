@@ -11,6 +11,59 @@ namespace AgentStudio.Tests;
 public sealed class BatchGateStoreTests : IDisposable
 {
     [Fact]
+    public void State_keeps_an_aged_formed_batch_visible_with_a_due_action_even_when_history_is_zero()
+    {
+        var manifest = Close(2);
+        var at = Now.AddHours(3);
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true), history: 0, now: at),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        var oldest = state.GetProperty("oldestFormed");
+        Assert.Equal(manifest.BatchId, oldest.GetProperty("batchId").GetString());
+        Assert.True(oldest.GetProperty("ageMinutes").GetDouble() >= 160);
+        var batch = Assert.Single(state.GetProperty("batches").EnumerateArray());
+        Assert.Equal("formed", batch.GetProperty("phase").GetString());
+        Assert.Equal(at.AddSeconds(30), batch.GetProperty("nextAction").GetProperty("dueAtUtc").GetDateTimeOffset());
+        Assert.All(batch.GetProperty("members").EnumerateArray(), member =>
+            Assert.Equal("claimed", member.GetProperty("disposition").GetString()));
+    }
+
+    [Fact]
+    public void State_reports_claim_age_reservation_wait_and_stage_deadline()
+    {
+        var manifest = Close(2);
+        var claimedAt = _store.LatestState(manifest.BatchId).RecordedAtUtc.AddMinutes(1);
+        var claim = Assert.IsType<BatchFlightClaim>(_store.TryClaimFlight("project", manifest.BatchId,
+            "test-owner", 5, claimedAt).Claim);
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true), now: claimedAt.AddMinutes(3)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        var batch = Assert.Single(state.GetProperty("batches").EnumerateArray());
+        Assert.Equal(3, batch.GetProperty("claimAgeMinutes").GetDouble());
+        Assert.Equal(3, batch.GetProperty("reservationWaitMinutes").GetDouble());
+        Assert.Equal(claimedAt, batch.GetProperty("lastProgressAtUtc").GetDateTimeOffset());
+        Assert.Equal(claim.StageDeadlineUtc, batch.GetProperty("nextAction").GetProperty("dueAtUtc").GetDateTimeOffset());
+    }
+
+    [Fact]
+    public void State_retains_a_red_nonterminal_batch_outside_recent_history()
+    {
+        var manifest = Close(2);
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Red, Next, 1, Now.AddMinutes(30), "isolation pending"));
+
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true), history: 0,
+            now: Now.AddMinutes(31)), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        var batch = Assert.Single(state.GetProperty("batches").EnumerateArray());
+        Assert.Equal("red", batch.GetProperty("phase").GetString());
+        Assert.Contains("isolation", batch.GetProperty("nextAction").GetProperty("action").GetString());
+    }
+
+    [Fact]
     public void State_keeps_excluded_overdue_member_out_of_proposals_and_uses_each_deadline()
     {
         _store.Enqueue(new BatchGatePendingRecord("review-a", Subject("task-a", 0),
@@ -69,6 +122,7 @@ public sealed class BatchGateStoreTests : IDisposable
         var batch = Assert.Single(snapshot.GetProperty("batches").EnumerateArray());
         Assert.Equal("abandoned", batch.GetProperty("phaseHistory").EnumerateArray().Last()
             .GetProperty("phase").GetString());
+        Assert.Equal(JsonValueKind.Null, batch.GetProperty("nextAction").ValueKind);
     }
     [Fact]
     public void State_reports_capacity_and_current_slot_use_together()
@@ -141,6 +195,7 @@ public sealed class BatchGateStoreTests : IDisposable
             "another batch paused", "another-batch", Now.AddMinutes(22)));
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
             _store, "project", new BatchGateFormationOptions(Enabled: true),
+            gateSlots: new GateSlotUsage(1, 4),
             activePerTaskFlights: new HashSet<string> { "review-1" }),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var gates = state.GetProperty("perTaskGates").EnumerateArray().ToArray();
@@ -150,10 +205,28 @@ public sealed class BatchGateStoreTests : IDisposable
         Assert.Equal(1, gates[4].GetProperty("position").GetInt32());
         Assert.Equal(1, gates[4].GetProperty("total").GetInt32());
         Assert.True(gates[1].GetProperty("running").GetBoolean());
+        Assert.All(gates, gate => Assert.Equal(3, gate.GetProperty("slotCapacity").GetInt32()));
+        Assert.All(gates.Where(gate => !gate.GetProperty("running").GetBoolean()), gate =>
+            Assert.Contains("duration", gate.GetProperty("startEstimateUnavailableReason").GetString()));
+        Assert.Equal(Now.AddMinutes(23), gates[0].GetProperty("lastProgressAtUtc").GetDateTimeOffset());
         Assert.Equal("gate-01", gates[1].GetProperty("host").GetString());
         Assert.Contains("flaky quarantine", gates[1].GetProperty("reason").GetString());
         Assert.Equal(PerTaskFallbackRules.BatchPaused,
             state.GetProperty("members").GetProperty("task-1").GetProperty("fallbackRule").GetString());
+
+        var ledger = new GateRunLedger(Path.Combine(_root, "ledger"));
+        ledger.Append(new GateRunLedgerRow("fallback-run", "per-task-fallback", "project", ["task-1"],
+            null, null, Now.AddMinutes(22), Now.AddMinutes(23), null, Now.AddMinutes(23),
+            Now.AddMinutes(25), "pass", 120_000, 0, [], null, 0, null, null, null));
+        _store.ResolvePending("review-1", "published");
+        var progressed = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true),
+            gateSlots: new GateSlotUsage(0, 4), now: Now.AddMinutes(26), ledger: ledger),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var remaining = progressed.GetProperty("perTaskGates").EnumerateArray()
+            .First(gate => gate.GetProperty("taskKey").GetString() == "task-0");
+        Assert.Equal(3, remaining.GetProperty("total").GetInt32());
+        Assert.Equal(Now.AddMinutes(25), remaining.GetProperty("lastProgressAtUtc").GetDateTimeOffset());
     }
 
     [Fact]

@@ -3,8 +3,7 @@
         <span class="pdov__icon">📊</span>
         Drift overview
         @if (latest(); as r) {
-          <span class="pdov__band pdov__band--{{ bandClass(r.scoreBand) }}"
-                data-testid="project-drift-overview-band">{{ tc(r.scoreBand) }}</span>
+          <app-status-indicator class="pdov__band" [compact]="true" [tone]="bandTone(r.scoreBand)" [label]="tc(r.scoreBand)" testId="project-drift-overview-band" />
         }
         @if (latest(); as r) {
           <span class="pdov__score-pill"
@@ -108,11 +107,11 @@
                   </header>
                   <p class="pdov__dim-summary">{{ row.dimension.summary }}</p>
                   <footer>
-                    <span class="pdov__sev pdov__sev--{{ severityClass(row.dimension.severity) }}"
-                          [attr.data-testid]="'project-drift-overview-dim-sev-' + dimSlug(row.type)">{{ tc(row.dimension.severity) }}</span>
+                    <app-status-indicator [compact]="true" [tone]="severityTone(row.dimension.severity)"
+                                          [label]="tc(row.dimension.severity)" [testId]="'project-drift-overview-dim-sev-' + dimSlug(row.type)" />
                     <span class="pdov__cov" [cacTooltip]="'Source coverage'">cov {{ formatCoverage(row.dimension.sourceCoverage) }}</span>
-                    <span class="pdov__status pdov__status--{{ statusClass(row.dimension.status) }}"
-                          [attr.data-testid]="'project-drift-overview-dim-status-' + dimSlug(row.type)">{{ tc(row.dimension.status) }}</span>
+                    <app-status-indicator [compact]="true" [tone]="findingStatusTone(row.dimension.status)"
+                                          [label]="tc(row.dimension.status)" [testId]="'project-drift-overview-dim-status-' + dimSlug(row.type)" />
                   </footer>
                 </button>
               } @else {
@@ -141,8 +140,8 @@
               <p class="pdov__panel-summary">{{ opened.dimension!.summary }}</p>
 
               <dl class="pdov__panel-meta">
-                <div><dt>Severity</dt><dd>{{ tc(opened.dimension!.severity) }}</dd></div>
-                <div><dt>Status</dt><dd>{{ tc(opened.dimension!.status) }}</dd></div>
+                <div><dt>Severity</dt><dd> <app-status-indicator [compact]="true" [tone]="severityTone(opened.dimension!.severity)" [label]="tc(opened.dimension!.severity)" testId="project-drift-overview-dimension-severity" /> </dd></div>
+                <div><dt>Status</dt><dd> <app-status-indicator [compact]="true" [tone]="findingStatusTone(opened.dimension!.status)" [label]="tc(opened.dimension!.status)" testId="project-drift-overview-dimension-status" /> </dd></div>
                 <div><dt>Confidence</dt><dd>{{ formatConfidence(opened.dimension!.confidence) }}</dd></div>
                 <div><dt>Source coverage</dt><dd>{{ formatCoverage(opened.dimension!.sourceCoverage) }}</dd></div>
               </dl>
@@ -176,9 +175,9 @@
                     <li class="pdov__finding pdov__finding--{{ severityClass(f.severity) }}"
                         [attr.data-testid]="'project-drift-overview-finding-' + f.findingId">
                       <header>
-                        <span class="pdov__sev pdov__sev--{{ severityClass(f.severity) }}">{{ tc(f.severity) }}</span>
+                        <app-status-indicator [compact]="true" [tone]="severityTone(f.severity)" [label]="tc(f.severity)" testId="project-drift-overview-finding-severity" />
                         <span class="pdov__finding-id"><code>{{ f.findingId }}</code></span>
-                        <span class="pdov__status pdov__status--{{ statusClass(f.status) }}">{{ tc(f.status) }}</span>
+                        <app-status-indicator [compact]="true" [tone]="findingStatusTone(f.status)" [label]="tc(f.status)" testId="project-drift-overview-finding-status" />
                       </header>
                       <p>{{ f.summary }}</p>
                       @if ((f.evidenceRefs?.length ?? 0) > 0) {
@@ -218,7 +217,7 @@
                       <span class="pdov__rel">{{ DIMENSION_LABELS[s.relatedDimension] || s.relatedDimension }}</span>
                     }
                     @if (s.createdJobId) {
-                      <span class="pdov__followup-job">queued · <code>{{ s.createdJobId }}</code></span>
+                      <app-status-indicator class="pdov__followup-job" [compact]="true" tone="info" [label]="'queued · ' + s.createdJobId" testId="project-drift-overview-followup-job" />
                     }
                   </header>
                   @if (s.summary) { <p>{{ s.summary }}</p> }
@@ -246,16 +245,14 @@
             <li class="pdov__hist-row pdov__hist-row--{{ bandClass(r.scoreBand) }}"
                 [attr.data-testid]="'project-drift-overview-history-row'"
                 (click)="openReport(r.reportId)" tabindex="0" (keydown.enter)="openReport(r.reportId)" (keydown.space)="openReport(r.reportId); $event.preventDefault()">
-              <span class="pdov__hist-band pdov__hist-band--{{ bandClass(r.scoreBand) }}">{{ tc(r.scoreBand) }}</span>
+              <app-status-indicator [compact]="true" [tone]="bandTone(r.scoreBand)" [label]="tc(r.scoreBand)" testId="project-drift-overview-history-band" />
               <span class="pdov__hist-score">{{ r.overallScore }}</span>
               <span class="pdov__hist-summary">{{ r.summary }}</span>
               <span class="pdov__hist-trigger">{{ tc(r.trigger) }}</span>
               @if (!parseStatusEq(r.parseStatus, 'Structured')) {
-                <span class="pdov__hist-parse"
-                      [attr.data-testid]="'project-drift-overview-history-parse-' + parseStatusClass(r.parseStatus)"
-                      [cacTooltip]="parseStatusEq(r.parseStatus, 'MalformedJson') ? (r.parseError ?? 'sidecar invalid') : 'no JSON sidecar'">
-                  ⚠️ {{ parseStatusEq(r.parseStatus, 'MalformedJson') ? 'malformed' : 'unstructured' }}
-                </span>
+                @let parse = parseNotice(r);
+                <app-status-indicator [compact]="true" tone="warning" [label]="parse.label" [detail]="parse.detail"
+                                      [testId]="'project-drift-overview-history-parse-' + parseStatusClass(r.parseStatus)" />
               }
               <span class="pdov__hist-ts">{{ formatTime(r.createdAt) }}</span>
             </li>
@@ -273,7 +270,8 @@
               <h3>
                 Drift report
                 <code>{{ detail.report.reportId }}</code>
-                <span class="pdov__band pdov__band--{{ bandClass(detail.report.scoreBand) }}">{{ tc(detail.report.scoreBand) }}</span>
+                <app-status-indicator class="pdov__band" [compact]="true" [tone]="bandTone(detail.report.scoreBand)"
+                                      [label]="tc(detail.report.scoreBand)" testId="project-drift-overview-report-band" />
               </h3>
               <button class="pdov__close"
                       data-testid="project-drift-overview-report-close"

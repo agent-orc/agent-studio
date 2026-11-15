@@ -7,11 +7,12 @@
   <div class="loop-strip" data-testid="overview-completion-loop">
     <div class="loop__head">
       <span class="loop__verdict"
-            [class]="'loop__verdict--' + verdictTone(loop.latestVerdict)"
             data-testid="overview-loop-verdict"
             [attr.data-verdict]="loop.latestVerdict">
-        <span class="loop__glyph" aria-hidden="true">{{ verdictGlyph(loop.latestVerdict) }}</span>
-        {{ verdictLabel(loop.latestVerdict) }}
+        <app-status-indicator
+          [tone]="verdictStatusTone(loop.latestVerdict)"
+          [label]="verdictLabel(loop.latestVerdict)"
+          testId="overview-loop-verdict-status" />
       </span>
       @if (attemptLabel(); as al) {
         <span class="loop__attempt" data-testid="overview-loop-attempt"

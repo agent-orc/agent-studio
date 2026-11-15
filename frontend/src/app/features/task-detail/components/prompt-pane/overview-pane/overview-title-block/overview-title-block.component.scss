@@ -26,6 +26,11 @@
   border-bottom: 1px solid var(--studio-border);
 }
 
+// Create implementation cards on a reviewed concept card (AGT-3701).
+.ov-concept-promotion {
+  margin-top: var(--studio-spacing-1);
+}
+
 // Promote-to-coding affordance: only rendered on a finished planning task.
 .ov-promote {
   margin-top: 6px;

@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { AspectFindingsListComponent } from '../aspect-findings';
-import type { SteeringInfo } from './steering-detail.model';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
+import { steeringStatusTone, type SteeringInfo } from './steering-detail.model';
 
 /**
  * The single canonical renderer for one orchestrator steering step
@@ -16,14 +17,14 @@ import type { SteeringInfo } from './steering-detail.model';
  *
  *   <app-steering-detail [info]="info" [showVerdictChip]="true" />
  *
- * Tones come exclusively from the central severity tokens (ASS-737):
- * accept → ok, reissue → warn, escalate → danger, continuation → neutral.
+ * The verdict chip is the shared status indicator (AGT-3403):
+ * accept → success, reissue → warning, escalate → danger, continuation → neutral.
  */
 @Component({
   selector: 'app-steering-detail',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [AspectFindingsListComponent],
+  imports: [AspectFindingsListComponent, StatusIndicatorComponent],
   templateUrl: './steering-detail.component.html',
   styleUrl: './steering-detail.component.scss',
 })
@@ -37,6 +38,9 @@ export class SteeringDetailComponent {
    * avoid duplicating it; the Steps surface passes `true`.
    */
   readonly showVerdictChip = input<boolean>(true);
+
+  /** Shared status tone for the verdict chip. */
+  readonly verdictTone = computed<StatusTone>(() => steeringStatusTone(this.info().verdict));
 
   /** Whether the collapsible body has anything worth expanding. */
   readonly hasBody = computed<boolean>(() => {

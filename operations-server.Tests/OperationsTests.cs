@@ -81,6 +81,14 @@ public sealed class OperationsTests
         Assert.Equal(OperationsProtocol.Digest(completed.Result), completed.ResultDigest);
         Assert.Equal(new long[] { 1, 2, 3 }, completed.Events.Select(e => e.Cursor));
         Assert.Empty(System.IO.Directory.EnumerateFiles(Path.Combine(f.Directory, "spool")));
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                         | UnixFileMode.GroupRead | UnixFileMode.GroupExecute,
+                File.GetUnixFileMode(Path.Combine(f.Directory, "spool")));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead,
+                File.GetUnixFileMode(Path.Combine(f.Directory, "spool.journal.jsonl")));
+        }
     }
 
     [Fact]
