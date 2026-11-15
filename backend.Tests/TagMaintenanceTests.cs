@@ -1,4 +1,7 @@
 using AgentStudio.Areas;
+using AgentStudio.Cli;
+using AgentStudio.Prompts;
+using AgentStudio.Shared;
 using AgentStudio.Tags;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -31,6 +34,43 @@ public sealed class TagMaintenanceTests : IDisposable
             configuration, clock);
     }
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
+
+    [Theory]
+    [InlineData("```\n[]\n```")]
+    [InlineData("```json\n[]\n```")]
+    [InlineData("Here are the proposals:\n[]\nEnd of answer.")]
+    public async Task SynthesisParsesArrayFromModelReply(string reply)
+    {
+        var proposals = await Synthesis(reply).ProposeAsync("Project", "run-123", "{}", CancellationToken.None);
+        Assert.Empty(proposals);
+    }
+
+    [Fact]
+    public async Task SynthesisInvalidReplyNamesRunAndAnswerPrefix()
+    {
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Synthesis("```json\n[broken]\n```").ProposeAsync("Project", "run-456", "{}", CancellationToken.None));
+        Assert.Contains("run-456", error.Message);
+        Assert.Contains("```json [broken]", error.Message);
+    }
+
+    private static TagMaintenanceSynthesis Synthesis(string reply)
+    {
+        var configuration = new ConfigurationBuilder().Build();
+        return new(new CliOneShotRegistry([new ReplyOneShot(reply)]),
+            new RuntimePromptService(configuration, NullLogger<RuntimePromptService>.Instance));
+    }
+
+    private sealed class ReplyOneShot(string reply) : ICliOneShot
+    {
+        public string CliType => CliTypes.Claude;
+        public Task<CliOneShotResult> RunAsync(CliOneShotRequest request, CancellationToken ct = default)
+        {
+            var now = new DateTime(2026, 11, 15, 12, 0, 0, DateTimeKind.Utc);
+            return Task.FromResult(new CliOneShotResult(true, 0, reply, "", TimeSpan.Zero, reply,
+                null, null, new AgentMessageLatency(RequestedAt: now, CompletedAt: now, TotalMs: 0), null));
+        }
+    }
 
     [Fact]
     public void MergePlansAllSubjectKindsAndRemovesRegistryLast()
@@ -600,7 +640,7 @@ public sealed class TagMaintenanceTests : IDisposable
         public int Calls { get; private set; }
         public TagMaintenanceProposal Proposal { get; init; } = Merge();
         public List<TagMaintenanceProposal>? Proposals { get; init; }
-        public Task<IReadOnlyList<TagMaintenanceProposal>> ProposeAsync(string project, string input, CancellationToken ct)
+        public Task<IReadOnlyList<TagMaintenanceProposal>> ProposeAsync(string project, string runId, string input, CancellationToken ct)
         {
             Calls++;
             if (Cancel) throw new OperationCanceledException(ct);

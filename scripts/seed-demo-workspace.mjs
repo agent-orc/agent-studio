@@ -104,6 +104,8 @@ const OWNER_DAY_TASKS = [
   { project: 'demo-platform', key: 'PLAT-5', state: '5-human-review', type: 'chore', title: 'Review deployment health signals' },
   { project: 'demo-platform', key: 'PLAT-6', state: '2-ready', type: 'feature', title: 'Expose batch diagnostic receipts' },
 ];
+const ACCEPTANCE_READY_KEYS = ['DEMO-5', 'DEMO-6', 'DEMO-14'];
+const ACCEPTANCE_REFUSED_KEY = 'DEMO-19';
 const TASKS = ARGS.ownerDay ? [...PINNED_SNAPSHOT.tasks, ...OWNER_DAY_TASKS] : PINNED_SNAPSHOT.tasks;
 const DECISION = PINNED_SNAPSHOT.decision;
 const WIKI_TREES = PINNED_CONTENT.wiki;
@@ -877,6 +879,66 @@ function commitProjectContents(root) {
     git('add', '--', '.gitignore', 'README.md', 'docs');
     git('-c', 'user.name=Demo Seed', '-c', 'user.email=demo-seed@example.invalid',
       '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Seed demo project content');
+  }
+  if (ARGS.ownerDay) writeOwnerDayAcceptance(root);
+}
+
+// The owner-day delivery is a local, published Git history and explicit gate
+// and content receipts. No external origin or credential participates.
+function writeOwnerDayAcceptance(root) {
+  const projectRoot = join(root, 'projects', 'demo-app');
+  const origin = join(root, '.metadata', 'demo-app-origin.git');
+  mkdirSync(dirname(origin), { recursive: true });
+  execFileSync('git', ['init', '--bare', '--quiet', origin], { windowsHide: true });
+  const git = (...args) => execFileSync('git', ['-C', projectRoot, ...args], {
+    encoding: 'utf8', windowsHide: true,
+    env: { ...process.env, GIT_AUTHOR_DATE: iso(0), GIT_COMMITTER_DATE: iso(0), GIT_CONFIG_NOSYSTEM: '1' },
+  }).trim();
+  git('remote', 'add', 'origin', origin);
+  git('push', '--quiet', 'origin', 'main');
+  git('checkout', '--quiet', '-b', 'develop');
+  const deliveries = new Map();
+  for (const key of [...ACCEPTANCE_READY_KEYS, ACCEPTANCE_REFUSED_KEY]) {
+    const path = join(projectRoot, 'demo-deliveries', `${key}.txt`);
+    writeText(path, `Invented owner-day delivery for ${key}.\n`);
+    git('add', '--', `demo-deliveries/${key}.txt`);
+    git('-c', 'user.name=Demo Seed', '-c', 'user.email=demo-seed@example.invalid',
+      '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', `Deliver ${key} demo scene`);
+    deliveries.set(key, git('rev-parse', 'HEAD'));
+  }
+  const verifiedTree = git('rev-parse', 'HEAD');
+  git('push', '--quiet', 'origin', 'develop');
+  git('checkout', '--quiet', 'main');
+  git('fetch', '--quiet', 'origin', 'develop');
+
+  for (const [key, deliverySha] of deliveries) {
+    const task = TASKS.find((candidate) => candidate.key === key);
+    const folder = taskDir(root, task);
+    const cardPath = join(folder, 'task.json');
+    const card = JSON.parse(readFileSync(cardPath, 'utf8'));
+    card.commits = [{ sha: deliverySha, shortSha: deliverySha.slice(0, 8),
+      message: `Deliver ${key} demo scene`, filesChanged: 1,
+      files: [`demo-deliveries/${key}.txt`], at: iso(275), attribution: 'task-key',
+      attributionConfidence: 'high' }];
+    writeJson(cardPath, card);
+    const brief = createHash('sha256').update(readFileSync(join(folder, 'prompt.md'))).digest('hex');
+    writeText(join(folder, '.metadata', 'brief-version'), brief);
+    writeJson(join(folder, 'content-review-context.json'), {
+      briefVersion: brief, reviewedAt: iso(278), provenance: PROVENANCE,
+    });
+    writeJson(join(folder, 'aspect-requirement-fit.json'), {
+      status: key === ACCEPTANCE_REFUSED_KEY ? 'concerns' : 'pass',
+      summary: key === ACCEPTANCE_REFUSED_KEY
+        ? 'The result SHA is absent from the delivery brief. Add it and run content review again.'
+        : 'The invented delivery addresses the current demo brief.',
+      evidenceChecked: `demo-deliveries/${key}.txt`, provenance: PROVENANCE,
+    });
+    writeJson(join(folder, 'integration-verification.json'), {
+      version: 1, state: 'integrated-verified', sha: verifiedTree, integrationBranch: 'develop',
+      deliveryShas: [deliverySha], evidence: 'merge-gate', gateVerdict: 'Ok',
+      reason: 'Simulated passing gate receipt for the published demo develop tree.',
+      recordedAtUtc: iso(279), provenance: PROVENANCE,
+    });
   }
 }
 

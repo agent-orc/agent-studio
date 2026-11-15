@@ -105,10 +105,10 @@ describe('CreateTaskFormService', () => {
     expect(form.newModel()).toBe('project-model');
   });
 
-  it('reports an empty project-default response with a retry path', () => {
+  it.each([EMPTY, of([])])('reports an empty project-default response with a retry path', response => {
     TestBed.configureTestingModule({ providers: [
       CreateTaskFormService,
-      { provide: TaskService, useValue: { getRegistryProjects: () => EMPTY } },
+      { provide: TaskService, useValue: { getRegistryProjects: () => response } },
       { provide: CliCatalogStore, useValue: { hasFresh: () => true, modelsFor: () => [] } },
       { provide: ErrorDialogService, useValue: {} },
       { provide: QuotaApiService, useValue: { getModelRoutingRecommendation: () => of({ model: 'policy-model' }) } },
