@@ -57,6 +57,7 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly routing = input<ComponentRoutingResolution | null>(null); readonly routingPending = input(false);
   readonly submitting = input(false);
   readonly defaultsPending = input(false);
+  readonly defaultsError = input<string | null>(null);
   readonly policySuggestion = input<ModelRoutingRecommendation | null>(null); readonly modelSelectionExplicit = input(false);
   readonly newTitle = model<string>('');
   readonly newWatchPath = model<string>('');
@@ -108,6 +109,7 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly openChatRequest = output<void>();
   readonly submitRequest = output<void>();
   readonly watchPathChange = output<string>();
+  readonly retryDefaultsRequest = output<void>();
 
   readonly isDragging = model<boolean>(false);
   readonly attachmentError = model<string | null>(null);
