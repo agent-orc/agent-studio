@@ -406,6 +406,15 @@ members, batch phases, test runs, candidate and publication evidence. It also
 offers confirmed close and eject actions. `BatchGateService` owns all calls and
 shares one 15-second state poll per visible project. Unsupported or malformed
 responses hide the feature and back off to a five-minute retry while visible.
+On a pending member of an active red isolation, the task detail round and move
+surfaces show the flight before submission, link to the batch panel's Eject
+action, and hold continue, steer and requeue. The current flight claim supplies
+its stage deadline when available; the next stage has no scheduled time until
+the current stage finishes. The shared state poll clears the preview when the
+flight ends or the member leaves. The batch panel shows the member's Eject
+control disabled until isolation ends, matching the server's eject guard.
+Mutation endpoints still return 409 if
+isolation begins after the last poll.
 
 The task card's CURRENT and NEXT rows use the same lane, hold, review queue,
 and batch member facts. A Ready card names runner pickup before its pipeline
