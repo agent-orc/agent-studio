@@ -302,11 +302,7 @@ export class WorkbenchDecisionActionsComponent {
     );
   }
 
-  /**
-   * A card restored from an older draft may lack its job id. The server
-   * removes an unlinked card by id only, so the id is looked up first; a card
-   * that cannot be found keeps no id and is never removed by its display key.
-   */
+  /** Resolve an older draft's missing id; removal must never use its display key. */
   private resolveCardId(card: WorkbenchDecisionDraftCard): Observable<WorkbenchDecisionDraftCard> {
     if (card.id) return of(card);
     return this.tasks.getDetailByProject(card.taskKey || card.key, this.projectName()).pipe(
@@ -361,8 +357,7 @@ export class WorkbenchDecisionActionsComponent {
   private seedFeatureDraft(): void {
     this.resetFeedback();
     const operationId = createOperationId();
-    // The prompt lists the recorded decisions in its own section; the goal
-    // repeating them listed every decision twice (AGT-3701).
+    // The prompt owns the decision list; repeating it in the goal duplicated it (AGT-3701).
     const draft = this.drafts.beginFeature(this.projectName(), this.document().workbench.id, {
       actor: this.actor(),
       title: `Implement ${this.document().workbench.title}`,
@@ -444,6 +439,7 @@ export class WorkbenchDecisionActionsComponent {
     this.validationError.set(message);
     return null;
   }
+
   private resetFeedback(): void {
     this.validationError.set(null);
     this.actionError.set(null);
