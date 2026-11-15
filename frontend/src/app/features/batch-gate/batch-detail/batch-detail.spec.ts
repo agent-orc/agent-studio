@@ -21,6 +21,18 @@ async function mount(initial: BatchGateState | null, task: Partial<TaskInfo>) {
 }
 
 describe('BatchDetailComponent', () => {
+  it('previews a live isolation hold and clears it when the flight ends', async () => {
+    const active = { ...redHalvingState, pending: [{ ...redHalvingState.pending[0], taskKey: 'AGT-2' }],
+      batches: redHalvingState.batches.map(batch => batch.batchId === 'batch-7'
+        ? { ...batch, isolationActive: true } : batch) };
+    const { fixture, state, host } = await mount(active, { id: 'AGT-2' });
+    expect(host.querySelector('[data-testid="batch-isolation-hold"]')?.textContent).toContain('batch-7');
+    expect(host.querySelector('[data-testid="isolation-open-batch"]')).not.toBeNull();
+    state.set({ ...active, batches: active.batches.map(batch => batch.batchId === 'batch-7'
+      ? { ...batch, isolationActive: false } : batch) });
+    await fixture.whenStable();
+    expect(host.querySelector('[data-testid="batch-isolation-hold"]')).toBeNull();
+  });
   it('renders status, batch id, position and phase for a member found by task id after the other keys', async () => {
     const { host } = await mount(redHalvingState, { taskKey: '/tmp/demo::AGT-2', key: 'OTHER', id: 'AGT-2' });
     const section = host.querySelector('[data-testid="task-batch-verification"]');

@@ -15,6 +15,27 @@ The procedure is scripted in [`deploy/networked/deploy.sh`](../../deploy/network
 the manifest and host commands are described in
 [setup/networked-deploy.md](setup/networked-deploy.md).
 
+## Guided review-host update in Execution Hosts
+
+When a review role runs another commit or image than the server expects,
+Execution Hosts shows **Update review host** with the expected commit and
+immutable image digest. Its guided progress drains that runner identity through
+the client API and reads the lease-authority drain status. An active review
+refuses the host switch. At the quiet point, use the supported networked deploy
+procedure below for the image build and host replacement. The UI does not run
+SSH or Docker commands from the server.
+
+Select **I am starting the host switch** immediately before the operator deploy
+steps. **Check new heartbeat** waits for a review-role report later than that
+selection with the exact expected commit and image digest. A successful deploy
+command or a matching older report does not pass verification. After proof,
+**Resume review host** lifts the client drain and checks that admission is open.
+Before starting the switch, **Cancel and resume** lifts the drain without
+recording a completed update.
+The full networked deploy script also drains and resumes its manifest's host
+identities. Its own idle and image verification remain required; the UI's fresh
+heartbeat provides a separate check of what the runner actually reports.
+
 ## Order
 
 1. **Drain every work host.** For each runner identity a coding or review host
