@@ -23,7 +23,7 @@ set -euo pipefail
 # This inventory is intentionally available on runner hosts without Docker.
 if [ "${1:-}" = --plan ]; then
   cat <<'JSON'
-{"schema":"agent-studio.networked-recovery-plan/v1","requires":["docker","age","git","curl","python3","node"],"checks":["isolated-source-stack","scheduled-backup","manual-backup","off-host-encrypted-archive","two-project-checkouts","empty-host-restore","restored-login","sealed-secret","checkout-refs","task-storage"],"scope":"operator host with Docker; does not assert live attempt or review deduplication"}
+{"schema":"agent-studio.networked-recovery-plan/v1","requires":["docker","age","age-keygen","git","curl","python3","openssl"],"conditionalRequires":{"JOB_RESULTS_DIR":["node","frontend npm dependencies","Playwright Chromium"]},"checks":["isolated-source-stack","scheduled-backup","manual-backup","off-host-encrypted-archive","two-project-checkouts","empty-host-restore","restored-login","sealed-secret","checkout-refs","task-storage","restored-work-inventory","no-duplicate-work-records"],"runningWorkRequirement":"Set STUDIO_RUNNING_TEAM_SEED_HOOK to an API seeding script and STUDIO_REQUIRE_RUNNING_WORK=1 to require active coding, review, red batch and publication records.","scope":"operator host with Docker"}
 JSON
   exit 0
 fi
@@ -42,9 +42,12 @@ chmod 755 "$work"
 project_a="studio-backup-drill-a-$$"
 project_b="studio-backup-drill-b-$$"
 
-for tool in age age-keygen git curl python3 docker node; do
+for tool in age age-keygen git curl python3 docker openssl; do
   command -v "$tool" > /dev/null || { echo "$tool is required" >&2; exit 1; }
 done
+if [ -n "${JOB_RESULTS_DIR:-}" ]; then
+  command -v node > /dev/null || { echo 'node is required when JOB_RESULTS_DIR is set' >&2; exit 1; }
+fi
 
 compose_in() {
   local dir="$1" project="$2"
@@ -273,6 +276,13 @@ in_api_image -v "$work/a/data/projects:/data/projects" -v "$work/remote-b.git:$w
   mkdir -p /data/projects/.task-storage/PROJ-2
   echo 'second task card' > /data/projects/.task-storage/PROJ-2/AGT-2.md"
 
+# An operator can populate real running work through the disposable stack's
+# application API before the archive is captured. The hook receives the source
+# data root, HTTPS URL and Owner cookie jar; it must not mutate another host.
+if [ -n "${STUDIO_RUNNING_TEAM_SEED_HOOK:-}" ]; then
+  bash "$STUDIO_RUNNING_TEAM_SEED_HOOK" "$work/a/data" "$url" "$work/a/jar"
+fi
+
 # Settings > Task Server > Create backup, as the browser sends it.
 idempotency="drill-$(openssl rand -hex 8)"
 create_status="$(curl "${curl_base[@]}" -o "$work/a/create.json" -w '%{http_code}' -b "$work/a/jar" \
@@ -350,15 +360,14 @@ fi
 grep -q "needs $key_id" "$work/b/wrong-key.log"
 (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --identity "$work/offline/identity.txt" \
   --secret-key "$work/offline/secrets.kek" "$archive")
-node -e '
-  const fs = require("node:fs");
-  const path = require("node:path");
-  const folder = process.argv[1];
-  const state = JSON.parse(fs.readFileSync(path.join(folder, "access-state.json"), "utf8"));
-  const notice = JSON.parse(fs.readFileSync(path.join(folder, "restore-notice.json"), "utf8"));
-  if (state.Sessions?.length !== 0 || notice.ArchiveId !== process.argv[2] || !notice.ArchiveCreatedAt)
-    process.exit(1);
-' "$work/b/data/workspace/.security" "$(basename "$archive")"
+python3 - "$work/b/data/workspace/.security" "$(basename "$archive")" <<'PY'
+import json, pathlib, sys
+folder = pathlib.Path(sys.argv[1])
+state = json.loads((folder / 'access-state.json').read_text())
+notice = json.loads((folder / 'restore-notice.json').read_text())
+assert state.get('Sessions') == []
+assert notice.get('ArchiveId') == sys.argv[2] and notice.get('ArchiveCreatedAt')
+PY
 if (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --identity "$work/offline/identity.txt" \
   --secret-key "$work/offline/secrets.kek" "$archive") > /dev/null 2> "$work/b/again.log"; then
   echo 'restore.sh restored into a stack that is not empty' >&2
@@ -366,8 +375,22 @@ if (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --id
 fi
 grep -q 'not empty' "$work/b/again.log"
 
+# Snapshot the restored stores before the API can resume. The work checker reads
+# the authority journal and batch records from these same paths after startup.
+mkdir -p "$work/b/before/workspace" "$work/b/before/home/.local/share"
+if [ -d "$work/b/data/workspace/.metadata" ]; then
+  cp -a "$work/b/data/workspace/.metadata" "$work/b/before/workspace/"
+fi
+if [ -d "$work/b/data/home/.local/share/agentstudio" ]; then
+  cp -a "$work/b/data/home/.local/share/agentstudio" "$work/b/before/home/.local/share/"
+fi
+
 compose_in "$work/b/stack" "$project_b" up -d --no-build
 wait_ready
+running_work_flag=()
+if [ "${STUDIO_REQUIRE_RUNNING_WORK:-0}" = 1 ]; then running_work_flag=(--require-running-work); fi
+python3 "$repo_root/scripts/monolith-networked-backup-work-verify.py" \
+  "$work/b/before" "$work/b/data" "${running_work_flag[@]}" > "$work/b/work-check.json"
 [ "$(json_field "$work/status.json" bootstrapRequired)" = False ] || { cat "$work/status.json" >&2; exit 1; }
 csrf="$(sign_in "$work/b/jar")"
 [ -n "$csrf" ] || { echo 'Sign-in to the restored stack failed' >&2; exit 1; }
@@ -397,4 +420,5 @@ echo "$message"
 if [ -n "${JOB_RESULTS_DIR:-}" ]; then
   mkdir -p "$JOB_RESULTS_DIR"
   printf '%s\n' "$message" > "$JOB_RESULTS_DIR/backup-restore-drill.txt"
+  cp "$work/b/work-check.json" "$JOB_RESULTS_DIR/backup-restore-work-check.json"
 fi
