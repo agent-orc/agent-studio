@@ -141,6 +141,7 @@ public sealed class BatchGateStoreTests : IDisposable
             "another batch paused", "another-batch", Now.AddMinutes(22)));
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
             _store, "project", new BatchGateFormationOptions(Enabled: true),
+            gateSlots: new GateSlotUsage(1, 4),
             activePerTaskFlights: new HashSet<string> { "review-1" }),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var gates = state.GetProperty("perTaskGates").EnumerateArray().ToArray();
@@ -150,10 +151,28 @@ public sealed class BatchGateStoreTests : IDisposable
         Assert.Equal(1, gates[4].GetProperty("position").GetInt32());
         Assert.Equal(1, gates[4].GetProperty("total").GetInt32());
         Assert.True(gates[1].GetProperty("running").GetBoolean());
+        Assert.All(gates, gate => Assert.Equal(3, gate.GetProperty("slotCapacity").GetInt32()));
+        Assert.All(gates.Where(gate => !gate.GetProperty("running").GetBoolean()), gate =>
+            Assert.Contains("duration", gate.GetProperty("startEstimateUnavailableReason").GetString()));
+        Assert.Equal(Now.AddMinutes(23), gates[0].GetProperty("lastProgressAtUtc").GetDateTimeOffset());
         Assert.Equal("gate-01", gates[1].GetProperty("host").GetString());
         Assert.Contains("flaky quarantine", gates[1].GetProperty("reason").GetString());
         Assert.Equal(PerTaskFallbackRules.BatchPaused,
             state.GetProperty("members").GetProperty("task-1").GetProperty("fallbackRule").GetString());
+
+        var ledger = new GateRunLedger(Path.Combine(_root, "ledger"));
+        ledger.Append(new GateRunLedgerRow("fallback-run", "per-task-fallback", "project", ["task-1"],
+            null, null, Now.AddMinutes(22), Now.AddMinutes(23), null, Now.AddMinutes(23),
+            Now.AddMinutes(25), "pass", 120_000, 0, [], null, 0, null, null, null));
+        _store.ResolvePending("review-1", "published");
+        var progressed = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true),
+            gateSlots: new GateSlotUsage(0, 4), now: Now.AddMinutes(26), ledger: ledger),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var remaining = progressed.GetProperty("perTaskGates").EnumerateArray()
+            .First(gate => gate.GetProperty("taskKey").GetString() == "task-0");
+        Assert.Equal(3, remaining.GetProperty("total").GetInt32());
+        Assert.Equal(Now.AddMinutes(25), remaining.GetProperty("lastProgressAtUtc").GetDateTimeOffset());
     }
 
     [Fact]

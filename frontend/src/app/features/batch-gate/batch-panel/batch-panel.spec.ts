@@ -48,7 +48,9 @@ describe('BatchPanelComponent', () => {
         phaseReason: 'paused-to-per-task-gate: fresh gate verdict required' }],
       pending: [redHalvingState.pending[0], { ...redHalvingState.pending[0], taskKey: 'AGT-2', reviewAttemptId: 'review-2' }],
       perTaskGates: [{ taskKey: 'AGT-1', reviewAttemptId: 'review-1', position: 1, total: 2,
-        batchId: 'batch-9', reason: 'batch batch-9 paused: fresh gate verdict required', running: false },
+        batchId: 'batch-9', reason: 'batch batch-9 paused: fresh gate verdict required', running: false,
+        slotCapacity: 3, lastProgressAtUtc: '2026-11-10T12:00:00Z',
+        startEstimateUnavailableReason: 'Full-suite duration is unknown.' },
         { taskKey: 'AGT-2', reviewAttemptId: 'review-2', position: 2, total: 2,
           batchId: 'batch-9', reason: 'batch batch-9 paused: fresh gate verdict required',
           running: true, host: 'gate-01', startedAtUtc: '2026-11-10T12:00:00Z' }],
@@ -61,10 +63,28 @@ describe('BatchPanelComponent', () => {
     const rows = [...fixture.nativeElement.querySelectorAll('[data-testid="batch-per-task-gate"]')] as HTMLElement[];
     expect(rows.map(row => row.querySelector('strong')?.textContent)).toEqual(['AGT-1', 'AGT-2']);
     expect(rows[0].textContent).toContain('Queued');
+    expect(rows[0].textContent).toContain('3 per-task slots');
+    expect(rows[0].textContent).toContain('Start estimate unavailable: Full-suite duration is unknown.');
+    expect(rows[0].textContent).toContain('Last progress');
+    expect(rows[0].textContent).toContain('Red escalates the card; green integrates it.');
     expect(rows[1].textContent).toContain('Running on gate-01 since');
     expect(fixture.nativeElement.querySelector('[data-testid="batch-per-task-gates"]').textContent)
       .toContain('Red escalates the card; green integrates it.');
     expect(fixture.nativeElement.textContent).toContain('Moved to per-task gates after pause: fresh gate verdict required');
+    const refresh = TestBed.inject(BatchGateService).refresh('Demo');
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({ ...redHalvingState,
+      perTaskGates: [{ taskKey: 'AGT-1', reviewAttemptId: 'review-1', position: 1, total: 1,
+        batchId: 'batch-9', reason: 'batch batch-9 paused: fresh gate verdict required', running: true,
+        host: 'gate-02', startedAtUtc: '2026-11-10T12:05:00Z', slotCapacity: 2,
+        lastProgressAtUtc: '2026-11-10T12:05:00Z' }],
+    });
+    await refresh;
+    fixture.detectChanges();
+    const updated = fixture.nativeElement.querySelector('[data-testid="batch-per-task-gate"]') as HTMLElement;
+    expect(updated.textContent).toContain('1 of 1');
+    expect(updated.textContent).toContain('2 per-task slots');
+    expect(updated.textContent).toContain('Running on gate-02');
+    expect(updated.textContent).toContain('Last progress');
     http.verify();
   });
   it('lists formed batch members only under their batch', async () => {

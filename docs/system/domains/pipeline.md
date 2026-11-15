@@ -80,8 +80,14 @@ start time while its flight is active. The board uses this projection for the
 card CURRENT line and lane counts. Each member receives a full suite as a gate
 slot opens; a red gate escalates that card, and a green gate integrates it. The
 batch panel lists the queue in order and excludes its members from cards waiting
-for another batch. The handoff writes one operator-feed event per paused batch
-with its members.
+for another batch. A remaining fallback handoff keeps the lane indicator and
+panel accessible even if the batch planner is disabled. Each panel row shows the
+per-task admission capacity and last recorded handoff progress time. It explains
+that a start estimate is unavailable
+because full-suite duration has no reliable bound, or that no per-task slot is
+available. The state refreshes with the project state feed every 15 seconds
+while visible and watched. The handoff writes one operator-feed event per paused
+batch with its members.
 
 A per-task gate with a completed parsed test report is a card code failure when
 the integration baseline passes and a clean repeat reproduces the failed tests.

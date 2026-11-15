@@ -448,7 +448,7 @@ public sealed partial class BatchGatePilotService
             HasLiveFlight, RecoveryStatus,
             ActiveIsolationFlights(project), LeaseDeadlineDeferred()(project),
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
-            _diskPauseReason);
+            _diskPauseReason, ConfiguredGateSlots());
     }
 
     private IReadOnlySet<string> ActiveIsolationFlights(string project)

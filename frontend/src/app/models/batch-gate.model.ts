@@ -41,7 +41,8 @@ export interface BatchGateState {
     requestedAtUtc: string; status: 'pending' | 'released'; releasedAtUtc?: string | null }[];
   perTaskGates?: { taskKey: string; reviewAttemptId: string; position: number; total: number;
     batchId?: string | null; reason: string; running: boolean; host?: string | null;
-    startedAtUtc?: string | null }[];
+    startedAtUtc?: string | null; slotCapacity?: number;
+    startEstimateUnavailableReason?: string | null; lastProgressAtUtc?: string | null }[];
   /** Gate processes detached at a lease deadline and still exiting. */
   detachedFlights?: { batchId: string; project: string; startedAtUtc: string; detachedAtUtc: string;
     deadlineMinutes: number; reason: string }[];

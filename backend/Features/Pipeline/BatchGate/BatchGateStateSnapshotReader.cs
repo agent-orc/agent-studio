@@ -29,7 +29,8 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
         IReadOnlySet<string>? activePerTaskFlights = null,
         BatchGateInvariantReport? invariants = null,
-        string? diskPauseReason = null)
+        string? diskPauseReason = null,
+        int? configuredGateSlots = null)
     {
         // AGT-3569: the durable claim on the project's flight slot, live or last ended.
         var flightClaim = store.ReadFlightClaim(project);
@@ -246,6 +247,29 @@ public static class BatchGateStateSnapshotReader
                 Ownership = BatchGateOwnershipStore.Read(item.JobFolderPath),
             })
             .Where(item => item.Cause is not null).ToArray();
+        // Admission reserves one host slot for a batch. A full suite has no
+        // reliable duration bound, so queue position cannot become a clock ETA.
+        var perTaskSlotCapacity = Math.Max(0, (configuredGateSlots ?? gateSlots?.Total
+            ?? gateCapacity?.Slots ?? 0) - 1);
+        DateTimeOffset LastFallbackProgress(string? batchId)
+        {
+            var group = fallbackItems.Where(item => item.Cause!.BatchId == batchId).ToArray();
+            // Resolved members leave pending immediately, but their completed
+            // gate still marks progress for the remaining handoff members.
+            var causesForBatch = fallbackCauses.Where(cause => cause.BatchId == batchId).ToArray();
+            var keys = causesForBatch.Select(cause => cause.TaskKey).ToHashSet(StringComparer.Ordinal);
+            var firstCause = causesForBatch.Min(cause => cause.RecordedAtUtc);
+            return causesForBatch.Select(cause => cause.RecordedAtUtc)
+                .Concat(group.Where(item => activePerTaskFlights?.Contains(item.ReviewAttemptId) == true
+                    && item.Ownership?.ReviewAttemptId == item.ReviewAttemptId
+                    && item.Ownership.FallbackGateActive)
+                    .Select(item => item.Ownership!.FallbackGateStartedAtUtc)
+                    .OfType<DateTimeOffset>())
+                .Concat(gateRows.Where(row => row.Type == "per-task-fallback"
+                    && row.FinishedAtUtc >= firstCause && row.Cards.Any(keys.Contains))
+                    .Select(row => row.FinishedAtUtc))
+                .Max();
+        }
         var perTaskGates = fallbackItems
             .Select((item, index) => new
             {
@@ -256,6 +280,11 @@ public static class BatchGateStateSnapshotReader
                 total = fallbackItems.Count(other => other.Cause!.BatchId == item.Cause!.BatchId),
                 batchId = item.Cause!.BatchId,
                 reason = item.Cause.Event,
+                slotCapacity = perTaskSlotCapacity,
+                startEstimateUnavailableReason = perTaskSlotCapacity == 0
+                    ? "No per-task gate slot is available."
+                    : "Full-suite duration is unknown.",
+                lastProgressAtUtc = LastFallbackProgress(item.Cause.BatchId),
                 running = activePerTaskFlights?.Contains(item.ReviewAttemptId) == true
                     && item.Ownership?.ReviewAttemptId == item.ReviewAttemptId
                     && item.Ownership.FallbackGateActive && item.Ownership.FallbackGateStartedAtUtc is not null,
