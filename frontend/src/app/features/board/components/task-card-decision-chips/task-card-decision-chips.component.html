@@ -1,12 +1,16 @@
 @if (badge(); as db) {
-  <span class="decision-chip decision-chip--decider" data-testid="task-card-decider"
-        [attr.data-open]="db.open" [cacTooltip]="db.tooltip">{{ db.open ? 'Decider: ' + db.decider : 'Decided by: ' + db.decidedBy }}</span>
+  <app-status-indicator data-testid="task-card-decider"
+                        [attr.data-open]="db.open" [cacTooltip]="db.tooltip"
+                        [tone]="deciderTone(db.open)"
+                        [label]="db.open ? 'Decider: ' + db.decider : 'Decided by: ' + db.decidedBy"
+                        [compact]="true" testId="task-card-decider-status" />
 }
 @for (key of blockers(); track key) {
   <button type="button"
-          class="decision-chip decision-chip--blocked-by"
+          class="decision-chip-link"
           data-testid="task-card-blocked-by"
           [attr.data-key]="key"
           [cacTooltip]="blockTooltip() + ' Click to open ' + key + '.'"
-          (click)="open(key, $event)">blocked by {{ key }}</button>
+          (click)="open(key, $event)"><app-status-indicator tone="warning" [label]="'blocked by ' + key"
+                          [compact]="true" testId="task-card-blocked-by-status" /></button>
 }

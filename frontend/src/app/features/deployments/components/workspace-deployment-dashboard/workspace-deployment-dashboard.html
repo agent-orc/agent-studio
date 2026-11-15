@@ -45,14 +45,14 @@
                           (click)="openDeployment.emit(row.name)">
                     <span class="deployment-dashboard__cell-head">
                       <strong>Release {{ status.currentRelease?.version ?? 'None' }}{{ status.currentRelease?.channel ? ' · ' + status.currentRelease?.channel : '' }}</strong>
-                      <span class="deployment-dashboard__state">{{ stateLabel(status.currentDeployment?.state) }}</span>
+                      <app-status-indicator [tone]="stateTone(status.currentDeployment?.state)" [label]="stateLabel(status.currentDeployment?.state)" [compact]="true" testId="deployment-dashboard-state" />
                     </span>
                     <span class="deployment-dashboard__cell-detail">
                       <span>{{ age(status) }}</span>
-                      <span class="deployment-dashboard__health" [attr.data-health]="status.health">{{ status.health }}</span>
+                      <app-status-indicator [tone]="healthTone(status.health)" [label]="healthLabel(status.health)" [compact]="true" testId="deployment-dashboard-health" />
                     </span>
-                    @if (status.currentDeployment?.state === 'awaiting-approval') { <span class="deployment-dashboard__marker">Approval pending</span> }
-                    @if (status.newerRelease; as newer) { <span class="deployment-dashboard__marker">Newer release {{ newer.version }} · {{ newer.channel }}</span> }
+                    @if (status.currentDeployment?.state === 'awaiting-approval') { <app-status-indicator tone="warning" label="Approval pending" [compact]="true" testId="deployment-dashboard-approval" /> }
+                    @if (status.newerRelease; as newer) { <app-status-indicator tone="info" [label]="'Newer release ' + newer.version + ' · ' + newer.channel" [compact]="true" testId="deployment-dashboard-newer-release" /> }
                   </button>
                 }
               </td>

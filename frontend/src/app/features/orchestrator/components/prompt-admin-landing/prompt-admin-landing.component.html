@@ -69,7 +69,6 @@
               [attr.data-testid]="'prompt-admin-overview-row-' + item.name">
               <td>
                 <button type="button" class="prompt-home__prompt-link" (click)="openPrompt.emit(item.name)">
-                  <span class="prompt-home__activity-dot" [class.prompt-home__activity-dot--dead]="item.calls.isDead"></span>
                   <span>
                     <strong>{{ item.title }}</strong>
                     <code>{{ item.name }}</code>
@@ -87,7 +86,9 @@
                 </div>
               </td>
               <td>
-                {{ item.calls.lastCalledAt ? (item.calls.lastCalledAt | date:'dd.MM.yyyy') : 'never' }}
+                <app-status-indicator [tone]="activityTone(item)" [compact]="true" testId="prompt-admin-overview-activity"
+                  [label]="item.calls.lastCalledAt ? (item.calls.lastCalledAt | date:'dd.MM.yyyy') ?? '' : 'never'"
+                  [detail]="item.calls.isDead ? 'No call in the last ' + deadPromptDays() + ' days' : null" />
               </td>
               <td [title]="item.lastChangedSha ? 'Commit ' + item.lastChangedSha : ''">
                 {{ item.lastChangedAt ? (item.lastChangedAt | date:'dd.MM.yyyy') : '-' }}
@@ -95,12 +96,8 @@
               <td>{{ item.lastReviewedAt ? (item.lastReviewedAt | date:'dd.MM.yyyy') : 'never' }}</td>
               <td class="prompt-home__number">{{ cost(item) }} / {{ cost(item, true) }}</td>
               <td>
-                <span class="prompt-home__status"
-                  [class.prompt-home__status--current]="item.reviewStatus === 'current'"
-                  [class.prompt-home__status--needs]="item.reviewStatus === 'needs-review'"
-                  [class.prompt-home__status--stale]="item.reviewStatus === 'stale'">
-                  {{ status(item) }}
-                </span>
+                @let review = reviewStatus(item.reviewStatus);
+                <app-status-indicator [tone]="review.tone" [label]="review.label" [compact]="true" testId="prompt-admin-overview-status" />
               </td>
             </tr>
           }

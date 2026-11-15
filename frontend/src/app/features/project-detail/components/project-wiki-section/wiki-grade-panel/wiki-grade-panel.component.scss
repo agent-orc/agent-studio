@@ -110,9 +110,6 @@
   transition: width 0.3s ease;
 }
 .wgrade__state {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--pwiki-paper-fg, var(--studio-fg));
   font-variant-numeric: tabular-nums;
 }
 .wgrade__current {
@@ -250,17 +247,7 @@
 }
 .wgrade__healthy {
   display: flex;
-  align-items: center;
-  gap: 10px;
   padding: 14px 12px;
-  border-radius: 7px;
-  color: var(--studio-success);
-  background: color-mix(in srgb, var(--studio-success) 10%, transparent);
-}
-.wgrade__healthy p {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--pwiki-paper-fg, var(--studio-fg));
 }
 
 /* ---- tones ---- */

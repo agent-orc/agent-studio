@@ -5,6 +5,12 @@ import { TaskState } from '../../../../models/task.model';
 import { isGateQueueOverrunReason } from '../../../../models/batch-gate.model';
 import { BatchGateService } from '../../../../services/batch-gate.service';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Release outcome tone: all released is success, any refusal needs attention (AGT-3403). */
+export function queueReleaseOutcomeTone(refused: number): StatusTone {
+  return refused > 0 ? 'warning' : 'success';
+}
 
 /**
  * AGT-3219: an escalated card whose per-task gate spent its budget waiting for
@@ -16,7 +22,7 @@ import { PendingButtonDirective } from '../../../../components/async-feedback';
   selector: 'app-gate-queue-release',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PendingButtonDirective],
+  imports: [PendingButtonDirective, StatusIndicatorComponent],
   templateUrl: './gate-queue-release.component.html',
   styleUrl: './gate-queue-release.component.scss',
 })
@@ -32,6 +38,7 @@ export class GateQueueReleaseComponent {
   readonly releasable = signal<string[]>([]);
   readonly releasing = signal(false);
   readonly outcome = signal<string | null>(null);
+  readonly outcomeTone = signal<StatusTone>('success');
   readonly error = signal<string | null>(null);
   private loadedFor: string | null = null;
 
@@ -52,6 +59,7 @@ export class GateQueueReleaseComponent {
       next: (result) => {
         this.releasing.set(false);
         const refused = result.refused.length;
+        this.outcomeTone.set(queueReleaseOutcomeTone(refused));
         this.outcome.set(
           `Released ${result.released.length} card${result.released.length === 1 ? '' : 's'} to the gate queue`
             + (refused > 0 ? `; ${refused} stayed escalated: ${result.refused.map((item) => `${item.taskKey} (${item.reason})`).join(', ')}` : '.'),

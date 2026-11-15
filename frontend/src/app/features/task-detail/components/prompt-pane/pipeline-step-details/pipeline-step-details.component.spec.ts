@@ -8,7 +8,7 @@ import { PipelineStepDetailsComponent } from './pipeline-step-details.component'
 
 const RESULT_HEADER: PipelineStepResultHeader = {
   label: 'Code quality',
-  statusIcon: 'ok',
+  statusTone: 'success',
   statusLabel: 'Passed',
   status: 'passed',
   verdict: 'pass',
@@ -130,6 +130,7 @@ describe('PipelineStepDetailsComponent', () => {
 
     const concerns = dialog.querySelector('[data-testid="overview-pipeline-step-concerns-detail"]');
     expect(concerns?.textContent).toContain('Review concern');
+    expect(concerns?.querySelector('[data-testid="overview-pipeline-step-concerns-state"]')?.getAttribute('data-tone')).toBe('warning');
     expect(concerns?.textContent).toContain('A regression remains possible.');
   });
 

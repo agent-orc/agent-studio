@@ -53,23 +53,7 @@
 }
 .cli-contracts__icon { font-size: 16px; }
 .cli-contracts__name { font-weight: 600; font-size: 13px; color: var(--studio-fg-strong); }
-.cli-contracts__badge {
-  margin-left: auto;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  /* stylelint-disable-next-line declaration-property-unit-disallowed-list -- sub-token pill padding, no scale step this small */
-  padding: 1px 6px;
-  border-radius: 999px;
-}
-.cli-contracts__badge--typed {
-  background: color-mix(in srgb, var(--severity-pass) 20%, var(--studio-bg-surface));
-  color: var(--severity-pass);
-}
-.cli-contracts__badge--heuristic {
-  background: color-mix(in srgb, var(--studio-accent-warn) 22%, var(--studio-bg-surface));
-  color: var(--studio-accent-warn-strong);
-}
+.cli-contracts__detection { margin-left: auto; }
 
 .cli-contracts__grid {
   display: grid;

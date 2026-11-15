@@ -1,6 +1,6 @@
 @if (model(); as deadEnd) {
   <section class="dead-end" data-testid="integration-dead-end" [attr.data-kind]="deadEnd.kind" aria-label="Integration dead end">
-    <strong>{{ deadEnd.title }}</strong>
+    <app-status-indicator [tone]="tone(deadEnd.kind)" [label]="deadEnd.title" testId="integration-dead-end-state" />
     <span>Stage: {{ deadEnd.stage }}</span>
     <p>{{ deadEnd.reason }}</p>
     @if (deadEnd.evidence) {

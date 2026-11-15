@@ -1,4 +1,5 @@
 import type { ProjectUrlDiagnostic, ProjectUrlDiagnosisClass } from '../../../../models/task.model';
+import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 export interface ProjectUrlDiagnosisPresentation {
   status: string;
@@ -21,6 +22,27 @@ const PRESENTATION: Record<ProjectUrlDiagnosisClass, ProjectUrlDiagnosisPresenta
   running: { status: 'Running', title: 'Preview ready', primaryAction: 'retry' },
   'local-only': { status: 'Local only', title: 'This URL is only reachable on the machine that serves it', primaryAction: 'external' },
 };
+
+/** Status tone of each diagnosis: a setup or readiness problem needs attention, a failed start is danger. */
+const DIAGNOSIS_TONES: Readonly<Record<ProjectUrlDiagnosisClass, StatusTone>> = {
+  'not-started': 'neutral',
+  starting: 'running',
+  'command-unavailable': 'danger',
+  'invalid-cwd': 'warning',
+  'process-exited': 'danger',
+  'port-in-use': 'warning',
+  'port-never-opened': 'warning',
+  timeout: 'warning',
+  'http-error-response': 'danger',
+  'content-not-renderable': 'warning',
+  'invalid-configuration': 'warning',
+  running: 'success',
+  'local-only': 'info',
+};
+
+export function projectUrlDiagnosisTone(value: ProjectUrlDiagnostic | null): StatusTone {
+  return DIAGNOSIS_TONES[value?.classification ?? 'not-started'] ?? 'neutral';
+}
 
 export function presentProjectUrlDiagnosis(value: ProjectUrlDiagnostic | null): ProjectUrlDiagnosisPresentation {
   return PRESENTATION[value?.classification ?? 'not-started'];

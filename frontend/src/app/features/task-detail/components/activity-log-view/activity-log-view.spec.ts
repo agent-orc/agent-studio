@@ -5,6 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ActivityLogViewComponent } from './activity-log-view';
+import { liveStatusTone } from './activity-log-view-model';
 import { CliOutputLine } from '../../../../models/task.model';
 import { DossierReferenceHydratorService } from '../../../../services/dossier-reference-hydrator.service';
 import {
@@ -374,5 +375,32 @@ describe('ActivityLogViewComponent - Dossier references', () => {
     const chips = dossierChipsIn(fixture.nativeElement as HTMLElement);
     expect(chips).toHaveLength(1);
     expect(chips[0].textContent).toContain('Decision cards');
+  });
+});
+
+describe('ActivityLogViewComponent live status indicator', () => {
+  it('maps every live kind to running except recovering, unknown kinds to neutral', () => {
+    expect(['starting', 'tool', 'agent', 'user', 'orchestrator', 'recovering', 'later'].map(liveStatusTone))
+      .toEqual(['running', 'running', 'running', 'running', 'running', 'danger', 'neutral']);
+  });
+
+  it('renders the live verb as a status indicator while running', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ActivityLogViewComponent],
+      providers: standardProviders,
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ActivityLogViewComponent);
+    fixture.componentRef.setInput('lines', [
+      { timestamp: new Date().toISOString(), stream: 'stdout', text: 'Considering the next step.' },
+    ]);
+    fixture.componentRef.setInput('isRunning', true);
+    fixture.detectChanges();
+
+    const live = fixture.nativeElement.querySelector('[data-testid="activity-log-live-status"]') as HTMLElement;
+    expect(live.dataset['kind']).toBe('agent');
+    const verb = fixture.nativeElement.querySelector('[data-testid="activity-log-live-verb"]') as HTMLElement;
+    expect(verb.dataset['tone']).toBe('running');
+    expect(verb.textContent?.trim()).toBe('Thinking');
+    fixture.destroy();
   });
 });

@@ -1,9 +1,9 @@
 @if (gap(); as gap) {
   <section class="attempt-gap" data-testid="acceptance-attempt-gap" role="status">
-    <span class="attempt-gap__dot" aria-hidden="true"></span>
     <div class="attempt-gap__body">
       <p class="attempt-gap__line">
-        Acceptance needs an operator override: no run attempt in authority epoch
+        <app-status-indicator tone="warning" label="Acceptance needs an operator override" [compact]="true"
+          testId="acceptance-attempt-gap-state" />: no run attempt in authority epoch
         <span class="attempt-gap__epoch" data-testid="acceptance-attempt-gap-epoch">{{ gap.authorityEpoch }}</span>
       </p>
       <p class="attempt-gap__hint" data-testid="acceptance-attempt-gap-reason">{{ gap.reason }}</p>

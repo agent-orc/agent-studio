@@ -1,3 +1,5 @@
+import { hostStatusIndicatorTone } from '../../../remote-hosts/models/remote-host.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import {
   ChangeDetectionStrategy,
@@ -30,16 +32,24 @@ interface ProjectExecutionSettings {
   integrationBranch?: string;
 }
 
+const PROBE_TONES: Record<ProbeState, StatusTone> = { passed: 'success', failed: 'danger', running: 'running', pending: 'neutral' };
+
+export function probeCheckTone(state: ProbeState): StatusTone {
+  return PROBE_TONES[state] ?? 'neutral';
+}
+
 @Component({
   selector: 'app-execution-assignment-card',
   standalone: true,
-  imports: [SegmentedControlComponent],
+  imports: [StatusIndicatorComponent, SegmentedControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './execution-assignment-card.html',
   styleUrl: './execution-assignment-card.scss',
 })
 export class ExecutionAssignmentCardComponent implements OnInit {
   readonly projectName = input.required<string>();
+  readonly hostTone = hostStatusIndicatorTone;
+  readonly probeTone = probeCheckTone;
 
   private readonly http = inject(HttpClient);
   readonly hostRegistry = inject(RemoteHostsService);

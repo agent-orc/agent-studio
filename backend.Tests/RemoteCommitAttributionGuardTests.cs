@@ -314,6 +314,82 @@ public sealed class RemoteCommitAttributionGuardTests
         }
     }
 
+    [Fact]
+    public void InspectRemoteDeliveryCommitRange_RebasedPastUntransferredRunnerMerge_UsesOwnedHistory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "remote-rebased-base-" + Guid.NewGuid().ToString("N"));
+        var remote = Path.Combine(root, "origin.git");
+        var runner = Path.Combine(root, "runner");
+        var server = Path.Combine(root, "server");
+        Directory.CreateDirectory(root);
+        try
+        {
+            RunGit(root, $"init -q --bare \"{remote}\"");
+            RunGit(root, $"clone -q \"{remote}\" \"{runner}\"");
+            RunGit(runner, "config user.email test@example.com");
+            RunGit(runner, "config user.name Test");
+            RunGit(runner, "checkout -q -b develop");
+            File.WriteAllText(Path.Combine(runner, "base.txt"), "base");
+            RunGit(runner, "add -A");
+            RunGit(runner, "commit -q -m \"chore: base\"");
+            var original = RunGit(runner, "rev-parse HEAD");
+            RunGit(runner, "push -q origin develop");
+            RunGit(runner, "checkout -q -b runner/test/AGT-2389");
+            File.WriteAllText(Path.Combine(runner, "old.txt"), "old");
+            RunGit(runner, "add -A");
+            RunGit(runner, "commit -q -m \"docs: previous result\"");
+            var previous = RunGit(runner, "rev-parse HEAD");
+            RunGit(runner, "checkout -q develop");
+            File.WriteAllText(Path.Combine(runner, "develop.txt"), "develop");
+            RunGit(runner, "add -A");
+            RunGit(runner, "commit -q -m \"docs: develop moves\"");
+            var develop = RunGit(runner, "rev-parse HEAD");
+            RunGit(runner, "push -q origin develop");
+            RunGit(runner, "checkout -q runner/test/AGT-2389");
+            RunGit(runner, "merge -q --no-ff develop -m \"Merge remote-tracking branch 'origin/develop' into runner/test/AGT-2389\"");
+            var fencedBase = RunGit(runner, "rev-parse HEAD");
+            Assert.Equal($"{fencedBase} {previous} {develop}",
+                RunGit(runner, "rev-list --parents -n 1 HEAD"));
+            // The new result is rebased onto develop, so the runner merge is
+            // absent from the pushed result and from the server object store.
+            RunGit(runner, "reset -q --hard develop");
+            File.WriteAllText(Path.Combine(runner, "delivery.txt"), "delivery");
+            RunGit(runner, "add -A");
+            RunGit(runner, "commit -q -m \"feat: own delivery\" -m \"Agent-Studio-Task: AGT-2389\"");
+            var tip = RunGit(runner, "rev-parse HEAD");
+            RunGit(runner, $"push -q origin {tip}:refs/heads/runner/test/AGT-2389");
+            RunGit(root, $"clone -q \"{remote}\" \"{server}\"");
+            var config = new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["WatchPaths:0:Name"] = "Fixture",
+                    ["WatchPaths:0:RootPath"] = server,
+                    ["WatchPaths:0:RepositoryPath"] = server,
+                    ["WatchPaths:0:Path"] = Path.Combine(server, ".orchestrator", "jobs"),
+                }).Build();
+            var scanner = new TaskScannerService(config,
+                NullLogger<TaskScannerService>.Instance,
+                new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+            var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+
+            var range = git.InspectRemoteDeliveryCommitRange(server,
+                "runner/test/AGT-2389", tip, "refs/heads/develop", fencedBase,
+                taskKey: "AGT-2389");
+
+            Assert.True(range.Success, range.Warning);
+            Assert.Equal(develop, range.MergeBaseSha);
+            Assert.Equal([tip], range.Commits.Select(commit => commit.Sha));
+            Assert.Contains(fencedBase[..8], range.Warning);
+            Assert.True(RemoteCommitAttributionGuard.Attribute("AGT-2389",
+                "runner/test/AGT-2389", range.Commits).Accepted);
+            Assert.NotEqual(original, develop);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
     /// <summary>
     /// Windows MAX_PATH regression behind the AGT-2494 fixture failures, in both
     /// manifestations. First, git disambiguates every revision argument against

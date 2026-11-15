@@ -91,6 +91,7 @@ export default defineConfig({
           : profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
           : profile === 'first-run'
             ? ['**/settings/first-run-journey.spec.ts', '**/settings/first-run-review-host-restart.spec.ts']
+          : profile === 'concept-remote' ? '**/project/concept-remote-journey.spec.ts'
           : profile === 'networked-monolith' ? '**/settings/first-run-networked-monolith.spec.ts'
           : profile === 'networked-https' ? ['**/security/product-session-networked-https.spec.ts', '**/security/owner-second-factor-human-pace.spec.ts', '**/security/owner-bootstrap-networked-https.spec.ts', '**/security/reviewer-role.networked-https.spec.ts']
           : profile === 'networked-checkout' ? '**/security/networked-project-checkout.spec.ts'
@@ -100,7 +101,7 @@ export default defineConfig({
           : profile === 'owner-day' ? '**/board/owner-day-acceptance.spec.ts'
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|board\/owner-day-acceptance\.spec\.ts|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-review-host-restart\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/(product-session-networked-https|owner-second-factor-human-pace|owner-bootstrap-networked-https|reviewer-role\.networked-https|networked-project-checkout|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts|project\/dossier-decision-live\.spec\.ts/
+          ? /visual-evidence\/|board\/owner-day-acceptance\.spec\.ts|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-review-host-restart\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/(product-session-networked-https|owner-second-factor-human-pace|owner-bootstrap-networked-https|reviewer-role\.networked-https|networked-project-checkout|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts|project\/(dossier-decision-live|concept-remote-journey)\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },

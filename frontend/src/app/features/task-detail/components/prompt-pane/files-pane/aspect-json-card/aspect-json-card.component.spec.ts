@@ -38,20 +38,20 @@ describe('AspectJsonCardComponent', () => {
 
     const badge = root.querySelector('[data-testid="aspect-json-status"]');
     expect(badge?.textContent?.trim()).toBe('concerns');
-    // concerns → warn tone (central severity token mapping).
-    expect(badge?.className).toContain('aspect-json__badge--warn');
+    // concerns → warning tone (shared status indicator mapping).
+    expect(badge?.getAttribute('data-tone')).toBe('warning');
 
     expect(root.querySelector('[data-testid="aspect-json-summary"]')?.textContent)
       .toContain('Dead helper left behind.');
   });
 
-  it('maps pass → ok and block → danger tones', async () => {
+  it('maps pass → success and block → danger tones', async () => {
     const pass = await render(doc({ status: 'pass' }));
-    expect(pass.querySelector('[data-testid="aspect-json-status"]')?.className).toContain('aspect-json__badge--ok');
+    expect(pass.querySelector('[data-testid="aspect-json-status"]')?.getAttribute('data-tone')).toBe('success');
 
     TestBed.resetTestingModule();
     const block = await render(doc({ status: 'block' }));
-    expect(block.querySelector('[data-testid="aspect-json-status"]')?.className).toContain('aspect-json__badge--danger');
+    expect(block.querySelector('[data-testid="aspect-json-status"]')?.getAttribute('data-tone')).toBe('danger');
   });
 
   it('shows the model and a details disclosure in full mode', async () => {

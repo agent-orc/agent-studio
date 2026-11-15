@@ -54,8 +54,8 @@ export function recoveryInputs(overview: BackupOverview): RecoveryInput[] {
       step: 'Compare restored configuration before start', href: `${runbook}#fresh-host-step-6`,
     },
     {
-      name: 'Operations Server', status: 'Excluded from archive; rebootstrap required',
-      step: 'Re-enrol remote agents and review revocations', href: `${runbook}#fresh-host-step-8`,
+      name: 'Operations Server', status: 'Confirm this archive includes operations/; offline fencing required',
+      step: 'Restore authority, re-enrol remote agents and check revocations', href: `${runbook}#fresh-host-step-8`,
     },
     {
       name: 'Quality Studio', status: 'Data and registry archived when present; image and repository checkouts required',

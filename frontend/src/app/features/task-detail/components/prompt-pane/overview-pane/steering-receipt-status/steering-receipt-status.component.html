@@ -2,7 +2,13 @@
   <div class="receipt" data-testid="overview-steering-receipt">
     <span class="receipt__label">Steering</span>
     <span class="receipt__value">
-      <span class="receipt__state">{{ current.summary }}</span>
+      <app-status-indicator
+        class="receipt__state"
+        [tone]="tone()"
+        [label]="current.summary"
+        [detail]="current.details?.['reason'] || null"
+        [compact]="true"
+        testId="overview-steering-receipt-state" />
       @if (current.details?.['commandId']; as commandId) {
         <span class="receipt__identity" [title]="commandId">command {{ commandId }}</span>
       }

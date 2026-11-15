@@ -5,6 +5,8 @@ import { TaskService } from '../../../../services/task.service';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { driftEnumLabel, driftFindingStatusTone, driftParseNotice, driftScoreBandTone, driftSeverityTone } from './drift-status-tones';
 import {
   DriftDimension,
   DriftDimensionType,
@@ -93,7 +95,7 @@ const ACTIONS: ActionButton[] = [
 @Component({
   selector: 'app-project-drift-overview-section',
   standalone: true,
-  imports: [TooltipDirective, OverlayPortalDirective],
+  imports: [TooltipDirective, OverlayPortalDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-drift-overview-section.html',
   styleUrl: './project-drift-overview-section.scss'
@@ -434,13 +436,18 @@ signal; do not let the suggestion text replace evidence-based scoping.
    *  regardless of wire case. The backend serializes drift enums lowercase
    *  ('warn', 'high', 'manual', 'schema') even though the schema and code
    *  are PascalCase; the UI needs a single normalized presentation. */
-  tc(value: string | null | undefined): string { return titleCase(value); }
+  tc(value: string | null | undefined): string { return driftEnumLabel(value); }
 
   /** Case-insensitive parseStatus equality. Wire is lowercase ('structured'),
    *  comparisons in templates target the PascalCase enum names. */
   parseStatusEq(actual: string | null | undefined, expected: string): boolean {
     return (actual ?? '').toString().toLowerCase() === expected.toLowerCase();
   }
+
+  readonly severityTone = driftSeverityTone;
+  readonly findingStatusTone = driftFindingStatusTone;
+  readonly bandTone = driftScoreBandTone;
+  readonly parseNotice = driftParseNotice;
 
   parseStatusClass(actual: string | null | undefined): string {
     return (actual ?? '').toString().toLowerCase();
@@ -452,10 +459,6 @@ signal; do not let the suggestion text replace evidence-based scoping.
 
   severityClass(s: DriftSeverity | string | undefined | null): string {
     return (s ?? 'info').toString().toLowerCase();
-  }
-
-  statusClass(s: string | undefined | null): string {
-    return (s ?? 'new').toString().toLowerCase();
   }
 
   priorityClass(p: string | undefined | null): string {
@@ -527,12 +530,6 @@ function normalizeDimensionType(raw: string | null | undefined): DriftDimensionT
     case 'token':        return 'Token';
     default:             return null;
   }
-}
-
-function titleCase(s: string | null | undefined): string {
-  if (!s) return '';
-  const str = s.toString();
-  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
 }
 
 function dimSlugStatic(t: DriftDimensionType): string {

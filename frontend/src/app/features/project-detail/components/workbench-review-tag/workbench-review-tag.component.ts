@@ -1,12 +1,26 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
-import type { WorkbenchReview } from '../../../../models/project-docs.model';
+import type { WorkbenchReview, WorkbenchReviewVerdict } from '../../../../models/project-docs.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { NowTickService } from '../../../../services/now-tick.service';
+
+const VERDICT_TONES: Readonly<Record<WorkbenchReviewVerdict, StatusTone>> = {
+  current: 'success',
+  'partially-superseded': 'warning',
+  superseded: 'neutral',
+  historical: 'neutral',
+};
+
+/** Review state of a Dossier: a due review needs attention whatever the last verdict was. */
+export function reviewTone(verdict: string | null | undefined, reviewDue: boolean): StatusTone {
+  if (reviewDue) return 'warning';
+  return VERDICT_TONES[verdict as WorkbenchReviewVerdict] ?? 'neutral';
+}
 
 @Component({
   selector: 'app-workbench-review-tag',
   standalone: true,
-  imports: [AppTooltipDirective],
+  imports: [AppTooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-review-tag.component.html',
   styleUrl: './workbench-review-tag.component.scss',
@@ -22,6 +36,7 @@ export class WorkbenchReviewTagComponent {
     if (!review) return 'Never reviewed';
     return `${review.verdict.replaceAll('-', ' ')} · reviewed ${reviewAge(review.reviewedAt, this.now())}`;
   });
+  readonly tone = computed(() => reviewTone(this.review()?.verdict, this.reviewDue()));
   readonly tooltip = computed(() => {
     const review = this.review();
     if (!review) return 'Verdict: never reviewed';

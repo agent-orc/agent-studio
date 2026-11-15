@@ -109,9 +109,7 @@
 }
 
 .receipt__source-head strong { color: var(--studio-fg); font-size: 10px; }
-.receipt__status { margin-left: auto; color: var(--studio-fg-muted); font-size: 9px; }
-.receipt__sources li[data-status='included'] .receipt__status { color: var(--studio-success); }
-.receipt__sources li[data-status='excerpted'] .receipt__status { color: var(--studio-warn); }
+.receipt__status { margin-left: auto; }
 .receipt__sources code { display: block; margin: var(--studio-spacing-1) 0; overflow: hidden; color: var(--studio-fg-dim); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .receipt__source-meta { color: var(--studio-fg-muted); font-size: 9px; font-variant-numeric: tabular-nums; }
 .receipt__source-meta span + span::before { content: '·'; margin-right: var(--studio-spacing-2); }

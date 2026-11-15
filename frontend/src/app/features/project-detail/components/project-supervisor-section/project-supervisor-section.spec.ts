@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { ProjectSupervisorSectionComponent } from './project-supervisor-section';
+import { ProjectSupervisorSectionComponent, supervisorRunnerTone } from './project-supervisor-section';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -40,5 +40,12 @@ describe('ProjectSupervisorSectionComponent (smoke)', () => {
       console.warn('[smoke] ProjectSupervisorSectionComponent initial render skipped:', (e as Error).message);
     }
     expect(fixture.componentInstance).toBeTruthy();
+  });
+});
+
+describe('supervisorRunnerTone', () => {
+  it('maps the raw runner status and falls back to neutral', () => {
+    expect(['paused', 'auto (active)', 'manual', 'unknown', '', null].map(supervisorRunnerTone))
+      .toEqual(['warning', 'running', 'neutral', 'neutral', 'neutral', 'neutral']);
   });
 });

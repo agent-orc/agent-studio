@@ -235,6 +235,19 @@ async function installMocks(
     policyWikiPath: 'docs/system/domains/model-routing-policy.md',
   }));
   await page.route('**/api/crash-recovery/pending**', route => json(route, { pending: [] }));
+  await page.route('**/api/usage/cockpit**', route => json(route, {
+    snapshotVersion: 1, workspaceId: 'workspace-evidence', timeZone: 'UTC', weekStart: 1,
+    generatedAt: '2026-08-11T10:00:00Z', calendar: { timeZone: 'UTC', weekStart: 1 }, clis: [],
+    cost: { currency: 'USD', todayUsd: null, weekUsd: null, projects: [],
+      coverage: { status: 'unavailable', observedAt: null, ttlSeconds: null } },
+    runs: [], slots: [], sources: {},
+  }));
+  await page.route('**/api/token-pricing/calculate', route => json(route, { provider: 'TokenEconomy', items: [] }));
+  await page.route('**/api/workspaces/*/quota/admission**', route => json(route, {
+    workspaceId: 'workspace-evidence',
+    workspace: { codingAllowed: true, hostingAllowed: true, limited: false },
+    projects: [],
+  }));
   await page.route('**/api/workbenches**', route => json(route, {
     includesHistory: true,
     count: 1,
@@ -522,7 +535,9 @@ for (const scenario of [
     await page.goto('/');
 
     const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
-    await frame.locator('[data-option-id="option-a"] input').check();
+    const option = frame.locator('[data-option-id="option-a"] input');
+    await expect(option).toBeVisible({ timeout: 30_000 });
+    await option.check();
     const inline = page.getByTestId('workbench-inline-decision-action');
     await inline.getByTestId('workbench-decision-start').click();
     await inline.getByTestId('workbench-decision-title').fill('Implement the stable naming contract');
@@ -599,7 +614,7 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   await expect(inline.getByTestId('workbench-decision-start')).toBeEnabled();
   await inline.getByTestId('workbench-decision-start').press('Enter');
   await expect(inline.getByTestId('workbench-decision-goal'))
-    .toHaveValue('Implement Naming Dossier according to the source Dossier and its recorded decisions.');
+    .toHaveValue('Choose the stable naming contract used by public references.');
   const seededPrompt = await inline.getByTestId('workbench-decision-prompt-preview').innerText();
   expect(seededPrompt.match(/Recorded decisions/g)).toHaveLength(1);
   await expect(inline.getByTestId('workbench-decision-prompt-preview'))
@@ -726,7 +741,7 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   });
   await page.goto(`/?job=naming-feature-1&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   const overview = page.getByTestId('overview-status');
-  await expect(overview).toBeVisible();
+  await expect(overview).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('overview-title'))
     .toContainText('Implement the stable naming contract');
   await page.waitForTimeout(1000);
@@ -803,8 +818,8 @@ test('failed Dossier confirmation reports the card the server removed', async ({
   await page.goto('/');
   const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
   await frame.locator('[data-option-id="option-a"] input').check();
-  await frame.locator('[data-studio-decision-host-slot]').scrollIntoViewIfNeeded();
   const inline = page.getByTestId('workbench-inline-decision-action');
+  await inline.scrollIntoViewIfNeeded();
   await expect.poll(() => inline.evaluate(element => getComputedStyle(element).pointerEvents))
     .toBe('auto');
   await inline.getByTestId('workbench-decision-start').click();

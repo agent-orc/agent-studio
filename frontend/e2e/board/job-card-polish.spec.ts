@@ -211,9 +211,18 @@ test.describe('F57 — Board-card polish', () => {
 
     const issuePill = page.locator('[data-testid="task-card-outcome-issue"]');
     if ((await issuePill.count()) > 0) {
+      // AGT-3403: the pill is a compact status indicator; read its tone text
+      // colour and the first opaque background behind it.
       const { fg, bg } = await issuePill.first().evaluate((el) => {
-        const cs = getComputedStyle(el);
-        return { fg: cs.color, bg: cs.backgroundColor };
+        const tone = (el.querySelector('[data-tone]') as HTMLElement | null) ?? (el as HTMLElement);
+        let node: HTMLElement | null = tone;
+        let bgColor = 'rgb(255, 255, 255)';
+        while (node) {
+          const c = getComputedStyle(node).backgroundColor;
+          if (c && c !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(c)) { bgColor = c; break; }
+          node = node.parentElement;
+        }
+        return { fg: getComputedStyle(tone).color, bg: bgColor };
       });
       const ratio = contrastRatio(fg, bg);
       expect(ratio).toBeGreaterThanOrEqual(4.5);
@@ -233,9 +242,18 @@ test.describe('F57 — Board-card polish', () => {
 
     const issuePill = page.locator('[data-testid="task-card-outcome-issue"]');
     if ((await issuePill.count()) > 0) {
+      // AGT-3403: the pill is a compact status indicator; read its tone text
+      // colour and the first opaque background behind it.
       const { fg, bg } = await issuePill.first().evaluate((el) => {
-        const cs = getComputedStyle(el);
-        return { fg: cs.color, bg: cs.backgroundColor };
+        const tone = (el.querySelector('[data-tone]') as HTMLElement | null) ?? (el as HTMLElement);
+        let node: HTMLElement | null = tone;
+        let bgColor = 'rgb(255, 255, 255)';
+        while (node) {
+          const c = getComputedStyle(node).backgroundColor;
+          if (c && c !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(c)) { bgColor = c; break; }
+          node = node.parentElement;
+        }
+        return { fg: getComputedStyle(tone).color, bg: bgColor };
       });
       const ratio = contrastRatio(fg, bg);
       expect(ratio).toBeGreaterThanOrEqual(4.5);

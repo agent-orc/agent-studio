@@ -19,7 +19,8 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
     public async Task RegisterAsync(CancellationToken ct)
     {
         Directory.CreateDirectory(spoolDirectory);
-        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(spoolDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(spoolDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute);
         // Results from an earlier process generation must be reported before
         // the new boot asks to replace that generation's registration.
         await ReplayJournalAsync(ct);
@@ -157,7 +158,7 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         if (File.Exists(path) && new FileInfo(path).Length + System.Text.Encoding.UTF8.GetByteCount(line) > 8 * 1024 * 1024)
             throw new IOException("Host journal capacity reached.");
         var options = new FileStreamOptions { Mode = FileMode.Append, Access = FileAccess.Write, Options = FileOptions.WriteThrough };
-        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
         await using var stream = new FileStream(path, options);
         await stream.WriteAsync(System.Text.Encoding.UTF8.GetBytes(line), ct);
         stream.Flush(flushToDisk: true);
@@ -192,7 +193,7 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
     private static async Task WriteDurableAsync(string path, byte[] bytes, CancellationToken ct)
     {
         var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Options = FileOptions.WriteThrough };
-        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
         using var stream = new FileStream(path, options);
         await stream.WriteAsync(bytes, ct);
         stream.Flush(flushToDisk: true);

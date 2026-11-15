@@ -15,9 +15,8 @@
         [attr.data-testid]="'environment-health-' + environment.environmentId">
         <header class="environment-health__environment-head">
           <div><strong>{{ environment.name }}</strong><small>{{ environment.kind }} · {{ environment.address }}</small></div>
-          <span class="environment-health__badge" [attr.data-status]="environment.status">
-            <span class="environment-health__dot" aria-hidden="true"></span>{{ statusLabel[environment.status] }}
-          </span>
+          <app-status-indicator [tone]="statusTone(environment.status)" [label]="statusLabel[environment.status]"
+                                testId="environment-health-status" />
         </header>
         @if (environment.error; as message) {
           <p class="environment-health__incident" role="alert" data-testid="environment-health-error">{{ message }}</p>
@@ -41,15 +40,18 @@
         <ul class="environment-health__checks">
           @for (check of environment.checks; track check.id) {
             <li [attr.data-testid]="'environment-health-check-' + check.id">
-              <span class="environment-health__dot" [attr.data-status]="check.status" aria-hidden="true"></span>
+              <app-status-indicator [tone]="statusTone(check.status)" [label]="statusLabel[check.status]" [compact]="true"
+                                    testId="environment-health-check-status" />
               <div>
                 <strong>{{ check.id }}</strong> <span>{{ target(check) }}</span>
                 <small>{{ rule(check) }}</small>
                 @if (certificate(check); as expiry) {
-                  <small [class.environment-health__warn]="certificateWarning(check)">{{ expiry }}</small>
+                  <app-status-indicator [tone]="certificateWarning(check) ? 'warning' : 'neutral'" [label]="expiry" [compact]="true"
+                                        testId="environment-health-certificate" />
                 }
               </div>
-              <span class="environment-health__result">{{ lastResult(check) }}</span>
+              <app-status-indicator [tone]="lastResultTone(check)" [label]="lastResult(check)" [compact]="true"
+                                    testId="environment-health-last-result" />
               <span class="environment-health__result">{{ uptime(check.uptime24h) }} · p95 {{ latency(check.latency24h.p95Ms) }}</span>
             </li>
           } @empty { <li>No health checks. Declare a health URL or an address to derive them.</li> }

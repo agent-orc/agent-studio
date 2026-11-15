@@ -9,7 +9,7 @@ import { RemoteHostsService, type RemoteHost } from '../../features/remote-hosts
 import { startsWithHttpVerb, type RemedyAction } from '../../models/remedy-action.model';
 import { RemedyNavigationService } from '../../services/remedy-navigation.service';
 import { controlFor } from '../pickup-hold-resolution/pickup-hold-resolution.component';
-import { PickupHoldComponent } from './pickup-hold.component';
+import { PickupHoldComponent, pickupHoldIndicatorTone } from './pickup-hold.component';
 
 const api = (target: string, taskKey?: string): RemedyAction => ({ kind: 'api', target, project: 'demo', taskKey });
 const route = (target: string, taskKey?: string): RemedyAction => ({ kind: 'route', target, project: 'demo', taskKey });
@@ -198,6 +198,9 @@ describe('PickupHoldComponent', () => {
 
     expect(block.getAttribute('data-tone')).toBe('blocked');
     expect(block.getAttribute('data-mechanism')).toBe('dependency-gate');
+    const headline = root.querySelector('[data-testid="pickup-hold-headline"]') as HTMLElement;
+    expect(headline.dataset['tone']).toBe('danger');
+    expect(headline.classList.contains('status-indicator--compact')).toBe(true);
     expect(root.querySelector('[data-testid="pickup-hold-headline"]')?.textContent)
       .toContain('cannot clear by itself');
     expect(root.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent)
@@ -488,5 +491,12 @@ describe('PickupHoldComponent', () => {
 
     expect(root.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent)
       .toContain('Quota exhausted');
+  });
+
+  it('maps the hold tone onto the shared status tone (AGT-3403)', () => {
+    expect(pickupHoldIndicatorTone('open')).toBe('info');
+    expect(pickupHoldIndicatorTone('stalled')).toBe('warning');
+    expect(pickupHoldIndicatorTone('blocked')).toBe('danger');
+    expect(pickupHoldIndicatorTone('later-state')).toBe('neutral');
   });
 });

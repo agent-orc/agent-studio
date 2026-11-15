@@ -25,13 +25,8 @@ button.kill__danger:hover:not(:disabled) { border-color: var(--severity-high); b
 }
 .kill__line + .kill__line { border-top: 1px solid var(--studio-border); }
 .kill__line[data-tone='alert'] { background: color-mix(in srgb, var(--severity-high) 14%, var(--studio-bg-surface)); }
-.kill__line strong { color: var(--studio-fg-strong); font-weight: 600; }
 .kill__meta { color: var(--studio-fg-dim); }
 .kill__push { margin-left: auto; }
-.kill__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--studio-fg-dim); }
-.kill__dot[data-tone='ok'] { background: var(--studio-success); }
-.kill__dot[data-tone='alert'] { background: var(--severity-high); }
 .kill__scroll { overflow-x: auto; }
 .kill__reason { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.access-badge[data-tone='active'] { background: color-mix(in srgb, var(--studio-success) 16%, transparent); color: var(--studio-fg-strong); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

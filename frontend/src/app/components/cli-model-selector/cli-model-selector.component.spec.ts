@@ -164,6 +164,7 @@ describe('CliModelSelectorComponent', () => {
     expect(astra?.getAttribute('aria-disabled')).toBe('true');
     expect(astra?.getAttribute('aria-label')).toContain(note);
     expect(astra?.textContent).toContain(note);
+    expect((astra?.querySelector('[data-testid="cli-model-selector-picker-note-gpt-6-astra"]') as HTMLElement | null)?.dataset['tone']).toBe('warning');
 
     astra?.click();
     expect(component.draftModel()).toBe('gpt-5.6-sol');
@@ -236,6 +237,7 @@ describe('CliModelSelectorComponent', () => {
     expect(olderRows).toHaveLength(2);
     expect(olderRows[0].getAttribute('data-deprecated')).toBeNull();
     expect(olderRows[0].textContent).toContain('Older generation');
+    expect((olderRows[0].querySelector('[data-testid^="cli-model-selector-picker-note-"]') as HTMLElement).dataset['tone']).toBe('neutral');
     expect(olderRows[0].disabled).toBe(false);
 
     const commits: string[] = [];

@@ -19,16 +19,6 @@
 .codex-auth__failure p,
 .codex-auth__privacy { margin: 0; }
 
-.codex-auth__spinner {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  border: 2px solid var(--studio-border-strong);
-  border-top-color: var(--studio-accent);
-  border-radius: 50%;
-  animation: codex-auth-spin 0.8s linear infinite;
-}
-
 .codex-auth__steps {
   display: grid;
   gap: var(--studio-spacing-5);
@@ -102,13 +92,7 @@
 .codex-auth__secondary { border: 1px solid var(--studio-border-strong); background: transparent; color: var(--studio-fg); }
 .codex-auth__primary { border: 1px solid var(--studio-accent); background: var(--studio-accent); color: var(--studio-on-accent); font-weight: 700; }
 
-@keyframes codex-auth-spin { to { transform: rotate(360deg); } }
-
 @media (max-width: 560px) {
   .codex-auth__code { align-items: flex-start; flex-direction: column; }
   .codex-auth__code strong { font-size: var(--studio-font-size-2xl); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .codex-auth__spinner { animation-duration: 0s; }
 }

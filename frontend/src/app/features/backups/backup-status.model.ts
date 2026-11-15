@@ -23,6 +23,20 @@ export interface BackupOverview {
   generatedAt: string;
   /** AGT-3734: the newest offline restore into this installation; absent on older servers. */
   lastRestore?: BackupRestoreReceipt | null;
+  operationsRecovery?: OperationsRecoveryDocument | null;
+}
+
+export interface OperationsRecoveryDocument {
+  backupId: string;
+  fencedAt: string;
+  items: readonly OperationsRecoveryItem[];
+}
+
+export interface OperationsRecoveryItem {
+  kind: 'reenrol' | 'agent-revocation' | 'host-certificate-revocations' | 'operator-revocations';
+  id: string;
+  complete: boolean;
+  oldPrincipalIds: readonly string[];
 }
 
 /** The receipt an offline restore writes into the workspace (AGT-3734). */

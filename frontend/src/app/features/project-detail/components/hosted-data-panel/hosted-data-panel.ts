@@ -2,10 +2,25 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, signal, untr
 import { HttpClient } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
 import { forkJoin, map, of, Subscription, switchMap } from 'rxjs';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 interface Volume { name: string; mountPath: string }
 interface Backup { id: string; createdAt: string; bytes: number; sha256: string }
 interface Schedule { volume: string; hourUtc: number | null; lastAttemptAt: string | null; lastError: string | null; backups: Backup[] }
+/**
+ * Data audit outcomes are raw strings the frontend does not enumerate. An
+ * audit entry is history, so a failed backup or restore stays calm (R4) and
+ * reads as warning; anything not recognised is neutral.
+ */
+const AUDIT_SUCCESS = new Set(['succeeded', 'success', 'ok', 'completed', 'done', 'restored', 'saved']);
+const AUDIT_FAILURE = new Set(['failed', 'failure', 'error', 'rejected', 'aborted']);
+export function auditOutcomeTone(outcome: string): StatusTone {
+  const value = outcome.trim().toLowerCase();
+  if (AUDIT_SUCCESS.has(value)) return 'success';
+  if (AUDIT_FAILURE.has(value)) return 'warning';
+  return 'neutral';
+}
+
 interface Audit { id: string; at: string; actor: string; action: string; volume: string; backupId: string | null; outcome: string }
 interface HostedData { database: { secretRef: string; environmentVariable: string } | null;
   volumes: Volume[]; schedules: Schedule[]; audit: Audit[]; adapterReady: boolean }
@@ -16,13 +31,14 @@ interface EnvironmentData extends HostedData { id: string; name: string }
 @Component({
   selector: 'app-hosted-data-panel',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, StatusIndicatorComponent],
   templateUrl: './hosted-data-panel.html',
   styleUrl: './hosted-data-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class HostedDataPanelComponent {
   private readonly http = inject(HttpClient);
+  readonly outcomeTone = auditOutcomeTone;
   private loadRequest?: Subscription;
   private displayedProject: string | null = null;
   /** Advances on every project switch so responses started for another project are dropped. */

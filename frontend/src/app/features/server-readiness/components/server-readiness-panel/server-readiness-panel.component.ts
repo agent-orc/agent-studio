@@ -1,11 +1,12 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, output, signal } from '@angular/core';
 import { CopyableCommandComponent } from '../../../../components/copyable-command/copyable-command.component';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { remedyLinkLabel } from '../../../../models/remedy-action.model';
 import { RemedyNavigationService } from '../../../../services/remedy-navigation.service';
 import { ServerReadinessService } from '../../services/server-readiness.service';
 import {
-  READINESS_STATE_LABEL, groupReadiness, readinessKey, type ReadinessCheck, type ServerReadinessReport,
+  READINESS_STATE_LABEL, READINESS_STATE_TONE, groupReadiness, readinessKey, type ReadinessCheck, type ReadinessState, type ServerReadinessReport,
 } from '../../models/server-readiness.model';
 
 /**
@@ -18,7 +19,7 @@ import {
 @Component({
   selector: 'app-server-readiness-panel',
   standalone: true,
-  imports: [CopyableCommandComponent, DisclosureMarkerComponent],
+  imports: [CopyableCommandComponent, DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './server-readiness-panel.component.html',
   styleUrl: './server-readiness-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -47,6 +48,11 @@ export class ServerReadinessPanelComponent implements OnInit, OnDestroy {
     return `${counts} · checked ${at} UTC`;
   });
   readonly label = READINESS_STATE_LABEL;
+
+  /** A state the server adds later stays neutral until it is mapped. */
+  stateTone(state: ReadinessState): StatusTone {
+    return READINESS_STATE_TONE[state] ?? 'neutral';
+  }
   readonly key = readinessKey;
   private timer: ReturnType<typeof setInterval> | null = null;
 

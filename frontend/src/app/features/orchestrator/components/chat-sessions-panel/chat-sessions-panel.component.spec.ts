@@ -115,6 +115,8 @@ describe('ChatSessionsPanelComponent', () => {
     const active = host.querySelector('[data-testid="chat-sessions-active"]')!;
     const words = [...active.querySelectorAll('[data-testid="chat-session-live"]')].map(item => item.textContent?.trim());
     expect(words.sort()).toEqual(['queued 2', 'running']);
+    const tones = [...active.querySelectorAll<HTMLElement>('[data-testid="chat-session-live"]')].map(item => item.dataset['tone']);
+    expect(tones.sort()).toEqual(['running', 'warning']);
     expect(host.querySelector('[data-testid="chat-sessions-active-head"]')?.textContent).toContain('2');
     expect(active.querySelector('[data-testid^="chat-session-archive-"]')).toBeNull();
   });

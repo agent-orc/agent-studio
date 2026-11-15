@@ -13,6 +13,18 @@ import type { ProjectExpensiveJob, ProjectExpensiveJobsResponse, ProjectJobToken
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ProjectPipelineCostTrendComponent } from '../project-pipeline-cost-trend/project-pipeline-cost-trend.component';
 import { ReviewObservationTableComponent } from '../review-observation-table/review-observation-table.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Tone of the "Data as of" freshness line (AGT-3403); an unknown status stays neutral. */
+const FRESHNESS_TONES: Readonly<Record<ProjectTokenDataFreshness['status'], StatusTone>> = {
+  complete: 'success',
+  partial: 'warning',
+  unavailable: 'danger',
+};
+
+export function tokenFreshnessTone(status: string | null | undefined): StatusTone {
+  return FRESHNESS_TONES[status as ProjectTokenDataFreshness['status']] ?? 'neutral';
+}
 interface CardSpec {
   testid: string;
   label: string;
@@ -49,7 +61,7 @@ interface TimelineBucket {
 @Component({
   selector: 'app-project-token-usage-panel',
   standalone: true,
-  imports: [TooltipDirective, ProjectPipelineCostTrendComponent, ReviewObservationTableComponent],
+  imports: [TooltipDirective, ProjectPipelineCostTrendComponent, ReviewObservationTableComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-token-usage-panel.component.html',
   styleUrl: './project-token-usage-panel.component.scss',
@@ -76,6 +88,8 @@ export class ProjectTokenUsagePanelComponent {
       sources: [],
     };
   });
+
+  readonly freshnessTone = tokenFreshnessTone;
 
   readonly selectedJobId = signal<string | null>(null);
   readonly drilldown = signal<ProjectJobTokenDetail | null>(null);

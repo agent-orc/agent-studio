@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { WikiGradePanelComponent } from './wiki-grade-panel.component';
+import { WikiGradePanelComponent, gradingStateTone } from './wiki-grade-panel.component';
 import type { WikiPulseCritical, WikiGradingRunStatus } from '../../../../../models/project-docs.model';
 
 const CRITICAL: WikiPulseCritical = {
@@ -58,6 +58,7 @@ describe('WikiGradePanelComponent', () => {
     expect(root.querySelector('[data-testid="project-wiki-pulse-grade-abort"]')).toBeTruthy();
     expect(root.querySelector('[data-testid="project-wiki-pulse-grade-start"]')).toBeNull();
     expect(root.querySelector('[data-testid="project-wiki-pulse-grade-state"]')?.textContent).toContain('4/10');
+    expect(root.querySelector('[data-testid="project-wiki-pulse-grade-state"]')?.getAttribute('data-tone')).toBe('running');
     expect(root.querySelector<HTMLElement>('.wgrade__fill')?.style.width).toBe('40%');
   });
 
@@ -77,7 +78,9 @@ describe('WikiGradePanelComponent', () => {
     const fixture = await mount({
       critical: { available: true, reason: 'No critical pages: every graded page is B or better.', count: 0, overallGrade: 'none', items: [] },
     });
-    expect(html(fixture).querySelector('[data-testid="project-wiki-pulse-critical-empty"]')).toBeTruthy();
+    const empty = html(fixture).querySelector('[data-testid="project-wiki-pulse-critical-empty"]');
+    expect(empty?.getAttribute('data-tone')).toBe('success');
+    expect(empty?.textContent).toContain('every graded page is B or better');
   });
 
   it('emits gradeModelChange when a model is picked from the dropdown', async () => {
@@ -94,5 +97,16 @@ describe('WikiGradePanelComponent', () => {
     select.value = 'claude-opus-4-8';
     select.dispatchEvent(new Event('change'));
     expect(picked).toBe('claude-opus-4-8');
+  });
+});
+
+describe('gradingStateTone', () => {
+  it('maps each grading run state onto a status tone, unknown states stay neutral', () => {
+    expect(gradingStateTone('running')).toBe('running');
+    expect(gradingStateTone('completed')).toBe('success');
+    expect(gradingStateTone('aborted')).toBe('neutral');
+    expect(gradingStateTone('failed')).toBe('danger');
+    expect(gradingStateTone('queued')).toBe('neutral');
+    expect(gradingStateTone(null)).toBe('neutral');
   });
 });

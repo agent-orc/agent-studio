@@ -49,18 +49,7 @@
 .parch__status {
   grid-area: status;
   justify-self: end;
-  white-space: nowrap;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--studio-card-muted-bg);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--studio-fg-dim);
 }
-.parch__status--accepted { background: color-mix(in srgb, var(--severity-pass) 15%, transparent); color: var(--severity-pass); }
-.parch__status--super    { background: color-mix(in srgb, var(--severity-warn) 15%, transparent); color: var(--studio-accent-warn); }
-.parch__status--depr     { background: color-mix(in srgb, var(--severity-high) 15%, transparent); color: var(--severity-high); }
 .parch__date { grid-area: date; color: var(--studio-fg-muted); font-size: 0.74rem; font-variant-numeric: tabular-nums; }
 
 // Full-width second line for long, free-form status prose. Wraps within the
