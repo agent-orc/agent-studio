@@ -127,13 +127,9 @@
   color: var(--studio-fg-muted);
   font-size: 0.64rem;
 }
-.operator-dashboard__sync-directions strong { color: var(--studio-success); font-size: 0.72rem; }
 .operator-dashboard__remote-row[data-state='pending'] {
   background: color-mix(in srgb, var(--studio-warn) 8%, var(--studio-card-muted-bg));
 }
-.operator-dashboard__remote-row[data-state='pending'] .operator-dashboard__sync-directions strong { color: var(--studio-accent-warn); }
-.operator-dashboard__remote-row[data-state='untracked'] .operator-dashboard__sync-directions strong { color: var(--studio-fg-muted); }
-.operator-dashboard__remote-warning { color: var(--studio-accent-warn); font-size: 0.72rem; }
 .operator-dashboard__remote-help { max-width: 56rem; margin: var(--studio-spacing-2) 0 0; color: var(--studio-fg-muted); font-size: 0.7rem; line-height: 1.45; }
 
 .operator-dashboard__section-head h2,
@@ -288,27 +284,6 @@
   @include m.deck-panel-attention;
 }
 .operator-dashboard__deployment h2 { font-size: 1.35rem; }
-
-.operator-dashboard__deployment-state {
-  padding: var(--studio-spacing-1) var(--studio-spacing-3);
-  border: 1px solid var(--studio-border-strong);
-  border-radius: 999px;
-  background: var(--studio-bg-surface);
-  color: var(--studio-fg-muted);
-  font-size: 0.7rem;
-  font-weight: 650;
-  white-space: nowrap;
-}
-.operator-dashboard__deployment-state--pending {
-  border-color: color-mix(in srgb, var(--studio-accent-warn) 55%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-accent-warn) 13%, transparent);
-  color: var(--studio-accent-warn);
-}
-.operator-dashboard__deployment-state--failed {
-  border-color: color-mix(in srgb, var(--studio-error) 55%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-error) 12%, transparent);
-  color: var(--studio-error);
-}
 
 .operator-dashboard__deploy-summary {
   display: grid;

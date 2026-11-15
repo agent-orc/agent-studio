@@ -6,11 +6,9 @@
         Security
         <app-concept-help concept="audits-and-checks" />
       </h2>
-      <span class="sec-panel__badge"
-            [class]="'sec-panel__badge--' + baselineBadge()"
-            data-testid="security-baseline-badge">
-        {{ baselineBadgeLabel() }}
-      </span>
+      <app-status-indicator [tone]="baselineTone()"
+                            [label]="baselineBadgeLabel()"
+                            testId="security-baseline-badge" />
       <span class="sec-panel__spacer"></span>
       @if (loading()) {
         <span class="sec-panel__loading" data-testid="security-loading">Loading…</span>
@@ -31,10 +29,10 @@
       @if (lastReview(); as r) {
         <p class="sec-panel__card-value">
           <span class="sec-panel__card-date">{{ r.reviewDate ?? formatDate(r.updatedAt) }}</span>
-          <span class="sec-panel__card-verdict"
-                [class]="'sec-panel__card-verdict--' + verdictTone(r.verdict)">
-            {{ r.verdict ?? 'no verdict' }}
-          </span>
+          <app-status-indicator [tone]="verdictTone(r.verdict)"
+                                [label]="r.verdict ?? 'no verdict'"
+                                [compact]="true"
+                                testId="security-card-verdict" />
         </p>
         @if (r.title) {
           <p class="sec-panel__card-detail">{{ r.title }}</p>
@@ -68,7 +66,10 @@
       <h3 class="sec-panel__card-title">Baseline definition</h3>
       @if (baseline()?.exists) {
         <p class="sec-panel__card-value">
-          {{ baseline()?.status ?? 'no status' }}
+          <app-status-indicator [tone]="baselineTone()"
+                                [label]="baseline()?.status ?? 'no status'"
+                                [compact]="true"
+                                testId="security-baseline-def-status" />
           @if (baseline()?.lastVerified) {
             <span class="sec-panel__card-detail">verified {{ baseline()?.lastVerified }}</span>
           }
@@ -109,14 +110,14 @@
       Create follow-up task
     </button>
     @if (auditError(); as err) {
-      <span class="sec-panel__chip sec-panel__chip--error"
-            role="status"
-            data-testid="security-audit-error">{{ err }}</span>
+      <span role="status" data-testid="security-audit-error">
+        <app-status-indicator tone="danger" [label]="err" testId="security-audit-error-indicator" />
+      </span>
     }
     @if (auditQueued(); as ok) {
-      <span class="sec-panel__chip sec-panel__chip--ok"
-            role="status"
-            data-testid="security-audit-queued">{{ ok }}</span>
+      <span role="status" data-testid="security-audit-queued">
+        <app-status-indicator tone="success" [label]="ok" testId="security-audit-queued-indicator" />
+      </span>
     }
   </div>
 
@@ -131,7 +132,6 @@
       <ul class="sec-panel__history-list">
         @for (r of reviews(); track r.fileName) {
           <li class="sec-panel__row"
-              [class.sec-panel__row--unstructured]="!r.parseOk"
               [attr.data-testid]="'security-history-row'"
               [attr.data-rel-path]="r.relPath"
               [attr.data-parse-ok]="r.parseOk">
@@ -139,15 +139,16 @@
               <span class="sec-panel__row-date">{{ r.reviewDate ?? formatDate(r.updatedAt) }}</span>
               <span class="sec-panel__row-name">{{ r.title ?? r.fileName }}</span>
               @if (r.verdict) {
-                <span class="sec-panel__row-verdict"
-                      [class]="'sec-panel__row-verdict--' + verdictTone(r.verdict)">
-                  {{ r.verdict }}
-                </span>
+                <app-status-indicator [tone]="historyVerdictTone(r.verdict)"
+                                      [label]="r.verdict"
+                                      [compact]="true"
+                                      testId="security-row-verdict" />
               }
             </div>
             @if (!r.parseOk) {
               <p class="sec-panel__warning" data-testid="security-unstructured-warning">
-                ⚠ unstructured report ({{ r.parseError ?? 'no structured block detected' }}). Raw Markdown shown below.
+                <app-status-indicator tone="warning" label="unstructured report" [compact]="true" />
+                ({{ r.parseError ?? 'no structured block detected' }}). Raw Markdown shown below.
               </p>
               @if (rawCache()[r.fileName]; as raw) {
                 <pre class="sec-panel__raw" data-testid="security-raw-md">{{ raw }}</pre>

@@ -15,9 +15,8 @@
           [attr.aria-expanded]="enrichmentExpanded()"
           (click)="toggleEnrichmentReport()"
         >
-          <span class="enrichment-report__dot" aria-hidden="true"></span>
+          <app-status-indicator [tone]="statusTone(report.status)" [label]="statusLabel(report.status)" [compact]="true" testId="enrichment-report-status" />
           <span class="enrichment-report__summary-copy">
-            <strong data-testid="enrichment-report-status">{{ statusLabel(report.status) }}</strong>
             <span class="enrichment-report__summary-separator" aria-hidden="true">·</span>
             <span class="enrichment-report__summary-metric" data-testid="enrichment-token-balance">
               {{ report.tokens.original }} +{{ report.tokens.appended }} → {{ report.tokens.final }}

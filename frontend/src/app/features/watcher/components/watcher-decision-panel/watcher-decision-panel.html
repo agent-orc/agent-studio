@@ -5,7 +5,7 @@
       <div><dt>Recommended model</dt><dd>{{ p.recommendedModel || '(unavailable)' }}</dd></div>
       <div><dt>Detector class</dt><dd>{{ p.detectorClass }}</dd></div>
       @if (p.decision; as decision) {
-        <div><dt>Decision</dt><dd data-testid="watcher-decision-outcome">{{ decision.outcome }} by {{ decision.decidedBy }}</dd></div>
+        <div><dt>Decision</dt><dd><app-status-indicator [tone]="outcomeTone(decision.outcome)" [label]="decision.outcome + ' by ' + decision.decidedBy" [compact]="true" testId="watcher-decision-outcome" /></dd></div>
       }
     </dl>
 

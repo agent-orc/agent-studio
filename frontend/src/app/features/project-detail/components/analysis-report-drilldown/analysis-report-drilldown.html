@@ -1,8 +1,8 @@
 <section class="ard" data-testid="analysis-report-drilldown">
   <header class="ard__head">
-    <span class="ard__sev ard__sev--{{ (report()?.severity ?? 'Info').toLowerCase() }}">
-      {{ report()?.severity ?? 'Info' }}
-    </span>
+    <app-status-indicator [tone]="severityTone(report()?.severity)"
+                          [label]="report()?.severity ?? 'Info'"
+                          testId="analysis-report-severity" />
     <h2 class="ard__title">{{ report()?.topic ?? '…' }}</h2>
     <span class="ard__trigger">{{ report()?.trigger ?? '' }}</span>
   </header>
@@ -26,15 +26,21 @@
     <div><dt>Created</dt><dd>{{ formatTime(report()?.createdAt) }}</dd></div>
     <div><dt>Scope</dt><dd>{{ scopeLabel() }}</dd></div>
     <div><dt>Producer</dt><dd>{{ producerLabel() }}</dd></div>
-    <div><dt>Parse status</dt><dd>{{ report()?.parseStatus }}</dd></div>
+    <div><dt>Parse status</dt><dd>
+      @if (report()?.parseStatus; as parseStatus) {
+        <app-status-indicator [tone]="parseTone(parseStatus)" [label]="parseStatus" [compact]="true"
+                              testId="analysis-report-parse-status" />
+      }
+    </dd></div>
   </dl>
 
   @if ((report()?.findings?.length ?? 0) > 0) {
     <h3 class="ard__sub">Findings</h3>
     <ul class="ard__findings">
       @for (f of report()!.findings; track f.topic) {
-        <li class="ard__finding ard__finding--{{ f.severity.toLowerCase() }}">
-          <span class="ard__finding-sev">{{ f.severity }}</span>
+        <li class="ard__finding">
+          <app-status-indicator [tone]="findingTone(f.severity)" [label]="f.severity"
+                                [compact]="true" testId="analysis-report-finding-severity" />
           <span class="ard__finding-topic">{{ f.topic }}</span>
           <span class="ard__finding-msg">{{ f.message }}</span>
         </li>
@@ -51,9 +57,11 @@
           <span class="ard__followup-prio">{{ s.priority }}</span>
           <p>{{ s.summary }}</p>
           @if (s.createdJobId) {
-            <span class="ard__followup-job">queued as <code>{{ s.createdJobId }}</code></span>
+            <app-status-indicator tone="info" [label]="'queued as ' + s.createdJobId" [compact]="true"
+                                  testId="analysis-report-followup-job" />
           } @else {
-            <span class="ard__followup-job">candidate (not yet queued)</span>
+            <app-status-indicator tone="neutral" label="candidate (not yet queued)" [compact]="true"
+                                  testId="analysis-report-followup-job" />
           }
         </li>
       }

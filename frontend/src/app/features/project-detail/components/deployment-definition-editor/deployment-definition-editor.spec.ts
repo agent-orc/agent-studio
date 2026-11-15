@@ -36,6 +36,7 @@ describe('DeploymentDefinitionEditorComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('[data-testid="deployment-definition-result"]').textContent).toContain('Definition valid');
+    expect(fixture.nativeElement.querySelector('[data-testid="deployment-definition-status"]').dataset['tone']).toBe('success');
     expect(fixture.nativeElement.querySelector('[data-testid="deployment-form-preview"]').textContent).toContain('Branch to deploy *');
     expect(fixture.nativeElement.querySelector('[data-testid="deployment-form-preview"]').textContent).toContain('Confirm deployment *');
   });
@@ -50,6 +51,7 @@ describe('DeploymentDefinitionEditorComponent', () => {
     const result = fixture.nativeElement.querySelector('[data-testid="deployment-definition-result"]');
     expect(result.textContent).toContain('Validating definition');
     expect(result.getAttribute('aria-busy')).toBe('true');
+    expect(result.querySelector('[data-testid="deployment-definition-status"]').dataset['tone']).toBe('running');
     http.expectOne('/api/projects/Demo%20Project/deployment/compile').flush({
       title: 'Deployment', summary: 'Valid', command: 'bash scripts/deploy.sh',
       parameters: [{ name: 'confirm', type: 'boolean', required: true, default: false, options: [] }],

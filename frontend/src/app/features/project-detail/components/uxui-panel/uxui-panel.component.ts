@@ -16,6 +16,8 @@ import {
   DesignOverviewResponse,
   DesignReferenceItem,
 } from './uxui-panel.types';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { designStatusTone } from './uxui-panel-status';
 
 /**
  * Project UX/UI panel (slice 6 of the quality-system mockup,
@@ -40,6 +42,7 @@ import {
 @Component({
   selector: 'app-uxui-panel',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './uxui-panel.component.html',
   styleUrl: './uxui-panel.component.scss',
@@ -55,6 +58,7 @@ export class UxuiPanelComponent {
   /** Emits when an action is successfully queued. */
   readonly actionQueuedEvent = output<{ projectName: string; action: DesignActionKind; jobId: string }>();
 
+  readonly statusTone = designStatusTone;
   readonly loading = signal<boolean>(false);
   readonly loadError = signal<string | null>(null);
   readonly overview = signal<DesignOverviewResponse | null>(null);

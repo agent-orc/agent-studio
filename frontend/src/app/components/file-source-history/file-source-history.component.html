@@ -10,18 +10,18 @@
                     [source]="body"
                     [dense]="dense()" />
     } @else if (content() === null) {
-      <div class="fsh__state fsh__state--error">Could not load this file.</div>
+      <div class="fsh__state"><app-status-indicator tone="danger" label="Could not load this file." testId="file-source-state" /></div>
     } @else {
-      <div class="fsh__state">Loading file...</div>
+      <div class="fsh__state"><app-status-indicator tone="running" label="Loading file..." testId="file-source-state" /></div>
     }
   } @else {
     <div class="fsh__history" data-testid="file-source-history-panel">
       @if (historyState() === 'loading') {
-        <div class="fsh__state">Loading history...</div>
+        <div class="fsh__state"><app-status-indicator tone="running" label="Loading history..." testId="file-source-state" /></div>
       } @else if (historyState() === 'error') {
-        <div class="fsh__state fsh__state--error">{{ historyError() }}</div>
+        <div class="fsh__state"><app-status-indicator tone="danger" [label]="historyError() ?? ''" testId="file-source-state" /></div>
       } @else if (history().length === 0) {
-        <div class="fsh__state">No git history found for this file source.</div>
+        <div class="fsh__state"><app-status-indicator tone="neutral" label="No git history found for this file source." testId="file-source-state" /></div>
       } @else {
         <div class="fsh__history-layout">
           <div class="fsh__history-list">
@@ -41,9 +41,12 @@
                           (click)="selectVersion(entry.sha)">
                     <span class="fsh__run">{{ runLabel(entry) }}</span>
                     <span class="fsh__time">{{ formatTimestamp(entry.at) || shortSha(entry.sha) }}</span>
-                    <span class="fsh__verdict" [attr.data-verdict]="verdictTone(entry.verdict)">
-                      {{ entry.verdict || 'No grade' }}
-                    </span>
+                    <app-status-indicator class="fsh__verdict"
+                                          [attr.data-verdict]="verdictTone(entry.verdict)"
+                                          [tone]="verdictStatusTone(entry.verdict)"
+                                          [label]="entry.verdict || 'No grade'"
+                                          [compact]="true"
+                                          testId="file-source-history-verdict" />
                   </button>
                 </li>
               }
@@ -60,9 +63,9 @@
             }
 
             @if (versionState() === 'loading') {
-              <div class="fsh__state">Loading version...</div>
+              <div class="fsh__state"><app-status-indicator tone="running" label="Loading version..." testId="file-source-state" /></div>
             } @else if (versionState() === 'error') {
-              <div class="fsh__state fsh__state--error">{{ versionError() }}</div>
+              <div class="fsh__state"><app-status-indicator tone="danger" [label]="versionError() ?? ''" testId="file-source-state" /></div>
             } @else if (versionContent(); as versionBody) {
               <cac-markdown class="fsh__markdown"
                             [source]="versionBody"

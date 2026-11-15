@@ -203,6 +203,9 @@ describe('WikiPulseComponent', () => {
     const fixture = await mount(makePulse());
     const root = html(fixture);
     expect(root.querySelector('[data-testid="project-wiki-pulse-warnings"]')?.textContent).toContain('Inspect the failed run.');
+    const status = root.querySelector('[data-testid="project-wiki-pulse-warning-status"]');
+    expect(status?.getAttribute('data-tone')).toBe('warning');
+    expect(status?.textContent?.trim()).toBe('active');
     expect(root.querySelector('[data-testid="project-wiki-pulse-live-AGT-2015"]')?.textContent).toContain('2 docs files changed');
   });
 });

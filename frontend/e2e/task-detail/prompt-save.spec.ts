@@ -67,19 +67,20 @@ test.describe('Prompt editor — Ctrl+S save & visual feedback', () => {
       const newBody = `# Updated by e2e\n\nrun-${Date.now()}`;
       await source.fill(newBody);
 
-      // Editor should now report a dirty state (status surfaces as the
-      // dot's aria-label after the F30 redesign — no inline text).
+      // Editor should now report a dirty state through the shared status
+      // indicator (AGT-3403).
       await expect(editor).toHaveAttribute('data-state', 'dirty');
-      await expect(page.getByTestId('prompt-editor-status').locator('[aria-label="Unsaved changes"]')).toBeVisible();
+      await expect(page.getByTestId('prompt-editor-save-state')).toHaveAttribute('data-tone', 'warning');
+      await expect(page.getByTestId('prompt-editor-save-state')).toHaveText('Unsaved changes');
 
       // Move focus OFF the editor — Ctrl+S should still work globally.
       await page.locator('body').click({ position: { x: 2, y: 2 } });
 
       await page.keyboard.press('Control+s');
 
-      // Saved state should appear (data-state=saved + green dot).
+      // Saved state should appear (data-state=saved + success indicator).
       await expect(editor).toHaveAttribute('data-state', 'saved', { timeout: 3_000 });
-      await expect(page.getByTestId('prompt-editor-status').locator('.md-editor__dot--saved')).toBeVisible();
+      await expect(page.getByTestId('prompt-editor-save-state')).toHaveAttribute('data-tone', 'success');
 
       // Backend should have received the update.
       await expect.poll(async () => {
@@ -141,7 +142,7 @@ test.describe('Prompt editor — Ctrl+S save & visual feedback', () => {
 
       // No Ctrl+S, no button click — wait for autosave (debounce is 600ms).
       await expect(editor).toHaveAttribute('data-state', 'saved', { timeout: 4_000 });
-      await expect(page.getByTestId('prompt-editor-status').locator('.md-editor__dot--saved')).toBeVisible();
+      await expect(page.getByTestId('prompt-editor-save-state')).toHaveAttribute('data-tone', 'success');
 
       // Backend must have the updated content.
       await expect.poll(async () => {

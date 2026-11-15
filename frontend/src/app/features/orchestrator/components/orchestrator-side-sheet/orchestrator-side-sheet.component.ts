@@ -35,7 +35,6 @@ import {
   ChatSubmitEvent,
 } from 'coding-agent-chat/core';
 import { SidesheetComponent } from '../../../../components/sidesheet/sidesheet.component';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
 import { OrchestratorContextHeaderComponent } from '../orchestrator-context-header/orchestrator-context-header.component';
 import { OrchestratorPanelHeaderComponent } from '../orchestrator-panel-header/orchestrator-panel-header.component';
 import { OrchestratorJumpLatestComponent } from '../orchestrator-jump-latest/orchestrator-jump-latest.component';
@@ -50,8 +49,10 @@ import { OrchestratorContextDigestService } from '../../state/orchestrator-conte
 import { OrchestratorComposerModelService } from '../../state/orchestrator-composer-model.service';
 import {
   buildOrchestratorConversationEvents,
+  contextFreshnessTone,
   sameOrchestratorChatTurns,
 } from './orchestrator-side-sheet.util';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
   buildNavigationContextKey,
   buildWorkbenchContextKey,
@@ -83,7 +84,6 @@ import { ConversationScrollFocusDirective } from '../../../../directives/convers
     ChatComponent,
     ConversationViewComponent,
     ConversationScrollFocusDirective,
-    AppTooltipDirective,
     SidesheetComponent,
     OrchestratorContextHeaderComponent,
     OrchestratorContextReceiptComponent,
@@ -93,6 +93,7 @@ import { ConversationScrollFocusDirective } from '../../../../directives/convers
     OrchestratorPanelHeaderComponent,
     OrchestratorJumpLatestComponent,
     PlanStripComponent,
+    StatusIndicatorComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-side-sheet.component.html',
@@ -184,6 +185,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   /** Overlay with pin, debug, settings, refresh, and the context include toggle. */
   readonly contextActionsOpen = signal(false);
   readonly contextDigestState = inject(OrchestratorContextDigestService);
+  readonly contextFreshnessTone = computed(() => { const d = this.contextDigestState; return contextFreshnessTone(
+    { refreshing: d.refreshing(), error: d.error() !== null, loading: d.loading(), hasDigest: d.activeDigest() !== null }); });
   readonly taskPlanState = inject(OrchestratorTaskPlanStore);
 
   private readonly selectedSession = computed(() => {

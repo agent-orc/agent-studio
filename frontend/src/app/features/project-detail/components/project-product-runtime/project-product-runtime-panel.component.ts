@@ -21,6 +21,8 @@ import {
   RuntimeEventParseWarning,
 } from '../../../../models/product-runtime.model';
 import { TaskDetailLatencyComponent } from '../task-detail-latency/task-detail-latency.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { LEVEL_RANK, runtimeLevelTone, runtimeStatusTone } from './product-runtime-status';
 
 interface FilterState {
   level: ProductRuntimeLevel | '';
@@ -49,10 +51,6 @@ const RANGE_OPTIONS: readonly { id: number; label: string }[] = [
   { id: 24 * 7, label: 'Last 7d' },
   { id: 0, label: 'All time' },
 ];
-
-const LEVEL_RANK: Record<ProductRuntimeLevel, number> = {
-  Trace: 0, Debug: 1, Info: 2, Warn: 3, Error: 4, Fatal: 5,
-};
 
 interface CountChip {
   testid: string;
@@ -132,7 +130,7 @@ const DOMAIN_TIMELINE_ALLOW_PREFIXES = ['order.', 'payment.', 'render.', 'job.',
 @Component({
   selector: 'app-project-product-runtime-panel',
   standalone: true,
-  imports: [FormsModule, TaskDetailLatencyComponent],
+  imports: [FormsModule, TaskDetailLatencyComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-product-runtime-panel.component.html',
   styleUrl: './project-product-runtime-panel.component.scss',
@@ -151,6 +149,8 @@ export class ProjectProductRuntimePanelComponent implements OnInit, OnDestroy {
   readonly events = signal<ProductRuntimeEvent[]>([]);
   readonly warnings = signal<RuntimeEventParseWarning[]>([]);
   readonly usingFixture = signal<boolean>(false);
+  readonly levelTone = runtimeLevelTone;
+  readonly statusTone = runtimeStatusTone;
   readonly selectedKey = signal<string | null>(null);
 
   filter: FilterState = { ...DEFAULT_FILTER };

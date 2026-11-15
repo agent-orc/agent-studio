@@ -141,13 +141,6 @@
 
 .wf__transition-state {
   margin-left: auto;
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--studio-accent) 36%, transparent);
-  background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
-  color: var(--studio-accent-strong);
-  font-size: 0.75rem;
-  font-weight: 600;
 }
 
 .wf__transition-detail {

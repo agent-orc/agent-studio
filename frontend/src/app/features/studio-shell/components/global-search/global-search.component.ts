@@ -9,6 +9,7 @@ import { resolveDossierReference, type DossierReference } from '../../../../serv
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { laneName, laneTone } from '../../../../models/lane-presentation';
 import { GlobalSearchItem, GlobalSearchService, SEARCH_DOMAINS, SearchDomain } from './global-search.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 /** Debounce before a keystroke turns into a request. */
 const DEBOUNCE_MS = 250;
@@ -35,7 +36,7 @@ const DOMAIN_LABELS: Readonly<Record<SearchDomain, string>> = {
 @Component({
   selector: 'app-global-search',
   standalone: true,
-  imports: [FormsModule, DossierReferenceChipComponent],
+  imports: [FormsModule, DossierReferenceChipComponent, StatusIndicatorComponent],
   templateUrl: './global-search.component.html',
   styleUrl: './global-search.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

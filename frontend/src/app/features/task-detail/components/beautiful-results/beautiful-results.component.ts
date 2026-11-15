@@ -16,18 +16,20 @@ import { applyHighlighting } from './beautiful-results.highlight';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { MarkdownImageLightboxDirective } from 'coding-agent-chat/shared';
 import { perfMark, perfMeasure } from '../../../../utils/perf-tracker';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 interface SentinelMeta {
   kind: SentinelBanner['kind'];
   label: string;
-  icon: string;
+  tone: StatusTone;
 }
 
+/** Result sentinel to label and shared status tone (AGT-3403). */
 const SENTINEL_META: Record<SentinelBanner['kind'], SentinelMeta> = {
-  done:       { kind: 'done',       label: 'Task complete',   icon: '✓' },
-  blocked:    { kind: 'blocked',    label: 'Task blocked',    icon: '⚠' },
-  needsInput: { kind: 'needsInput', label: 'Needs input',     icon: '?' },
-  noop:       { kind: 'noop',       label: 'No action taken', icon: '○' }
+  done:       { kind: 'done',       label: 'Task complete',   tone: 'success' },
+  blocked:    { kind: 'blocked',    label: 'Task blocked',    tone: 'danger' },
+  needsInput: { kind: 'needsInput', label: 'Needs input',     tone: 'warning' },
+  noop:       { kind: 'noop',       label: 'No action taken', tone: 'neutral' }
 };
 
 /**
@@ -41,7 +43,7 @@ const SENTINEL_META: Record<SentinelBanner['kind'], SentinelMeta> = {
   selector: 'app-beautiful-results',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MarkdownImageLightboxDirective],
+  imports: [MarkdownImageLightboxDirective, StatusIndicatorComponent],
   templateUrl: './beautiful-results.component.html',
   styleUrls: ['./beautiful-results.component.scss']
 })

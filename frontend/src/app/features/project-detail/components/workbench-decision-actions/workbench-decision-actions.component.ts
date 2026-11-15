@@ -1,15 +1,6 @@
 import {
-  ChangeDetectionStrategy,
-  Component,
-  DestroyRef,
-  ElementRef,
-  computed,
-  effect,
-  inject,
-  input,
-  output,
-  signal,
-  untracked,
+  ChangeDetectionStrategy, Component, DestroyRef, ElementRef,
+  computed, effect, inject, input, output, signal, untracked,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { EMPTY, Observable, catchError, map, of, switchMap, tap, throwError } from 'rxjs';
@@ -48,6 +39,12 @@ import {
 } from '../workbench-decision-panel/workbench-decision-panel.util';
 
 type ActionMode = 'feature-spawn' | 'rework' | null;
+
+/** Answer progress of the inline decision points, e.g. "3 inline decision points · ready". */
+export function decisionAnswerCountLabel(count: number, complete: boolean): string {
+  const points = `${count} inline decision point${count === 1 ? '' : 's'}`;
+  return `${points} · ${complete ? 'ready' : 'answer every point in the document'}`;
+}
 
 @Component({
   selector: 'app-workbench-decision-actions',
@@ -97,6 +94,8 @@ export class WorkbenchDecisionActionsComponent {
     return this.decisionPoints().every(point =>
       (responses.get(point.id)?.selectedOptionIds.length ?? 0) > 0);
   });
+  readonly answerCountLabel = computed(() =>
+    decisionAnswerCountLabel(this.decisionPoints().length, this.answersComplete()));
   readonly selectedSummary = computed(() => selectedDecisionText(
     this.decisionPoints(), this.responses()));
   readonly hasReworkComment = computed(() =>

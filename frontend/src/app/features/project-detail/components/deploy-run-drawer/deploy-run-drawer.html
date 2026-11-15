@@ -1,7 +1,7 @@
 <app-sidesheet eyebrow="Deploy run" [title]="title()" [subtitle]="subtitle()" testid="deploy-run-drawer" (closeRequest)="closeRequest.emit()">
   <div body class="run-drawer">
     <p class="run-drawer__outcome">
-      <span class="run-drawer__badge" [attr.data-tone]="run().state" data-testid="deploy-run-outcome">{{ stateLabel[run().state] }}</span>
+      <app-status-indicator [tone]="runTone(run().state)" [label]="stateLabel[run().state]" testId="deploy-run-outcome" />
     </p>
     @if (actions().length) {
       <div class="run-drawer__actions" role="group" aria-label="Run actions">
@@ -31,7 +31,7 @@
     <dl class="run-drawer__facts">
       <dt>Release</dt><dd>{{ run().releaseVersion ?? 'Not in the release list' }} <code class="run-drawer__muted">{{ run().releaseId }}</code></dd>
       <dt>Requested by</dt><dd>{{ run().requestedBy ?? 'Not recorded' }}</dd>
-      <dt>Approval</dt><dd data-testid="deploy-run-approval">{{ approval() }}</dd>
+      <dt>Approval</dt><dd data-testid="deploy-run-approval"><app-status-indicator [tone]="approval().tone" [label]="approval().label" [compact]="true" testId="deploy-run-approval-state" /></dd>
       <dt>Queued</dt><dd><time [attr.datetime]="run().createdAt">{{ run().createdAt | date:'medium' }}</time></dd>
       <dt>Started</dt><dd>@if (run().startedAt; as started) { <time [attr.datetime]="started">{{ started | date:'medium' }}</time> } @else { Not started }</dd>
       <dt>Finished</dt><dd>@if (run().finishedAt; as finished) { <time [attr.datetime]="finished">{{ finished | date:'medium' }}</time> } @else { Not finished }</dd>
@@ -47,9 +47,9 @@
       @for (step of steps(); track step.step + $index) {
         <li [attr.data-testid]="'deploy-run-step-' + step.step">
           @if (step.state; as state) {
-            <span class="run-drawer__badge" [attr.data-tone]="state">{{ stepLabel[state] }}</span>
+            <app-status-indicator [tone]="runTone(state)" [label]="stepLabel[state]" [compact]="true" testId="deploy-run-step-state" />
           } @else {
-            <span class="run-drawer__badge">Log only</span>
+            <app-status-indicator tone="neutral" label="Log only" [compact]="true" testId="deploy-run-step-state" />
           }
           <div>
             <strong>{{ stepKindLabel(step.step) }}</strong>

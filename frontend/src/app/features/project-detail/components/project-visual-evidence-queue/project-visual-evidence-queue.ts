@@ -2,10 +2,19 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, output, sign
 import { timeout } from 'rxjs';
 import type { ProjectVisualEvidenceItem, ProjectVisualEvidenceQueue } from '../../../../models/project-overview.model';
 import { TaskService } from '../../../../services/task.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Settled review state shown instead of the "Mark reviewed" button (AGT-3403). */
+export function evidenceReviewIndicator(item: Pick<ProjectVisualEvidenceItem, 'reviewStatus'>): { tone: StatusTone; label: string } {
+  return item.reviewStatus === 'reviewed'
+    ? { tone: 'success', label: 'Reviewed' }
+    : { tone: 'neutral', label: 'No longer actionable' };
+}
 
 @Component({
   selector: 'app-project-visual-evidence-queue',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-visual-evidence-queue.html',
   styleUrl: './project-visual-evidence-queue.scss',
@@ -20,6 +29,7 @@ export class ProjectVisualEvidenceQueueComponent {
   readonly loading = signal(true);
   readonly error = signal(false);
   readonly acknowledging = signal<ReadonlySet<string>>(new Set());
+  readonly reviewIndicator = evidenceReviewIndicator;
   private loadGeneration = 0;
   private queueProject: string | null = null;
 

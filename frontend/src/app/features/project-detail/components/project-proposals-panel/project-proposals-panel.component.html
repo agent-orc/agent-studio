@@ -78,12 +78,14 @@
               </span>
               <span class="proposal-row__copy">
                 <span class="proposal-row__meta">
-                  <span class="severity-dot" aria-hidden="true"></span>{{ item.severity }}
+                  <app-status-indicator [compact]="true" [tone]="severityTone(item.severity)" [label]="item.severity"
+                                        testId="proposal-row-severity" />
                   <span>{{ item.generation }}</span>
                 </span>
                 <span class="topic-chip">{{ item.topic }}</span>
                 <strong>{{ item.proposal }}</strong>
-                <span class="status-chip" [attr.data-status]="item.status">{{ item.status }}</span>
+                <app-status-indicator class="proposal-row__status" [compact]="true" [tone]="statusTone(item.status)" [label]="item.status"
+                                      [attr.data-status]="item.status" testId="proposal-row-status" />
               </span>
             </button>
           </li>
@@ -96,16 +98,18 @@
           <div class="proposal-detail__hero" [attr.aria-busy]="detailImageState() === 'loading'">
             @if (detailImageState() === 'loading') {
               <div class="proposal-detail__image-status" data-testid="proposal-image-loading" role="status">
-                <span class="proposal-detail__spinner" aria-hidden="true"></span>
-                <span>Loading evidence…</span>
+                <app-status-indicator tone="running" label="Loading evidence…" />
               </div>
             } @else if (detailImageState() === 'error') {
-              <div class="proposal-detail__image-status proposal-detail__image-status--error" role="alert">Evidence could not be loaded.</div>
+              <div class="proposal-detail__image-status" role="alert">
+                <app-status-indicator tone="danger" label="Evidence could not be loaded." testId="proposal-image-error" />
+              </div>
             }
             <img [src]="evidenceUrl(item)" [alt]="'Evidence for ' + item.id" loading="eager" decoding="async" fetchpriority="high"
                  [class.proposal-detail__image--loaded]="detailImageState() === 'loaded'"
                  (load)="detailImageState.set('loaded')" (error)="detailImageState.set('error')" />
-            <span class="proposal-detail__severity" [attr.data-severity]="item.severity">{{ item.severity }}</span>
+            <app-status-indicator class="proposal-detail__severity" [compact]="true" [tone]="severityTone(item.severity)"
+                                  [label]="item.severity" [attr.data-severity]="item.severity" testId="proposal-detail-severity" />
           </div>
           }
           <div class="proposal-detail__body">
@@ -145,7 +149,8 @@
                   </button>
                 </div>
               } @else {
-                <span class="proposal-detail__resolved">Decision recorded: {{ item.status }}</span>
+                <app-status-indicator class="proposal-detail__resolved" [compact]="true" [tone]="statusTone(item.status)"
+                                      [label]="'Decision recorded: ' + item.status" testId="proposal-decision" />
               }
             </footer>
             @if (rejectionFormOpen() && (item.status === 'proposed' || item.status === 'approved')) {

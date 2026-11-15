@@ -6,9 +6,8 @@
   <header class="decision-panel__header">
     <strong class="decision-panel__title">{{ document().workbench.title }}</strong>
     <span class="decision-panel__separator" aria-hidden="true">·</span>
-    <span class="decision-panel__stage">
-      <i aria-hidden="true"></i>{{ stageLabel() }}
-    </span>
+    <app-status-indicator class="decision-panel__stage" [tone]="stageTone()" [label]="stageLabel()" [compact]="true"
+                          testId="workbench-decision-stage" />
     <span class="decision-panel__separator" aria-hidden="true">·</span>
     <label class="decision-panel__owner">
       <span>Decision owner</span>
@@ -33,7 +32,8 @@
 
   @if (hasBrowserDraft() && !inline()) {
     <div class="decision-panel__draft" role="status" data-testid="workbench-decision-draft-notice">
-      <span><i aria-hidden="true"></i>Draft saved for this browser session.</span>
+      <app-status-indicator tone="info" label="Draft saved for this browser session." [compact]="true"
+                            testId="workbench-decision-draft-state" />
       <button type="button"
               class="decision-panel__discard"
               data-testid="workbench-decision-discard"
@@ -57,13 +57,9 @@
   } @else if (persistedDecision(); as decision) {
     <div class="decision-panel__receipt" data-testid="workbench-decision-receipt">
       <span>
-        <strong>
-          @if (decision.outcome === 'rework') {
-            Rework requested on {{ decision.confirmedAt | date:'medium' }} with {{ decision.model || 'the selected model' }}
-          } @else {
-            {{ outcomeLabel(decision) }}
-          }
-        </strong>
+        <app-status-indicator class="decision-panel__outcome" [tone]="outcomeTone(decision)" [compact]="true"
+                              testId="workbench-decision-outcome"
+                              [label]="receiptLabel(decision)" />
         · {{ decision.responses.length }} decision point{{ decision.responses.length === 1 ? '' : 's' }}
         · {{ decision.confirmedBy || decision.preparedBy }}
         · {{ (decision.decidedAt || decision.confirmedAt || decision.preparedAt) | date:'medium' }}

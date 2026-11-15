@@ -6,6 +6,8 @@ import { DriftService } from '../../../../services/drift.service';
 import { TaskService } from '../../../../services/task.service';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { driftFindingStatusTone, driftSeverityTone } from '../project-drift-overview-section/drift-status-tones';
 import {
   DriftArchitectureElement,
   DriftArchitectureModel,
@@ -41,7 +43,7 @@ interface MarbleRow {
 @Component({
   selector: 'app-project-drift-section',
   standalone: true,
-  imports: [SegmentedControlComponent, FormsModule, TooltipDirective],
+  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-drift-section.html',
   styleUrl: './project-drift-section.scss'
@@ -51,6 +53,9 @@ export class ProjectDriftSectionComponent implements OnInit, OnDestroy {
 
   private readonly drift = inject(DriftService);
   private readonly jobs = inject(TaskService);
+
+  readonly severityTone = driftSeverityTone;
+  readonly statusTone = driftFindingStatusTone;
 
   readonly model = signal<DriftArchitectureModel | null>(null);
   readonly sourceReportId = signal<string | null>(null);

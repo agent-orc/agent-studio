@@ -29,7 +29,7 @@ describe('deriveWatchdogPill', () => {
       now: NOW
     });
     expect(pill.state).toBe('healthy');
-    expect(pill.label).toBe('● Live');
+    expect(pill.label).toBe('Live');
   });
 
   it('shows quiet after 30s+ of silence past warm-up', () => {
@@ -68,7 +68,7 @@ describe('deriveWatchdogPill', () => {
       now: NOW
     });
     expect(pill.state).toBe('hung');
-    expect(pill.label).toBe('✕ Killed');
+    expect(pill.label).toBe('Killed');
   });
 
   it('does not let watchdog meta lines reset the silence clock', () => {
@@ -116,6 +116,6 @@ describe('deriveWatchdogPill', () => {
       now: new Date('2026-05-02T12:03:00Z') // 180s after base
     });
     expect(pill.state).toBe('hung');
-    expect(pill.label).toBe('✕ Killed');
+    expect(pill.label).toBe('Killed');
   });
 });

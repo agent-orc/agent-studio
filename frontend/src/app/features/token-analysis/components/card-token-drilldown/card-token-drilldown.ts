@@ -2,6 +2,8 @@ import { ChangeDetectionStrategy, Component, computed, input, output } from '@an
 import { DatePipe } from '@angular/common';
 import { formatCompactTokens, formatCompactUsd } from '../../../tokens/token-number-format.util';
 import type { TokenAnalysisCardDetail } from '../../models/token-analysis.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { cardOutcomeTone, stepResultTone } from '../../token-analysis-status';
 import { eventShares, formatDuration, kindColor, kindLabel, kindTotals } from '../../token-analysis.util';
 
 /**
@@ -14,7 +16,7 @@ import { eventShares, formatDuration, kindColor, kindLabel, kindTotals } from '.
 @Component({
   selector: 'app-card-token-drilldown',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './card-token-drilldown.html',
   styleUrl: './card-token-drilldown.scss',
@@ -31,6 +33,8 @@ export class CardTokenDrilldownComponent {
   readonly kindLabel = kindLabel;
   readonly kindColor = kindColor;
   readonly duration = formatDuration;
+  readonly outcomeTone = cardOutcomeTone;
+  readonly resultTone = stepResultTone;
 
   readonly events = computed(() => eventShares(this.detail()?.events ?? []));
   readonly kinds = computed(() => {

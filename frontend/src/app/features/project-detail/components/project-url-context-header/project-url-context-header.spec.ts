@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { TaskService } from '../../../../services/task.service';
-import { ProjectUrlContextHeaderComponent } from './project-url-context-header';
+import { ProjectUrlContextHeaderComponent, integrationStatus } from './project-url-context-header';
 
 describe('ProjectUrlContextHeaderComponent', () => {
   it('shows working-directory Git context and expandable linked open tasks', () => {
@@ -49,6 +49,7 @@ describe('ProjectUrlContextHeaderComponent', () => {
     expect(element.querySelector('[data-testid="url-preview-head"]')?.textContent).toContain('abcdef01');
     expect(element.querySelector('[data-testid="url-preview-integration"]')?.textContent)
       .toContain('2 ahead, 1 behind origin/develop');
+    expect(element.querySelector('[data-testid="url-preview-integration-state"]')?.getAttribute('data-tone')).toBe('warning');
     expect(element.querySelector('[data-testid="url-preview-tasks"]')?.textContent).toContain('2');
 
     (element.querySelector('[data-testid="url-preview-tasks"] summary') as HTMLElement).click();
@@ -70,3 +71,14 @@ function task(taskKey: string, key: string, state: string, projectName: string):
     model: null, cliType: null, useOwnSession: null, lastUsage: null, execution: null, commit: null,
   };
 }
+
+describe('integrationStatus', () => {
+  const base = { comparisonRef: 'origin/develop', ahead: 0, behind: 0, error: null };
+  it('maps the integration line to tones', () => {
+    expect(integrationStatus({ ...base })).toEqual({ tone: 'success', label: 'Aligned with origin/develop' });
+    expect(integrationStatus({ ...base, ahead: 2, behind: 1 }).tone).toBe('warning');
+    expect(integrationStatus({ ...base, comparisonRef: null })).toEqual({ tone: 'neutral', label: 'No comparison line' });
+    expect(integrationStatus({ ...base, error: 'git failed' })).toEqual({ tone: 'neutral', label: 'Unavailable' });
+    expect(integrationStatus(null).tone).toBe('neutral');
+  });
+});

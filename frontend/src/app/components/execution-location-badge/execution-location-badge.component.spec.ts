@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import type { TaskExecutionLocation, TaskExecutionState } from '../../models/task.model';
-import { ExecutionLocationBadgeComponent } from './execution-location-badge.component';
+import { ExecutionLocationBadgeComponent, executionLocationTone } from './execution-location-badge.component';
 
 function execution(state: TaskExecutionState, overrides: Partial<TaskExecutionLocation> = {}): TaskExecutionLocation {
   const remote = state.startsWith('remote') || state === 'queued-remote';
@@ -82,6 +82,7 @@ describe('ExecutionLocationBadgeComponent', () => {
     fixture.detectChanges();
     const badge = fixture.nativeElement.querySelector('[data-testid="execution-location-badge"]') as HTMLElement;
     expect(badge.classList.contains('execution-location--acute')).toBe(true);
+    expect(badge.querySelector('[data-testid="execution-location-indicator"]')?.getAttribute('data-tone')).toBe('danger');
     const tooltip = fixture.componentInstance.tooltip();
     expect(tooltip).toContain('Host stale - nothing is driving this run');
     expect(tooltip).toContain('Last runner event: Last runner event 2026-09-18 05:17:53Z');
@@ -94,5 +95,20 @@ describe('ExecutionLocationBadgeComponent', () => {
     const badge = fixture.nativeElement.querySelector('[data-testid="execution-location-badge"]') as HTMLElement;
     expect(badge.classList.contains('execution-location--history')).toBe(true);
     expect(badge.classList.contains('execution-location--acute')).toBe(false);
+    expect(badge.querySelector('[data-testid="execution-location-indicator"]')?.getAttribute('data-tone')).toBe('neutral');
+  });
+
+  it('maps live states onto the shared status tones', () => {
+    for (const [state, tone] of [
+      ['local-running', 'running'],
+      ['remote-running', 'running'],
+      ['queued-remote', 'neutral'],
+      ['recovering', 'info'],
+      ['remote-disconnected', 'danger'],
+      ['remote-stale', 'danger'],
+    ] as const) {
+      expect(executionLocationTone(execution(state))).toBe(tone);
+    }
+    expect(executionLocationTone(null)).toBe('neutral');
   });
 });

@@ -13,7 +13,11 @@
            aria-live="polite">
     <div class="task-live__current" data-testid="task-live-current">
       <span class="task-live__label">Current</span>
-      <span class="task-live__signal" aria-hidden="true"></span>
+      @if (live.loss || live.hold) {
+        <span class="task-live__signal" aria-hidden="true"></span>
+      } @else {
+        <span class="task-live__signal task-live__signal--spacer" aria-hidden="true"></span>
+      }
       <span class="task-live__summary">
         @if (live.loss; as loss) {
           <span class="task-live__headline task-live__headline--wrap" data-testid="task-live-review-loss">
@@ -29,7 +33,7 @@
                     [attr.aria-label]="'Open ' + hold.causeKey"
                     (click)="openCause($event, hold.causeKey)">{{ hold.causeKey }}</button>: {{ hold.summary }}</span>
         } @else {
-          <span class="task-live__headline">{{ live.headline }}</span>
+          <app-status-indicator class="task-live__headline" [tone]="liveIndicatorTone(live.tone)" [label]="live.headline" [compact]="true" testId="task-live-headline" />
         }
         @if (live.waitReason === 'manual-mode' && task().executionLocation?.configuredRunnerId) {
           <button type="button" class="task-live__auto-action" data-testid="task-live-switch-auto"
