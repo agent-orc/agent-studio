@@ -73,6 +73,37 @@ describe('sessionSecurityInterceptor', () => {
     expect(auth.status()?.bootstrapCodeRequired).toBe(true);
   });
 
+  it('keeps owner setup open after anonymous startup resources return 401', () => {
+    const { http, requests, auth } = configure();
+    auth.status.set({ profile: 'networked', bootstrapRequired: true,
+      bootstrapCodeRequired: true, authenticated: false });
+
+    for (const resource of ['/api/environment', '/api/v1/management/remote-hosts']) {
+      http.get(resource).subscribe({ error: () => undefined });
+      requests.expectOne(resource).flush(
+        { error: 'authentication-required' }, { status: 401, statusText: 'Unauthorized' });
+      expect(auth.status()).toMatchObject({
+        profile: 'networked', bootstrapRequired: true,
+        bootstrapCodeRequired: true, authenticated: false,
+      });
+    }
+  });
+
+  it('does not let a stale signed-in request overwrite a newer owner setup status', () => {
+    const { http, requests, auth } = configure();
+    auth.status.set({ profile: 'networked', bootstrapRequired: false, authenticated: true });
+
+    http.get('/api/tasks').subscribe({ error: () => undefined });
+    auth.status.set({ profile: 'networked', bootstrapRequired: true,
+      bootstrapCodeRequired: true, authenticated: false });
+    requests.expectOne('/api/tasks').flush({}, { status: 401, statusText: 'Unauthorized' });
+
+    expect(auth.status()).toMatchObject({
+      profile: 'networked', bootstrapRequired: true,
+      bootstrapCodeRequired: true, authenticated: false,
+    });
+  });
+
   it('keeps the monolith login open after incorrect credentials', () => {
     const { http, requests, auth } = configure();
     auth.status.set({ profile: 'networked', bootstrapRequired: false, authenticated: false });

@@ -137,10 +137,11 @@ export class AuthSessionState {
 
   expireNetworkedSession(): void {
     const status = this.status();
-    if (status?.profile !== 'networked') return;
+    if (status?.profile !== 'networked' || !status.authenticated) return;
     this.status.set({
       profile: 'networked',
-      bootstrapRequired: false,
+      bootstrapRequired: status.bootstrapRequired,
+      bootstrapCodeRequired: status.bootstrapCodeRequired,
       authenticated: false,
       user: null,
     });

@@ -3,6 +3,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { take } from 'rxjs';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { recoveryHandoff, recoveryInputs } from '../recovery-handoff';
 import {
   formatAge, formatBytes, isBackupOverview, itemOffHostLabel, offHostLabel, offHostListingSummary, offHostTone, overviewLabel, overviewTone,
   verificationLabel, verificationTone, type BackupOverview,
@@ -42,6 +43,7 @@ export class BackupStatusPanelComponent {
   readonly itemOffHostLabel = itemOffHostLabel;
   readonly formatAge = formatAge;
   readonly formatBytes = formatBytes;
+  readonly recoveryInputs = recoveryInputs;
 
   constructor() { this.load(); }
 
@@ -70,5 +72,14 @@ export class BackupStatusPanelComponent {
         this.error.set('Backup state could not be loaded.');
       },
     });
+  }
+
+  downloadHandoff(overview: BackupOverview): void {
+    const url = URL.createObjectURL(new Blob([recoveryHandoff(overview)], { type: 'text/plain' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'studio-fresh-host-recovery.txt';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 }

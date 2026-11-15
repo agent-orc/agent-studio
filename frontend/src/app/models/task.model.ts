@@ -697,7 +697,7 @@ export interface TaskInfo {
    */
   kind?: TaskKind;
   /** One primary Dossier; other Dossiers remain ordinary reference links. */
-  dossier?: { path: string; section?: string | null; decision?: string | null; implementationIndex?: number | null } | null;
+  dossier?: TaskDossier | null;
   /**
    * Execution mode. Mirrors backend `TaskInfo.Mode` (default `coding`).
    * Older payloads may omit it, so callers treat absent as `coding`.
@@ -1818,11 +1818,25 @@ export interface PromoteAttachmentRef {
   url: string;
 }
 
+/** The one Dossier that owns a card, and the card's slice position in it. */
+export interface TaskDossier {
+  path: string;
+  section?: string | null;
+  decision?: string | null;
+  /** Zero-based slice index in the Dossier's `implementationTasks`. */
+  implementationIndex?: number | null;
+  /** Slices the Dossier proposed when the card was cut. */
+  implementationCount?: number | null;
+}
+
 /** One implementation slice proposed by a concept Dossier, in Dossier order. */
 export interface ConceptImplementationTask {
+  /** Slice id, unique within the Dossier descriptor. */
   id?: string | null;
   title: string;
   promptMarkdown: string;
+  /** Ids of earlier slices that must be delivered first. */
+  dependsOn?: string[];
   section?: string | null;
   decisionId?: string | null;
   environments?: string[];

@@ -32,3 +32,16 @@ export function dossierStatusLabel(item: DossierPresentationInput): string {
 export function dossierPatternIcon(pattern: ArticlePattern | null | undefined): StudioIconName {
   return pattern === 'ui' ? 'grid' : 'book';
 }
+
+/**
+ * A promoted card's place in its Dossier: `Slice 2 of 3`, or `Slice 2` when
+ * the card predates the recorded slice count. Null for a card without a slice.
+ */
+export function dossierSlicePosition(
+  dossier: { implementationIndex?: number | null; implementationCount?: number | null } | null | undefined,
+): string | null {
+  const index = dossier?.implementationIndex;
+  if (index == null || index < 0) return null;
+  const count = dossier?.implementationCount;
+  return count != null && count > index ? `Slice ${index + 1} of ${count}` : `Slice ${index + 1}`;
+}
