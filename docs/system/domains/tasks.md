@@ -2208,10 +2208,17 @@ their authoritative checks; display state never grants permission to mutate.
   version key an immutable snapshot. An input change during computation
   discards the result and queues one rerun. A failed run retains the last
   successful snapshot, marked stale with a bounded reason. Git children have
-  deadlines and are killed on timeout; failed runs back off with at most five
-  automatic retries. Later safety sweeps retry a failed repository even when
-  its inputs are unchanged, and only a successful publication clears stale
-  state. A repository computation runs at most four Git children at once.
+  deadlines and are killed on timeout; ordinary failed runs back off with at
+  most five automatic retries. A run deadline sets a cooldown of two minutes,
+  doubled on consecutive deadline failures up to 30 minutes. Coalesced
+  triggers and safety sweeps respect that cooldown; the sweep retries after it
+  even when inputs are unchanged. The last successful generation remains
+  available with one timeout health reason until a successful publication
+  clears stale state. A repository computation runs at most four Git children
+  at once. Verification ancestry below a published integration tip uses one
+  read of a parent graph and membership checks in memory for all cards. Completed
+  graphs are cached by tip SHA across runs, including a run that later reaches
+  its deadline.
   One Git config command per index run supplies both the effective
   config signature and primary origin. The 45 s sweep checks effective config
   separately. Both publish that capture into the process-wide `GitOriginStore`,
