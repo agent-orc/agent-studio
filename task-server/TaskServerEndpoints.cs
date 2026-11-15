@@ -29,7 +29,7 @@ public static class TaskServerEndpoints
             TaskServerStore store, CancellationToken ct) =>
         {
             if (RunnerIdentityMismatch(context, request.RunnerId) is { } mismatch) return mismatch;
-            return await InvokeAsync(() => store.ClaimOneShotJobAsync(request, ct));
+            return await InvokeOneShotClaimAsync(() => store.ClaimOneShotJobAsync(request, ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireAnyTaskServerScope(TaskServerScopes.RunsClaim, TaskServerScopes.ReviewsClaim);
         api.MapPost("/one-shot-jobs/complete", async (HttpContext context, OneShotJobCompletion request,
@@ -1575,6 +1575,19 @@ public static class TaskServerEndpoints
         {
             var value = await action();
             return Results.Json(value, statusCode: successStatus);
+        }
+        catch (Exception exception)
+        {
+            return MapError(exception);
+        }
+    }
+
+    internal static async Task<IResult> InvokeOneShotClaimAsync(Func<Task<OneShotJobWork?>> action)
+    {
+        try
+        {
+            var work = await action();
+            return work is null ? Results.NoContent() : Results.Json(work);
         }
         catch (Exception exception)
         {
