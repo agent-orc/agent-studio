@@ -1107,7 +1107,9 @@ occur. It is not a claim about tunnel transfer time.
   service accounts with one `api.` token), role bindings per scope, runner
   enrollments, and enrolled runners from `GET /api/auth/iam`,
   `/api/auth/runner-enrollments`, and `/api/auth/runners`. It invites through
-  the existing `POST /api/auth/invitations` with one initial binding, resets
+  the existing `POST /api/auth/invitations` with one initial binding, clears
+  the previous one-use link as soon as another invite is submitted, and names
+  the pending invitee and role until that request settles. It resets
   passwords, disables users with a `{ disabled }` PUT that leaves bindings
   alone, shows a service-account token or enrollment code once, and reloads
   after every change. Expiry math reads the injectable `ACCESS_CLOCK`. Its
