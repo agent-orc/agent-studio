@@ -157,7 +157,11 @@ case "${PW_E2E_PROFILE:-standard}" in
   # cards, so role-scoped card reads (AGT-3669) meet real Ready and Human
   # Review cards.
   demo|public-demo|networked-https-demo)
-    node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
+    if [[ "${PW_E2E_OWNER_DAY:-0}" == 1 && "${PW_E2E_PROFILE}" == demo ]]; then
+      node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}" --owner-day
+    else
+      node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
+    fi
     export WatchPaths__0__Name='Demo App'
     export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/demo-app"
     export WatchPaths__0__RootPath="${WatchPaths__0__Path}"

@@ -56,6 +56,23 @@ describe('TokenAnalysisViewComponent', () => {
     expect(el(fixture, 'token-analysis-row-rest')).not.toBeNull();
   });
 
+  it('labels the cost as a priced subtotal and names models without a list price', async () => {
+    const fixture = await render();
+    const response = fixtureResponse();
+    response.cards[0].slices[1].model = 'demo-unpriced-model';
+    response.cards[0].slices[1].priced = false;
+    response.cards[0].slices[1].costUsd = 0;
+    response.cards[0].costUsd = 0.5;
+    response.cards[0].costComplete = false;
+    http.expectOne(r => r.url === ANALYSIS).flush(response);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(el(fixture, 'token-analysis-cost')?.textContent).toContain('*');
+    expect(el(fixture, 'token-analysis-unpriced')?.textContent).toContain('demo-unpriced-model');
+    expect(el(fixture, 'token-analysis-unpriced')?.textContent).toContain('Priced subtotal');
+  });
+
   it('writes filters into the ta= hash segment and keeps the route', async () => {
     const fixture = await render();
     http.expectOne(r => r.url === ANALYSIS).flush(fixtureResponse());

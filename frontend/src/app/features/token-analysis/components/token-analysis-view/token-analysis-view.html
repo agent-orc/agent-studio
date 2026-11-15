@@ -26,9 +26,14 @@
     <dl class="tav__stats" data-testid="token-analysis-stats">
       <div><dt>Cards</dt><dd>{{ visible().length }}</dd></div>
       <div><dt>Tokens</dt><dd data-testid="token-analysis-total">{{ fmt(totals().tokens) }}</dd></div>
-      <div><dt>Theoretical cost</dt><dd>{{ usd(totals().cost) }}</dd></div>
+      <div><dt>Theoretical cost</dt><dd data-testid="token-analysis-cost">{{ usd(totals().cost) }}@if (unpricedModels().length) { * }</dd></div>
       <div><dt>Runs in flight</dt><dd data-testid="token-analysis-in-flight">{{ inFlight() }}</dd></div>
     </dl>
+    @if (unpricedModels().length) {
+      <p class="tav__notice" data-testid="token-analysis-unpriced">
+        * Priced subtotal. No list price for {{ unpricedModels().join(', ') }}.
+      </p>
+    }
 
     @if (effective().card) {
       <app-card-token-drilldown [detail]="detail()" [loading]="detailLoading()" [error]="detailError()"

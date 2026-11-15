@@ -88,6 +88,10 @@ export class TokenAnalysisViewComponent {
     cost: this.visible().reduce((sum, card) => sum + card.costUsd, 0)
       + this.remainders().reduce((sum, r) => sum + r.costUsd, 0),
   }));
+  readonly unpricedModels = computed(() => [...new Set(allSlices(this.visible())
+    .concat(this.remainders().flatMap(row => row.slices))
+    .filter(slice => !slice.priced)
+    .map(slice => slice.model))].sort());
   readonly freshnessWarning = computed(() => {
     const freshness = this.data()?.freshness;
     return freshness && freshness.status !== 'complete' ? freshness.warning || 'Some token sources could not be read.' : null;
