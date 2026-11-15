@@ -28,6 +28,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
       *dossier-decision-live.spec.ts*) PW_E2E_PROFILE=demo ;;
       *public-demo-shell.spec.ts*) PW_E2E_PROFILE=public-demo ;;
+      *owner-day-real-backend.spec.ts*) PW_E2E_PROFILE=owner-day ;;
     esac
   done
 fi
