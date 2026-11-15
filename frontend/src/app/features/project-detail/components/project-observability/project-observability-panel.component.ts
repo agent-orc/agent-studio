@@ -12,6 +12,8 @@ import {
 import { FormsModule } from '@angular/forms';
 import { AgentBusService, AgentBusFixture } from '../../../../services/agent-bus.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { OUTCOME_ISSUE_TOPICS, observabilitySeverityTone } from './project-observability-status';
 import {
   AGENT_MESSAGE_KINDS,
   AGENT_MESSAGE_SEVERITIES,
@@ -87,15 +89,6 @@ const RANGE_OPTIONS: readonly { id: number; label: string }[] = [
   { id: 0, label: 'All time' },
 ];
 
-const OUTCOME_ISSUE_TOPICS: readonly { topic: string; label: string; tone: 'warn' | 'high' }[] = [
-  { topic: 'permission-blocked', label: 'Permission blocked', tone: 'high' },
-  { topic: 'watchdog-timeout', label: 'Watchdog timeout', tone: 'high' },
-  { topic: 'missing-terminal-sentinel', label: 'Missing sentinel', tone: 'warn' },
-  { topic: 'classifier-unknown', label: 'Classifier unknown', tone: 'warn' },
-  { topic: 'heuristic-done', label: 'Heuristic done', tone: 'warn' },
-  { topic: 'soft-intervention', label: 'Soft intervention', tone: 'warn' },
-];
-
 /**
  * Project Observability panel: renders the Agent Message Bus as a dense,
  * scannable operations surface. Reads `/api/bus/{project}/...` via
@@ -116,7 +109,7 @@ const OUTCOME_ISSUE_TOPICS: readonly { topic: string; label: string; tone: 'warn
 @Component({
   selector: 'app-project-observability-panel',
   standalone: true,
-  imports: [FormsModule, TooltipDirective],
+  imports: [FormsModule, TooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-observability-panel.component.html',
   styleUrl: './project-observability-panel.component.scss',
@@ -135,6 +128,8 @@ export class ProjectObservabilityPanelComponent implements OnInit, OnDestroy {
   readonly summary = signal<AgentMessageSummary | null>(null);
   readonly messages = signal<AgentMessage[]>([]);
   readonly usingFixture = signal<boolean>(false);
+  /** Message severity: Info neutral, Warn warning, High danger (AGT-3403). */
+  readonly severityTone = observabilitySeverityTone;
   readonly selectedMessageId = signal<string | null>(null);
 
   filter: FilterState = { ...DEFAULT_FILTER };

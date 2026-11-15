@@ -71,5 +71,7 @@ describe('CommandDeckComponent remote run control', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="command-deck-start"]')).toBeNull();
     stop.click();
     expect(stops).toBe(1);
+    const running = fixture.nativeElement.querySelector('[data-testid="commandbar-running"]') as HTMLElement;
+    expect(running.getAttribute('data-tone')).toBe('running');
   });
 });

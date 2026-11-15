@@ -37,44 +37,9 @@
     color: var(--studio-fg-strong);
   }
 
-  // Tone-coloured verdict chip. Colours come exclusively from the central
-  // severity tokens so the chip flips with the theme (ASS-737); the tint is
-  // built in place from the same token so there is no per-tone hardcode.
+  // Verdict chip: the shared status indicator carries tone and icon (AGT-3403).
   &__chip {
     flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: lowercase;
-    letter-spacing: 0.02em;
-    padding: 1px 7px;
-    border-radius: 999px;
-    background: var(--studio-bg-hover);
-    border: 1px solid var(--studio-border);
-    color: var(--studio-fg-dim);
-
-    &--ok {
-      color: var(--severity-pass);
-      background: color-mix(in srgb, var(--severity-pass) 14%, transparent);
-      border-color: color-mix(in srgb, var(--severity-pass) 40%, transparent);
-    }
-
-    &--warn {
-      color: var(--severity-warn);
-      background: color-mix(in srgb, var(--severity-warn) 14%, transparent);
-      border-color: color-mix(in srgb, var(--severity-warn) 40%, transparent);
-    }
-
-    &--danger {
-      color: var(--severity-high);
-      background: color-mix(in srgb, var(--severity-high) 14%, transparent);
-      border-color: color-mix(in srgb, var(--severity-high) 40%, transparent);
-    }
-
-    &--neutral {
-      color: var(--studio-fg-dim);
-    }
   }
 
   &__reason {

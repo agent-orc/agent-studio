@@ -18,9 +18,9 @@
     <p class="pipeline__muted">Loading pipeline definition…</p>
   } @else if (definition(); as current) {
     <div class="pipeline__summary">
-      <span class="pipeline__status" data-testid="pipeline-validation-status" [attr.data-valid]="current.valid">
-        {{ current.valid ? 'Valid' : current.issues.length + (current.issues.length === 1 ? ' issue' : ' issues') }}
-      </span>
+      @let validation = validationStatus(current.valid, current.issues.length);
+      <app-status-indicator [compact]="true" [tone]="validation.tone" [label]="validation.label"
+                            testId="pipeline-validation-status" />
       @if (current.schemaVersion) {
         <span data-testid="pipeline-schema-version">Schema {{ current.schemaVersion }}</span>
       }

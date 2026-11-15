@@ -78,20 +78,7 @@
     small { color: var(--studio-fg-dim); overflow-wrap: anywhere; }
   }
 
-  &__verdict {
-    flex: 0 0 auto;
-    padding: 1px var(--studio-spacing-2);
-    border: 1px solid var(--studio-border);
-    border-radius: 999px;
-    color: var(--studio-fg-dim);
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1.4;
-  }
-
-  &__verdict[data-tone='ok'] { color: var(--severity-pass); }
-  &__verdict[data-tone='warn'] { color: var(--severity-warn); }
-  &__verdict[data-tone='danger'] { color: var(--severity-high); }
+  &__verdict { flex: 0 0 auto; }
 
   &__source,
   &__state {

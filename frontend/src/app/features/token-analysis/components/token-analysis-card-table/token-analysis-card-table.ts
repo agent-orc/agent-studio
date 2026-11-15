@@ -3,6 +3,8 @@ import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.
 import { laneName } from '../../../../models/lane-presentation';
 import { formatCompactTokens, formatCompactUsd } from '../../../tokens/token-number-format.util';
 import type { TokenAnalysisCard, TokenAnalysisProjectRemainder } from '../../models/token-analysis.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { cardOutcomeTone } from '../../token-analysis-status';
 import { cardId, dominant, kindColor, kindLabel, kindTotals } from '../../token-analysis.util';
 
 const PAGE = 50;
@@ -31,7 +33,7 @@ interface Row {
 @Component({
   selector: 'app-token-analysis-card-table',
   standalone: true,
-  imports: [AppTooltipDirective],
+  imports: [AppTooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './token-analysis-card-table.html',
   styleUrl: './token-analysis-card-table.scss',
@@ -46,6 +48,7 @@ export class TokenAnalysisCardTableComponent {
   readonly fmt = formatCompactTokens;
   readonly usd = formatCompactUsd;
   readonly kindLabel = kindLabel;
+  readonly outcomeTone = cardOutcomeTone;
   readonly limit = signal(PAGE);
 
   readonly rows = computed<Row[]>(() => {

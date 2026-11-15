@@ -3,6 +3,7 @@ import type { CliType } from '../../../../models/task.model';
 import { ConceptHelpComponent } from '../../../../components/concept-help/concept-help.component';
 import type { QuotaWindow } from '../../../../features/quota';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type {
   AdHocUsageAggregate,
@@ -49,7 +50,7 @@ interface ProjectUsageRow {
 @Component({
   selector: 'app-cli-usage-detail',
   standalone: true,
-  imports: [ConceptHelpComponent, TooltipDirective],
+  imports: [ConceptHelpComponent, TooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './cli-usage-detail.html',
   styleUrl: './cli-usage-detail.scss',

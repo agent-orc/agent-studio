@@ -1,3 +1,4 @@
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { forkJoin, type Subscription } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -9,6 +10,7 @@ import {
   buildParkedBlockerView,
   parkNextStepSentence,
   type ParkedBlockerView,
+  type ParkedRecallTone,
 } from '../../../../models/parked-blocker-presentation';
 import { formatDateTimeUtc } from '../../../../services/format.util';
 import { NowTickService } from '../../../../services/now-tick.service';
@@ -20,8 +22,10 @@ import { TaskTimelinePollService } from '../../../polling/services/task-timeline
 import { laneActionsFor } from '../../state/triage-actions.model';
 import { ActivityLogViewComponent } from '../activity-log-view/activity-log-view';
 import { resolveTaskArtifactLink } from '../task-artifact-links/task-artifact-link';
-import { TooltipDirective } from 'coding-agent-chat/shared';
 import { WatchdogReceiptComponent } from '../watchdog-receipt/watchdog-receipt.component';
+
+const RECALL_STATUS_TONES: Readonly<Record<ParkedRecallTone, StatusTone>> = { ok: 'success', warn: 'warning', neutral: 'neutral' };
+export function parkedRecallStatusTone(tone: ParkedRecallTone | null | undefined): StatusTone { return (tone && RECALL_STATUS_TONES[tone]) || 'neutral'; }
 
 const EXPANDED_STORAGE_KEY = 'taskboard.parkedSession.expanded.v1';
 const COLLAPSE_KEY = 'taskboard.parkedBlocker.collapsed';
@@ -81,11 +85,12 @@ export function resolveRunPrompt(
   selector: 'app-parked-blocker',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, ActivityLogViewComponent, DisclosureMarkerComponent, WatchdogReceiptComponent],
+  imports: [StatusIndicatorComponent, ActivityLogViewComponent, DisclosureMarkerComponent, WatchdogReceiptComponent],
   templateUrl: './parked-blocker.component.html',
   styleUrl: './parked-blocker.component.scss',
 })
 export class ParkedBlockerComponent {
+  readonly recallTone = parkedRecallStatusTone;
   readonly detail = input.required<TaskDetail>();
 
   private readonly tabs = inject(StudioTabStateService);

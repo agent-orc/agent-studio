@@ -1,20 +1,41 @@
 import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, input, output } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { formatCompactDateTime } from '../../../../services/format.util';
 import {
   buildGitCommitChips,
   buildGitGraphRows,
+  type GitCommitChip,
+  type GitCommitChipTone,
   type GitGraphCommit,
 } from '../../../git';
+
+/**
+ * Commit facts that are a state (presence in a branch, a live deployment)
+ * render as a status indicator; cards and work facts stay tags.
+ */
+const CHIP_STATUS_TONES: Partial<Record<GitCommitChipTone, StatusTone>> = {
+  integrated: 'success',
+  released: 'success',
+  deployed: 'info',
+};
+
+/** Status tone of a commit chip, or null when the chip is a tag rather than a state. */
+export function gitCommitChipStatusTone(chip: Pick<GitCommitChip, 'tone'>): StatusTone | null {
+  return CHIP_STATUS_TONES[chip.tone] ?? null;
+}
 
 @Component({
   selector: 'app-project-git-history',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-git-history.component.html',
   styleUrl: './project-git-history.component.scss',
 })
 export class ProjectGitHistoryComponent {
   private readonly host = inject(ElementRef) as ElementRef<HTMLElement>;
+
+  readonly chipStatusTone = gitCommitChipStatusTone;
 
   readonly commits = input.required<readonly GitGraphCommit[]>();
   readonly selectedSha = input<string | null>(null);

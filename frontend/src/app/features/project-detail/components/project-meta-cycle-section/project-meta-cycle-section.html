@@ -2,14 +2,8 @@
   <h3>
     <span class="pmc__icon">🔁</span>
     Meta-cycle
-    <span class="pmc__pill"
-          [class.pmc__pill--good]="enabled() && lastVerdict() === 'healthy'"
-          [class.pmc__pill--warn]="enabled() && lastVerdict() === 'fixTriggering'"
-          [class.pmc__pill--bad]="enabled() && lastVerdict() === 'escalationOnly'"
-          [class.pmc__pill--off]="!enabled()"
-          data-testid="project-meta-cycle-status">
-      {{ statusLabel() }}
-    </span>
+    <app-status-indicator class="pmc__status" [tone]="statusTone()" [label]="statusLabel()" [compact]="true"
+                          testId="project-meta-cycle-status" />
   </h3>
 
   @if (loading() && reports().length === 0) {
@@ -30,7 +24,9 @@
   } @else {
     <dl class="pmc__meta">
       <div><dt>Cycle length</dt><dd>N = {{ config()?.cycleLengthN ?? 2 }}</dd></div>
-      <div><dt>Last cycle</dt><dd>{{ formatRelative(lastCompletedAt()) }} &middot; {{ verdictLabel(lastVerdict()) }}</dd></div>
+      <div><dt>Last cycle</dt><dd>{{ formatRelative(lastCompletedAt()) }} &middot;
+        <app-status-indicator [tone]="verdictTone(lastVerdict())" [label]="verdictLabel(lastVerdict())" [compact]="true"
+                              testId="project-meta-cycle-last-verdict" /></dd></div>
       <div><dt>Last action</dt><dd><code>{{ actionLabel(lastActionKind()) }}</code> &middot; {{ lastReason() }}</dd></div>
       <div><dt>Auto-fix budget</dt><dd>{{ config()?.maxFixesPerHour ?? 2 }}/hour</dd></div>
     </dl>
@@ -38,11 +34,9 @@
     <h4 class="pmc__sub">History (last {{ reports().length }})</h4>
     <ul class="pmc__list" data-testid="project-meta-cycle-history">
       @for (r of reports(); track r.cycleId) {
-        <li class="pmc__item"
-            [class.pmc__item--healthy]="r.verdict === 'healthy'"
-            [class.pmc__item--warn]="r.verdict === 'fixTriggering'"
-            [class.pmc__item--high]="r.verdict === 'escalationOnly'">
-          <span class="pmc__sev">{{ verdictLabel(r.verdict) }}</span>
+        <li class="pmc__item">
+          <app-status-indicator [tone]="historyTone(r.verdict)" [label]="verdictLabel(r.verdict)" [compact]="true"
+                                testId="project-meta-cycle-history-verdict" />
           <span class="pmc__action"><code>{{ actionLabel(r.action.kind) }}</code></span>
           <span class="pmc__msg">{{ r.action.reason }}</span>
           <span class="pmc__ts">{{ formatTimeShort(r.completedAt) }}</span>
@@ -54,10 +48,9 @@
       <h4 class="pmc__sub">Last cycle findings</h4>
       <ul class="pmc__list" data-testid="project-meta-cycle-findings">
         @for (f of lastFindings(); track f.topic) {
-          <li class="pmc__item"
-              [class.pmc__item--warn]="f.severity === 'Warn'"
-              [class.pmc__item--high]="f.severity === 'High'">
-            <span class="pmc__sev">{{ f.severity }}</span>
+          <li class="pmc__item">
+            <app-status-indicator [tone]="findingTone(f.severity)" [label]="f.severity" [compact]="true"
+                                  testId="project-meta-cycle-finding-severity" />
             <span class="pmc__action">{{ f.topic }}</span>
             <span class="pmc__msg">{{ f.message }}</span>
           </li>

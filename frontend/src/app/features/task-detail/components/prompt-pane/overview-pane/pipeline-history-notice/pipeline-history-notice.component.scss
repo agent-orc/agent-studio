@@ -5,7 +5,7 @@
 
 .pipeline-history-notice {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
   gap: var(--studio-spacing-2);
   width: 100%;
@@ -15,9 +15,4 @@
   background: var(--studio-surface-muted);
   color: var(--studio-fg-dim);
   font-size: 11px;
-
-  strong {
-    color: var(--studio-fg-strong);
-    font-variant-numeric: tabular-nums;
-  }
 }

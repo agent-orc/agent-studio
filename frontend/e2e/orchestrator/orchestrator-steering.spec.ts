@@ -102,12 +102,13 @@ test.describe('Orchestrator steering', () => {
     await expect(conversationBtn).toBeVisible({ timeout: 10_000 });
     await conversationBtn.click({ force: true });
 
-    // Steer card is present with the question-mark icon and the parsed
+    // Steer card is present with its warning status indicator and the parsed
     // Need / Why fields. The first cli-output poll fires ~1 s after the
     // detail panel mounts, then every 5 s while the job is idle. Give the
     // card up to 20 s so a slow first poll never flakes the assertion.
     const card = page.getByTestId('orchestrator-steer-card');
     await expect(card).toBeVisible({ timeout: 20_000 });
+    await expect(card.getByTestId('orchestrator-steer-state')).toHaveAttribute('data-tone', 'warning');
 
     const need = page.getByTestId('orchestrator-steer-need');
     await expect(need).toContainText('screenshot of the affected modal');

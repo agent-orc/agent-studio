@@ -126,24 +126,7 @@
   font: inherit;
 }
 .cr-verdict {
-  text-transform: uppercase;
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 2px var(--studio-row-pad-inline-compact);
-  border-radius: 3px;
-  background: var(--studio-surface-muted);
-}
-
-.cr-verdict-pass {
-  color: var(--severity-pass);
-}
-
-.cr-verdict-concerns {
-  color: var(--severity-warn);
-}
-
-.cr-verdict-block {
-  color: var(--severity-high);
+  flex: 0 0 auto;
 }
 
 .cr-summary {
@@ -251,24 +234,6 @@
   font-size: 0.7rem;
   line-height: 1.5;
   overflow-wrap: anywhere;
-}
-
-.cr-body-chip--pass {
-  color: var(--severity-pass);
-  border-color: color-mix(in srgb, var(--severity-pass) 40%, var(--studio-border));
-  background: color-mix(in srgb, var(--severity-pass) 12%, transparent);
-}
-
-.cr-body-chip--concerns {
-  color: color-mix(in srgb, var(--severity-warn) 75%, var(--studio-fg-strong));
-  border-color: color-mix(in srgb, var(--severity-warn) 40%, var(--studio-border));
-  background: color-mix(in srgb, var(--severity-warn) 12%, transparent);
-}
-
-.cr-body-chip--block {
-  color: var(--severity-high);
-  border-color: color-mix(in srgb, var(--severity-high) 40%, var(--studio-border));
-  background: color-mix(in srgb, var(--severity-high) 12%, transparent);
 }
 
 .cr-body-chip--provenance {

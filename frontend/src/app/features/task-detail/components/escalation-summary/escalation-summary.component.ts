@@ -1,12 +1,7 @@
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  effect,
-  inject,
-  input,
-  output,
-  signal,
+  ChangeDetectionStrategy, Component, computed, effect,
+  inject, input, output, signal,
 } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 
@@ -39,6 +34,10 @@ import {
 import {
   buildEscalationSummaryView,
   parseBatchDiagnostic,
+  type EscalationRecommendation,
+  type EscalationHeadKind,
+  ESCALATION_RECOMMENDATION_TONES,
+  ESCALATION_HEAD_TONES,
   type EscalationSummaryView,
 } from './escalation-summary.util';
 
@@ -49,7 +48,7 @@ import {
   selector: 'app-escalation-summary',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [
+  imports: [StatusIndicatorComponent,
     TooltipDirective,
     PendingButtonDirective,
     EscalationDetailsComponent,
@@ -264,7 +263,11 @@ export class EscalationSummaryComponent {
       : this.watchdogPark() ? 'Review recovery'
       : this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
   );
-
+  readonly headKind = computed<EscalationHeadKind>(() => this.detail().info.needsInput
+    ? (this.hasQueuedAnswer() ? 'answer-queued' : 'needs-input')
+    : (this.view().escalation?.kind === 'gave-up' ? 'gave-up' : 'needs-review'));
+  readonly headTone = computed(() => ESCALATION_HEAD_TONES[this.headKind()]);
+  readonly recommendationTone = (tone: EscalationRecommendation['tone']) => ESCALATION_RECOMMENDATION_TONES[tone];
   readonly hasQueuedAnswer = computed(() =>
     this.detail().info.pendingIntent?.mode === 'steer'
       && !!this.detail().info.pendingIntent?.prompt?.trim(),

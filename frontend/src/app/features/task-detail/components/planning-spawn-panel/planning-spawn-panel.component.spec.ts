@@ -76,7 +76,7 @@ describe('PlanningSpawnPanelComponent (AGT-2069)', () => {
     const fixture = await mount(job('planning', summary({ contractSatisfied: false })), {}, true);
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelector('[data-testid="planning-spawn-panel"]')).toBeTruthy();
-    expect(host.querySelector('[data-testid="planning-no-followups-status"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="planning-no-followups-status"]')?.getAttribute('data-tone')).toBe('warning');
     expect(host.textContent?.match(/No follow-up cards created/g)).toHaveLength(1);
     expect(host.querySelector('[data-testid="planning-contract"]')).toBeNull();
     expect(host.querySelector('[data-testid="overview-promote-btn"]')).toBeTruthy();
@@ -123,6 +123,7 @@ describe('PlanningSpawnPanelComponent (AGT-2069)', () => {
 
     expect(setPlanningClosure).toHaveBeenCalledWith('job-1', true, 'archived', '/wp');
     expect(host.querySelector('[data-testid="planning-no-followup-declared"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="planning-no-followup-declared-state"]')?.getAttribute('data-tone')).toBe('success');
     expect(host.textContent).toContain('No follow-up intended');
   });
 });

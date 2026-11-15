@@ -86,8 +86,7 @@
   [data-status="skipped"] { --state-color: var(--studio-fg-dim); }
   [data-status="legacy-unverifiable"],
   [data-status="superseded"] { --state-color: var(--studio-fg-dim); }
-  &__counts button[data-status],
-  &__status[data-status] { color: var(--state-color); background: color-mix(in srgb, var(--state-color) 12%, transparent); }
+  &__counts button[data-status] { color: var(--state-color); background: color-mix(in srgb, var(--state-color) 12%, transparent); }
 
   &__table { min-width: 720px; }
   &__table-head,

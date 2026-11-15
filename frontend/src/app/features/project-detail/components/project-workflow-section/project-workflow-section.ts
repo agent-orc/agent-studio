@@ -4,6 +4,7 @@ import { TaskService } from '../../../../services/task.service';
 import { laneSentence } from '../../../../models/lane-presentation';
 import type { PipelineCatalogueStep, PipelineStepSetting } from '../../../../features/task-pipeline';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   SORTABLE_LANES,
   USER_VISIBLE_LANE_SORT_STRATEGIES,
@@ -31,6 +32,8 @@ interface TransitionRow {
   facetLabel: string;
   /** Live effective state (on/off, strategy, gate count) for this facet. */
   state: string;
+  /** Tone of the state on the shared status indicator. */
+  tone: StatusTone;
   /** One-line description of the implemented behaviour. */
   detail: string;
   /** Where the operator configures this today (read-only here). */
@@ -55,7 +58,7 @@ interface TransitionRow {
 @Component({
   selector: 'app-project-workflow-section',
   standalone: true,
-  imports: [FormsModule, TooltipDirective],
+  imports: [FormsModule, TooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-workflow-section.html',
   styleUrl: './project-workflow-section.scss',
@@ -117,6 +120,7 @@ export class ProjectWorkflowSectionComponent implements OnInit {
         facet: 'auto-commit',
         facetLabel: 'Auto-commit',
         state: commit == null ? '…' : commit ? 'On' : 'Off',
+        tone: switchTone(commit),
         detail:
           'When on, the orchestrator commits the run’s changes as the task leaves In Progress.',
         configuredIn: 'Settings',
@@ -127,6 +131,7 @@ export class ProjectWorkflowSectionComponent implements OnInit {
         facet: 'attribution',
         facetLabel: 'Attribution',
         state: commit == null ? '…' : commit ? 'SHA stamped' : 'No commit',
+        tone: switchTone(commit),
         detail:
           'The commit SHA is stamped on the task (TaskInfo.Commit) so the run’s work is traceable. Only happens when auto-commit is on.',
         configuredIn: 'Settings',
@@ -140,6 +145,7 @@ export class ProjectWorkflowSectionComponent implements OnInit {
           gates.length === 0
             ? 'No active gate steps'
             : `${gates.length} active gate step${gates.length === 1 ? '' : 's'}`,
+        tone: switchTone(gates.length > 0),
         detail:
           'The configured review pipeline runs here (aspects, code-review grade, orchestrator decision) and resolves to accept / reissue / escalate.',
         configuredIn: 'Pipeline',
@@ -150,6 +156,7 @@ export class ProjectWorkflowSectionComponent implements OnInit {
         facet: 'auto-push',
         facetLabel: 'Auto-push',
         state: push == null ? '…' : AUTO_PUSH_LABELS[push],
+        tone: push == null ? 'running' : switchTone(push !== 'never'),
         detail:
           'On completed pushes git push origin <sha>:refs/heads/main (never force). Immediate also pushes right after auto-commit.',
         configuredIn: 'Settings',
@@ -200,6 +207,16 @@ export class ProjectWorkflowSectionComponent implements OnInit {
       error: () => { /* keep the optimistic draft; next open re-reads */ },
     });
   }
+}
+
+/**
+ * Effective transition state on the shared indicator (AGT-3403): an active
+ * step is success, an inactive one a settled neutral choice, and a value that
+ * is still loading (`null`) is running.
+ */
+export function switchTone(active: boolean | null | undefined): StatusTone {
+  if (active == null) return 'running';
+  return active ? 'success' : 'neutral';
 }
 
 const AUTO_PUSH_LABELS: Record<AutoPushStrategy, string> = {

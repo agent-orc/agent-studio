@@ -11,6 +11,7 @@ import { ContinueRoundPanelComponent } from '../../../continue-round-panel/conti
 import { HumanReviewDecisionPanelComponent } from '../../../human-review-decision-panel/human-review-decision-panel.component';
 import { ReviewerSession } from '../../../../../../services/reviewer-session.service';
 import { CopyableTaskKeyComponent } from '../../../../../../components/copyable-task-key/copyable-task-key.component';
+import { ConceptPromotionComponent } from '../../../../../../components/concept-promotion/concept-promotion.component';
 import { TaskPromptPopoverComponent } from '../../task-prompt-popover/task-prompt-popover.component';
 import { DossierSliceLinkComponent } from '../../../../../../components/dossier-slice-link/dossier-slice-link';
 import { laneTone } from '../../../../../../models/lane-presentation';
@@ -21,6 +22,8 @@ import { ModalStackService } from '../../../../../../services/modal-stack.servic
 import { projectIdentity } from '../../../../../../services/project-identity.util';
 import { TaskService } from '../../../../../../services/task.service';
 import { laneLabel } from '../overview-pane-formatters';
+import { StatusIndicatorComponent } from '../../../../../../components/status-indicator/status-indicator.component';
+import { lifecyclePhaseTone } from './lifecycle-phase-tone';
 
 /** Short unique id for a seeded create-modal attachment (mirrors the dialog's own). */
 function makeAttachmentId(): string {
@@ -46,6 +49,7 @@ function makeAttachmentId(): string {
   imports: [
     TooltipDirective,
     ConceptDossierNoticeComponent,
+    ConceptPromotionComponent,
     PlanningSpawnPanelComponent,
     DeliveryClaimPanelComponent,
     ContinueRoundPanelComponent,
@@ -53,6 +57,7 @@ function makeAttachmentId(): string {
     CopyableTaskKeyComponent,
     TaskPromptPopoverComponent,
     DossierSliceLinkComponent,
+    StatusIndicatorComponent,
   ],
   templateUrl: './overview-title-block.component.html',
   styleUrl: './overview-title-block.component.scss',
@@ -60,6 +65,7 @@ function makeAttachmentId(): string {
 export class OverviewTitleBlockComponent {
   readonly laneLabel = laneLabel;
   readonly laneTone = laneTone;
+  readonly phaseTone = lifecyclePhaseTone;
 
   readonly job = input.required<TaskInfo>();
   /** Raw task prompt markdown, surfaced through the sub-line's popover. */
@@ -118,6 +124,16 @@ export class OverviewTitleBlockComponent {
     TaskState.Completed,
   ]);
 
+  /**
+   * A concept card after sight review whose Dossier is linked offers
+   * Create implementation cards. Accepting the concept stays a separate move.
+   */
+  readonly canPromoteConcept = computed(() => {
+    const job = this.job();
+    return job.mode === 'concept'
+      && (job.state === TaskState.HumanReview || job.state === TaskState.Completed)
+      && !!job.conceptDossier?.repoRelativePath?.trim();
+  });
   /**
    * "Promote to coding task" is offered only on a planning task whose latest
    * run finished. Research tasks are read-only reports by design and never show

@@ -12,7 +12,11 @@
       <ul class="council-reaction__findings">
         @for (assessment of current.assessments; track assessment.finding) {
           <li>
-            <span class="council-reaction__action">{{ actionLabel(assessment.action) }}</span>
+            <app-status-indicator
+              [tone]="actionTone(assessment.action)"
+              [label]="actionLabel(assessment.action)"
+              [compact]="true"
+              testId="code-review-council-action" />
             <span>{{ assessment.finding }}</span>
             <small>{{ assessment.reason }}</small>
           </li>

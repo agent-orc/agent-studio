@@ -263,7 +263,7 @@ test.describe('F39 - running task-card across themes', () => {
       // 2. The execution pill stays readable: text-on-background contrast
       //    clears WCAG-AA (≥ 4.5:1). This is the regression the prompt
       //    explicitly called out for the light theme.
-      const pill = runningCard.locator('.task-card__execution-pill--running');
+      const pill = runningCard.locator('[data-testid="task-card-execution"][data-execution="running"]');
       await expect(pill).toBeVisible();
       const pillSample = await pill.evaluate((el) => {
         const cs = getComputedStyle(el);
@@ -320,7 +320,7 @@ test.describe('F39 - running task-card across themes', () => {
       await expect(runningCard).toBeVisible({ timeout: 5_000 });
 
       await expect(runningCard.locator('[data-testid="task-card-progress"]')).toHaveCount(0);
-      await expect(runningCard.locator('.task-card__execution-pill--running')).toBeVisible();
+      await expect(runningCard.locator('[data-testid="task-card-execution"][data-execution="running"]')).toBeVisible();
 
       if (process.env.F39_RESULTS_DIR) {
         await page.screenshot({

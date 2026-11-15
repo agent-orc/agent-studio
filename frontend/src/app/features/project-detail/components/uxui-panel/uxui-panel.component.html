@@ -21,7 +21,10 @@
   <div class="ux-panel__cards" data-testid="uxui-metric-grid">
     <article class="ux-panel__card" data-testid="uxui-card-status">
       <h3 class="ux-panel__card-title">Design status</h3>
-      <p class="ux-panel__card-value" data-testid="uxui-card-status-value">{{ overview()?.status ?? '—' }}</p>
+      <p class="ux-panel__card-value">
+        @if (overview()?.status; as status) { <app-status-indicator [tone]="statusTone(status)" [label]="status" testId="uxui-card-status-value" /> }
+        @else { <span data-testid="uxui-card-status-value">—</span> }
+      </p>
       <p class="ux-panel__card-detail">
         @if (overview()?.lastReviewDate) {
           Last council {{ overview()?.lastReviewDate }}
@@ -175,14 +178,10 @@
         Create follow-up task
       </button>
       @if (actionError(); as err) {
-        <span class="ux-panel__chip ux-panel__chip--error"
-              role="status"
-              data-testid="uxui-action-error">{{ err }}</span>
+        <span role="status" data-testid="uxui-action-error"><app-status-indicator tone="danger" [label]="err" [detail]="err" testId="uxui-action-error-state" /></span>
       }
       @if (actionQueued(); as ok) {
-        <span class="ux-panel__chip ux-panel__chip--ok"
-              role="status"
-              data-testid="uxui-action-queued">{{ ok }}</span>
+        <span role="status" data-testid="uxui-action-queued"><app-status-indicator tone="success" [label]="ok" testId="uxui-action-queued-state" /></span>
       }
     </div>
   </section>
@@ -221,12 +220,13 @@
                 <span class="ux-panel__council-date">{{ n.noteDate }}</span>
               }
               @if (n.acceptedAt) {
-                <span class="ux-panel__chip ux-panel__chip--ok" data-testid="uxui-council-accepted-chip">accepted</span>
+                <app-status-indicator tone="success" label="accepted" [compact]="true" testId="uxui-council-accepted-chip" />
               }
             </div>
             @if (!n.parseOk) {
               <p class="ux-panel__warning" data-testid="uxui-unstructured-warning">
-                ⚠ unstructured report ({{ n.parseError ?? 'no structured block detected' }}). Raw Markdown shown below.
+                <app-status-indicator tone="warning" [label]="'unstructured report (' + (n.parseError ?? 'no structured block detected') + ')'" [compact]="true" testId="uxui-unstructured-state" />
+                Raw Markdown shown below.
               </p>
               @if (rawCache()[n.fileName]; as raw) {
                 <pre class="ux-panel__raw" data-testid="uxui-council-raw">{{ raw }}</pre>

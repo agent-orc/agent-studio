@@ -1,3 +1,6 @@
 @if (waitingLabel(); as label) {
-  <p role="status" data-testid="orchestrator-chat-waiting">{{ label }}</p>
+  <p role="status" data-testid="orchestrator-chat-waiting">
+    <app-status-indicator tone="warning" [label]="label.state" testId="orchestrator-chat-waiting-state" />
+    <span>{{ label.reason }}</span>
+  </p>
 }

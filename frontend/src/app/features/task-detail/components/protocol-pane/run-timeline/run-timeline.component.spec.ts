@@ -5,6 +5,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { RunTimelineComponent } from './run-timeline.component';
+import { runCardStatusTone } from './run-timeline-status';
 import type { CliExecutionContext, RunPromptEntry, RunRecord } from '../../../../../features/run-timeline';
 import type { TaskInfo } from '../../../../../models/task.model';
 
@@ -651,3 +652,15 @@ function runRecord(
     } : null,
   };
 }
+
+describe('runCardStatusTone', () => {
+  it('maps run statuses and keeps only the latest failure acute', () => {
+    expect(runCardStatusTone('running', true)).toBe('running');
+    expect(runCardStatusTone('completed', false)).toBe('success');
+    expect(runCardStatusTone('failed', true)).toBe('danger');
+    expect(runCardStatusTone('failed', false)).toBe('warning');
+    expect(runCardStatusTone('stopped', true)).toBe('warning');
+    expect(runCardStatusTone('cancelled', true)).toBe('warning');
+    expect(runCardStatusTone('unknown', true)).toBe('neutral');
+  });
+});

@@ -127,16 +127,11 @@
   background: transparent;
 }
 
-.pwiki__count,
-.pwiki__saving {
+.pwiki__count {
   font-size: 0.74rem;
   color: var(--studio-fg-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.pwiki__saving {
-  color: var(--studio-accent-3-strong, var(--studio-accent-3));
 }
 
 .pwiki__spacer { flex: 1; }
@@ -640,20 +635,8 @@
   color: color-mix(in srgb, var(--studio-fg-muted) 82%, transparent);
 }
 
-.pwiki__class-chip[data-tone='stale'] {
-  color: color-mix(in srgb, var(--studio-error) 55%, var(--studio-fg-muted));
-  border-color: color-mix(in srgb, var(--studio-error) 30%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-error) 7%, transparent);
-}
-
-.pwiki__class-chip[data-tone='superseded'] {
-  color: color-mix(in srgb, var(--studio-warn, var(--studio-fg)) 45%, var(--studio-fg-muted));
-  border-color: color-mix(in srgb, var(--studio-warn, var(--studio-border)) 25%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-warn, transparent) 6%, transparent);
-}
-
-// Meta-rail "Klassifikation" block: the status chip reuses the tree optics
-// (.pwiki__class-chip tones); the successor of a superseded page renders as a
+// Meta-rail "Klassifikation" block: the status is the shared status
+// indicator (AGT-3403); the successor of a superseded page renders as a
 // plain navigable link underneath so long docs-relative paths can wrap.
 .pwiki__class-status {
   display: flex;
@@ -1099,13 +1082,9 @@
 }
 
 .pwiki__save-error {
+  display: flex;
+  min-width: 0;
   margin: var(--studio-spacing-2) 0 0;
-  padding: var(--studio-spacing-2);
-  border: 1px solid color-mix(in srgb, var(--severity-high) 36%, var(--studio-border));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--severity-high) 8%, transparent);
-  color: color-mix(in srgb, var(--severity-high) 76%, var(--studio-fg));
-  font-size: 0.78rem;
 }
 
 .pwiki__json-preview {

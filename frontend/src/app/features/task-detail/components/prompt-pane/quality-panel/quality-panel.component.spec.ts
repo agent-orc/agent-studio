@@ -5,7 +5,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskInfo } from '../../../../../models/task.model';
 import { QualityStudioService } from '../../../../../services/quality-studio.service';
-import { QualityPanelComponent } from './quality-panel.component';
+import { QUALITY_STATE_TONES, QualityPanelComponent } from './quality-panel.component';
 
 describe('QualityPanelComponent request reuse', () => {
   it('keeps an in-flight quality read when the same task updates', async () => {
@@ -56,5 +56,15 @@ describe('QualityPanelComponent request reuse', () => {
     });
     expect(fixture.componentInstance.loadError()).toBe(false);
     http.verify();
+  });
+});
+
+describe('QUALITY_STATE_TONES', () => {
+  it('maps the review verdicts onto status tones', () => {
+    expect(QUALITY_STATE_TONES.pass).toBe('success');
+    expect(QUALITY_STATE_TONES.concerns).toBe('warning');
+    expect(QUALITY_STATE_TONES.block).toBe('danger');
+    expect(QUALITY_STATE_TONES.reviewing).toBe('running');
+    expect(QUALITY_STATE_TONES['not-reviewed']).toBe('neutral');
   });
 });

@@ -100,16 +100,6 @@
   padding: 1px 7px;
   font-size: 11px;
 }
-.logic__pill--ok {
-  border-color: color-mix(in srgb, var(--studio-accent-success-strong) 28%, transparent);
-  background: color-mix(in srgb, var(--studio-accent-success-strong) 10%, transparent);
-  color: var(--studio-accent-success-strong);
-}
-.logic__pill--warn {
-  border-color: color-mix(in srgb, var(--studio-accent-warn-strong) 32%, transparent);
-  background: color-mix(in srgb, var(--studio-accent-warn-strong) 10%, transparent);
-  color: var(--studio-accent-warn-strong);
-}
 .logic__control {
   display: flex;
   align-items: center;

@@ -43,6 +43,8 @@ describe('DeployRunDrawerComponent', () => {
     expect(text('deploy-run-drawer')).toContain('Release 2026.10.19.1');
     expect(text('deploy-run-outcome')).toBe('Failed');
     expect(text('deploy-run-approval')).toBe('Not required');
+    expect(byTestId('deploy-run-outcome')!.dataset['tone']).toBe('danger');
+    expect(byTestId('deploy-run-approval-state')!.dataset['tone']).toBe('neutral');
     expect(host().textContent).toContain('release-gate');
     expect(host().textContent).toContain('1 min 0 s');
   });
@@ -57,12 +59,16 @@ describe('DeployRunDrawerComponent', () => {
     expect(text('deploy-run-step-health')).toContain('Failed');
     expect(text('deploy-run-step-health')).toContain('Health check failed (health-http-failed).');
     expect(byTestId('deploy-run-step-health')!.querySelectorAll('.run-drawer__log li')).toHaveLength(1);
+    const stepTone = (id: string) => byTestId(id)!.querySelector<HTMLElement>('[data-testid="deploy-run-step-state"]')!.dataset['tone'];
+    expect(stepTone('deploy-run-step-publish-static')).toBe('success');
+    expect(stepTone('deploy-run-step-health')).toBe('danger');
   });
 
   it('shows who approved a Production run', async () => {
     await render(run('run-a-production'));
 
     expect(text('deploy-run-approval')).toBe('Approved by local.owner');
+    expect(byTestId('deploy-run-approval-state')!.dataset['tone']).toBe('success');
     expect(byTestId('deploy-run-approve')).toBeNull();
   });
 
@@ -72,6 +78,8 @@ describe('DeployRunDrawerComponent', () => {
     fixture.componentInstance.act.subscribe(action => chosen.push(action));
 
     expect(text('deploy-run-approval')).toBe('Waiting for an Owner or Maintainer');
+    expect(byTestId('deploy-run-approval-state')!.dataset['tone']).toBe('warning');
+    expect(byTestId('deploy-run-outcome')!.dataset['tone']).toBe('info');
     expect(text('deploy-run-step-approval')).toContain('Awaiting approval');
     expect(text('deploy-run-step-publish-static')).toContain('Pending');
     byTestId('deploy-run-approve')!.click();

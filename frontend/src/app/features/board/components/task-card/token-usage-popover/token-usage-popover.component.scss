@@ -106,24 +106,14 @@
 }
 
 .tup__mismatch {
-  display: inline-block;
   margin-inline-start: var(--studio-spacing-1);
-  padding: 0 4px;
-  border: 1px solid var(--notify-warning-border);
-  border-radius: 999px;
-  background: var(--notify-warning-tint);
-  color: var(--notify-warning-icon-fg);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.4;
 }
 
 .tup__mismatch--run {
-  display: block;
+  display: flex;
   width: fit-content;
   margin-block-start: 2px;
   margin-inline-start: 0;
-  white-space: nowrap;
 }
 
 .tup__footnote {

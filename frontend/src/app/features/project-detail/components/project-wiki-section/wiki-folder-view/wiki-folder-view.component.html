@@ -39,11 +39,17 @@
   </header>
 
   @if (loading()) {
-    <p class="wfolder__state" data-testid="wiki-folder-loading">Ordner wird geladen…</p>
+    <p class="wfolder__state">
+      <app-status-indicator tone="running" label="Ordner wird geladen…" testId="wiki-folder-loading" />
+    </p>
   } @else if (error(); as message) {
-    <p class="wfolder__state wfolder__state--error" data-testid="wiki-folder-error">{{ message }}</p>
+    <p class="wfolder__state">
+      <app-status-indicator tone="danger" [label]="message" [detail]="message" testId="wiki-folder-error" />
+    </p>
   } @else if (children().length === 0) {
-    <p class="wfolder__state" data-testid="wiki-folder-empty">Dieser Ordner ist leer.</p>
+    <p class="wfolder__state">
+      <app-status-indicator tone="neutral" label="Dieser Ordner ist leer." testId="wiki-folder-empty" />
+    </p>
   } @else {
     <table class="wfolder__table" data-testid="wiki-folder-table">
       <thead>
@@ -111,11 +117,22 @@
               @if (classBadges(child); as badges) {
                 @if (badges.length) {
                   @for (badge of badges; track badge.key) {
-                    <span class="wfolder__class-chip"
-                          [attr.data-kind]="badge.key"
-                          [attr.data-tone]="badge.tone"
-                          [attr.data-testid]="'wiki-folder-class-' + child.relPath + '-' + badge.key"
-                          [cacTooltip]="badge.tooltip">{{ badge.label }}</span>
+                    @if (badge.key === 'status') {
+                      <app-status-indicator
+                          class="wfolder__class-status"
+                          [tone]="statusTone(badge.tone)"
+                          [label]="badge.label"
+                          [detail]="badge.tooltip"
+                          [compact]="true"
+                          [testId]="'wiki-folder-class-' + child.relPath + '-' + badge.key" />
+                    } @else {
+                      <!-- The type code is a tag, not a state: it keeps its quiet chip. -->
+                      <span class="wfolder__class-chip"
+                            [attr.data-kind]="badge.key"
+                            [attr.data-tone]="badge.tone"
+                            [attr.data-testid]="'wiki-folder-class-' + child.relPath + '-' + badge.key"
+                            [cacTooltip]="badge.tooltip">{{ badge.label }}</span>
+                    }
                   }
                 } @else {
                   <span aria-hidden="true">–</span>

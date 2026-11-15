@@ -1,5 +1,6 @@
 <section class="history" data-testid="retention-run-history">
-  <p class="history__schedule" data-testid="retention-schedule">{{ scheduleText() }}</p>
+  @let scheduleState = scheduleStatus();
+  <app-status-indicator class="history__schedule" [tone]="scheduleState.tone" [label]="scheduleState.label" [compact]="true" testId="retention-schedule" />
   @if (error()) { <p class="history__error" role="alert">{{ error() }}</p> }
   @if (loading() && runs().length === 0) {
     <p class="history__empty">Loading run history…</p>
@@ -18,7 +19,8 @@
             <td class="history__number">{{ bytes(run.appliedBytes) }}</td>
             <td class="history__number">{{ duration(run) }}</td>
             <td>{{ run.actorId }}</td>
-            <td>{{ result(run) }}</td>
+            @let runResult = result(run);
+            <td><app-status-indicator [tone]="runResult.tone" [label]="runResult.label" [compact]="true" testId="retention-history-result" /></td>
             <td><button type="button" [attr.data-testid]="'retention-history-toggle-' + run.id" [attr.aria-expanded]="expandedRunId() === run.id" (click)="toggle(run)">{{ expandedRunId() === run.id ? 'Hide' : 'Report' }}</button></td>
           </tr>
           @if (expandedRunId() === run.id) {

@@ -51,6 +51,9 @@ describe('ProjectIntegrationPanelComponent', () => {
 
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelectorAll('[data-testid="integration-queue-row"]')).toHaveLength(6);
+    const statuses = Array.from(root.querySelectorAll<HTMLElement>('[data-testid="integration-queue-status"]'));
+    expect(statuses.map(item => item.dataset['tone'])).toEqual(['success', 'info', 'danger', 'neutral', 'neutral', 'neutral']);
+    expect(statuses.map(item => item.textContent?.trim())).toEqual(['Merged', 'Waiting', 'Conflict', 'Skipped', 'Legacy unverifiable', 'Superseded']);
     expect(root.textContent).toContain('1 merged');
     expect(root.textContent).toContain('1 legacy unverifiable');
     expect(root.textContent).toContain('1 superseded');

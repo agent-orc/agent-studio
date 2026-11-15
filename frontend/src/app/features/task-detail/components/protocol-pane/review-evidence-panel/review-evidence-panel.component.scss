@@ -100,26 +100,13 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.evidence-row__chip {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+.evidence-row__head app-status-indicator {
+  text-transform: none;
+  letter-spacing: normal;
 }
-.evidence-row__chip[data-severity="high"]  { background: color-mix(in srgb, var(--severity-high) 18%, transparent); color: var(--severity-high); }
-.evidence-row__chip[data-severity="warn"]  { background: color-mix(in srgb, var(--severity-warn) 18%, transparent); color: var(--severity-warn); }
-.evidence-row__chip[data-severity="info"]  { background: color-mix(in srgb, var(--severity-info) 18%, transparent); color: var(--severity-info); }
 .evidence-row__source { color: var(--studio-fg); }
 .evidence-row__ts     { color: var(--studio-fg-muted); font-family: var(--font-mono, monospace); text-transform: none; letter-spacing: 0; }
 .evidence-row__run    { color: var(--studio-fg-muted); }
-.evidence-row__ack-pill {
-  background: color-mix(in srgb, var(--severity-pass) 18%, transparent);
-  color: var(--severity-pass);
-  padding: 1px 6px;
-  border-radius: 999px;
-  letter-spacing: 0.06em;
-}
 .evidence-row__followup {
   color: var(--severity-pass);
   text-transform: none;

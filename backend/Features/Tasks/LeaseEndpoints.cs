@@ -2080,6 +2080,7 @@ public static class LeaseEndpoints
             RemoteDeliveryCommitRange? deliveryRange = null;
             RemoteCommitAttributionResult? remoteAttribution = null;
             string? attributionWarning = null;
+            var attributionFailed = false;
             // Set when the completion cannot produce a verified, materializable
             // coding subject: either its immutable envelope is absent or the
             // target repository actively contradicts the claimed delivery.
@@ -2100,6 +2101,7 @@ public static class LeaseEndpoints
                 {
                     attributionWarning =
                         "Remote commit attribution skipped because repository, delivery branch, or result SHA was unavailable.";
+                    attributionFailed = true;
                 }
                 else
                 {
@@ -2109,7 +2111,8 @@ public static class LeaseEndpoints
                         resultSha,
                         req.IntegrationBranch,
                         req.BaseSha,
-                        ct);
+                        ct,
+                        taskKey: req.TaskKey);
                     // AGT-2494: the top-ranked claim is contradicted by the
                     // repository, so let the repository name the ref instead of
                     // the ranking. A divergent salvage published this run's
@@ -2137,12 +2140,14 @@ public static class LeaseEndpoints
                                 resultSha,
                                 req.IntegrationBranch,
                                 req.BaseSha,
-                                ct);
+                                ct,
+                                taskKey: req.TaskKey);
                         }
                     }
                     if (!deliveryRange.Success)
                     {
                         attributionWarning = deliveryRange.Warning;
+                        attributionFailed = true;
                     }
                     else
                     {
@@ -2151,16 +2156,24 @@ public static class LeaseEndpoints
                             deliveryBranch,
                             deliveryRange.Commits,
                             req.Repository);
-                        attributionWarning = remoteAttribution.Warning;
+                        attributionWarning = string.Join(" ", new[]
+                            { deliveryRange.Warning, remoteAttribution.Warning }
+                            .Where(value => !string.IsNullOrWhiteSpace(value)));
+                        if (remoteAttribution.Accepted && remoteAttribution.Commits.Count == 0)
+                            attributionWarning = "Verified delivery has no attributable commits for this task.";
+                        attributionFailed = !remoteAttribution.Accepted
+                            || remoteAttribution.Commits.Count == 0;
                         mutations.SetRunIntegrationBranchOnFolder(
                             task.FolderPath,
                             deliveryRange.IntegrationBranch!);
-                        mutations.SetRemoteCommitAttributionOnFolder(
-                            task.FolderPath,
-                            attemptId,
-                            req.RunnerId,
-                            resultSha,
-                            remoteAttribution.Commits);
+                        if (remoteAttribution.Accepted && remoteAttribution.Commits.Count > 0
+                            && !mutations.SetRemoteCommitAttributionOnFolder(
+                                task.FolderPath, attemptId, req.RunnerId, resultSha,
+                                remoteAttribution.Commits))
+                        {
+                            attributionWarning = "Verified delivery commit attribution could not be persisted.";
+                            attributionFailed = true;
+                        }
                     }
                 }
 
@@ -2225,7 +2238,9 @@ public static class LeaseEndpoints
                     run.RepositoryId,
                     run.ResultSha!,
                     run.AttemptId,
-                    AttemptAuthorityService.Hash(requirements),
+                    TaskModes.IsConcept(task.Mode)
+                        ? BriefVersionStore.ReadCurrent(task.FolderPath)
+                        : AttemptAuthorityService.Hash(requirements),
                     AttemptAuthorityService.Hash("remote-review-policy:v1"),
                     run.EvidenceDigests,
                     $"review-subject:{run.AttemptId}:{run.ResultSha}",
@@ -2385,6 +2400,8 @@ public static class LeaseEndpoints
             }
             if (!string.IsNullOrWhiteSpace(reportedReason))
                 details["reason"] = reportedReason;
+            else if (outcome == "done" && attributionFailed)
+                details["reason"] = attributionWarning ?? "Commit attribution failed for this delivery.";
             if (providerRejection is not null)
             {
                 details["typedOutcome"] = AgentStudio.TaskServer.Contracts.ExecutionOutcomeKind.ProviderRejectedRequest.ToString();
@@ -2476,12 +2493,16 @@ public static class LeaseEndpoints
                       $"`{req.SalvageAuthoritativeBaseBranch ?? salvageBranch}` at " +
                       $"`{req.SalvageAuthoritativeBaseSha ?? salvageCommitSha}` was the authoritative pickup base.{Environment.NewLine}"
                     : string.Empty;
-                File.WriteAllText(
-                    deliverablesPath,
-                    $"# Remote runner deliverables{Environment.NewLine}{Environment.NewLine}" +
-                    $"- Salvage branch {branchRef} at `{salvageCommitSha}`.{Environment.NewLine}" +
-                    recoveryLine,
-                    System.Text.Encoding.UTF8);
+                var existingDeliverables = File.Exists(deliverablesPath)
+                    ? File.ReadAllText(deliverablesPath)
+                    : $"# Remote runner deliverables{Environment.NewLine}";
+                var salvageLine = $"- Salvage branch {branchRef} at `{salvageCommitSha}`.{Environment.NewLine}";
+                if (!existingDeliverables.Contains(salvageLine, StringComparison.Ordinal))
+                    File.WriteAllText(
+                        deliverablesPath,
+                        existingDeliverables.TrimEnd() + Environment.NewLine + Environment.NewLine +
+                        salvageLine + recoveryLine,
+                        System.Text.Encoding.UTF8);
                 artifactCommits.TryCommitArtifactUpload(
                     null, task.Id, task.FolderPath, ["results/deliverables.md"]);
             }

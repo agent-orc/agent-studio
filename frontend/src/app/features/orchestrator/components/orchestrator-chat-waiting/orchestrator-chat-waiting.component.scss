@@ -1,6 +1,10 @@
 :host { display: block; }
 
 p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-2);
   margin: 0;
   padding: var(--studio-spacing-2);
   color: var(--studio-fg-strong);

@@ -1,3 +1,5 @@
+import { usageStateTone } from '../usage-cost-detail/usage-detail-status';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, computed, inject, input, signal } from '@angular/core';
 import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
@@ -24,12 +26,13 @@ import {
 @Component({
   selector: 'app-usage-detail-panel',
   standalone: true,
-  imports: [UsageCapacityDetailComponent, UsageCostDetailComponent, DisclosureMarkerComponent],
+  imports: [StatusIndicatorComponent, UsageCapacityDetailComponent, UsageCostDetailComponent, DisclosureMarkerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './usage-detail-panel.html',
   styleUrl: './usage-detail-panel.scss',
 })
 export class UsageDetailPanelComponent implements OnDestroy {
+  readonly stateTone = usageStateTone;
   private readonly remoteHosts = inject(RemoteHostsService);
   readonly chatUsage = this.remoteHosts.interactiveUsage;
   readonly chatUsageOpen = signal(false);

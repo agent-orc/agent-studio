@@ -21,7 +21,7 @@
 
 .env-card__health { margin: 0; }
 
-/* Read by screen readers only, so the badge is announced as the health state. */
+/* Read by screen readers only, so the indicator is announced as the health state. */
 .env-card__sr {
   position: absolute;
   width: 1px;
@@ -34,7 +34,6 @@
 .env-card__newer { margin: 0; }
 
 .env-card__address { @include deploy.muted; margin: 0; overflow-wrap: anywhere; }
-.env-card__badge { @include deploy.tone-badge; }
 .env-card__facts { @include deploy.fact-list; }
 .env-card__release { color: var(--studio-fg-strong); font-weight: 600; @include deploy.numeric; }
 .env-card__muted { @include deploy.muted; }

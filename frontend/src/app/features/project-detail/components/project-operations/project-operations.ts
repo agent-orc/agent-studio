@@ -1,3 +1,5 @@
+import { historyRunStateTone } from '../../state/deploy-status-tone';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
@@ -8,11 +10,12 @@ import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 
 @Component({
-  selector: 'app-project-operations', standalone: true, imports: [DatePipe, OperationsTrendComponent, LoadingSurfaceComponent],
+  selector: 'app-project-operations', standalone: true, imports: [StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent],
   templateUrl: './project-operations.html', styleUrl: './project-operations.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectOperationsComponent {
+  readonly markerTone = historyRunStateTone;
   private readonly http = inject(HttpClient);
   private readGeneration = 0;
   private logGeneration = 0;

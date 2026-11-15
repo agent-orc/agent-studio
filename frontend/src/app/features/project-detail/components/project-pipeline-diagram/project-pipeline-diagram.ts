@@ -4,6 +4,7 @@ import type {
   PipelineDiagram,
   PipelineStepNode,
 } from '../../services/project-pipeline-definition.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 const STEP_LABELS: Record<string, string> = {
   'static-site': 'Static site over SSH',
@@ -23,6 +24,7 @@ const STEP_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-project-pipeline-diagram',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-pipeline-diagram.html',
   styleUrl: './project-pipeline-diagram.scss',

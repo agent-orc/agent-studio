@@ -28,10 +28,3 @@
   color: var(--studio-fg-strong);
   outline: none;
 }
-
-/* Modal body. The shell (centred panel, backdrop, header, theming) is
-   owned by <app-dialog>; the rendered prose is owned by <cac-markdown>.
-   Only the load/error placeholders need local styling, and they read
-   studio tokens so they flip per theme. */
-.info-btn__loading { color: var(--studio-fg-muted); }
-.info-btn__error   { color: var(--severity-high, #f38ba8); }

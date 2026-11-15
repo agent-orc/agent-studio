@@ -3,11 +3,12 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, output, sign
 import { firstValueFrom } from 'rxjs';
 import { formatRetentionBytes, type RetentionArchiveManifest } from '../../models/retention.model';
 import { RetentionService } from '../../services/retention.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-archived-task-notice',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './archived-task-notice.component.html',
   styleUrl: './archived-task-notice.component.scss',

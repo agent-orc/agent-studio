@@ -20,23 +20,7 @@ html .task-card.task-card--stalled[data-stalled]:hover {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--studio-accent-warn) 58%, transparent), var(--studio-card-shadow-hover);
 }
 
-.task-card__stalled-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  min-height: var(--studio-card-pill-height);
-  padding: 0 var(--studio-card-pill-padding-x);
-  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 52%, transparent);
-  border-radius: 999px;
-  color: var(--studio-accent-warn-strong);
-  background: color-mix(in srgb, var(--studio-accent-warn) 18%, var(--studio-bg-elevated));
-  font-size: var(--studio-card-meta-size);
-  font-weight: 750;
-  letter-spacing: 0.01em;
-}
-
 .column__count { gap: var(--studio-spacing-1); }
-.column__stalled-count { color: var(--studio-accent-warn-strong); font-weight: 700; }
 
 .studio-panel {
   background: var(--studio-surface);
