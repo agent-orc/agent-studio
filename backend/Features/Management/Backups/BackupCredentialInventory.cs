@@ -39,7 +39,7 @@ public static class BackupCredentialInventory
         "access-state-hashes-and-sessions", "totp-seeds-sealed", "secret-store-values-sealed",
         "stack-environment", "backup-target-credentials", "home-ssh-keys",
         "provider-cli-and-git-logins", "github-app-git-credentials", "caddy-tls-and-acme",
-        "host-certificates", "origin-pull-ca"
+        "host-certificates", "origin-pull-ca", "operations-authority"
     ];
 
     public static IReadOnlyDictionary<string, int> Count(IEnumerable<BackupContentEntry> files)
@@ -85,6 +85,11 @@ public static class BackupCredentialInventory
         if (path.StartsWith("caddy-data/", StringComparison.Ordinal)) yield return "caddy-tls-and-acme";
         if (path.StartsWith("host-certificates/", StringComparison.Ordinal)) yield return "host-certificates";
         if (path.StartsWith("origin-pull/", StringComparison.Ordinal)) yield return "origin-pull-ca";
+        if (path.StartsWith("operations/principals/", StringComparison.Ordinal)
+            || path.StartsWith("operations/agent-secret/", StringComparison.Ordinal)
+            || path.StartsWith("operations/client-secret/", StringComparison.Ordinal)
+            || path.StartsWith("operations/data/", StringComparison.Ordinal))
+            yield return "operations-authority";
     }
 
     private static bool IsAccessState(string path)

@@ -17,7 +17,12 @@
     </span>
     <h4>Drift</h4>
     @if (loading()) {
-      <span class="wpulse__loading" data-testid="project-wiki-pulse-loading">Refreshing…</span>
+      <app-status-indicator
+          class="wpulse__loading"
+          tone="running"
+          label="Refreshing…"
+          [compact]="true"
+          testId="project-wiki-pulse-loading" />
     }
   </header>
   @if (drift(); as d) {
@@ -140,7 +145,13 @@
                 <span class="wpulse__row-top">
                   <span class="wpulse__signal-kind">{{ warning.kind }}</span>
                   <span class="wpulse__warning-doc">{{ warning.relPath }}</span>
-                  @if (warning.status) { <span class="wpulse__status">{{ warning.status }}</span> }
+                  @if (warning.status) {
+                    <app-status-indicator
+                        tone="warning"
+                        [label]="warning.status"
+                        [compact]="true"
+                        testId="project-wiki-pulse-warning-status" />
+                  }
                 </span>
                 <strong class="wpulse__row-title">{{ warning.title }}</strong>
                 <span class="wpulse__reason">{{ warning.detail }}</span>

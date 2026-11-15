@@ -2,9 +2,7 @@
   @if (errorMsg(); as err) {
     <div class="watcher-strip__error" data-testid="watcher-contingent-error">{{ err }}</div>
   } @else if (!enabled()) {
-    <div class="watcher-strip__disabled" data-testid="watcher-contingent-disabled">
-      Watcher is disabled for this workspace (Watcher:Enabled).
-    </div>
+    <app-status-indicator class="watcher-strip__state" tone="neutral" label="Watcher is disabled for this workspace (Watcher:Enabled)." testId="watcher-contingent-disabled" />
   } @else if (contingent(); as c) {
     <div class="watcher-strip__row" data-testid="watcher-contingent-tokens">
       <span class="watcher-strip__label">Tokens (day)</span>
@@ -33,7 +31,7 @@
               [style.width.%]="usedPct(c.day.proposalsCreated, c.budgets.dailyProposalBudget)"></span>
       </div>
       @if (c.proposalsExhausted) {
-        <span class="watcher-strip__backlog" data-testid="watcher-contingent-backlog">Backlog visible - contingent exhausted</span>
+        <app-status-indicator class="watcher-strip__backlog" tone="danger" label="Backlog visible - contingent exhausted" [compact]="true" testId="watcher-contingent-backlog" />
       }
     </div>
     <div class="watcher-strip__row watcher-strip__row--week">
@@ -45,6 +43,6 @@
       </span>
     </div>
   } @else {
-    <div class="watcher-strip__empty">No contingent data yet.</div>
+    <app-status-indicator class="watcher-strip__state" tone="neutral" label="No contingent data yet." testId="watcher-contingent-empty" />
   }
 </div>

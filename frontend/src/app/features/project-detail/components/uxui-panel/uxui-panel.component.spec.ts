@@ -5,6 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { UxuiPanelComponent } from './uxui-panel.component';
+import { designStatusTone } from './uxui-panel-status';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -40,5 +41,12 @@ describe('UxuiPanelComponent (smoke)', () => {
       console.warn('[smoke] UxuiPanelComponent initial render skipped:', (e as Error).message);
     }
     expect(fixture.componentInstance).toBeTruthy();
+  });
+});
+
+describe('designStatusTone', () => {
+  it('maps design status keywords and falls back to neutral', () => {
+    expect(['ok', 'stale', 'failing', 'no iteration', '', null].map(designStatusTone))
+      .toEqual(['success', 'warning', 'danger', 'neutral', 'neutral', 'neutral']);
   });
 });

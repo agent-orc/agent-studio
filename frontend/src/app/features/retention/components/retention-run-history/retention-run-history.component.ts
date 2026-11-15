@@ -3,11 +3,25 @@ import { firstValueFrom } from 'rxjs';
 import { formatRetentionBytes, type RetentionRunDetail, type RetentionRunSummary, type RetentionSchedule } from '../../models/retention.model';
 import { RetentionService } from '../../services/retention.service';
 import { RetentionReportTableComponent } from '../retention-report-table/retention-report-table.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+export interface RetentionStatus { tone: StatusTone; label: string }
+
+/**
+ * Result of a recorded retention run. A finished run with errors is history,
+ * so it reads as warning rather than danger (hard rule R4).
+ */
+export function retentionRunResult(finished: boolean, errorCount: number, warningCount: number): RetentionStatus {
+  if (!finished) return { tone: 'running', label: 'Running' };
+  if (errorCount > 0) return { tone: 'warning', label: 'Completed with errors' };
+  if (warningCount > 0) return { tone: 'warning', label: 'Completed with warnings' };
+  return { tone: 'success', label: 'Completed' };
+}
 
 @Component({
   selector: 'app-retention-run-history',
   standalone: true,
-  imports: [RetentionReportTableComponent],
+  imports: [RetentionReportTableComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './retention-run-history.component.html',
   styleUrl: './retention-run-history.component.scss',
@@ -70,18 +84,19 @@ export class RetentionRunHistoryComponent implements OnInit {
 
   bytes(value: number): string { return formatRetentionBytes(value); }
 
-  scheduleText(): string {
+  scheduleStatus(): RetentionStatus {
     const schedule = this.schedule();
-    if (!schedule) return 'Schedule unavailable';
-    if (!schedule.enabled) return 'Scheduled retention is off';
+    if (!schedule) return { tone: 'warning', label: 'Schedule unavailable' };
+    if (!schedule.enabled) return { tone: 'neutral', label: 'Scheduled retention is off' };
     const hour = String(schedule.serverLocalHour).padStart(2, '0');
-    return `Daily at ${hour}:00 server time · Next run ${this.date(schedule.nextRunAt)}`;
+    return { tone: 'success', label: `Daily at ${hour}:00 server time · Next run ${this.date(schedule.nextRunAt)}` };
   }
 
-  result(run: RetentionRunSummary): string {
-    if (!run.finishedAt) return 'Running';
-    if ((run.errorCount ?? this.details()[run.id]?.errors.length ?? 0) > 0) return 'Completed with errors';
-    if ((run.warningCount ?? this.details()[run.id]?.warnings.length ?? 0) > 0) return 'Completed with warnings';
-    return 'Completed';
+  result(run: RetentionRunSummary): RetentionStatus {
+    return retentionRunResult(
+      !!run.finishedAt,
+      run.errorCount ?? this.details()[run.id]?.errors.length ?? 0,
+      run.warningCount ?? this.details()[run.id]?.warnings.length ?? 0,
+    );
   }
 }

@@ -12,9 +12,11 @@
                  [attr.data-testid]="'test-evidence-source-' + source.kind"
                  [attr.aria-label]="sourceAriaLabel(source)"
                  [appTooltip]="sourceReason(source)">
-          <span class="test-evidence-source__dot" aria-hidden="true"></span>
           <span class="test-evidence-source__copy">
-            <strong>{{ source.summary }}</strong>
+            <app-status-indicator [tone]="sourceTone(source.result)"
+                                  [label]="source.summary"
+                                  [compact]="true"
+                                  [testId]="'test-evidence-source-state-' + source.kind" />
             <small>{{ sourceReason(source) }}</small>
           </span>
           @if (reportHref(source); as href) {
@@ -34,9 +36,11 @@
          [attr.data-testid]="testId()"
          [attr.aria-label]="tooltipText()"
          [appTooltip]="tooltipText()">
-      <span class="test-evidence__dot" aria-hidden="true"></span>
       <span class="test-evidence__copy">
-        <strong>{{ evidence.summary }}</strong>
+        <app-status-indicator [tone]="evidenceTone(evidence.evidenceState)"
+                              [label]="evidence.summary"
+                              [compact]="variant() === 'card'"
+                              testId="test-evidence-state" />
         @if (evidence.runId) {
           <small>{{ evidence.runId }} · {{ evidence.runState }}{{ evidence.runResult ? ' · ' + evidence.runResult : '' }}</small>
         } @else if (evidence.sources?.length || evidence.sourceCount) {

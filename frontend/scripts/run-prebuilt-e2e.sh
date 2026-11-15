@@ -6,7 +6,7 @@ FRONTEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${FRONTEND_ROOT}/.." && pwd)"
 if [[ "${PW_E2E_SINGLE_RUN:-0}" != "1" && "$#" -eq 0 ]]; then
   result=0
-  for profile in standard recovery ref-drift demo public-demo first-run networked-monolith networked-https networked-checkout networked-https-demo operator-cli; do
+  for profile in standard recovery ref-drift demo public-demo first-run concept-remote networked-monolith networked-https networked-checkout networked-https-demo operator-cli; do
     PW_E2E_SINGLE_RUN=1 PW_E2E_PROFILE="${profile}" bash "$0" || result=1
   done
   exit "${result}"
@@ -17,6 +17,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
     case "${arg}" in
       *crash-recovery-prompt.spec.ts*|*first-run-checklist.spec.ts*) PW_E2E_PROFILE=recovery ;;
       *first-run-journey.spec.ts*|*first-run-review-host-restart.spec.ts*) PW_E2E_PROFILE=first-run ;;
+      *concept-remote-journey.spec.ts*) PW_E2E_PROFILE=concept-remote ;;
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
       *product-session-networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *reviewer-role.networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
@@ -49,14 +50,14 @@ if [[ ! -f "${PUBLISH_DIR}/OrchestratorApi.dll" \
    || "$(cat "${PUBLISH_DIR}/E2E-FINGERPRINT" 2>/dev/null || true)" != "${CHECKOUT_SHA}" \
    || "$(cat "${PUBLISH_DIR}/E2E-CONFIGURATION" 2>/dev/null || true)" != "${PUBLISH_CONFIGURATION}" ]]; then
   dotnet publish "${REPO_ROOT}/backend/OrchestratorApi.csproj" --configuration "${PUBLISH_CONFIGURATION}" \
-    --output "${PUBLISH_DIR}" "${PUBLISH_BUILD_ARGS[@]}"
+    --output "${PUBLISH_DIR}" -p:UseSharedCompilation=false "${PUBLISH_BUILD_ARGS[@]}"
   git -C "${REPO_ROOT}" rev-parse HEAD > "${PUBLISH_DIR}/RELEASE-SHA"
   printf '%s\n' "${CHECKOUT_SHA}" > "${PUBLISH_DIR}/E2E-FINGERPRINT"
   printf '%s\n' "${PUBLISH_CONFIGURATION}" > "${PUBLISH_DIR}/E2E-CONFIGURATION"
 fi
-if [[ "${PW_E2E_PROFILE}" == first-run || "${PW_E2E_PROFILE}" == networked-checkout ]]; then
+if [[ "${PW_E2E_PROFILE}" == first-run || "${PW_E2E_PROFILE}" == concept-remote || "${PW_E2E_PROFILE}" == networked-checkout ]]; then
   dotnet publish "${REPO_ROOT}/runner/AgentRunner.csproj" --configuration Release \
-    --output "${REPO_ROOT}/runner/bin/e2e-publish"
+    --output "${REPO_ROOT}/runner/bin/e2e-publish" -p:UseSharedCompilation=false
 fi
 if [[ ! -f "${FRONTEND_ROOT}/dist/frontend/browser/index.html" || "$(cat "${FRONTEND_ROOT}/dist/frontend/browser/.source-sha" 2>/dev/null || true)" != "${CHECKOUT_SHA}" ]]; then
   npm --prefix "${FRONTEND_ROOT}" run build

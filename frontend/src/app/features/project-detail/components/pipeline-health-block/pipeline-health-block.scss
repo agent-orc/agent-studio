@@ -26,21 +26,13 @@
   border-bottom: 1px solid var(--studio-card-muted-border);
 }
 
-.ph__title,
-.ph__state {
+.ph__title {
   display: inline-flex;
   align-items: center;
   gap: var(--studio-spacing-1);
   color: var(--studio-fg-strong);
   font-size: var(--studio-card-meta-size);
   font-weight: 650;
-}
-
-.ph__title i {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--severity-pass);
 }
 
 // The flow-health link sits after the state, pushed to the end of the head.
@@ -60,8 +52,6 @@
   &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 }
 
-.ph--alarm .ph__title i { background: var(--severity-high); }
-.ph--alarm .ph__state { color: var(--severity-high); }
 
 .ph__grid {
   display: grid;
@@ -89,11 +79,7 @@
   line-height: 1.2;
 }
 
-.ph__metric > strong {
-  color: var(--studio-fg-strong);
-  font-size: var(--studio-card-compact-title-size);
-  line-height: 1.3;
-}
+.ph__metric > app-status-indicator { align-self: flex-start; }
 
 .ph__metric small,
 .ph__drain small {

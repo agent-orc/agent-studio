@@ -17,9 +17,17 @@ export function distinctStepVerdict(status: string, verdict: string | null): str
   return REDUNDANT_VERDICTS[status]?.includes(normalized) ? null : verdict;
 }
 
+/** Tone of the review-round finding state (AGT-3403): carried over, fixed or still open. */
+export function reviewRoundTone(step: PipelineStepExecution | null | undefined): StatusTone {
+  if (step?.carriedOverFrom) return 'info';
+  if (step?.fixedInRun != null) return 'success';
+  return step?.stillOpen === true ? 'warning' : 'neutral';
+}
+
 export function reviewRoundStatus(step: PipelineStepExecution | null | undefined): string | null {
   if (step?.carriedOverFrom) return `Carried over from review ${step.carriedOverFrom}`;
   if (step?.fixedInRun != null) return `Fixed in run #${step.fixedInRun}`;
   return step?.stillOpen === true ? 'Still open' : null;
 }
 import type { PipelineStepExecution } from '../../../../task-pipeline';
+import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';

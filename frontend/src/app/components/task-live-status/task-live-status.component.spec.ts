@@ -2,7 +2,7 @@ import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { TaskInfo } from '../../models/task.model';
-import { TaskLiveStatusComponent } from './task-live-status.component';
+import { TaskLiveStatusComponent, liveIndicatorTone } from './task-live-status.component';
 import { RemoteHostsService } from '../../features/remote-hosts';
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
@@ -355,6 +355,9 @@ describe('TaskLiveStatusComponent', () => {
     expect(root.dataset['liveTone']).toBe('stalled');
     expect(root.querySelector('[data-testid="task-live-current"]')?.textContent)
       .toContain('Review stalled · operator decision needed');
+    const headline = root.querySelector('[data-testid="task-live-headline"]') as HTMLElement;
+    expect(headline.dataset['tone']).toBe('warning');
+    expect(headline.classList.contains('status-indicator--compact')).toBe(true);
     expect(root.textContent).toContain(
       'review ended (infrastructureFailure); no new review attempt; operator decision needed');
     expect(root.textContent).not.toContain('Waiting for review slot');
@@ -805,6 +808,14 @@ describe('TaskLiveStatusComponent', () => {
     expect(root.textContent).toContain('Preparing');
     // last activity still surfaced, live-ticking via NowTickService
     expect(root.textContent).toMatch(/Last activity (?:92h59m|93h00m) ago/);
+  });
+
+  it('maps every live tone onto a shared status tone (AGT-3403)', () => {
+    expect(liveIndicatorTone('active')).toBe('running');
+    expect(liveIndicatorTone('waiting')).toBe('info');
+    expect(liveIndicatorTone('idle')).toBe('neutral');
+    expect(liveIndicatorTone('stalled')).toBe('warning');
+    expect(liveIndicatorTone('future-tone')).toBe('neutral');
   });
 
   // AGT-3589 (walkthrough F14): idle Post Processing cards read "Between steps

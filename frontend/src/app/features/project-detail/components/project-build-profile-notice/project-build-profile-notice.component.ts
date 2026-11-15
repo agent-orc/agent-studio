@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 /** One command list where the central BuildProfile disagrees with the repository's own `.agent-studio/project.yml`. */
 export interface BuildProfileContradiction {
@@ -29,6 +30,7 @@ export interface BuildProfileGateSummary {
 @Component({
   selector: 'app-project-build-profile-notice',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './project-build-profile-notice.component.html',
   styleUrl: './project-build-profile-notice.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { WikiDashboardComponent } from './wiki-dashboard.component';
+import { WikiDashboardComponent, driftGradeTone } from './wiki-dashboard.component';
 import type { WikiPulse } from '../../../../../models/project-docs.model';
 
 function isoHoursAgo(hours: number): string {
@@ -85,14 +85,14 @@ describe('WikiDashboardComponent', () => {
     expect(root.querySelector('[data-testid="project-wiki-stat-edited"]')?.textContent).toContain('vor 3 h');
 
     // Drift counts render as three plain numbers with labels; the overall
-    // verdict is a small dot + label, never a coloured number.
+    // verdict is a compact status indicator, never a coloured number.
     const drift = root.querySelector('[data-testid="project-wiki-stat-drift"]')!;
     expect(drift.textContent).toContain('Fresh');
     expect(drift.textContent).toContain('Aging');
     expect(drift.textContent).toContain('Stale');
     const overall = root.querySelector('[data-testid="project-wiki-pulse-overall"]')!;
     expect(overall.textContent).toContain('Drift Aging');
-    expect(overall.querySelector('.wdash__status-dot')?.getAttribute('data-tone')).toBe('warn');
+    expect(overall.getAttribute('data-tone')).toBe('warning');
     http.verify();
   });
 
@@ -125,5 +125,16 @@ describe('WikiDashboardComponent', () => {
     expect(grid.querySelector('[data-testid="project-wiki-style-guides"]')).toBeTruthy();
     expect(grid.querySelector('[data-testid="project-wiki-pulse-grading"]')).toBeTruthy();
     http.verify();
+  });
+});
+
+describe('driftGradeTone', () => {
+  it('maps every drift grade onto a status tone, unknown grades stay neutral', () => {
+    expect(driftGradeTone('Fresh')).toBe('success');
+    expect(driftGradeTone('Aging')).toBe('warning');
+    expect(driftGradeTone('Stale')).toBe('danger');
+    expect(driftGradeTone('Empty')).toBe('neutral');
+    expect(driftGradeTone('Something new')).toBe('neutral');
+    expect(driftGradeTone(null)).toBe('neutral');
   });
 });

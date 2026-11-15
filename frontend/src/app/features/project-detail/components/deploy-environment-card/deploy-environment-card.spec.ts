@@ -24,6 +24,10 @@ describe('DeployEnvironmentCardComponent', () => {
     await fixture.whenStable();
   }
 
+  function tone(id: string): string | undefined {
+    return host().querySelector<HTMLElement>(`[data-testid="${id}"]`)?.dataset['tone'];
+  }
+
   function emitted(): { runs: string[]; tools: number } {
     const result = { runs: [] as string[], tools: 0 };
     fixture.componentInstance.openRun.subscribe(id => result.runs.push(id));
@@ -47,6 +51,8 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(text('deploy-environment-cards')).toBe('WEB-35');
     expect(text('deploy-environment-health')).toBe('Healthy');
     expect(text('deploy-environment-last-run')).toBe('Redeploy cancelled 5 min ago');
+    expect(tone('deploy-environment-health')).toBe('success');
+    expect(tone('deploy-environment-last-run-state')).toBe('neutral');
     expect(host().querySelector('[data-testid="deploy-environment-age"] time')?.getAttribute('datetime')).toBe('2026-10-19T11:48:00Z');
   });
 
@@ -56,6 +62,7 @@ describe('DeployEnvironmentCardComponent', () => {
 
     expect(text('deploy-environment-newer')).toBe('Release 2026.10.19.2 is ready with 3 cards');
     expect(text('deploy-environment-last-run')).toBe('Deploy awaiting approval 11 min ago');
+    expect(tone('deploy-environment-last-run-state')).toBe('info');
     expect(text('deploy-environment-approval')).toBe('Awaiting approval: Release 2026.10.19.2, requested by local.dev');
     button('deploy-environment-review-approval')!.click();
     expect(events).toEqual({ runs: ['run-c-production'], tools: 0 });
@@ -111,11 +118,13 @@ describe('DeployEnvironmentCardComponent', () => {
     sources.environments!.environments[0].declaration.healthUrl = null;
     await render(buildEnvironmentCards(sources)[0]);
     expect(text('deploy-environment-health')).toBe('No checks');
+    expect(tone('deploy-environment-health')).toBe('neutral');
 
     const unhealthy = deploySourcesFixture();
     unhealthy.statuses![0].health = 'unhealthy';
     await render(buildEnvironmentCards(unhealthy)[0]);
     expect(text('deploy-environment-health')).toBe('Unhealthy');
+    expect(tone('deploy-environment-health')).toBe('danger');
   });
 
   it('renders without a deployment and offers no run action', async () => {

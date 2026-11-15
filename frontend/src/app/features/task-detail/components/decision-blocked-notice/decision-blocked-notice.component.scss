@@ -1,7 +1,7 @@
 :host { display: block; min-width: 0; }
 
 // AGT-2795: waiting on a pending decision is a current, actionable block, so
-// it reads as a warn tint with a status dot (R1: no accent bar).
+// it reads as a warn tint with a warning status indicator (R1: no accent bar).
 .decision-blocked {
   display: flex;
   align-items: flex-start;
@@ -13,15 +13,6 @@
   background: color-mix(in srgb, var(--studio-accent-warn) 8%, var(--studio-bg-elevated));
   color: var(--studio-fg);
   font-size: 0.78rem;
-}
-
-.decision-blocked__dot {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  margin-top: var(--studio-spacing-1);
-  border-radius: 50%;
-  background: var(--studio-accent-warn);
 }
 
 .decision-blocked__body { display: grid; gap: var(--studio-spacing-1); min-width: 0; }

@@ -10,18 +10,6 @@
   border-bottom: 1px solid var(--studio-card-muted-border);
 }
 .ard__title { margin: 0; color: var(--studio-fg-strong); font-size: 1.1rem; flex: 1; }
-.ard__sev {
-  text-transform: uppercase;
-  font-weight: 600;
-  font-size: 0.70rem;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: var(--studio-card-muted-bg);
-}
-.ard__sev--info { background: color-mix(in srgb, var(--studio-fg-dim) 18%, transparent); color: var(--studio-fg-dim); }
-.ard__sev--warn { background: color-mix(in srgb, var(--studio-warn) 20%, transparent); color: var(--severity-warn); }
-.ard__sev--high { background: color-mix(in srgb, var(--studio-accent-strong) 20%, transparent); color: var(--studio-accent-strong); }
-.ard__sev--critical { background: color-mix(in srgb, var(--studio-error) 22%, transparent); color: var(--severity-high); }
 .ard__trigger { color: var(--studio-fg-muted); font-size: 0.78rem; }
 
 .ard__warn {
@@ -65,7 +53,6 @@
 
 .ard__findings, .ard__followups, .ard__refs { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .ard__finding { display: grid; grid-template-columns: 70px 160px 1fr; gap: 8px; padding: 6px 8px; background: var(--studio-card-muted-bg); border-radius: 6px; font-size: 0.82rem; }
-.ard__finding-sev { color: var(--studio-fg-dim); font-weight: 600; text-transform: uppercase; font-size: 0.70rem; }
 .ard__finding-topic { color: var(--studio-accent-3-strong); font-family: ui-monospace, monospace; }
 .ard__finding-msg { color: var(--studio-fg); }
 
@@ -73,8 +60,6 @@
 .ard__followups li strong { color: var(--studio-fg); font-size: 0.9rem; }
 .ard__followup-prio { margin-left: 6px; padding: 1px 6px; border-radius: 3px; background: color-mix(in srgb, var(--studio-accent-3) 15%, transparent); color: var(--studio-accent-3-strong); font-size: 0.70rem; text-transform: uppercase; }
 .ard__followups li p { margin: 4px 0 4px; color: var(--studio-fg-dim); font-size: 0.82rem; }
-.ard__followup-job { color: var(--studio-fg-muted); font-size: 0.75rem; }
-.ard__followup-job code { color: var(--studio-accent-4-strong); }
 
 .ard__refs li {
   display: flex;

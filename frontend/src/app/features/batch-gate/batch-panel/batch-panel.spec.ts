@@ -77,8 +77,11 @@ describe('BatchPanelComponent', () => {
     const pending = [1, 2].map(index => ({ taskKey: `AGT-${index}`,
       reviewAttemptId: `r-${index}`, resultSha: 'a'.repeat(40), waitMinutes: 229.234388035, risk: 0.2 }));
     const batch = { ...redHalvingState.batches[1], phase: 'formed',
-      members: [{ taskKey: 'AGT-1', replay: 'applied', released: false }], runs: [] };
+      lastProgressAtUtc: '2026-11-10T12:00:00Z',
+      nextAction: { action: 'Start the formed batch', dueAtUtc: '2026-11-10T12:00:30Z' },
+      members: [{ taskKey: 'AGT-1', replay: 'applied', disposition: 'claimed', released: false }], runs: [] };
     http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({ ...redHalvingState,
+      oldestFormed: { batchId: batch.batchId, formedAtUtc: '2026-11-10T12:00:00Z', ageMinutes: 229 },
       pending, batches: [batch], members: {} });
     http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
     await Promise.resolve();
@@ -90,6 +93,9 @@ describe('BatchPanelComponent', () => {
     expect(waiting.textContent).toContain('AGT-2 · 3 h 49 min');
     expect(waiting.textContent).not.toContain('AGT-1');
     expect(host.querySelector('#batch-batch-8')!.textContent).toContain('AGT-1');
+    expect(host.querySelector('[data-testid="batch-oldest-formed"]')!.textContent).toContain('3 h 49 min');
+    expect(host.querySelector('#batch-batch-8')!.textContent).toContain('Start the formed batch');
+    expect(host.querySelector('#batch-batch-8')!.textContent).toContain('claimed');
     http.verify();
   });
   it('separates batch members from waiting cards and shows interrupted runs and detached flights', async () => {

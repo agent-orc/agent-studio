@@ -21,6 +21,30 @@ import { CLAUDE_FALLBACK_MODEL_ID } from '../../../../cli';
 import { generatedFileProvenance } from '../../generated-file-provenance.util';
 import { ModelPriceStore } from '../../../../tokens/model-prices';
 import { codeReviewVerdictTone, type CodeReviewVerdictTone } from '../../code-review-verdict.util';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+
+const CODE_REVIEW_STATUS_TONES: Readonly<Record<CodeReviewVerdictTone, StatusTone>> = {
+  pass: 'success',
+  concerns: 'warning',
+  block: 'danger',
+  unknown: 'neutral',
+};
+
+/** Status tone of a code-review verdict (AGT-3403); unknown verdicts stay neutral. */
+export function codeReviewStatusTone(verdict: string | null | undefined): StatusTone {
+  return CODE_REVIEW_STATUS_TONES[codeReviewVerdictTone(verdict)];
+}
+
+/**
+ * Tone of the older-delivery grade line. It is history, so a D grade drops to
+ * warning instead of an acute danger (R4).
+ */
+export function olderGradeStatusTone(grade: string | null | undefined): StatusTone {
+  const normalized = grade?.trim().toUpperCase();
+  if (normalized === 'A' || normalized === 'B') return 'success';
+  if (normalized === 'C' || normalized === 'D') return 'warning';
+  return 'neutral';
+}
 import { describeDiffSize, isLargeDiff } from '../../../../../utils/large-diff-gate';
 import { formatDateTimeUtc } from '../../../../../services/format.util';
 import { buildTokenCostTooltip } from '../../../../tokens';
@@ -66,6 +90,7 @@ const LAST_AGENT_STORAGE_KEY = 'atp.codeReview.lastAgent';
     FileSourceHistoryComponent,
     TooltipDirective,
     CouncilReviewReactionComponent,
+    StatusIndicatorComponent,
   ],
   templateUrl: './code-review-panel.component.html',
   styleUrl: './code-review-panel.component.scss',
@@ -289,13 +314,8 @@ export class CodeReviewPanelComponent implements OnInit {
     return codeReviewVerdictTone(v);
   }
 
-  gradeTone(grade: string | null | undefined): string {
-    const normalized = grade?.trim().toUpperCase();
-    if (normalized === 'A' || normalized === 'B') return 'pass';
-    if (normalized === 'C') return 'concerns';
-    if (normalized === 'D') return 'block';
-    return 'neutral';
-  }
+  readonly verdictStatusTone = codeReviewStatusTone;
+  readonly olderGradeStatusTone = olderGradeStatusTone;
 
   trackByFile(_index: number, entry: CodeReviewListEntry): string {
     return entry.fileName;

@@ -2,7 +2,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { TaskPreview } from '../../models/task.model';
-import { TaskPreviewComponent } from './task-preview.component';
+import { TaskPreviewComponent, previewStatusTone } from './task-preview.component';
 
 const preview: TaskPreview = {
   address: 'https://agt-3180.demo.preview.internal', status: 'ready',
@@ -35,6 +35,9 @@ describe('TaskPreviewComponent', () => {
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('[data-testid="activity-chat-preview"]')?.textContent).toContain('deploying');
+    const status = root.querySelector('[data-testid="task-preview-status"]') as HTMLElement;
+    expect(status.dataset['tone']).toBe('running');
+    expect(status.textContent?.trim()).toBe('Preview · deploying');
     expect(root.querySelector('a')).toBeNull();
   });
 
@@ -49,5 +52,15 @@ describe('TaskPreviewComponent', () => {
     root.querySelector('a')!.click();
     expect(parentClick).not.toHaveBeenCalled();
     expect(root.querySelector('a')?.getAttribute('aria-label')).toBe('Open preview for AGT-3180');
+  });
+
+  it('maps every preview status onto a shared status tone (AGT-3403)', () => {
+    expect(previewStatusTone('queued')).toBe('neutral');
+    expect(previewStatusTone('updating')).toBe('running');
+    expect(previewStatusTone('deploying')).toBe('running');
+    expect(previewStatusTone('ready')).toBe('success');
+    expect(previewStatusTone('failed')).toBe('danger');
+    expect(previewStatusTone('removing')).toBe('running');
+    expect(previewStatusTone('archived')).toBe('neutral');
   });
 });

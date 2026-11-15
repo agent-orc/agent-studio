@@ -21,6 +21,8 @@ import type {
   EscalationReissue,
 } from '../escalation-summary/escalation-summary.util';
 import { parseFollowUp } from './follow-up-parser';
+import { aspectToneStatusTone } from '../../../../components/aspect-findings';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 interface ReviewRound {
   entry: CodeReviewListEntry;
@@ -31,7 +33,7 @@ interface ReviewRound {
   selector: 'app-escalation-details',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FileSourceHistoryComponent, CouncilReviewReactionComponent, DisclosureMarkerComponent],
+  imports: [FileSourceHistoryComponent, CouncilReviewReactionComponent, DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './escalation-details.component.html',
   styleUrl: './escalation-details.component.scss',
 })
@@ -40,6 +42,8 @@ export class EscalationDetailsComponent {
   readonly reviews = input<readonly CodeReviewListEntry[]>([]);
   readonly followUpMarkdown = input<string | null>(null);
   readonly gateItems = input<readonly EscalationGateItem[]>([]);
+  /** Gate item tone (aspect, council or evidence verdict) as a shared status tone (AGT-3403). */
+  readonly verdictTone = aspectToneStatusTone;
   readonly gateSource = input<EscalationGateSource>('none');
   readonly reissues = input<readonly EscalationReissue[]>([]);
   readonly followUpMaximized = signal(false);

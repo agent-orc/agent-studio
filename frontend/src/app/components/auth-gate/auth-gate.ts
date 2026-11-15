@@ -1,3 +1,4 @@
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, computed, inject, OnInit, signal } from '@angular/core';
 import { DomSanitizer } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
@@ -26,7 +27,7 @@ export function authGateFailure(error: unknown, fallback: string): string {
 
 @Component({
   selector: 'app-auth-gate',
-  imports: [FormsModule],
+  imports: [StatusIndicatorComponent, FormsModule],
   templateUrl: './auth-gate.html',
   styleUrl: './auth-gate.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

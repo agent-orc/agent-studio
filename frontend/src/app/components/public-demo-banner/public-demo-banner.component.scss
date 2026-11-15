@@ -10,14 +10,6 @@
   border-bottom: 2px solid var(--notify-info-border);
 }
 
-.public-demo-banner__text strong {
-  color: var(--notify-info-icon-fg);
-}
-
-.public-demo-banner__dot {
+.public-demo-banner__state {
   flex: 0 0 auto;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--notify-info-icon-fg);
 }

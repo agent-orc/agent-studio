@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { SupervisorService } from '../../../../services/supervisor.service';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
@@ -8,6 +8,31 @@ import {
   SupervisorObservation,
 } from '../../../../models/supervisor.model';
 import { ConceptHelpComponent } from '../../../../components/concept-help/concept-help.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { findingSeverityTone } from '../analysis-report-drilldown/analysis-report-status';
+
+type SupervisorStatus = 'live' | 'idle' | 'paused' | 'error' | 'unknown';
+
+/** Supervisor state to tone (AGT-3403): live means a job is running right now. */
+const SUPERVISOR_STATUS_TONES: Readonly<Record<SupervisorStatus, StatusTone>> = {
+  live: 'running',
+  idle: 'neutral',
+  paused: 'warning',
+  error: 'danger',
+  unknown: 'neutral',
+};
+
+/**
+ * Raw runner status (`<mode>` plus ` (active)` while a job runs) to tone:
+ * paused needs an operator step, an active job is work in progress, any
+ * other mode is a settled choice.
+ */
+export function supervisorRunnerTone(runnerStatus: string | null | undefined): StatusTone {
+  const r = (runnerStatus || '').toLowerCase();
+  if (r.includes('paused')) return 'warning';
+  if (r.includes('(active)')) return 'running';
+  return 'neutral';
+}
 
 /**
  * Project-level Supervisor panel: live observation snapshot + recent
@@ -24,7 +49,7 @@ import { ConceptHelpComponent } from '../../../../components/concept-help/concep
 @Component({
   selector: 'app-project-supervisor-section',
   standalone: true,
-  imports: [FormsModule, ConceptHelpComponent],
+  imports: [FormsModule, ConceptHelpComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-supervisor-section.html',
   styleUrl: './project-supervisor-section.scss'
@@ -39,7 +64,11 @@ export class ProjectSupervisorSectionComponent implements OnInit, OnDestroy {
   readonly advisories = signal<SupervisorAdvisory[]>([]);
   readonly interventions = signal<SupervisorIntervention[]>([]);
   readonly loading = signal<boolean>(false);
-  readonly status = signal<'live' | 'idle' | 'paused' | 'error' | 'unknown'>('unknown');
+  readonly status = signal<SupervisorStatus>('unknown');
+  readonly statusTone = computed<StatusTone>(() => SUPERVISOR_STATUS_TONES[this.status()] ?? 'neutral');
+  /** Advisory severity: Info neutral, Warn warning, High danger. */
+  readonly severityTone = findingSeverityTone;
+  readonly runnerTone = supervisorRunnerTone;
 
   ngOnInit(): void {
     this.refresh();
@@ -71,7 +100,7 @@ export class ProjectSupervisorSectionComponent implements OnInit, OnDestroy {
     });
   }
 
-  private deriveStatus(o: SupervisorObservation): 'live' | 'idle' | 'paused' | 'error' | 'unknown' {
+  private deriveStatus(o: SupervisorObservation): SupervisorStatus {
     const r = (o.runnerStatus || '').toLowerCase();
     if (r.includes('paused')) return 'paused';
     if (o.currentJobId) return 'live';

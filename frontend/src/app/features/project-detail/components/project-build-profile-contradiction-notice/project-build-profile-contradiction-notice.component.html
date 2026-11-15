@@ -5,7 +5,8 @@
   <span class="contradiction-notice__copy">
     <span class="contradiction-notice__title-row">
       <strong id="project-settings-build-profile-contradiction-title">Build profile disagrees with project.yml</strong>
-      <span class="contradiction-notice__badge">Overridden</span>
+      <app-status-indicator class="contradiction-notice__badge" tone="warning" label="Overridden" [compact]="true"
+                            testId="project-settings-build-profile-contradiction-state" />
     </span>
     <span>
       The repository's <code>.agent-studio/project.yml</code> always takes

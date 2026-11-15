@@ -1,7 +1,13 @@
 @if (manifest(); as archive) {
   <section class="archive-notice" data-testid="archived-task-notice" aria-label="Cold archive status">
-    <span class="archive-notice__dot" aria-hidden="true"></span>
-    <p>Archived on {{ archive.archivedAt | date:'mediumDate' }}, {{ bytes(archive.totalBytes) }} in cold storage</p>
+    <p>
+      <app-status-indicator
+        tone="info"
+        [label]="'Archived on ' + (archive.archivedAt | date:'mediumDate') + ', ' + bytes(archive.totalBytes) + ' in cold storage'"
+        [compact]="true"
+        testId="archived-task-notice-state"
+      />
+    </p>
     <button type="button" data-testid="archived-task-restore" [disabled]="restoring()" (click)="restore()">
       {{ restoring() ? 'Restoring…' : 'Restore' }}
     </button>

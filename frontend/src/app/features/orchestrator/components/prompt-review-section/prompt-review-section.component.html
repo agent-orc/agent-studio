@@ -1,16 +1,9 @@
 @let d = detail();
-<section class="prompt-review"
-  [class.prompt-review--stale]="d.review?.status === 'stale'"
-  [class.prompt-review--needs]="d.review?.status === 'needs-review'"
-  data-testid="prompt-admin-review">
+<section class="prompt-review" data-testid="prompt-admin-review">
   <div class="prompt-review__head">
     <div>
-      <span class="prompt-review__pill"
-        [class.prompt-review__pill--ok]="d.review?.status === 'current'"
-        [class.prompt-review__pill--warn]="d.review?.status === 'needs-review'"
-        [class.prompt-review__pill--err]="d.review?.status === 'stale'">
-        {{ statusLabel(d.review?.status) }}
-      </span>
+      @let review = reviewStatus(d.review?.status);
+      <app-status-indicator [tone]="review.tone" [label]="review.label" testId="prompt-admin-review-status" />
       <span class="prompt-review__muted">
         last review:
         {{ d.review?.lastReviewedAt ? (d.review!.lastReviewedAt | date:'dd.MM.yyyy') : 'never' }}
@@ -28,7 +21,8 @@
     <ul class="prompt-review__findings">
       @for (finding of d.review!.findings; track finding.code + finding.message) {
         <li [attr.data-severity]="finding.severity">
-          <span class="prompt-review__pill">{{ finding.severity }}</span>
+          <app-status-indicator [tone]="findingTone(finding.severity)" [label]="finding.severity" [compact]="true"
+            testId="prompt-admin-review-finding-severity" />
           <span>{{ finding.message }}</span>
         </li>
       }
@@ -54,7 +48,7 @@
             <td><code>{{ item.stepId }}</code></td>
             <td>
               @if (item.matchesDefault) {
-                <span class="prompt-review__pill prompt-review__pill--ok">matches</span>
+                <app-status-indicator tone="success" label="matches" [compact]="true" testId="prompt-admin-project-override-matches" />
               } @else {
                 <span class="prompt-overrides__diff">+{{ item.addedLines }} / −{{ item.removedLines }}</span>
               }

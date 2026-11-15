@@ -42,6 +42,9 @@ describe('RemoteDispatchRejectionComponent', () => {
     const alert = root.querySelector('[data-testid="remote-dispatch-rejection"]') as HTMLElement;
     expect(alert.textContent).toContain('Runner agent-runner-01 rejected:');
     expect(alert.textContent).toContain('project has no repositoryUrl');
+    const state = root.querySelector('[data-testid="remote-dispatch-rejection-state"]') as HTMLElement;
+    expect(state.dataset['tone']).toBe('warning');
+    expect(state.classList.contains('status-indicator--compact')).toBe(true);
   });
 
   // AGT-2818: AGT-2738 sat in 2-ready for a week with this record on disk and

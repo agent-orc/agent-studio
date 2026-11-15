@@ -27,11 +27,12 @@
             [attr.data-acknowledged]="e.acknowledged ? 'true' : 'false'"
             [attr.data-testid]="'review-evidence-row-' + e.id">
           <div class="evidence-row__head">
-            <span class="evidence-row__chip"
-                  [attr.data-severity]="e.severity"
-                  [attr.data-testid]="'review-evidence-severity-' + e.id">
-              {{ severityLabel(e.severity) }}
-            </span>
+            <app-status-indicator
+              [attr.data-severity]="e.severity"
+              [tone]="severityTone(e.severity)"
+              [label]="severityLabel(e.severity)"
+              [compact]="true"
+              [testId]="'review-evidence-severity-' + e.id" />
             <span class="evidence-row__source">{{ sourceLabel(e.source) }}</span>
             @if (e.ruleId) {
               <code class="evidence-row__rule-id" [attr.data-testid]="'review-evidence-rule-' + e.id">{{ e.ruleId }}</code>
@@ -41,7 +42,7 @@
               <span class="evidence-row__run">run #{{ e.runIndex }}</span>
             }
             @if (e.acknowledged) {
-              <span class="evidence-row__ack-pill" data-testid="review-evidence-ack-pill">acknowledged</span>
+              <app-status-indicator tone="success" label="acknowledged" [compact]="true" testId="review-evidence-ack-pill" />
             }
             @if (e.followupJobId) {
               <span class="evidence-row__followup"

@@ -3794,6 +3794,40 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains(keySha, completed.CompletionClaim?.Evidence);
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task Acceptance_WorkbenchOwnerDecisionCommit_IsGateNeutralOnlyForDecisionMetadata(
+        bool changesDossierTitle, bool accepted)
+    {
+        const string path = "docs/acceptance-dossier/workbench.json";
+        var (deps, _) = PublishVerifiedDescriptorAndKey(useManagedTrailer: true);
+        RunGit(_repo, "checkout", "-q", "-B", "owner-decision", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, path), JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            id = "acceptance-dossier",
+            title = changesDossierTitle ? "Changed" : "Before",
+            key = "FIX-W1",
+            status = "decided",
+            decision = new { outcome = "feature-spawn" },
+        }) + "\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "chore(workbench): record decision for acceptance-dossier\n\n"
+            + ManagedRepositoryMutationService.DecisionReceiptCommitTrailer);
+        var decisionSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+
+        var result = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(accepted ? MoveJobStatus.Success : MoveJobStatus.IntegrationFailed, result.Status);
+        if (accepted)
+            Assert.Contains(decisionSha, deps.Scanner.FindJob(Slug, _watchPath)?.CompletionClaim?.Evidence);
+        else
+            Assert.Contains(decisionSha[..7], result.Message);
+    }
+
     [Fact]
     public async Task Acceptance_LaterPassedBatchDoesNotCoverUngatedCommitAfterDocumentKey()
     {

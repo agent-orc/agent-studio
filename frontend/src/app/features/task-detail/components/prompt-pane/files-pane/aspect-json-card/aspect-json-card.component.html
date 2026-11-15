@@ -1,9 +1,11 @@
 <div class="aspect-json" [class.aspect-json--compact]="compact()" data-testid="aspect-json-card">
   <div class="aspect-json__meta-head">
     <span class="aspect-json__title">{{ title() }}</span>
-    <span class="aspect-json__badge"
-          [class]="'aspect-json__badge--' + tone()"
-          data-testid="aspect-json-status">{{ statusLabel() }}</span>
+    <app-status-indicator class="aspect-json__badge"
+                          [tone]="statusTone()"
+                          [label]="statusLabel()"
+                          [compact]="true"
+                          testId="aspect-json-status" />
     @if (!compact() && doc().model) {
       <span class="aspect-json__model" data-testid="aspect-json-model">{{ doc().model }}</span>
     }

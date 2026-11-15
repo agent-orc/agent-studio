@@ -151,12 +151,16 @@ public class ClientIdentityMiddleware
         if (path.StartsWith("/api/runner/replay", StringComparison.OrdinalIgnoreCase))
             return true;
 
+        // The pull gate owns both an exclusive bearer and a run lease. Its
+        // outbound worker does not have a browser client identity.
+        if (path.StartsWith("/api/pull-gates/", StringComparison.OrdinalIgnoreCase))
+            return true;
+
         if (TaskServerPlaneProxy.IsConfigured(_configuration))
             return path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase);
 
         // AGT-2325's interim Runner and Review adapters own their fenced
-        // attribution. Legacy monolith management remains behind this
-        // middleware until the standalone proxy replaces the whole v1 plane.
+        // attribution. Legacy monolith management stays behind this middleware.
         return path.StartsWith("/api/v1/protocol", StringComparison.OrdinalIgnoreCase)
                || path.StartsWith("/api/v1/orchestration", StringComparison.OrdinalIgnoreCase)
                || path.StartsWith("/api/v1/runners", StringComparison.OrdinalIgnoreCase)

@@ -1,8 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, untracked } from '@angular/core';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import type { ResourceName } from '../../../../models/task-core.model';
 import { LayoutPanesService } from '../../services/layout-panes.service';
 import { TaskSelectionService } from '../../state/task-selection.service';
 import { resourceReasonLabel } from '../../state/task-resource-states';
+import { resourcePhaseTone } from './resource-phase-tone';
 
 const LABELS: Record<ResourceName, { title: string; retry: string }> = {
   overview: { title: 'Overview information unavailable', retry: 'Retry overview' },
@@ -24,6 +26,7 @@ const ORDER: readonly ResourceName[] = ['overview', 'documents', 'git', 'usage',
 @Component({
   selector: 'app-task-resource-status',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './task-resource-status.component.html',
   styleUrl: './task-resource-status.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -37,7 +40,8 @@ export class TaskResourceStatusComponent {
     return ORDER.filter(name => ['warming', 'unavailable', 'error', 'stale'].includes(states[name].phase))
       .map(name => ({ name, ...LABELS[name],
         title: states[name].phase === 'warming' ? `${LABELS[name].title.replace(' unavailable', '')} pending` : LABELS[name].title,
-        reason: resourceReasonLabel(states[name].reason) }));
+        reason: resourceReasonLabel(states[name].reason),
+        tone: resourcePhaseTone(states[name].phase) }));
   });
 
   constructor() {
