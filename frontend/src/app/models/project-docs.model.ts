@@ -323,7 +323,7 @@ export interface WorkbenchDecisionResult {
   error: string | null;
   workbenchId: string;
   operationId: string;
-  outcome: 'feature-spawn' | 'rework' | 'archive' | null;
+  outcome: 'feature-spawn' | 'rework' | 'archive' | 'record-only' | null;
   decisionStage: WorkbenchDecisionStage | null;
   revision: string | null;
   fingerprint: string | null;
@@ -346,7 +346,7 @@ export interface WorkbenchDecisionResult {
 
 export interface PrepareWorkbenchDecisionRequest {
   operationId: string;
-  outcome: 'feature-spawn' | 'rework' | 'archive';
+  outcome: 'feature-spawn' | 'rework' | 'archive' | 'record-only';
   expectedRevision: string | null;
   expectedFingerprint: string | null;
   actor: string;
@@ -363,7 +363,7 @@ export interface PrepareWorkbenchDecisionRequest {
  */
 export interface ConfirmWorkbenchDecisionRequest {
   operationId: string;
-  outcome: 'feature-spawn' | 'rework' | 'archive';
+  outcome: 'feature-spawn' | 'rework' | 'archive' | 'record-only';
   expectedRevision: string | null;
   expectedFingerprint: string | null;
   actor: string;

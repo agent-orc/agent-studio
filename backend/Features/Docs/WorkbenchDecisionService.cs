@@ -278,6 +278,7 @@ public sealed class WorkbenchDecisionService
             return Failure(id, body.OperationId, "validation",
                 "The Dossier has no readable revision or fingerprint provenance.");
 
+        var recordOnly = body.Outcome == "record-only";
         var archive = body.Outcome == "archive";
         var rework = body.Outcome == "rework";
         var now = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
@@ -286,6 +287,7 @@ public sealed class WorkbenchDecisionService
             ? string.IsNullOrWhiteSpace(revisionTaskKey)
                 ? "Revision requested"
                 : $"Revision requested from {revisionTaskKey.Trim()}"
+            : recordOnly ? "Recorded an open Dossier choice"
             : archive
                 ? $"Archived: {body.ArchiveReason!.Trim()}"
                 : $"Decided to build a feature: {gate.Draft!.Title.Trim()}";
@@ -298,7 +300,7 @@ public sealed class WorkbenchDecisionService
         var receipt = DecisionRecordService.Receipt(new DecisionReceiptInput
         {
             Outcome = body.Outcome,
-            Action = rework ? "rework-requested" : archive ? "archived" : "created-card",
+            Action = rework ? "rework-requested" : recordOnly ? "recorded" : archive ? "archived" : "created-card",
             State = rework ? "pending" : "succeeded",
             OperationId = body.OperationId,
             SourceRevision = snapshot.Revision,
@@ -314,7 +316,7 @@ public sealed class WorkbenchDecisionService
             ThinkingLevel = body.ThinkingLevel?.Trim(),
         });
         if (archive) receipt["reason"] = body.ArchiveReason!.Trim();
-        else if (!rework) receipt["taskDraft"] = JsonSerializer.SerializeToNode(gate.Draft, DraftJson);
+        else if (!rework && !recordOnly) receipt["taskDraft"] = JsonSerializer.SerializeToNode(gate.Draft, DraftJson);
         else
         {
             if (!string.IsNullOrWhiteSpace(body.Request)) receipt["request"] = body.Request.Trim();
@@ -343,7 +345,7 @@ public sealed class WorkbenchDecisionService
             // Archive settles into "done" (projected as "archived"), a feature
             // decision into "decided" - the two settled states the catalogue
             // accepts for a succeeded receipt.
-            var lifecycleState = rework
+            var lifecycleState = rework || recordOnly
                 ? snapshot.Item.LifecycleState ?? "review-requested"
                 : archive ? "done" : "decided";
             descriptor["lifecycleState"] = lifecycleState;
@@ -361,10 +363,10 @@ public sealed class WorkbenchDecisionService
             // schema v1 still carries most Dossiers. Its visibility hangs on
             // the flat status field; the receipt above rides along so a later
             // migration to v2 keeps the provenance.
-            descriptor["status"] = rework ? "decision-pending" : archive ? "archived" : "decided";
+            descriptor["status"] = rework || recordOnly ? "decision-pending" : archive ? "archived" : "decided";
             descriptor["updatedAt"] = now;
             descriptor["editedBy"] = actor;
-            if (rework)
+            if (rework || recordOnly)
             {
                 if (descriptor["lifecycleHistory"] is not JsonArray history)
                 {
@@ -407,7 +409,7 @@ public sealed class WorkbenchDecisionService
         }
 
         var revision = mutation.CommitSha ?? snapshot.Revision;
-        var currentStatus = rework ? "decision-pending" : archive ? "archived" : "decided";
+        var currentStatus = rework || recordOnly ? "decision-pending" : archive ? "archived" : "decided";
         _notifier?.PublishDecisionRecorded(projectName, id, snapshot.Item.Status, currentStatus);
 
         return new WorkbenchDecisionResult
@@ -447,18 +449,30 @@ public sealed class WorkbenchDecisionService
     {
         if (!WorkbenchDecisionContracts.SafeOperationId(operationId))
             return new(Failure(id, operationId, "validation", "operationId is malformed."));
-        if (outcome is not ("feature-spawn" or "archive" or "rework"))
+        if (outcome is not ("feature-spawn" or "archive" or "rework" or "record-only"))
             return new(Failure(id, operationId, "validation", $"Unsupported outcome '{outcome}'."));
         if (string.IsNullOrWhiteSpace(actor) || actor.Trim().Length > 120)
             return new(Failure(id, operationId, "validation", "actor is required."));
         var responsesError = WorkbenchDecisionContracts.ValidateResponses(
             responses,
-            allowPartial: outcome == "rework");
+            allowPartial: outcome is "rework" or "record-only");
         if (responsesError != null)
             return new(Failure(id, operationId, "validation", responsesError));
 
         WorkbenchTaskDraft? draft = null;
-        if (outcome == "archive")
+        if (outcome == "record-only")
+        {
+            if (task != null || !string.IsNullOrWhiteSpace(archiveReason))
+                return new(Failure(id, operationId, "validation",
+                    "A recorded choice cannot carry a task draft or archive reason."));
+            if (!responses.Any(response => response.SelectedOptionIds.Count > 0))
+                return new(Failure(id, operationId, "validation",
+                    "Select at least one decision option to record."));
+            if (spawnedTaskKeys?.Any(key => !string.IsNullOrWhiteSpace(key)) == true)
+                return new(Failure(id, operationId, "validation",
+                    "A recorded choice cannot carry spawned task keys."));
+        }
+        else if (outcome == "archive")
         {
             if (string.IsNullOrWhiteSpace(archiveReason) || archiveReason.Trim().Length > 20_000)
                 return new(Failure(id, operationId, "validation",
@@ -509,7 +523,7 @@ public sealed class WorkbenchDecisionService
                 "No single canonical Dossier descriptor owns this id."));
 
         var stored = snapshot.Item.Decision;
-        if (stored is { State: "succeeded" })
+        if (stored is { State: "succeeded" } && stored.Outcome != "record-only")
             return stored.OperationId == operationId
                 ? new(new WorkbenchDecisionResult
                 {
