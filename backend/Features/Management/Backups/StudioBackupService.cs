@@ -90,6 +90,9 @@ public sealed class StudioBackupService
     private readonly ControlPlaneAuditLog? _audit;
     private readonly SemaphoreSlim _run = new(1, 1);
     private readonly SemaphoreSlim _upload = new(1, 1);
+    private readonly object _readAuditLock = new();
+    private readonly Dictionary<(string Actor, string Operation, string? Target, string Outcome), DateTimeOffset> _recentReads = new();
+    public static readonly TimeSpan ReadAuditWindow = TimeSpan.FromMinutes(1);
 
     public StudioBackupService(
         IConfiguration configuration,
@@ -623,6 +626,30 @@ public sealed class StudioBackupService
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             _logger?.LogError("backup-audit-write-failed {Operation} {Reason}", record.Operation, ex.Message);
+        }
+    }
+
+    /// <summary>Records the first read for each actor, operation, archive and outcome in a rolling minute.</summary>
+    public void AuditRead(string actor, string operation, string? target, string outcome, string summary)
+    {
+        if (_audit is null) return;
+        var key = (actor, operation, target, outcome);
+        lock (_readAuditLock)
+        {
+            var now = _clock.GetUtcNow();
+            if (_recentReads.TryGetValue(key, out var previous) && now - previous < ReadAuditWindow) return;
+            foreach (var stale in _recentReads.Where(pair => now - pair.Value >= ReadAuditWindow)
+                         .Select(pair => pair.Key).ToArray())
+                _recentReads.Remove(stale);
+            try
+            {
+                _audit.Append(BackupAudit.Record(BackupAudit.ManualPrefix + actor, operation, outcome, target, summary));
+                _recentReads[key] = now;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger?.LogError("backup-audit-write-failed {Operation} {Reason}", operation, ex.Message);
+            }
         }
     }
 

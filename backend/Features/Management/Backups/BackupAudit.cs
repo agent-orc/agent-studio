@@ -25,18 +25,27 @@ public static partial class BackupAudit
     public const string Retention = "backup.retention";
     public const string Decrypt = "backup.decrypt";
     public const string Restore = "backup.restore";
+    public const string InventoryRead = "backup.inventory.read";
+    public const string ContentsRead = "backup.contents.read";
 
     public const string Succeeded = "succeeded";
     public const string Failed = "failed";
     public const string Denied = "denied";
 
-    public static readonly IReadOnlyList<string> Operations = [Create, Upload, Verify, Retention, Decrypt, Restore];
+    public static readonly IReadOnlyList<string> Operations = [Create, Upload, Verify, Retention, Decrypt, Restore, InventoryRead, ContentsRead];
 
     /// <summary>The audit actor of a backup trigger: <c>manual:&lt;actor&gt;</c> names the principal; any other trigger stands for itself.</summary>
     public static string Actor(string trigger)
         => trigger.StartsWith(ManualPrefix, StringComparison.Ordinal) && trigger.Length > ManualPrefix.Length
             ? trigger[ManualPrefix.Length..]
             : trigger;
+
+    /// <summary>Only archive-shaped route identifiers may enter the audit target field.</summary>
+    public static string? ArchiveTarget(string id)
+        => ArchiveId().IsMatch(id) ? id : null;
+
+    [GeneratedRegex(@"^studio-backup-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$")]
+    private static partial Regex ArchiveId();
 
     public static ControlPlaneAuditRecord Record(string trigger, string operation, string outcome, string? target,
         string summary, object? facts = null)
