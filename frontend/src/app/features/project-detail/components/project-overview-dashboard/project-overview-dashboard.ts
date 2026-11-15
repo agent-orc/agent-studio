@@ -24,6 +24,23 @@ import type { ProjectRailKey } from '../project-shell/project-shell.config';
 import { WikiLiveRefreshService } from '../../services/wiki-live-refresh.service';
 import { mergeRecentWikiFeed } from './project-overview-wiki-feed';
 import { ReviewStatisticsComponent } from '../../../tokens/components/review-statistics/review-statistics';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { lastDeploymentTone } from '../project-deployment-panel/deployment-status-tone';
+
+type DeploymentOverviewState = 'pending' | 'current' | 'failed' | 'unknown';
+/** Deployment block state onto the shared tones (AGT-3403). */
+const DEPLOYMENT_STATE_TONE: Readonly<Record<DeploymentOverviewState, StatusTone>> = {
+  failed: 'danger',
+  pending: 'warning',
+  current: 'success',
+  unknown: 'neutral',
+};
+
+/** One sync direction: nothing left is success, commits left need an operator step, no upstream is neutral. */
+export function syncDirectionTone(hasUpstream: boolean, count: number): StatusTone {
+  if (!hasUpstream) return 'neutral';
+  return count === 0 ? 'success' : 'warning';
+}
 
 /** Operator-first Project Overview. Every block is a compact projection of an
  * existing detail truth; it owns no task, URL, deployment, or Wiki mutation. */
@@ -36,6 +53,7 @@ import { ReviewStatisticsComponent } from '../../../tokens/components/review-sta
     ProjectOverviewUrlsComponent,
     ProjectVisualEvidenceQueueComponent,
     ReviewStatisticsComponent,
+    StatusIndicatorComponent,
   ],
   providers: [WikiLiveRefreshService],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -81,13 +99,15 @@ export class ProjectOverviewDashboardComponent {
     const total = this.deployment()?.lastDeployment?.commits.length ?? 0;
     return Math.max(0, total - this.deployedCommits().length);
   });
-  readonly deploymentState = computed<'pending' | 'current' | 'failed' | 'unknown'>(() => {
+  readonly deploymentState = computed<DeploymentOverviewState>(() => {
     const summary = this.deployment();
     if (!summary?.available || summary.pendingCount == null) return 'unknown';
     const status = summary.lastDeployment?.status.toLowerCase();
     if (status && status !== 'ok') return 'failed';
     return summary.pendingCount > 0 ? 'pending' : 'current';
   });
+  readonly deploymentStateTone = computed(() => DEPLOYMENT_STATE_TONE[this.deploymentState()]);
+  readonly lastDeploymentTone = lastDeploymentTone;
   readonly deploymentStateLabel = computed(() => {
     switch (this.deploymentState()) {
       case 'failed': return 'Check deployment';
@@ -187,6 +207,10 @@ export class ProjectOverviewDashboardComponent {
 
   branchKind(branch: GitBranchEntry): string {
     return branch.category === 'task' ? 'Task branch' : 'Integration branch';
+  }
+
+  syncTone(branch: GitBranchEntry, count: number): StatusTone {
+    return syncDirectionTone(!!branch.upstream, count);
   }
 
   pushLabel(branch: GitBranchEntry): string {

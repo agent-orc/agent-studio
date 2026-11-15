@@ -5,6 +5,8 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideRouter } from '@angular/router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectUrlPreviewTabComponent } from './project-url-preview-tab.component';
+import { previewPillTone } from './project-url-preview-status';
+import { processStateTone } from '../project-url-process-console/project-url-process-console';
 import {
   ProjectUrlProbeService,
   type ProjectUrlReadiness,
@@ -223,6 +225,7 @@ describe('ProjectUrlPreviewTabComponent', () => {
     const pill = el.querySelector('[data-testid="url-preview-status"]');
     expect(pill?.getAttribute('data-status')).toBe('local-only');
     expect(pill?.textContent?.trim()).toBe('local only');
+    expect(el.querySelector('[data-testid="url-preview-status-state"]')?.getAttribute('data-tone')).toBe('info');
     const card = el.querySelector('.url-preview__state-card');
     expect(card?.textContent).toContain('Preview is local only');
     expect(card?.textContent).toContain('This URL points at a loopback or link-local address.');
@@ -392,6 +395,7 @@ describe('ProjectUrlPreviewTabComponent', () => {
     expect(consoleEl?.textContent).toContain('Generating browser application bundles');
     expect(consoleEl?.querySelector('[data-testid="url-preview-process-status"]')?.textContent)
       .toContain('Starting · console active');
+    expect(consoleEl?.querySelector('[data-testid="url-preview-process-status"]')?.getAttribute('data-tone')).toBe('running');
   });
 
   it.each([
@@ -567,5 +571,30 @@ describe('ProjectUrlPreviewTabComponent', () => {
     expect(TestBed.inject(ProjectUrlRecoveryService).takeQuickSetupRequest()).toEqual({
       urlId: 'url-1', suggestion: README_SUGGESTION,
     });
+  });
+});
+
+describe('previewPillTone', () => {
+  it('maps every preview status to a tone and falls back to neutral', () => {
+    expect(previewPillTone('running')).toBe('success');
+    expect(previewPillTone('building')).toBe('running');
+    expect(previewPillTone('checking')).toBe('running');
+    expect(previewPillTone('blocked')).toBe('warning');
+    expect(previewPillTone('failed')).toBe('danger');
+    expect(previewPillTone('offline')).toBe('neutral');
+    expect(previewPillTone('local-only')).toBe('info');
+    expect(previewPillTone('custom')).toBe('neutral');
+    expect(previewPillTone('later')).toBe('neutral');
+  });
+});
+
+describe('processStateTone', () => {
+  it('maps preview server process states and treats a clean exit as a warning', () => {
+    expect(processStateTone({ state: 'starting', exitCode: null })).toBe('running');
+    expect(processStateTone({ state: 'running', exitCode: null })).toBe('success');
+    expect(processStateTone({ state: 'stopped', exitCode: null })).toBe('neutral');
+    expect(processStateTone({ state: 'exited', exitCode: 0 })).toBe('warning');
+    expect(processStateTone({ state: 'exited', exitCode: 1 })).toBe('danger');
+    expect(processStateTone({ state: 'failed', exitCode: null })).toBe('danger');
   });
 });

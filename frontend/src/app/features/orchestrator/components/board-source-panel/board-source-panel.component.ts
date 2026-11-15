@@ -1,15 +1,24 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { BoardSourceService, BoardSourceStatus } from '../../../../services/board-source.service';
 
-const READINESS_LABELS: Record<BoardSourceStatus['readiness']['state'], string> = {
-  'shadow-off': 'Shadow off',
-  'no-comparisons': 'No comparison yet',
-  'comparisons-stalled': 'Comparisons stalled',
-  'clean-window-open': 'Clean window open',
-  ready: 'Ready for task-server',
-  switched: 'Task Server answers',
+type ReadinessState = BoardSourceStatus['readiness']['state'];
+
+const READINESS: Record<ReadinessState, { label: string; tone: StatusTone }> = {
+  'shadow-off': { label: 'Shadow off', tone: 'neutral' },
+  'no-comparisons': { label: 'No comparison yet', tone: 'neutral' },
+  'comparisons-stalled': { label: 'Comparisons stalled', tone: 'warning' },
+  'clean-window-open': { label: 'Clean window open', tone: 'running' },
+  ready: { label: 'Ready for task-server', tone: 'success' },
+  switched: { label: 'Task Server answers', tone: 'success' },
 };
+
+/** Tone of the mirror sync fact: synced, waiting for the first sync, or off. */
+export function mirrorSyncTone(status: Pick<BoardSourceStatus, 'mirroring' | 'sync'>): StatusTone {
+  if (status.sync.syncedGeneration !== null) return 'success';
+  return status.mirroring ? 'warning' : 'neutral';
+}
 
 /**
  * Metrics card of the board read model (pipeline delivery target M1 and M2):
@@ -21,7 +30,7 @@ const READINESS_LABELS: Record<BoardSourceStatus['readiness']['state'], string> 
 @Component({
   selector: 'app-board-source-panel',
   standalone: true,
-  imports: [DatePipe, DecimalPipe],
+  imports: [DatePipe, DecimalPipe, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './board-source-panel.component.html',
   styleUrl: './board-source-panel.component.scss',
@@ -41,9 +50,15 @@ export class BoardSourcePanelComponent implements OnInit {
     void this.api.load();
   }
 
-  readinessLabel(state: BoardSourceStatus['readiness']['state']): string {
-    return READINESS_LABELS[state];
+  readinessLabel(state: ReadinessState): string {
+    return READINESS[state]?.label ?? state;
   }
+
+  readinessTone(state: ReadinessState): StatusTone {
+    return READINESS[state]?.tone ?? 'neutral';
+  }
+
+  readonly mirrorSyncTone = mirrorSyncTone;
 
   startExplain(fingerprint: string): void {
     this.explaining.set(fingerprint);

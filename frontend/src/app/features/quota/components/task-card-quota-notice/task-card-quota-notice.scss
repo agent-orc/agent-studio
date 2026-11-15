@@ -1,9 +1,10 @@
 :host { display: contents; }
+
+// AGT-3403: the refusal reads from the shared status indicator; the paragraph
+// only keeps the status role and the spacing inside the card. The full text is
+// also the indicator tooltip, so a truncated label stays readable.
 .task-card-quota-notice {
+  display: flex;
+  min-width: 0;
   margin: var(--studio-spacing-2) 0;
-  padding: var(--studio-spacing-2);
-  border: 1px solid color-mix(in srgb, var(--studio-error) 46%, var(--studio-border));
-  border-radius: var(--studio-action-radius-sm);
-  background: color-mix(in srgb, var(--studio-error) 14%, var(--studio-bg-elevated));
-  color: var(--studio-text-primary);
 }

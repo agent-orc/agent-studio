@@ -57,6 +57,19 @@ The spec covers the desktop project picker and the narrow-screen **More →
 Switch project** path at 1280 and 390 px in both themes. With
 `JOB_RESULTS_DIR` set, it writes four screenshots there for review.
 
+### Remote concept journey
+
+Run `npm --prefix frontend run e2e -- e2e/project/concept-remote-journey.spec.ts`.
+The `concept-remote` profile uses a disposable Git origin and the same remote
+coding and review host processes as the first-run profile. Its fake coding CLI
+authors a contract-valid Dossier in the claimed worktree. The spec enrolls a
+throwaway pull gate worker against the isolated backend, records the initial
+run and a follow-up, and checks Dossier publication, owner choices, promotion,
+and completion. It then runs one promoted coding slice through a batch gate
+executed by the pull worker.
+The profile does not contact an SSH host or use a real provider
+credential. Screenshots go to `JOB_RESULTS_DIR` when set.
+
 ### Product session over HTTPS
 
 Run `npm --prefix frontend run e2e -- e2e/security/product-session-networked-https.spec.ts`

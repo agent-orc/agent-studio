@@ -1,7 +1,23 @@
 import { WikiClassification } from '../../../../models/project-docs.model';
+import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 /** Visual tone of a classification badge in the tree / folder table. */
 export type WikiClassBadgeTone = 'stale' | 'superseded' | 'muted';
+
+/**
+ * Shared status-indicator tone for a classification status (AGT-3403):
+ * veraltet is a danger, überholt needs attention, archived and any other raw
+ * status stay neutral.
+ */
+const CLASS_BADGE_STATUS_TONES: Readonly<Record<WikiClassBadgeTone, StatusTone>> = {
+  stale: 'danger',
+  superseded: 'warning',
+  muted: 'neutral',
+};
+
+export function classificationStatusTone(tone: WikiClassBadgeTone | null | undefined): StatusTone {
+  return (tone && CLASS_BADGE_STATUS_TONES[tone]) || 'neutral';
+}
 
 /** One compact classification badge (status chip or 2-3-letter type code). */
 export interface WikiClassBadge {

@@ -11,7 +11,7 @@
     <div class="codex-auth" [attr.data-state]="phase()" aria-live="polite">
       @if (phase() === 'starting') {
         <div class="codex-auth__status" data-testid="codex-sign-in-starting">
-          <span class="codex-auth__spinner" aria-hidden="true"></span>
+          <app-status-indicator tone="running" label="Starting" testId="codex-sign-in-starting-state" />
           <p>{{ detail() }}</p>
         </div>
       }
@@ -45,7 +45,7 @@
 
       @if (phase() === 'verifying') {
         <div class="codex-auth__status" data-testid="codex-sign-in-verifying">
-          <span class="codex-auth__spinner" aria-hidden="true"></span>
+          <app-status-indicator tone="running" label="Verifying" testId="codex-sign-in-verifying-state" />
           <p>{{ detail() }}</p>
         </div>
       }

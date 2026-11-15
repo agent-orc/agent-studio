@@ -2,7 +2,8 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 import { NgTemplateOutlet } from '@angular/common';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
 import { StudioIconComponent } from '../studio-icon/studio-icon.component';
-import { dossierPatternIcon, dossierStatusLabel } from '../../models/dossier-presentation';
+import { dossierPatternIcon, dossierStatusLabel, dossierStatusTone } from '../../models/dossier-presentation';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import { DossierReferenceNavigationService } from '../../services/dossier-reference-navigation.service';
 import type { DossierReference } from '../../services/dossier-reference.util';
 
@@ -16,7 +17,7 @@ import type { DossierReference } from '../../services/dossier-reference.util';
 @Component({
   selector: 'app-dossier-reference-chip',
   standalone: true,
-  imports: [NgTemplateOutlet, AppTooltipDirective, StudioIconComponent],
+  imports: [NgTemplateOutlet, AppTooltipDirective, StudioIconComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './dossier-reference-chip.html',
   styleUrl: './dossier-reference-chip.scss',
@@ -36,6 +37,7 @@ export class DossierReferenceChipComponent {
   readonly label = computed(() => this.reference().key ?? this.reference().id);
   readonly icon = computed(() => dossierPatternIcon(this.reference().pattern));
   readonly statusLabel = computed(() => dossierStatusLabel(this.reference()));
+  readonly statusTone = computed(() => dossierStatusTone(this.reference()));
   readonly route = computed(() => this.navigation.routeFor(this.reference()));
   readonly ariaLabel = computed(() =>
     `Open Dossier ${this.label()}: ${this.reference().title}`);

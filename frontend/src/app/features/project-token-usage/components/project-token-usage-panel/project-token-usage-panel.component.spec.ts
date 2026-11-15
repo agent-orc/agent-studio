@@ -5,7 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { By } from '@angular/platform-browser';
-import { ProjectTokenUsagePanelComponent } from './project-token-usage-panel.component';
+import { ProjectTokenUsagePanelComponent, tokenFreshnessTone } from './project-token-usage-panel.component';
 import { ProjectPipelineCostTrendComponent } from '../project-pipeline-cost-trend/project-pipeline-cost-trend.component';
 import type { ProjectPipelineCostTimeline, ProjectTokenUsageSummary } from '../../../../features/project-token-usage';
 
@@ -289,7 +289,17 @@ describe('ProjectTokenUsagePanelComponent (freshness)', () => {
     const host: HTMLElement = fixture.nativeElement;
     expect(host.querySelector('[data-testid="token-usage-as-of"]')?.textContent)
       .toContain('2026-08-09 10:00 UTC');
+    expect(host.querySelector('[data-testid="token-usage-freshness"]')?.getAttribute('data-tone')).toBe('warning');
     expect(host.querySelector('[data-testid="token-usage-source-warning"]')?.textContent)
       .toContain('may be incomplete');
+  });
+});
+
+describe('tokenFreshnessTone', () => {
+  it('maps freshness onto a status tone, unknown stays neutral', () => {
+    expect(tokenFreshnessTone('complete')).toBe('success');
+    expect(tokenFreshnessTone('partial')).toBe('warning');
+    expect(tokenFreshnessTone('unavailable')).toBe('danger');
+    expect(tokenFreshnessTone('later')).toBe('neutral');
   });
 });

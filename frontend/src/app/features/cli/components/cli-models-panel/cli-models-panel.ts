@@ -6,6 +6,7 @@ import { CliCatalogStore } from '../../services/cli-catalog.store';
 import { ModelMigrationCatalogStore } from '../../services/model-migration-catalog.store';
 import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliFallbackState, type CliModelFallbackRoute, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
 import type { ActiveModelSwitch, EffectiveModelSelection } from '../../../quota/services/quota-api.service';
@@ -24,6 +25,17 @@ interface CliModelGroup {
   defaultModel: CliModelInfo | null;
 }
 
+/** Quota fallback state per CLI: any active or operator-preferred fallback needs attention. */
+const FALLBACK_STATE_TONES: Readonly<Record<CliFallbackState['state'], StatusTone>> = {
+  normal: 'neutral',
+  'fallback-active': 'warning',
+  'fallback-preferred': 'warning',
+};
+
+export function fallbackStateTone(state: string | null | undefined): StatusTone {
+  return FALLBACK_STATE_TONES[state as CliFallbackState['state']] ?? 'neutral';
+}
+
 /**
  * CLI Management rows show each CLI's primary model and fallback route, then
  * expand to the route editor and discovered models. Data comes from the live
@@ -37,7 +49,7 @@ interface CliModelGroup {
   standalone: true,
   // The badge reads the migration store through the CLI barrel. Defer it so
   // file-order-dependent barrel evaluation cannot leave Angular an undefined dependency.
-  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, DatePipe],
+  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, DatePipe, StatusIndicatorComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -291,6 +303,10 @@ export class CliModelsPanelComponent implements OnInit {
   price(input: number | null, output: number | null): string {
     if (input === null || output === null) return 'price unavailable';
     return `$${input.toFixed(2)} in / $${output.toFixed(2)} out`;
+  }
+
+  fallbackStateTone(cliType: CliType): StatusTone {
+    return fallbackStateTone(this.fallbackStates()[cliType]?.state);
   }
 
   fallbackStateLabel(cliType: CliType): string {

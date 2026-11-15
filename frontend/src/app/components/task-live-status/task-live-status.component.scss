@@ -75,7 +75,9 @@
   flex: 0 0 auto;
 }
 
-.task-live--active .task-live__signal {
+.task-live__signal--spacer { visibility: hidden; }
+
+.task-live--active .task-live__signal:not(.task-live__signal--spacer) {
   background: var(--studio-accent-3-strong);
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 45%, transparent);
   animation: task-live-pulse 1.35s ease-out infinite;

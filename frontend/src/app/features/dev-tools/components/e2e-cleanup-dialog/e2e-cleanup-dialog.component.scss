@@ -158,4 +158,4 @@
   background: var(--studio-bg-hover);
 }
 .report__line { font-size: 13px; color: var(--studio-fg); }
-.report__line--err { margin-top: 8px; color: var(--severity-high); }
+.report__line--failed { margin-top: 8px; }

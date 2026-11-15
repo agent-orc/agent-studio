@@ -760,7 +760,7 @@ public sealed class DecisionCardApplyTests : IDisposable
         Assert.Equal(2, decision.Decision.Options[1].Requirements.Count);
         Assert.Contains(source.Key!, decision.References.RelatedTo);
         Assert.Contains("docs/release/index.html", File.ReadAllText(Path.Combine(decision.FolderPath, "prompt.md")));
-        Assert.Contains("\"status\": \"decided\"", File.ReadAllText(descriptorPath));
+        Assert.DoesNotContain("\"status\": \"decided\"", File.ReadAllText(descriptorPath));
     }
 
     // ---- reminder ----

@@ -11,7 +11,7 @@
     <div class="claude-auth" [attr.data-state]="phase()" aria-live="polite">
       @if (phase() === 'starting') {
         <div class="claude-auth__status" data-testid="claude-sign-in-starting">
-          <span class="claude-auth__spinner" aria-hidden="true"></span>
+          <app-status-indicator tone="running" label="Starting" testId="claude-sign-in-starting-state" />
           <p>{{ detail() }}</p>
         </div>
       }
@@ -33,7 +33,7 @@
 
       @if (phase() === 'verifying') {
         <div class="claude-auth__status" data-testid="claude-sign-in-verifying">
-          <span class="claude-auth__spinner" aria-hidden="true"></span>
+          <app-status-indicator tone="running" label="Verifying" testId="claude-sign-in-verifying-state" />
           <p>{{ detail() }}</p>
         </div>
       }

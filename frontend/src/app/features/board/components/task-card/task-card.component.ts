@@ -1,3 +1,5 @@
+import { commitEmptyTone, decisionTone, dependencyTone, executionTone, gradeTone, issueTone, loopTone, mergeTone, phaseTone, reviewTone } from './task-card-status-tones';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, input, output, signal } from '@angular/core';
 import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecutionLocation, type TaskInfo, type PendingIntent } from '../../../../models/task.model';
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
@@ -100,13 +102,24 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent, DossierSliceLinkComponent, AcceptanceReadinessNoteComponent],
+  imports: [StatusIndicatorComponent, TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent, DossierSliceLinkComponent, AcceptanceReadinessNoteComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
 })
 export class TaskCardComponent implements OnInit, OnDestroy {
   readonly job = input.required<TaskInfo>();
+  /** State-to-tone maps for the card's status indicators (AGT-3403). */
+  protected readonly gradeTone = gradeTone;
+  protected readonly decisionTone = decisionTone;
+  protected readonly dependencyTone = dependencyTone;
+  protected readonly phaseTone = phaseTone;
+  protected readonly executionTone = executionTone;
+  protected readonly loopTone = loopTone;
+  protected readonly reviewTone = reviewTone;
+  protected readonly issueTone = issueTone;
+  protected readonly mergeTone = mergeTone;
+  protected readonly commitEmptyTone = commitEmptyTone;
   readonly compact = input<boolean>(false);
   readonly mutationsBlocked = input<boolean>(false);
   /**

@@ -1,10 +1,19 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import type { ProjectDeploymentParameterType } from '../../../../models/project-overview.model';
 import { TaskService } from '../../../../services/task.service';
 
 type DefinitionState = 'empty' | 'loading' | 'valid' | 'invalid';
+
+/** Preview result state onto the shared status tones (AGT-3403). */
+export const DEFINITION_RESULT_STATUS: Readonly<Record<DefinitionState, { tone: StatusTone; label: string }>> = {
+  empty: { tone: 'neutral', label: 'Preview not generated' },
+  loading: { tone: 'running', label: 'Validating definition...' },
+  valid: { tone: 'success', label: 'Definition valid' },
+  invalid: { tone: 'danger', label: 'Definition needs attention' },
+};
 
 interface ParameterDraft {
   id: number;
@@ -31,7 +40,7 @@ interface ParameterFieldErrors {
 @Component({
   selector: 'app-deployment-definition-editor',
   standalone: true,
-  imports: [FormsModule, PendingButtonDirective],
+  imports: [FormsModule, PendingButtonDirective, StatusIndicatorComponent],
   templateUrl: './deployment-definition-editor.html',
   styleUrl: './deployment-definition-editor.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -46,6 +55,7 @@ export class DeploymentDefinitionEditorComponent {
   readonly commandPlaceholder = 'bash scripts/deploy.sh --branch {{branch}}';
   readonly parameters = signal<ParameterDraft[]>([]);
   readonly state = signal<DefinitionState>('empty');
+  readonly resultStatus = computed(() => DEFINITION_RESULT_STATUS[this.state()]);
   readonly commandError = signal<string | null>(null);
   readonly parameterErrors = signal<Record<number, ParameterFieldErrors>>({});
   readonly generalErrors = signal<string[]>([]);

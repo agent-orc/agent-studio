@@ -82,6 +82,9 @@ describe('FlowHealthPageComponent', () => {
     }
     const review = host.querySelector('[data-testid="flow-health-stage"][data-stage="review"]')!;
     expect(review.getAttribute('data-status')).toBe('missed');
+    const reviewStatus = review.querySelector('[data-testid="status-indicator"]') as HTMLElement;
+    expect(reviewStatus.dataset['tone']).toBe('warning');
+    expect(reviewStatus.textContent!.trim()).toBe('Missed');
     const gateMinutes = host.querySelector('[data-figure="gateMinutesPerCard"]')!;
     expect(gateMinutes.querySelector('[data-testid="flow-health-target"]')!.textContent!.trim()).toBe('≤ 10 min');
     expect(gateMinutes.querySelector('[data-testid="flow-health-value-7d"]')!.textContent!.trim()).toBe('8 min');

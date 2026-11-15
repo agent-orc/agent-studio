@@ -2,12 +2,23 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { AspectFindingsListComponent } from '../../../../components/aspect-findings';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
-import {
-  verdictGlyph,
-  verdictLabel,
-  verdictTone,
-  type CompletionLoopVerdict,
-} from '../../models/task-timeline.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { verdictLabel, type CompletionLoopVerdict } from '../../models/task-timeline.model';
+
+const LOOP_VERDICT_TONES: Readonly<Record<CompletionLoopVerdict, StatusTone>> = {
+  accepted: 'success',
+  reopened: 'warning',
+  escalated: 'danger',
+};
+
+/**
+ * Status tone of the latest completion-loop verdict (AGT-3403). No verdict
+ * yet means the loop is still in progress; an unknown verdict stays neutral.
+ */
+export function completionLoopVerdictTone(v: CompletionLoopVerdict | null): StatusTone {
+  if (v === null) return 'running';
+  return LOOP_VERDICT_TONES[v] ?? 'neutral';
+}
 
 /**
  * Compact attempt-cycle indicator for the task-detail Overview tab
@@ -26,7 +37,7 @@ import {
   selector: 'app-completion-loop-indicator',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, AspectFindingsListComponent],
+  imports: [TooltipDirective, AspectFindingsListComponent, StatusIndicatorComponent],
   templateUrl: './completion-loop-indicator.component.html',
   styleUrl: './completion-loop-indicator.component.scss',
 })
@@ -49,12 +60,8 @@ export class CompletionLoopIndicatorComponent {
     return verdictLabel(v);
   }
 
-  verdictGlyph(v: CompletionLoopVerdict | null): string {
-    return verdictGlyph(v);
-  }
-
-  verdictTone(v: CompletionLoopVerdict | null): string {
-    return verdictTone(v);
+  verdictStatusTone(v: CompletionLoopVerdict | null): StatusTone {
+    return completionLoopVerdictTone(v);
   }
 
   formatRelativeTime(iso: string): string {

@@ -1,11 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input } from '@angular/core';
 import { BatchGateService } from '../../../services/batch-gate.service';
-import { batchEjectionLabel, batchFallbackWaitLabel, batchMemberFor } from '../../../models/batch-gate.model';
+import { batchEjectionLabel, batchFallbackWaitLabel, batchMemberFor, type BatchMemberState, type BatchMemberStatus } from '../../../models/batch-gate.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-batch-member',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [StatusIndicatorComponent],
   templateUrl: './batch-member.html',
   styleUrl: './batch-member.scss',
 })
@@ -31,6 +33,24 @@ export class BatchMemberComponent {
     return batch?.phase === 'red' ? batch.phaseReason ?? item.reasonDetail ?? item.reason ?? 'Batch gate failed' : null;
   });
   readonly fallbackWait = computed(() => batchFallbackWaitLabel(this.member()?.waitKind));
+  readonly memberTone = (status: BatchMemberStatus): StatusTone => ({
+    pending: 'neutral', 'in-batch': 'info', published: 'success', fallback: 'warning',
+    'pre-check-red': 'danger', 'review-fix': 'warning',
+  } satisfies Record<BatchMemberStatus, StatusTone>)[status];
+  readonly memberLabel = (item: BatchMemberState): string => {
+    let label: string;
+    switch (item.status) {
+      case 'pending': label = 'Batch pending'; break;
+      case 'in-batch': label = `Batch ${item.batchId} · ${item.position ?? '?'} of ${item.size ?? '?'}`; break;
+      case 'published': label = 'Batch published'; break;
+      case 'fallback': label = `Per-task fallback${this.ejection() ? ` · ${this.ejection()}` : ''}${this.fallbackWait() ? ` · ${this.fallbackWait()}` : ''}`; break;
+      case 'pre-check-red': label = 'Pre-check red'; break;
+      case 'review-fix': label = `Review fix before batch${item.reason ? ` · ${item.reason}` : ''}`; break;
+    }
+    if (this.redReason()) label += ` · in a red batch: ${this.redReason()}`;
+    if (item.preCheck && item.status !== 'pre-check-red') label += ` · pre-check ${item.preCheck.outcome}`;
+    return label;
+  };
   constructor() {
     effect(onCleanup => {
       const project = this.project();

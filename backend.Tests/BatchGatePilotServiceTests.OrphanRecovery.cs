@@ -123,6 +123,13 @@ public sealed class BatchGatePilotOrphanRecoveryTests : BatchGatePilotServiceTes
         _gate.Batch = request => Green(request.ExpectedSha);
 
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        using (var before = System.Text.Json.JsonDocument.Parse(
+                   System.Text.Json.JsonSerializer.Serialize(pilot.State(ProjectName, history: 0))))
+        {
+            var batch = Assert.Single(before.RootElement.GetProperty("batches").EnumerateArray());
+            Assert.Equal(formed.BatchId, batch.GetProperty("BatchId").GetString());
+            Assert.NotEqual(System.Text.Json.JsonValueKind.Null, batch.GetProperty("nextAction").ValueKind);
+        }
         await pilot.TickAsync(CancellationToken.None);
         await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
 

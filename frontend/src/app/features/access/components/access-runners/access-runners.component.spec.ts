@@ -108,7 +108,7 @@ describe('AccessRunnersComponent', () => {
     expect(text('access-runner-expiry-runner_bound')).toContain('Expires 18 Nov 2026');
     expect(text('access-runner-projects-runner_soon')).toContain('No project');
     expect(text('access-runner-expiry-runner_soon')).toContain('Expires in 5 days');
-    expect(element.querySelector('[data-testid="access-runner-expiry-runner_soon"] .access-badge')?.getAttribute('data-tone')).toBe('attention');
+    expect((element.querySelector('[data-testid="access-runner-expiry-runner_soon"] [data-testid="status-indicator"]') as HTMLElement).dataset['tone']).toBe('warning');
     expect(text('access-runner-projects-runner_legacy')).toContain('All projects');
     expect(text('access-runner-projects-runner_legacy')).toContain('Before binding');
     expect(text('access-runner-expiry-runner_legacy')).toContain('No expiry');

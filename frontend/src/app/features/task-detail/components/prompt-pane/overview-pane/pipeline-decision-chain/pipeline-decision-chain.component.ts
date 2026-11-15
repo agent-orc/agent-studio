@@ -11,7 +11,8 @@ import type {
 import { formatClock, formatStepDuration } from '../overview-pane-formatters';
 import { clearVisibleInterval, setVisibleInterval } from '../../../../../../utils/visible-interval';
 import { summarizeDecisionCost } from '../../../../../task-pipeline';
-import { buildDecisionTransitions, type DecisionTransitionVm } from './decision-chain.util';
+import { buildDecisionTransitions, decisionVerdictTone, operatorIntentOutcome, type DecisionTransitionVm } from './decision-chain.util';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../../components/status-indicator/status-indicator.component';
 
 interface ReceiptSummary {
   receiptId: string; occurrenceId: string; taskId: string | null; projectId: string | null;
@@ -43,7 +44,7 @@ interface OperatorIntent {
 @Component({
   selector: 'app-pipeline-decision-chain',
   standalone: true,
-  imports: [TooltipDirective, DisclosureMarkerComponent],
+  imports: [TooltipDirective, DisclosureMarkerComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './pipeline-decision-chain.component.html',
   styleUrl: './pipeline-decision-chain.component.scss',
@@ -186,12 +187,8 @@ export class PipelineDecisionChainComponent implements OnDestroy {
     }
   }
 
-  intentOutcomeText(intent: OperatorIntent): string {
-    if (intent.outcome.startsWith('applied:run-limit:')) return 'applied to the card';
-    if (intent.outcome === 'applied:stopped-and-held') return 'run stopped and card held';
-    if (intent.outcome === 'applied:run-finished-held') return 'card held after the run finished';
-    if (intent.outcome.startsWith('recorded, not applied')) return 'recorded, not applied';
-    return intent.outcome;
+  intentOutcome(intent: OperatorIntent): { label: string; tone: StatusTone } {
+    return operatorIntentOutcome(intent.outcome);
   }
 
   receiptCost(item: ReceiptSummary): string {
@@ -226,6 +223,7 @@ export class PipelineDecisionChainComponent implements OnDestroy {
   readonly summary = computed(() => summarizeDecisionCost(this.decisionCost()));
 
   readonly formatClock = formatClock;
+  readonly verdictTone = decisionVerdictTone;
   readonly formatStepDuration = formatStepDuration;
 
   modelTooltip(item: DecisionTransitionVm): string {

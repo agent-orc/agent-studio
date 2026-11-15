@@ -33,7 +33,7 @@
               <td class="access-numeric" [attr.title]="grant.usesLastHour + ' used in the last hour'">{{ grant.usesLastHour }} / {{ grant.ratePerHour }} per hour</td>
               <td>{{ windowText(grant.window) }}</td>
               <td class="access-numeric" [attr.title]="issuedNote(grant)">{{ time(grant.expiresAt) }}</td>
-              <td><span class="access-badge" [attr.data-tone]="grant.state === 'active' ? 'active' : 'muted'" [attr.title]="grant.revokedAt ? 'Revoked ' + time(grant.revokedAt) + ' by ' + person(grant.revokedBy) : null">{{ stateLabel(grant.state) }}</span></td>
+              <td><app-status-indicator [tone]="grant.state === 'active' ? 'success' : 'neutral'" [label]="stateLabel(grant.state)" [detail]="grant.revokedAt ? 'Revoked ' + time(grant.revokedAt) + ' by ' + person(grant.revokedBy) : null" [compact]="true" /></td>
               <td class="grants__reason">{{ grant.reason }}</td>
               <td class="access-actions">
                 @if (grant.state === 'active') {

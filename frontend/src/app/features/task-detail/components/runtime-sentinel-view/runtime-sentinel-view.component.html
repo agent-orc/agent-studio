@@ -1,6 +1,11 @@
 @for (aspect of sentinels().aspects; track $index) {
   <section class="runtime-verdict" [attr.data-status]="aspect.status" data-testid="activity-aspect-verdict">
-    <span class="runtime-verdict__pill">{{ aspect.status }}</span>
+    <app-status-indicator
+      class="runtime-verdict__status"
+      [tone]="aspectTone(aspect.status)"
+      [label]="aspect.status"
+      [compact]="true"
+      testId="activity-aspect-verdict-status" />
     <span class="runtime-verdict__content">
       <strong>{{ aspect.summary || 'No summary supplied.' }}</strong>
       @if (aspect.evidenceChecked.length > 0) {
@@ -16,7 +21,11 @@
   </section>
 }
 @for (terminal of sentinels().terminals; track $index) {
-  <span class="runtime-terminal" [attr.data-kind]="terminal.kind" data-testid="activity-terminal-sentinel">
-    {{ terminalLabel(terminal) }}@if (terminal.detail) { · {{ terminal.detail }} }
-  </span>
+  <app-status-indicator
+    class="runtime-terminal"
+    [attr.data-kind]="terminal.kind"
+    [tone]="terminalTone(terminal.kind)"
+    [label]="terminalText(terminal)"
+    [compact]="true"
+    testId="activity-terminal-sentinel" />
 }

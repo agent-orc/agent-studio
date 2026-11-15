@@ -14,7 +14,9 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import { TaskService } from '../../../../services/task.service';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
-import { ProjectUrlProbeService, ProjectUrlStatusLabelPipe, type ProjectUrlStatus } from '../../../../services/project-url-probe.service';
+import { ProjectUrlProbeService, ProjectUrlStatusLabelPipe } from '../../../../services/project-url-probe.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { type UrlPill, urlDiagnosisTone, urlPillTone, urlStripTone } from './project-urls-status';
 import { WorkspaceManagerService } from '../../../shell/state/workspace-manager.service';
 import { ProjectUrlRecoveryService } from '../../services/project-url-recovery.service';
 import type {
@@ -24,9 +26,6 @@ import type {
   RegistryProjectUrl,
 } from '../../../../models/task.model';
 
-/** Pill shown per row: probe-derived status, upgraded to "building" while a
- *  start/restart is in flight. */
-type UrlPill = ProjectUrlStatus | 'building';
 
 /**
  * Project Hub "Project URLs" panel — one flat page to manage a project's
@@ -40,7 +39,7 @@ type UrlPill = ProjectUrlStatus | 'building';
 @Component({
   selector: 'app-project-urls-panel',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, TooltipDirective, ProjectUrlStatusLabelPipe],
+  imports: [FormsModule, StudioIconComponent, TooltipDirective, ProjectUrlStatusLabelPipe, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './project-urls-panel.component.html',
@@ -90,6 +89,9 @@ export class ProjectUrlsPanelComponent {
   readonly startableCount = computed(() =>
     this.urls().filter(u => !!u.startRule).length);
   readonly anyBuilding = computed(() => this.buildingIds().size > 0);
+  readonly stripTone = computed(() => urlStripTone(this.runningCount(), this.startableCount(), this.anyBuilding()));
+  readonly pillTone = urlPillTone;
+  readonly diagnosisTone = urlDiagnosisTone;
 
   constructor() {
     // Re-resolve whenever the bound project changes.

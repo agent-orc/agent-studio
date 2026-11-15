@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { describe, expect, it } from 'vitest';
 import { DEPLOYMENT_CLOCK } from '../../services/deployment-status.service';
-import { WorkspaceDeploymentDashboardComponent } from './workspace-deployment-dashboard';
+import { WorkspaceDeploymentDashboardComponent, dashboardHealth, dashboardStateTone } from './workspace-deployment-dashboard';
 import type { RegistryWorkspaceListItem, RegistryProjectSummary } from '../../../../models/task.model';
 import type { EnvironmentStatus } from '../../models/deployment.model';
 
@@ -75,6 +75,22 @@ describe('WorkspaceDeploymentDashboardComponent', () => {
     expect(root.querySelector('tbody')?.textContent).not.toContain('beta');
     expect((root.querySelector('[aria-label="Website acme Production deployment"]') as HTMLButtonElement).dataset['state'])
       .toBe('awaiting-approval');
+    const cell = root.querySelector('[aria-label="Website acme Production deployment"]') as HTMLElement;
+    expect(cell.querySelector<HTMLElement>('[data-testid="deployment-dashboard-state"]')?.dataset['tone']).toBe('warning');
+    expect(cell.querySelector<HTMLElement>('[data-testid="deployment-dashboard-approval"]')?.dataset['tone']).toBe('warning');
     TestBed.inject(HttpTestingController).verify();
+  });
+
+  it('maps deployment states and health onto tones', () => {
+    const states: Record<string, string> = {
+      queued: 'neutral', running: 'running', succeeded: 'success', failed: 'danger',
+      cancelled: 'neutral', 'awaiting-approval': 'warning', later: 'neutral',
+    };
+    for (const [state, tone] of Object.entries(states)) expect(dashboardStateTone(state)).toBe(tone);
+    expect(dashboardStateTone(undefined)).toBe('neutral');
+    expect(dashboardHealth('healthy')).toEqual({ tone: 'success', label: 'Healthy' });
+    expect(dashboardHealth('unhealthy')).toEqual({ tone: 'danger', label: 'Unhealthy' });
+    expect(dashboardHealth('unknown')).toEqual({ tone: 'neutral', label: 'Unknown' });
+    expect(dashboardHealth('later').tone).toBe('neutral');
   });
 });

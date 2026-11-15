@@ -5,6 +5,7 @@ import { AgentWorkSummaryPollService } from '../../../../../polling/services/age
 import { TaskSectionAccessService } from '../../../../../../services/task-section-access.service';
 import { AgentWorkDetailComponent } from '../../agent-work-detail/agent-work-detail.component';
 import { formatAbsoluteTime, formatRelativeTime } from '../overview-pane-formatters';
+import { StatusIndicatorComponent } from '../../../../../../components/status-indicator/status-indicator.component';
 
 /** How many tool counts the compact chip strip shows before the tooltip takes over. */
 const TOP_TOOL_CHIP_COUNT = 6;
@@ -21,7 +22,7 @@ const TOP_TOOL_CHIP_COUNT = 6;
   selector: 'app-overview-agent-work',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, AgentWorkDetailComponent],
+  imports: [TooltipDirective, AgentWorkDetailComponent, StatusIndicatorComponent],
   templateUrl: './overview-agent-work.component.html',
   styleUrl: './overview-agent-work.component.scss',
 })

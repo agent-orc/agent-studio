@@ -10,6 +10,8 @@ namespace AgentStudio.Pipeline;
 /// Creates coding cards from the implementation proposals embedded in a
 /// validated concept Workbench. The per-source spawn ledger makes each
 /// descriptor item idempotent across repeated operator requests.
+/// Promotion never moves the source concept card: accepting the concept is
+/// the separate Human review to Accepted move (AGT-3701).
 /// </summary>
 public sealed class ConceptPromotionService
 {
@@ -20,6 +22,7 @@ public sealed class ConceptPromotionService
     private readonly ManagedRepositoryMutationService _repositoryMutations;
     private readonly AgentStudio.Docs.WorkbenchChangeNotifier _workbenchChanges;
     private readonly ILogger<ConceptPromotionService> _logger;
+    private readonly PipelineExecutionLog? _pipelineLog;
     private readonly object _gate = new();
     internal Action<string>? FailurePoint { get; set; }
 
@@ -28,13 +31,47 @@ public sealed class ConceptPromotionService
         AgentStudio.Tasks.TaskMutationService mutations,
         ManagedRepositoryMutationService repositoryMutations,
         AgentStudio.Docs.WorkbenchChangeNotifier workbenchChanges,
-        ILogger<ConceptPromotionService> logger)
+        ILogger<ConceptPromotionService> logger,
+        PipelineExecutionLog? pipelineLog = null)
     {
         _scanner = scanner;
         _mutations = mutations;
         _repositoryMutations = repositoryMutations;
         _workbenchChanges = workbenchChanges;
         _logger = logger;
+        _pipelineLog = pipelineLog;
+    }
+
+    /// <summary>Whether the concept card already promoted at least one Dossier slice.</summary>
+    public static bool HasPromotedSlices(string sourceFolderPath, ILogger? logger = null)
+        => SpawnedTaskLedger.Read(sourceFolderPath, logger)
+            .Any(record => record.Reason?.StartsWith(ReasonPrefix, StringComparison.Ordinal) == true);
+
+    /// <summary>
+    /// The plan with every slice that already has a card, so the owner sees
+    /// which slices a new request would still create.
+    /// </summary>
+    public PromoteConceptResponse WithPromotedSlices(TaskInfo source, PromoteConceptResponse plan)
+    {
+        var ledger = SpawnedTaskLedger.Read(source.FolderPath, _logger);
+        var promoted = new List<PromotedConceptTask>();
+        for (var index = 0; index < plan.Items.Count; index++)
+        {
+            var reason = ReasonFor(plan.Source.RepoRelativePath, index);
+            var record = ledger.FirstOrDefault(candidate =>
+                string.Equals(candidate.Reason, reason, StringComparison.Ordinal));
+            if (record is null) continue;
+            var card = _scanner.FindJob(record.TargetJobId ?? record.TargetKey ?? "", source.WatchPath);
+            promoted.Add(new PromotedConceptTask
+            {
+                JobId = record.TargetJobId ?? card?.Id ?? "",
+                TaskKey = card?.Key ?? record.TargetKey,
+                Title = card?.Title ?? plan.Items[index].Title.Trim(),
+                ItemIndex = index,
+                State = card?.State,
+            });
+        }
+        return plan with { Promoted = promoted };
     }
 
     public PromoteConceptTasksResponse Promote(
@@ -52,7 +89,8 @@ public sealed class ConceptPromotionService
         var predecessors = Enumerable.Range(0, plan.Items.Count)
             .Select(index => DossierImplementationCardPolicy.PredecessorIndexes(plan.Items, index))
             .ToList();
-        var spawns = WithPredecessors(selected, predecessors).Select(index =>
+        var indexes = WithPredecessors(selected, predecessors).ToList();
+        var spawns = indexes.Select(index =>
         {
             var item = plan.Items[index];
             return new ConceptCardSpawn(
@@ -73,12 +111,17 @@ public sealed class ConceptPromotionService
                 Reasons = (previous?.Reasons ?? []).Concat(spawns.Select(spawn => spawn.Reason))
                     .Distinct(StringComparer.Ordinal).ToList(),
             });
-            var created = CreateCards(source, spawns).ToList();
+            var created = CreateCards(source, spawns)
+                .Select((card, position) => card with
+                {
+                    ItemIndex = indexes[position],
+                    State = _scanner.FindJob(card.JobId, source.WatchPath)?.State,
+                })
+                .ToList();
             ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source, "cards-recorded"));
             FailurePoint?.Invoke("after-cards-recorded");
-            MarkDossierAccepted(source, plan);
-            ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source, "dossier-accepted"));
-            FailurePoint?.Invoke("after-dossier-accepted");
+            RecordPromotionStep(source, created.Count);
+            ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source, "completed"));
             return new PromoteConceptTasksResponse
             {
                 Source = plan.Source,
@@ -109,6 +152,22 @@ public sealed class ConceptPromotionService
     {
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(reason)))[..16].ToLowerInvariant();
         return $"concept-{source.Id.ToLowerInvariant()}-{digest}";
+    }
+
+    private void RecordPromotionStep(TaskInfo source, int createdCount)
+    {
+        if (_pipelineLog is null || createdCount == 0) return;
+        var now = DateTime.UtcNow;
+        _pipelineLog.RecordStep(source.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.ConceptPromotionStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Passed,
+            StartedAt = now,
+            CompletedAt = now,
+            Verdict = "implementation-cards-created",
+            VerdictSummary = $"Created or confirmed {createdCount} implementation card(s) from the Dossier.",
+        });
     }
 
     /// <summary>
@@ -144,7 +203,8 @@ public sealed class ConceptPromotionService
         return CreateCards(source, [new ConceptCardSpawn(reason, request)]).Single();
     }
 
-    private void MarkDossierAccepted(TaskInfo source, PromoteConceptResponse plan)
+    // The Dossier lifecycle follows concept acceptance, never card creation.
+    public void MarkDossierAccepted(TaskInfo source, PromoteConceptResponse plan)
     {
         var entry = _scanner.GetWatchPaths().FirstOrDefault(candidate =>
             WatchPathComparison.PathsEqual(candidate.Path, source.WatchPath));

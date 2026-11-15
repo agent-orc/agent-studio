@@ -1,7 +1,7 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it } from 'vitest';
-import { OrchestratorContextReceiptComponent } from './orchestrator-context-receipt.component';
+import { OrchestratorContextReceiptComponent, contextSourceStatusTone } from './orchestrator-context-receipt.component';
 
 describe('OrchestratorContextReceiptComponent', () => {
   it('discloses included, excerpted, and unresolved source truth', async () => {
@@ -33,5 +33,20 @@ describe('OrchestratorContextReceiptComponent', () => {
     expect(inspector.textContent).toContain('Excerpted');
     expect(inspector.textContent).toContain('Unresolved');
     expect(inspector.textContent).toContain('Task not found.');
+    const tone = (sourceId: string) =>
+      (inspector.querySelector(`[data-testid="orch-context-receipt-status-${sourceId}"]`) as HTMLElement).dataset['tone'];
+    expect(tone('file:Demo/README.md')).toBe('success');
+    expect(tone('page:Demo/concept.md')).toBe('warning');
+    expect(tone('task:Demo/DEMO-9/bundle')).toBe('danger');
+  });
+
+  it('maps every context source status onto a tone and falls back to neutral', () => {
+    expect(contextSourceStatusTone('included')).toBe('success');
+    expect(contextSourceStatusTone('excerpted')).toBe('warning');
+    for (const status of ['unresolved', 'unavailable', 'blocked', 'oversize']) {
+      expect(contextSourceStatusTone(status)).toBe('danger');
+    }
+    expect(contextSourceStatusTone('omitted-budget')).toBe('neutral');
+    expect(contextSourceStatusTone('something-new')).toBe('neutral');
   });
 });

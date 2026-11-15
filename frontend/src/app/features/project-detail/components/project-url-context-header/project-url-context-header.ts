@@ -6,10 +6,22 @@ import {
   ProjectUrlContextService,
   type ProjectUrlRepositoryContext,
 } from '../../services/project-url-context.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Integration line of the preview source: aligned is good, drift needs attention, no comparison is a fact. */
+export function integrationStatus(
+  context: Pick<ProjectUrlRepositoryContext, 'comparisonRef' | 'ahead' | 'behind' | 'error'> | null,
+): { tone: StatusTone; label: string } {
+  if (context?.error) return { tone: 'neutral', label: 'Unavailable' };
+  if (!context?.comparisonRef) return { tone: 'neutral', label: 'No comparison line' };
+  if (context.ahead === 0 && context.behind === 0) return { tone: 'success', label: `Aligned with ${context.comparisonRef}` };
+  return { tone: 'warning', label: `${context.ahead} ahead, ${context.behind} behind ${context.comparisonRef}` };
+}
 
 @Component({
   selector: 'app-project-url-context-header',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-url-context-header.html',
   styleUrl: './project-url-context-header.scss',
@@ -32,12 +44,7 @@ export class ProjectUrlContextHeaderComponent {
       && task.state !== TaskState.Completed
       && task.state !== TaskState.Archive)
     .sort((left, right) => this.taskLabel(left).localeCompare(this.taskLabel(right))));
-  readonly integrationSummary = computed(() => {
-    const context = this.context();
-    if (!context?.comparisonRef) return 'No comparison line';
-    if (context.ahead === 0 && context.behind === 0) return `Aligned with ${context.comparisonRef}`;
-    return `${context.ahead} ahead, ${context.behind} behind ${context.comparisonRef}`;
-  });
+  readonly integration = computed(() => integrationStatus(this.context()));
 
   constructor() {
     effect(() => {

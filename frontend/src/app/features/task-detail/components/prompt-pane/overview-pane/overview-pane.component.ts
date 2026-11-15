@@ -11,11 +11,7 @@ import { SteeringReceiptStatusComponent } from './steering-receipt-status/steeri
 import { AgentWorkSummaryPollService } from '../../../../polling/services/agent-work-summary-poll.service';
 import { TaskPipelinePollService } from '../../../../polling/services/task-pipeline-poll.service';
 import { TaskTimelinePollService } from '../../../../polling/services/task-timeline-poll.service';
-import type {
-  PipelineExecutionRecord,
-  PipelineStep,
-  TaskPipelineResponse,
-} from '../../../../task-pipeline';
+import type { PipelineExecutionRecord, PipelineStep, TaskPipelineResponse } from '../../../../task-pipeline';
 import { ClientService } from '../../../../../services/client.service';
 import { CliModelSelectorComponent } from '../../../../../components/cli-model-selector';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
@@ -29,11 +25,7 @@ import { PipelineTokenUsageComponent } from '../pipeline-token-usage/pipeline-to
 import { PipelineStepDetailsComponent } from '../pipeline-step-details/pipeline-step-details.component';
 import { PipelineStepToggleComponent } from '../pipeline-step-toggle/pipeline-step-toggle.component';
 import { PostStepControlsComponent } from '../post-step-controls/post-step-controls.component';
-import {
-  isSteeringKind,
-  steeringInfoFromEvent,
-  type SteeringInfo,
-} from '../../../../../components/steering-detail';
+import { isSteeringKind, steeringInfoFromEvent, type SteeringInfo } from '../../../../../components/steering-detail';
 import { cliTypeLabel } from '../../../../../services/format.util';
 import { TaskService } from '../../../../../services/task.service';
 import {
@@ -78,14 +70,17 @@ import { OverviewRunsComponent } from './overview-runs/overview-runs.component';
 import { OverviewTitleBlockComponent } from './overview-title-block/overview-title-block.component';
 import { OverviewStepTokenModalComponent } from './overview-step-token-modal/overview-step-token-modal.component';
 import { OverviewAgentWorkComponent } from './overview-agent-work/overview-agent-work.component';
-import { distinctStepVerdict, reviewRoundStatus } from './pipeline-status-verdict.util';
+import { distinctStepVerdict, reviewRoundStatus, reviewRoundTone } from './pipeline-status-verdict.util';
+import {
+  decisionBadgeStatusTone, historicalRowLabel, pipelineGroupStatusTone, rowReviewRoundTone, rowStepVerdictTone, runOutcomeCounterTone,
+} from './overview-pipeline-tones';
+import { pipelineStepStatusTone } from '../pipeline-step-result/step-status-tone';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 import type { ProtocolVerdict } from '../../protocol-pane/protocol-verdict';
 import { outcomeDecisionBadge, type DecisionBadgeVm } from './outcome-decision-badge.util';
 import { PipelineAspectResultComponent } from './pipeline-aspect-result/pipeline-aspect-result.component';
 import { PipelineDecisionChainComponent } from './pipeline-decision-chain/pipeline-decision-chain.component';
-import {
-  type PipelineRowVm, type PipelineRunOptionVm, type PipelineTotalVm,
-} from './pipeline-row.vm';
+import { type PipelineRowVm, type PipelineRunOptionVm, type PipelineTotalVm } from './pipeline-row.vm';
 import {
   FINAL_VERDICT_STEP_ID,
   buildStepExplanation,
@@ -104,7 +99,7 @@ import {
   selector: 'app-overview-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, SteeringReceiptStatusComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent, PipelineAspectResultComponent, PipelineDecisionChainComponent],
+  imports: [FormsModule, StatusIndicatorComponent, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, SteeringReceiptStatusComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent, PipelineAspectResultComponent, PipelineDecisionChainComponent],
   templateUrl: './overview-pane.component.html',
   styleUrl: './overview-pane.component.scss',
 })
@@ -379,6 +374,7 @@ export class OverviewPaneComponent {
         reviewAttemptNumber: e?.reviewAttemptNumber ?? null, reviewAttemptId: e?.executionAttemptId ?? null,
         batchGateSummary: e?.batchGate ? `Batch ${e.batchGate.batchId} · ${e.batchGate.phase} · ${e.batchGate.verdict ?? 'pending'}${e.batchGate.publishedSha ? ` · ${e.batchGate.publishedSha.slice(0, 12)}` : ''}` : null,
         reviewRoundStatus: reviewRoundStatus(e),
+        reviewRoundTone: reviewRoundTone(e),
         explanation: buildStepExplanation(step.id, label, step.kind),
         durationMs: onDemand?.durationMs ?? e?.durationMs ?? 0,
         startedAt: onDemand?.startedAt ?? e?.startedAt ?? null,
@@ -484,6 +480,12 @@ export class OverviewPaneComponent {
    * call them directly.
    */
   readonly groupToneLabel = groupToneLabel;
+  readonly groupStatusTone = pipelineGroupStatusTone;
+  readonly decisionTone = decisionBadgeStatusTone;
+  readonly runOutcomeTone = runOutcomeCounterTone;
+  readonly stepVerdictStatusTone = rowStepVerdictTone;
+  readonly roundTone = rowReviewRoundTone;
+  readonly historicalLabel = historicalRowLabel;
   readonly groupAriaLabel = groupAriaLabel;
 
   /**
@@ -720,7 +722,7 @@ export class OverviewPaneComponent {
       fileName,
       header: {
         label: row.label,
-        statusIcon: this.stepStatusIcon(row.status),
+        statusTone: pipelineStepStatusTone(row.status, row.attentionRequired),
         statusLabel: this.stepStatusLabel(row.status),
         status: row.status,
         verdict: row.verdict,

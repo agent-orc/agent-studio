@@ -2,10 +2,7 @@
      [class.commandbar--collapsed]="collapsed()"
      data-testid="commandbar">
   @if (collapsed()) {
-    <span class="commandbar__status" data-testid="commandbar-running">
-      <span class="commandbar__pulse"></span>
-      <span class="commandbar__status-text">Running · {{ elapsedTime() }}</span>
-    </span>
+    <app-status-indicator tone="running" [label]="'Running · ' + elapsedTime()" [compact]="true" testId="commandbar-running" />
     <span class="commandbar__compact-meta">
       <app-cli-model-selector
         [cliType]="cliTypeDraft()"
@@ -59,10 +56,7 @@
       (thinkingLevelChange)="thinkingLevelChange.emit($event)" />
 
     @if (isRunning()) {
-      <span class="commandbar__status" data-testid="commandbar-running">
-        <span class="commandbar__pulse"></span>
-        <span class="commandbar__status-text">{{ elapsedTime() }}</span>
-      </span>
+      <app-status-indicator tone="running" [label]="elapsedTime()" [compact]="true" testId="commandbar-running" />
       <button type="button"
               class="commandbar__toggle"
               data-testid="commandbar-hide-setup"

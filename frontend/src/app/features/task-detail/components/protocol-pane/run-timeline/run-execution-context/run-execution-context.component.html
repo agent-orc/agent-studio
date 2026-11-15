@@ -37,9 +37,9 @@
                   <code class="exec-context__source-path" [cacTooltip]="source.path">{{ source.path }}</code>
                 }
                 @if (source.exists === true) {
-                  <span class="exec-context__source-flag exec-context__source-flag--ok">present</span>
+                  <app-status-indicator tone="success" label="present" [compact]="true" testId="exec-context-source-present" />
                 } @else if (source.exists === false) {
-                  <span class="exec-context__source-flag exec-context__source-flag--missing">absent</span>
+                  <app-status-indicator tone="neutral" label="absent" [compact]="true" testId="exec-context-source-absent" />
                 }
                 @if (source.detail) {
                   <span class="exec-context__source-detail">{{ source.detail }}</span>

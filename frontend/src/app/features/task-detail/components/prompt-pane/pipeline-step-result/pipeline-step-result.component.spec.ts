@@ -10,7 +10,7 @@ import { TaskService } from '../../../../../services/task.service';
 
 const HEADER: PipelineStepResultHeader = {
   label: 'Code quality',
-  statusIcon: '✅',
+  statusTone: 'success',
   statusLabel: 'Passed',
   status: 'passed',
   verdict: 'pass',
@@ -111,6 +111,10 @@ describe('PipelineStepResultComponent', () => {
     expect(
       root(fixture).querySelector('[data-testid="pipeline-step-result-verdict"]')?.textContent,
     ).toContain('pass');
+    expect(root(fixture).querySelector('[data-testid="pipeline-step-result-verdict"]')?.getAttribute('data-tone'))
+      .toBe('success');
+    expect(root(fixture).querySelector('[data-testid="pipeline-step-result-status"]')?.getAttribute('data-tone'))
+      .toBe('success');
   });
 
   it('does not refetch when toggled closed then open again', async () => {
@@ -130,7 +134,7 @@ describe('PipelineStepResultComponent', () => {
     fixture.componentInstance.toggle();
     await fixture.whenStable();
     fixture.detectChanges();
-    const state = root(fixture).querySelector('.step-result__state--error');
-    expect(state).not.toBeNull();
+    const state = root(fixture).querySelector('[data-testid="pipeline-step-result-error"]');
+    expect(state?.getAttribute('data-tone')).toBe('danger');
   });
 });

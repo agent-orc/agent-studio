@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskArtifact } from '../../../../../models/task.model';
-import { compareDocuments, presentDocument } from './document-presentation.util';
+import { compareDocuments, documentVerdictStatusTone, presentDocument } from './document-presentation.util';
 
 function artifact(overrides: Partial<TaskArtifact>): TaskArtifact {
   return {
@@ -33,5 +33,15 @@ describe('document presentation', () => {
       artifact({ name: 'code-review-grade.md', kind: 'codeReview' }),
     ].sort(compareDocuments);
     expect(files.map((file) => file.kind)).toEqual(['codeReview', 'aspect', 'prompt', 'other']);
+  });
+});
+
+describe('documentVerdictStatusTone', () => {
+  it('maps document verdict tones onto status tones', () => {
+    expect(documentVerdictStatusTone('pass')).toBe('success');
+    expect(documentVerdictStatusTone('concerns')).toBe('warning');
+    expect(documentVerdictStatusTone('block')).toBe('danger');
+    expect(documentVerdictStatusTone('neutral')).toBe('neutral');
+    expect(documentVerdictStatusTone(null)).toBe('neutral');
   });
 });

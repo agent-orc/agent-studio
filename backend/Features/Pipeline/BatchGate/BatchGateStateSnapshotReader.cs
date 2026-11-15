@@ -9,6 +9,9 @@ public sealed record BatchGateReviewFixWait(string TaskKey, string ReviewAttempt
 public sealed record BatchGateDetachedFlight(string BatchId, string Project,
     DateTimeOffset StartedAtUtc, DateTimeOffset DetachedAtUtc, int DeadlineMinutes, string Reason);
 
+/// <summary>The next observable pilot action for a batch that has not reached a terminal phase.</summary>
+public sealed record BatchGateNextAction(string Action, DateTimeOffset DueAtUtc);
+
 public static class BatchGateStateSnapshotReader
 {
     public static object Read(BatchGateStore store, string project,
@@ -55,10 +58,14 @@ public static class BatchGateStateSnapshotReader
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
                 && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason)
             .ToArray();
+        var nonterminalManifests = projectManifests.Where(item => StateOf(store, item).Phase
+            is not (BatchPhase.Published or BatchPhase.Paused or BatchPhase.Abandoned)).ToArray();
         var relevantManifests = projectManifests.OrderByDescending(item => item.ClosedAtUtc)
             .Take(Math.Clamp(history, 0, 500))
+            .Concat(nonterminalManifests)
             .Concat(projectManifests.Where(item => store.ReadPublication(item.BatchId) is { } publication
-                && DateOnly.FromDateTime(publication.VerifiedAtUtc.UtcDateTime) == today)).ToArray();
+                && DateOnly.FromDateTime(publication.VerifiedAtUtc.UtcDateTime) == today))
+            .DistinctBy(item => item.BatchId).ToArray();
         var relevantKeys = relevantManifests.SelectMany(item => item.Members)
             .Concat(pending.Select(item => item.Subject)).ToArray();
         var relevantChecks = preChecks.Where(check => DateOnly.FromDateTime(check.CompletedAtUtc.UtcDateTime) == today
@@ -91,6 +98,8 @@ public static class BatchGateStateSnapshotReader
         var queuePositions = BatchGateFlightQueue.Positions(store, formedBatches,
             _ => leaseDeadlineDeferredBatchId, at, _ => settings.MaximumWaitMinutes);
         var flightQueue = formedBatches.OrderBy(manifest => queuePositions[manifest.BatchId]).ToArray();
+        var oldestFormed = nonterminalManifests.Where(item => StateOf(store, item).Phase == BatchPhase.Formed)
+            .MinBy(manifest => BatchGateFlightQueue.QueuedSince(store, manifest));
         var planDeadlinePassed = plan.CloseAtUtc is { } closeAt && closeAt <= at;
         bool OwnDeadlinePassed(BatchGatePendingRecord item) =>
             item.Subject.ReviewCompletedAtUtc.AddMinutes(settings.DeadlineMinutes) <= at;
@@ -142,7 +151,7 @@ public static class BatchGateStateSnapshotReader
         var manifests = projectManifests
             .OrderByDescending(item => item.ClosedAtUtc)
             .Take(Math.Clamp(history, 0, 500))
-            .Concat(recoverable)
+            .Concat(nonterminalManifests)
             .DistinctBy(item => item.BatchId)
             .OrderByDescending(item => item.ClosedAtUtc).ToArray();
         var moved = projectManifests
@@ -174,6 +183,11 @@ public static class BatchGateStateSnapshotReader
         {
             var phase = StateOf(store, manifest);
             var hasLiveFlight = liveFlight?.Invoke(manifest.BatchId) ?? false;
+            var claim = flightClaim?.BatchId == manifest.BatchId && flightClaim.End is null
+                ? flightClaim : null;
+            store.TryReadPhaseRecord(manifest.BatchId, out var phaseRecord);
+            var progressAt = claim is null || claim.StageStartedAtUtc <= phase.RecordedAtUtc
+                ? phase.RecordedAtUtc : claim.StageStartedAtUtc;
             return new
             {
                 manifest.BatchId,
@@ -182,6 +196,12 @@ public static class BatchGateStateSnapshotReader
                 manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseAtUtc = phase.RecordedAtUtc,
+                lastProgressAtUtc = progressAt,
+                claimAgeMinutes = claim is null ? (double?)null
+                    : Math.Max(0, (at - claim.ClaimedAtUtc).TotalMinutes),
+                reservationWaitMinutes = claim?.Stage.ToString() == "Reserving"
+                    ? Math.Max(0, (at - claim.StageStartedAtUtc).TotalMinutes) : (double?)null,
+                nextAction = NextAction(phase, claim, recoveryStatus?.Invoke(manifest.BatchId), at),
                 liveFlight = hasLiveFlight,
                 recoveryStatus = phase.Phase == BatchPhase.Running && !hasLiveFlight
                     ? recoveryStatus?.Invoke(manifest.BatchId) : null,
@@ -211,6 +231,9 @@ public static class BatchGateStateSnapshotReader
                 members = manifest.Members.Select(member => new
                 {
                     member.TaskKey,
+                    disposition = phaseRecord?.Members.FirstOrDefault(item =>
+                        item.TaskKey == member.TaskKey && item.RunAttempt == member.RunAttempt)
+                        ?.Disposition.ToString().ToLowerInvariant() ?? "unknown",
                     replay = store.TryReadReplay(manifest.BatchId, member.TaskKey),
                     released = store.ReadPublication(manifest.BatchId) is { } publication
                         && store.TryReadMember(manifest.BatchId, member.TaskKey,
@@ -395,6 +418,12 @@ public static class BatchGateStateSnapshotReader
                 };
             }).ToArray(),
             batches,
+            oldestFormed = oldestFormed is null ? null : new
+            {
+                oldestFormed.BatchId,
+                formedAtUtc = BatchGateFlightQueue.QueuedSince(store, oldestFormed),
+                ageMinutes = Math.Max(0, (at - BatchGateFlightQueue.QueuedSince(store, oldestFormed)).TotalMinutes),
+            },
             perTaskGates,
             flightQueue = flightQueue.Select(manifest => new
             {
@@ -443,6 +472,26 @@ public static class BatchGateStateSnapshotReader
             dailySummary,
             quarantined = Quarantined(store, project),
         };
+    }
+
+    private static BatchGateNextAction? NextAction(BatchGateState phase, BatchFlightClaim? claim,
+        BatchGatePilotService.RecoveryDelay? recovery, DateTimeOffset at)
+    {
+        if (phase.Phase is BatchPhase.Published or BatchPhase.Paused or BatchPhase.Abandoned)
+            return null;
+        if (claim is not null)
+            return new(claim.StageDeadlineUtc <= at ? "Expire overdue flight claim on the next pilot tick"
+                : $"Advance or expire {claim.Stage.ToString().ToLowerInvariant()} flight claim",
+                claim.StageDeadlineUtc <= at ? at.AddSeconds(30) : claim.StageDeadlineUtc);
+        if (phase.Phase == BatchPhase.Running && recovery is not null)
+            return new("Recover the running batch or record a terminal reason", recovery.NextRetryAtUtc);
+        return new(phase.Phase switch
+        {
+            BatchPhase.Formed => "Start the formed batch when its flight slot opens, or record a terminal reason",
+            BatchPhase.Red => "Continue isolation or pause with a reason",
+            BatchPhase.Green or BatchPhase.Publishing => "Publish the verified batch or pause with a reason",
+            _ => "Advance the batch or record a terminal reason",
+        }, at.AddSeconds(30));
     }
 
     /// <summary>

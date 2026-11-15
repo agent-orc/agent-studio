@@ -17,6 +17,7 @@ const json = (body: unknown) => (route: Route) => route.fulfill({
 async function stub(page: Page) {
   const now = new Date().toISOString();
   await page.route('**/api/auth/status', json({ profile: 'networked', bootstrapRequired: false, authenticated: true }));
+  await page.route('**/api/auth/sessions', json([]));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/v1/studio/board*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));

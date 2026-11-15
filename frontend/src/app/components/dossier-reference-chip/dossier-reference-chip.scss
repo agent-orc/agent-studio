@@ -55,30 +55,7 @@ a.dossier-ref__link:focus-visible,
 }
 
 .dossier-ref__status {
-  padding: 0 var(--studio-spacing-1);
-  border-radius: 999px;
-  color: var(--studio-fg-muted);
-  background: var(--studio-card-muted-bg);
   font-size: 0.72rem;
-}
-.dossier-ref__status[data-status='decision-pending'] {
-  color: var(--severity-pending);
-  background: color-mix(in srgb, var(--severity-pending) 16%, transparent);
-}
-.dossier-ref__status[data-status='decided'] {
-  color: var(--severity-info);
-  background: color-mix(in srgb, var(--severity-info) 16%, transparent);
-}
-.dossier-ref__status[data-status='documented'] {
-  color: var(--studio-success);
-  background: color-mix(in srgb, var(--studio-success) 16%, transparent);
-}
-.dossier-ref__status[data-status='invalid'] {
-  color: var(--studio-error);
-  background: color-mix(in srgb, var(--studio-error) 16%, transparent);
-}
-.dossier-ref__status[data-status='archived'] {
-  opacity: 0.75;
 }
 
 .dossier-ref__source {

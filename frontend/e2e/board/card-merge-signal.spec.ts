@@ -322,14 +322,14 @@ test.describe('AGT-2046 board card merge signal', () => {
     await gotoBoard(page);
 
     const released = cardByTitle(page, RELEASED.title);
-    const relDev = released.locator('[data-testid="task-card-merge-signal"] [data-seg="develop"]');
-    const relMain = released.locator('[data-testid="task-card-merge-signal"] [data-seg="main"]');
-    await expect(relDev).toHaveClass(/task-card__merge-seg--on/);
-    await expect(relMain).toHaveClass(/task-card__merge-seg--on/);
+    const relDev = released.locator('[data-testid="task-card-merge-signal"] [data-testid="task-card-merge-develop"]');
+    const relMain = released.locator('[data-testid="task-card-merge-signal"] [data-testid="task-card-merge-main"]');
+    await expect(relDev).toHaveAttribute('data-tone', 'success');
+    await expect(relMain).toHaveAttribute('data-tone', 'success');
 
     const onBranch = cardByTitle(page, ON_BRANCH.title);
-    const branchDev = onBranch.locator('[data-testid="task-card-merge-signal"] [data-seg="develop"]');
-    await expect(branchDev).not.toHaveClass(/task-card__merge-seg--on/);
+    const branchDev = onBranch.locator('[data-testid="task-card-merge-signal"] [data-testid="task-card-merge-develop"]');
+    await expect(branchDev).toHaveAttribute('data-tone', 'neutral');
   });
 
   test('accepted cards use only computed target membership despite stale attempt evidence', async ({ page }) => {

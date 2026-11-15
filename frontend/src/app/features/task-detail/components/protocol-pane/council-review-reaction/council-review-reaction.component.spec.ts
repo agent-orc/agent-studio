@@ -51,6 +51,7 @@ describe('CouncilReviewReactionComponent', () => {
     const root = fixture.nativeElement as HTMLElement;
     expect(root.textContent).toContain('Dark-theme colors are incorrect');
     expect(root.textContent).toContain('Fix next round');
+    expect(root.querySelector('[data-testid="code-review-council-action"]')?.getAttribute('data-tone')).toBe('warning');
     expect(root.querySelector<HTMLElement>('section')?.dataset['disposition']).toBe('reissue');
     expect(root.querySelector('a')?.getAttribute('href')).toContain('#/tasks/AGT-2108');
   });
@@ -67,7 +68,9 @@ describe('CouncilReviewReactionComponent', () => {
     fixture.detectChanges();
 
     const root = fixture.nativeElement as HTMLElement;
-    expect(root.querySelector('.council-reaction__action')?.textContent?.trim()).toBe('Escalate');
+    const action = root.querySelector('[data-testid="code-review-council-action"]');
+    expect(action?.textContent?.trim()).toBe('Escalate');
+    expect(action?.getAttribute('data-tone')).toBe('danger');
     expect(root.querySelector<HTMLElement>('section')?.dataset['disposition']).toBe('escalate');
   });
 });

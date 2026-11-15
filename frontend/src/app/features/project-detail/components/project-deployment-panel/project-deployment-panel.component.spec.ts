@@ -45,6 +45,12 @@ describe('ProjectDeploymentPanelComponent', () => {
 
     expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-pending-count"]').textContent.trim()).toBe('2');
     expect(fixture.nativeElement.querySelectorAll('[data-testid="project-deployment-history"] > li').length).toBe(2);
+    const runTones = Array.from(fixture.nativeElement.querySelectorAll('[data-testid="project-deployment-run-status"]'))
+      .map(item => (item as HTMLElement).dataset['tone']);
+    expect(runTones).toEqual(['success', 'warning']);
+    const targetStatus = fixture.nativeElement.querySelector('[data-testid="project-deployment-target-status"]') as HTMLElement;
+    expect(targetStatus.textContent?.trim()).toBe('Idle required');
+    expect(targetStatus.dataset['tone']).toBe('warning');
     expect(fixture.nativeElement.textContent).toContain('deploy-stable');
     expect(fixture.nativeElement.textContent).not.toContain('Run deployment');
     expect(fixture.nativeElement.textContent).toContain('Head is 2 commits ahead');

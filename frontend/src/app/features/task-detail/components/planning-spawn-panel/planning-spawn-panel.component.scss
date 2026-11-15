@@ -60,40 +60,17 @@
 
 .spawn__risk-status,
 .spawn__declared-line {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-2);
   margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
 }
 
 .spawn__risk-status {
   margin-top: var(--studio-spacing-2);
-  color: var(--studio-accent-warn-strong);
-  cursor: help;
-}
-
-.spawn__status-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--studio-accent-warn-strong);
-}
-
-.spawn__status-dot--ok {
-  background: var(--studio-accent-success-strong);
 }
 
 .spawn__declared {
   margin-top: var(--studio-spacing-2);
 }
 
-.spawn__declared-line {
-  color: var(--studio-fg);
-}
 
 .spawn__declared-reason {
   margin: var(--studio-spacing-1) 0 var(--studio-spacing-2);

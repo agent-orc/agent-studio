@@ -13,6 +13,7 @@ import { TaskReferenceNavigationService } from '../../../../services/task-refere
 import { TaskService } from '../../../../services/task.service';
 import { CliCatalogStore } from '../../../cli';
 import { WorkbenchDecisionPanelComponent } from './workbench-decision-panel';
+import { decisionOutcomeTone, decisionStageTone } from './workbench-decision-panel.util';
 
 const POINTS: WorkbenchDecisionPoint[] = [{
   id: 'route',
@@ -162,8 +163,12 @@ describe('WorkbenchDecisionPanelComponent', () => {
     const confirmation = fixture.nativeElement.querySelector(
       '[data-testid="workbench-decision-feature-confirmation"]');
     expect(confirmation.textContent).toContain('Direct path');
-    expect((confirmation.querySelector('[data-testid="workbench-decision-goal"]') as HTMLTextAreaElement).value)
-      .toBe('Implement Routing policy according to the source Dossier and its recorded decisions.');
+    expect(confirmation.querySelector('[data-testid="workbench-decision-combined-note"]')?.textContent)
+      .toContain('one combined card');
+    const goal = (confirmation.querySelector('[data-testid="workbench-decision-goal"]') as HTMLTextAreaElement).value;
+    expect(goal).not.toContain('Recorded decisions');
+    const preview = confirmation.querySelector('[data-testid="workbench-decision-prompt-preview"]')?.textContent ?? '';
+    expect(preview.split('Direct path').length - 1).toBe(1);
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-draft-notice"]')
       .textContent).toContain('Draft saved');
 
@@ -301,6 +306,7 @@ describe('WorkbenchDecisionPanelComponent', () => {
 
     const receipt = fixture.nativeElement.querySelector('[data-testid="workbench-decision-receipt"]');
     expect(receipt.textContent).toContain('Archived');
+    expect(receipt.querySelector('[data-testid="workbench-decision-outcome"]')?.getAttribute('data-tone')).toBe('neutral');
     expect(receipt.textContent).toContain('The experiment disproved the direction.');
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-confirm"]')).toBeNull();
   });
@@ -534,4 +540,21 @@ describe('WorkbenchDecisionPanelComponent', () => {
     return (fixture.nativeElement.querySelector(`[data-testid="${testId}"]`) as HTMLElement)
       .textContent ?? '';
   }
+});
+
+describe('decision panel status tones', () => {
+  it('maps decision stages and outcomes to tones', () => {
+    expect(decisionStageTone('prepared', false)).toBe('info');
+    expect(decisionStageTone('pending', false)).toBe('running');
+    expect(decisionStageTone('failed', false)).toBe('danger');
+    expect(decisionStageTone('succeeded', false)).toBe('success');
+    expect(decisionStageTone('archived', false)).toBe('neutral');
+    expect(decisionStageTone(null, false)).toBe('info');
+    expect(decisionStageTone('failed', true)).toBe('success');
+    expect(decisionStageTone('later', false)).toBe('neutral');
+    expect(decisionOutcomeTone('feature-spawn')).toBe('success');
+    expect(decisionOutcomeTone('archive')).toBe('neutral');
+    expect(decisionOutcomeTone('rework')).toBe('warning');
+    expect(decisionOutcomeTone(null)).toBe('neutral');
+  });
 });

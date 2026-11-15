@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 import type { TaskInfo } from '../../../../../models/task.model';
 import { TaskService } from '../../../../../services/task.service';
 import { tokenAnalysisCardHash } from '../../../../token-analysis/token-analysis-navigation.util';
@@ -26,7 +27,7 @@ import { buildTypeBreakdown, type TypeBreakdownRow } from './token-usage-popover
   selector: 'app-task-token-usage-popover',
   exportAs: 'tokenUsagePopover',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './token-usage-popover.component.html',
   styleUrl: './token-usage-popover.component.scss',

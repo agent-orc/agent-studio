@@ -49,6 +49,7 @@ describe('ServerReadinessPanelComponent', () => {
     const failing = element.querySelector('[data-testid="readiness-server:committer-identity:"]')!;
     expect(failing.getAttribute('data-state')).toBe('fail');
     expect(failing.textContent).toContain('Failing');
+    expect((failing.querySelector('[data-testid="status-indicator"]') as HTMLElement).dataset['tone']).toBe('danger');
     expect(failing.textContent).toContain('Committer identity unknown');
     expect(failing.querySelector('[data-testid="readiness-command-text"]')!.textContent)
       .toContain('git config --global user.name "Agent Studio"');

@@ -3,23 +3,7 @@
     :host { display: block; }
     .pdov__icon { margin-right: 6px; }
 
-    .pdov__band {
-      display: inline-block;
-      margin-left: 8px;
-      padding: 1px 8px;
-      border-radius: 999px;
-      font-size: 0.72rem;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
-      background: var(--studio-card-muted-bg);
-      color: var(--studio-fg-dim);
-    }
-    .pdov__band--healthy { background: color-mix(in srgb, var(--severity-pass) 18%, transparent); color: var(--severity-pass); }
-    .pdov__band--watch   { background: color-mix(in srgb, var(--studio-accent-teal) 16%, transparent); color: var(--studio-accent-teal); }
-    .pdov__band--warn    { background: color-mix(in srgb, var(--severity-warn) 20%, transparent); color: var(--severity-warn); }
-    .pdov__band--critical{ background: color-mix(in srgb, var(--severity-high) 22%, transparent); color: var(--severity-high); }
-    .pdov__band--unknown { background: var(--studio-card-muted-bg); color: var(--studio-fg-muted); }
+    .pdov__band { margin-left: 8px; }
 
     .pdov__score-pill {
       display: inline-block;
@@ -138,31 +122,7 @@
     .pdov__dim--critical { background: color-mix(in srgb, var(--severity-high) 10%, var(--studio-card-bg)); }
     .pdov__dim--empty    { cursor: default; opacity: 0.7; }
 
-    .pdov__sev {
-      text-transform: uppercase;
-      font-weight: 600;
-      padding: 1px 6px;
-      border-radius: 3px;
-      background: var(--studio-card-muted-bg);
-    }
-    .pdov__sev--info { background: color-mix(in srgb, var(--studio-fg-dim) 18%, transparent); color: var(--studio-fg-dim); }
-    .pdov__sev--warn { background: color-mix(in srgb, var(--severity-warn) 20%, transparent); color: var(--severity-warn); }
-    .pdov__sev--high { background: color-mix(in srgb, var(--studio-accent-strong) 20%, transparent); color: var(--studio-accent-strong); }
-    .pdov__sev--critical { background: color-mix(in srgb, var(--severity-high) 22%, transparent); color: var(--severity-high); }
-
     .pdov__cov { color: var(--studio-fg-muted); font-variant-numeric: tabular-nums; }
-    .pdov__status {
-      padding: 1px 6px;
-      border-radius: 3px;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      background: var(--studio-card-muted-bg);
-      color: var(--studio-fg-dim);
-    }
-    .pdov__status--accepted { background: color-mix(in srgb, var(--severity-pass) 15%, transparent); color: var(--severity-pass); }
-    .pdov__status--tracked  { background: color-mix(in srgb, var(--severity-info) 18%, transparent); color: var(--severity-info); }
-    .pdov__status--ignored  { background: var(--studio-card-muted-bg); color: var(--studio-fg-muted); text-decoration: line-through; }
-    .pdov__status--resolved { background: color-mix(in srgb, var(--studio-accent-teal) 15%, transparent); color: var(--studio-accent-teal); }
 
     /* Dimension drilldown -> bounded inspector on the uniform panel surface. */
     .pdov__panel {
@@ -237,8 +197,7 @@
     .pdov__prio--high { background: color-mix(in srgb, var(--studio-accent-strong) 20%, transparent); color: var(--studio-accent-strong); }
     .pdov__prio--critical { background: color-mix(in srgb, var(--severity-high) 22%, transparent); color: var(--severity-high); }
     .pdov__rel { font-size: 0.72rem; color: var(--studio-fg-muted); }
-    .pdov__followup-job { font-size: 0.74rem; color: var(--studio-accent-teal); margin-left: auto; }
-    .pdov__followup-job code { background: var(--studio-bg-overlay); padding: 1px 4px; border-radius: 3px; }
+    .pdov__followup-job { margin-left: auto; }
 
     .pdov__history { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
     .pdov__hist-row {
@@ -254,23 +213,9 @@
       font-size: 0.80rem;
     }
     .pdov__hist-row:hover { background: var(--studio-bg-hover); border-color: var(--studio-card-border-hover); }
-    .pdov__hist-band {
-      padding: 1px 6px;
-      border-radius: 3px;
-      font-size: 0.70rem;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
-    }
-    .pdov__hist-band--healthy  { background: color-mix(in srgb, var(--severity-pass) 18%, transparent); color: var(--severity-pass); }
-    .pdov__hist-band--watch    { background: color-mix(in srgb, var(--studio-accent-teal) 16%, transparent); color: var(--studio-accent-teal); }
-    .pdov__hist-band--warn     { background: color-mix(in srgb, var(--severity-warn) 20%, transparent); color: var(--severity-warn); }
-    .pdov__hist-band--critical { background: color-mix(in srgb, var(--severity-high) 22%, transparent); color: var(--severity-high); }
-    .pdov__hist-band--unknown  { background: var(--studio-card-muted-bg); color: var(--studio-fg-muted); }
     .pdov__hist-score { font-variant-numeric: tabular-nums; color: var(--studio-fg); min-width: 28px; text-align: right; }
     .pdov__hist-summary { color: var(--studio-fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pdov__hist-trigger { color: var(--studio-fg-muted); font-size: 0.72rem; padding: 1px 5px; background: var(--studio-card-muted-bg); border-radius: 3px; }
-    .pdov__hist-parse { color: var(--severity-warn); font-size: 0.72rem; }
     .pdov__hist-ts { color: var(--studio-fg-muted); font-variant-numeric: tabular-nums; font-size: 0.72rem; }
 
     .pdov__report-modal {

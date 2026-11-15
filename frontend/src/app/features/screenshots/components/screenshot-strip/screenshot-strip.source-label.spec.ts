@@ -107,3 +107,20 @@ describe('ScreenshotStripComponent source label', () => {
     expect(sourceLabels(host)).toEqual([]);
   });
 });
+
+describe('ScreenshotStripComponent status indicator', () => {
+  it('shows the test status as a toned indicator on the thumbnail', async () => {
+    const host = await render([
+      shot({ url: '/a', status: 'passed' }),
+      shot({ url: '/b', status: 'failed' }),
+      shot({ url: '/c', status: 'skipped' }),
+      shot({ url: '/d', status: null }),
+    ]);
+    const statuses = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="screenshot-thumb-status"]'));
+    expect(statuses.map(el => [el.dataset['tone'], el.textContent?.trim()])).toEqual([
+      ['success', 'Passed'],
+      ['danger', 'Failed'],
+      ['neutral', 'Skipped'],
+    ]);
+  });
+});

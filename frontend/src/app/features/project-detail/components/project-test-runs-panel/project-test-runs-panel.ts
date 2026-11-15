@@ -3,11 +3,30 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import type { ProjectTestRunItem, ProjectTestRunsResponse } from '../../../../models/project-overview.model';
 import { TaskService } from '../../../../services/task.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/**
+ * Test run result (or state while it has no result) on the shared indicator
+ * (AGT-3403). Completed runs are history, so a failure reads as warning and a
+ * cancellation as neutral, never as an acute danger (hard rule R4).
+ */
+const TEST_RUN_RESULT_TONES: Readonly<Record<string, StatusTone>> = {
+  passed: 'success',
+  failed: 'warning',
+  canceled: 'neutral',
+  running: 'running',
+  planned: 'neutral',
+  completed: 'neutral',
+};
+
+export function testRunResultTone(result: string | null | undefined): StatusTone {
+  return result && Object.hasOwn(TEST_RUN_RESULT_TONES, result) ? TEST_RUN_RESULT_TONES[result] : 'neutral';
+}
 
 @Component({
   selector: 'app-project-test-runs-panel',
   standalone: true,
-  imports: [DatePipe, DecimalPipe, PendingButtonDirective],
+  imports: [DatePipe, DecimalPipe, PendingButtonDirective, StatusIndicatorComponent],
   templateUrl: './project-test-runs-panel.html',
   styleUrl: './project-test-runs-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -16,6 +35,7 @@ export class ProjectTestRunsPanelComponent {
   private readonly tasks = inject(TaskService);
 
   readonly projectName = input.required<string>();
+  readonly resultTone = testRunResultTone;
   readonly response = signal<ProjectTestRunsResponse | null>(null);
   readonly loading = signal(true);
   readonly failed = signal(false);

@@ -233,7 +233,8 @@ public sealed class RemoteCompletionAttributionSweep
                 deliveryRef,
                 subject.ResultSha,
                 subject.IntegrationBranch ?? task.IntegrationBranch,
-                baseSha);
+                baseSha,
+                taskKey: task.Key ?? task.Id);
             if (!range.Success)
             {
                 if (!string.IsNullOrWhiteSpace(range.Warning)) warnings.Add(range.Warning);
