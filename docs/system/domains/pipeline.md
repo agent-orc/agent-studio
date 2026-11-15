@@ -1626,7 +1626,14 @@ comparison before Quality Studio's verdict contract can decide a review.
   reviewed task-branch merge integrates it after a pre-merge Dossier placement
   check. The post-steps verify the source-card key plus `decision-pending`
   status and task-file links, wait for human sight review, then create coding
-  cards from the descriptor.
+  cards from the descriptor. Promotion writes a durable intent in the source
+  card's `.metadata/concept-promotion.json` before creating children. Each
+  child has a stable identity and creation source, so a retry recovers a card
+  created before its spawn-ledger row. The state records `creating-cards`,
+  `cards-recorded`, `dossier-accepted`, or `completed`, plus created keys.
+  Promotion conflicts and later plan reads return that state and a safe retry
+  action. A successful retry repairs source relations, accepts the Dossier,
+  and completes the concept.
 - `backend/Features/Docs/DossierMaintenanceService.cs` and
   `DossierImplementationContract.cs`: resolve a delivery card's Dossiers from
   `references.workbenches` or descriptor `sourceTaskKeys`, frame the CORE run,

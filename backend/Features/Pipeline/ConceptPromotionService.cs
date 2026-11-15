@@ -1,4 +1,6 @@
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.Git;
 using AgentStudio.Shared;
 
@@ -19,6 +21,7 @@ public sealed class ConceptPromotionService
     private readonly AgentStudio.Docs.WorkbenchChangeNotifier _workbenchChanges;
     private readonly ILogger<ConceptPromotionService> _logger;
     private readonly object _gate = new();
+    internal Action<string>? FailurePoint { get; set; }
 
     public ConceptPromotionService(
         AgentStudio.Tasks.TaskScannerService scanner,
@@ -58,13 +61,50 @@ public sealed class ConceptPromotionService
                 });
         }).ToList();
 
-        var created = CreateCards(source, spawns).ToList();
-        MarkDossierAccepted(source, plan);
-        return new PromoteConceptTasksResponse
+        lock (_gate)
         {
-            Source = plan.Source,
-            Created = created,
-        };
+            var previous = ConceptPromotionRecoveryStore.Read(source.FolderPath);
+            ConceptPromotionRecoveryStore.Write(source.FolderPath, new ConceptPromotionRecovery
+            {
+                Reasons = (previous?.Reasons ?? []).Concat(spawns.Select(spawn => spawn.Reason))
+                    .Distinct(StringComparer.Ordinal).ToList(),
+            });
+            var created = CreateCards(source, spawns).ToList();
+            ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source, "cards-recorded"));
+            FailurePoint?.Invoke("after-cards-recorded");
+            MarkDossierAccepted(source, plan);
+            ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source, "dossier-accepted"));
+            FailurePoint?.Invoke("after-dossier-accepted");
+            return new PromoteConceptTasksResponse
+            {
+                Source = plan.Source,
+                Created = created,
+            };
+        }
+    }
+
+    public ConceptPromotionRecovery GetRecovery(TaskInfo source, string? phase = null)
+    {
+        var state = ConceptPromotionRecoveryStore.Read(source.FolderPath) ?? new ConceptPromotionRecovery();
+        var ledger = SpawnedTaskLedger.Read(source.FolderPath, _logger);
+        var created = new List<PromotedConceptTask>();
+        foreach (var reason in state.Reasons)
+        {
+            var recorded = ledger.FirstOrDefault(row => row.Reason == reason);
+            var card = _scanner.FindJob(recorded?.TargetJobId ?? recorded?.TargetKey ?? ChildId(source, reason), source.WatchPath);
+            if (card is null || (recorded is null && card.CreationSource != reason)) continue;
+            created.Add(new PromotedConceptTask { JobId = card.Id, TaskKey = card.Key, Title = card.Title });
+        }
+        return state with { Phase = phase ?? state.Phase, Created = created };
+    }
+
+    public void RecordPhase(TaskInfo source, string phase)
+        => ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source, phase));
+
+    private static string ChildId(TaskInfo source, string reason)
+    {
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(reason)))[..16].ToLowerInvariant();
+        return $"concept-{source.Id.ToLowerInvariant()}-{digest}";
     }
 
     /// <summary>
@@ -193,38 +233,56 @@ public sealed class ConceptPromotionService
                     .FirstOrDefault(record => string.Equals(record.Reason, spawn.Reason, StringComparison.Ordinal));
                 if (existing != null)
                 {
+                    var prior = _scanner.FindJob(existing.TargetJobId ?? existing.TargetKey ?? "", source.WatchPath)
+                        ?? throw new InvalidOperationException("A recorded implementation card is missing. Restore it before retrying promotion.");
                     if (spawn.Request.Dossier is { } dossier)
                     {
-                        var prior = _scanner.FindJob(existing.TargetJobId ?? existing.TargetKey ?? "", source.WatchPath);
-                        if (prior is { Dossier: null })
-                            _mutations.SetJobDossier(prior.Id, dossier, prior.WatchPath);
+                        if (prior.Dossier is null
+                            && !_mutations.SetJobDossier(prior.Id, dossier, prior.WatchPath))
+                            throw new IOException("The implementation card's Dossier relation could not be persisted.");
                     }
+                    EnsureSourceRelation(source, prior);
                     promoted.Add(new PromotedConceptTask
                     {
-                        JobId = existing.TargetJobId ?? "",
-                        TaskKey = existing.TargetKey,
+                        JobId = prior.Id,
+                        TaskKey = prior.Key,
                         Title = title,
                     });
                     continue;
                 }
 
-                var jobId = _mutations.CreateJob(spawn.Request with
+                var childId = ChildId(source, spawn.Reason);
+                var recovered = _scanner.FindJob(childId, source.WatchPath);
+                if (recovered is not null && recovered.CreationSource != spawn.Reason)
+                    throw new InvalidOperationException("The promotion child identity belongs to another card.");
+                var jobId = recovered?.Id ?? _mutations.CreateJob(spawn.Request with
                 {
+                    Id = childId,
+                    CreationSource = spawn.Reason,
                     Title = title,
                     WatchPath = source.WatchPath,
                     Dossier = spawn.Request.Dossier ?? source.Dossier,
                 });
+                // Another promotion request may have created the stable child
+                // while this call waited for the task create lock.
+                if (jobId is null)
+                {
+                    recovered = _scanner.FindJob(childId, source.WatchPath);
+                    if (recovered?.CreationSource == spawn.Reason) jobId = recovered.Id;
+                }
                 if (string.IsNullOrWhiteSpace(jobId))
                     throw new InvalidOperationException(
                         $"Could not create implementation card {position + 1}.");
 
+                if (ConceptPromotionRecoveryStore.Read(source.FolderPath) is not null)
+                    ConceptPromotionRecoveryStore.Write(source.FolderPath, GetRecovery(source));
+                FailurePoint?.Invoke("after-card-created");
                 var created = _scanner.FindJob(jobId, source.WatchPath);
-                if (!string.IsNullOrWhiteSpace(source.Key) && created != null)
+                if (created?.CreationSource != spawn.Reason)
+                    throw new InvalidOperationException("The implementation card could not be verified for recovery.");
+                if (created != null)
                 {
-                    _mutations.SetTaskReferences(
-                        jobId,
-                        new TaskReferences { RelatedTo = [source.Key!] },
-                        created.WatchPath);
+                    EnsureSourceRelation(source, created);
                     created = _scanner.FindJob(jobId, source.WatchPath) ?? created;
                 }
 
@@ -232,7 +290,7 @@ public sealed class ConceptPromotionService
                 if (!SpawnedTaskLedger.Append(source.FolderPath, new SpawnedTaskRecord
                     {
                         At = DateTime.UtcNow,
-                        SourceKey = source.Key,
+                        SourceKey = source.Key ?? source.Id,
                         TargetProject = source.ProjectName,
                         TargetKey = targetKey,
                         TargetJobId = jobId,
@@ -252,6 +310,15 @@ public sealed class ConceptPromotionService
             }
         }
         return promoted;
+    }
+
+    private void EnsureSourceRelation(TaskInfo source, TaskInfo card)
+    {
+        var sourceKey = source.Key ?? source.Id;
+        if (card.References.RelatedTo.Contains(sourceKey, StringComparer.OrdinalIgnoreCase)) return;
+        var related = card.References.RelatedTo.Append(sourceKey).ToList();
+        if (!_mutations.SetTaskReferences(card.Id, card.References with { RelatedTo = related }, card.WatchPath))
+            throw new IOException("The implementation card was created, but its source relation could not be persisted.");
     }
 
     private static CreateTaskRequest CodingRequest(ConceptSourceDocument source, ConceptImplementationTask item) => new()

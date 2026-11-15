@@ -95,6 +95,16 @@ public sealed record PromoteConceptResponse
     public string TargetState { get; init; } = TaskStates.Preparation;
     public string WatchPath { get; init; } = "";
     public string ProjectName { get; init; } = "";
+    public ConceptPromotionRecovery? Recovery { get; init; }
+}
+
+/// <summary>Durable promotion progress returned after failures and on later plan reads.</summary>
+public sealed record ConceptPromotionRecovery
+{
+    public string Phase { get; init; } = "creating-cards";
+    public List<string> Reasons { get; init; } = [];
+    public List<PromotedConceptTask> Created { get; init; } = [];
+    public string NextAction { get; init; } = "Retry promotion. Existing cards will be reused.";
 }
 
 public sealed record PromoteConceptRequest

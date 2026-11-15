@@ -1836,6 +1836,13 @@ export interface PromoteConceptResponse {
   targetState: string;
   watchPath: string;
   projectName: string;
+  recovery?: ConceptPromotionRecovery | null;
+}
+
+export interface ConceptPromotionRecovery {
+  phase: string;
+  created: PromotedConceptTask[];
+  nextAction: string;
 }
 
 export interface PromotedConceptTask {
