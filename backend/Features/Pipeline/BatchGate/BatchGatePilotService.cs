@@ -556,6 +556,7 @@ public sealed partial class BatchGatePilotService
             }
             RecoverInterrupted();
             RepairBatchInvariants();
+            RepairOrphanedPending();
             foreach (var project in _store.ListPending().Select(item => item.Subject.Project)
                          .Distinct(StringComparer.Ordinal))
                 await HandOffProvenRedsAsync(project, ct).ConfigureAwait(false);
@@ -575,7 +576,7 @@ public sealed partial class BatchGatePilotService
                     if (pending is not null)
                         await StartConflictRoundAsync(pending, replay).ConfigureAwait(false);
                 }
-            ReconcileFormedBatches();
+            ReconcileFormedBatches(ct);
             CancelOrphanedStacks();
             ReleaseEjectedTerminalBatches(ct);
             foreach (var item in _store.ListPending().Where(item =>
@@ -606,6 +607,7 @@ public sealed partial class BatchGatePilotService
                 }
             }
             RestoreQueueWaiters();
+            RecoverFallbackHandoffs(ct, fetchedBases);
             // A persisted active per-task marker with no flight in this process
             // is a gate the process lost: it stopped or the gate threw. Resume
             // it on the same immutable subject; exclusion alone would keep the
@@ -833,6 +835,11 @@ public sealed partial class BatchGatePilotService
                 continue;
             try
             {
+                // A manual return re-admits the same review generation. Its
+                // old fallback cause is history, not a new recovery handoff.
+                // Clear it before reopening the queue so a crash at that seam
+                // cannot restart the failed per-task gate instead of planning.
+                _store.ClearFallbackCause(task.ProjectName, review.AttemptId);
                 _store.ReopenPending(review.AttemptId);
                 await EnqueueAsync(task, review, source, ReviewedAt(review), ct)
                     .ConfigureAwait(false);
@@ -995,11 +1002,12 @@ public sealed partial class BatchGatePilotService
         }
     }
 
-    internal void ReconcileFormedBatches()
+    internal void ReconcileFormedBatches(CancellationToken ct = default)
     {
         foreach (var manifest in _store.ListRecoverableManifests()
                      .Where(manifest => _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed))
         {
+            ct.ThrowIfCancellationRequested();
             var waiting = _store.ListPending();
             if (FormedExclusions(manifest, waiting).Length == 0) continue;
             var repo = waiting.FirstOrDefault(item => manifest.Members.Any(member =>
@@ -1008,7 +1016,7 @@ public sealed partial class BatchGatePilotService
             if (repo is not null)
             {
                 var currentBase = _git.FetchBatchIntegrationTip(repo.RepositoryPath,
-                    manifest.Scope.IntegrationBranch, CancellationToken.None);
+                    manifest.Scope.IntegrationBranch, ct);
                 if (currentBase is not null
                     && !string.Equals(currentBase, manifest.BaseSha,
                         StringComparison.OrdinalIgnoreCase))
@@ -1266,6 +1274,7 @@ public sealed partial class BatchGatePilotService
                              member.TaskKey == item.Subject.TaskKey && member.RunAttempt == item.Subject.RunAttempt)
                              && BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId is null).ToArray())
                 {
+                    PersistFallbackHandoff(item, cause);
                     var containedInSha = PublishedIn(Refresh(item), fetchedBases, ct,
                         gateInterrupted: !FallbackInFlight(item.ReviewAttemptId));
                     var handoff = ScheduleFallback(item, ct, cause, containedInSha: containedInSha);
@@ -1369,11 +1378,28 @@ public sealed partial class BatchGatePilotService
                 {
                     _logger.LogWarning("batch-gate-paused batch={BatchId} reason={Reason}",
                         manifest.BatchId, paused.Reason);
-                    released = ReturnToPending(manifest);
-                    State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
-                        "paused-to-per-task-gate: " + paused.Reason);
+                    var returned = ReturnToPending(manifest);
+                    // A crash during isolation can leave a member on its
+                    // queued marker already. It still needs the same durable
+                    // fallback handoff as a member just released here.
+                    var protectedChildren = _store.ListManifests()
+                        .Where(child => child.ParentBatchId == manifest.BatchId
+                            && _store.LatestState(child.BatchId).Phase is
+                                (BatchPhase.Green or BatchPhase.Publishing or BatchPhase.Published))
+                        .SelectMany(child => child.Members.Select(member =>
+                            (member.TaskKey, member.RunAttempt))).ToHashSet();
+                    released = returned.Concat(_store.ListPending().Where(item =>
+                            manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey
+                                && member.RunAttempt == item.Subject.RunAttempt)
+                            && !protectedChildren.Contains((item.Subject.TaskKey, item.Subject.RunAttempt))
+                            && BatchGateOwnershipStore.Read(MemberFolder(item)) is
+                                { BatchId: null, FallbackGateActive: false }))
+                        .DistinctBy(item => item.ReviewAttemptId).ToArray();
                     pauseCause = new PerTaskFallbackCause(PerTaskFallbackRules.BatchPaused,
                         $"batch {manifest.BatchId} paused: {paused.Reason}", manifest.BatchId);
+                    foreach (var item in released) PersistFallbackHandoff(item, pauseCause);
+                    State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
+                        "paused-to-per-task-gate: " + paused.Reason);
                 }
             }
             finally { _leases.Release(lease); }
@@ -3480,18 +3506,7 @@ public sealed partial class BatchGatePilotService
         var task = _scanner.FindJob(subject.TaskKey, pending.WatchPath);
         var settings = _settings.Get(subject.Project);
         var ownership = task is null ? null : BatchGateOwnershipStore.Read(task.FolderPath);
-        var current = task is { State: TaskStates.AutoReview, PendingIntent: null }
-            && projection.CurrentRunAttempt?.AttemptId == subject.RunAttempt
-            && projection.CurrentReviewAttempt?.AttemptId == pending.ReviewAttemptId
-            && (projection.CurrentReviewAttempt.Outcome is ReviewTerminalOutcome.Pass
-                or ReviewTerminalOutcome.IntegrationBranchDefect)
-            && string.Equals(projection.CurrentReviewAttempt.TestedResultSha,
-                subject.ResultSha, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(projection.CurrentRunAttempt.ResultEnvelope?.ResultSha,
-                subject.ResultSha, StringComparison.OrdinalIgnoreCase)
-            && projection.CurrentRunAttempt.ResultEnvelope?.ImmutableRemoteRef == subject.ResultRef
-            && projection.CurrentRunAttempt.LastFence == subject.FencingToken
-            && projection.CurrentRunAttempt.AuthorityEpoch == subject.DeliveryEpoch;
+        var current = CurrentGeneration(pending, task, projection);
         return pending with
         {
             Subject = subject with
@@ -3512,6 +3527,24 @@ public sealed partial class BatchGatePilotService
                     ?? subject.ResultSha,
             },
         };
+    }
+
+    private static bool CurrentGeneration(BatchGatePendingRecord pending, TaskInfo? task,
+        AttemptAuthorityProjection projection)
+    {
+        var subject = pending.Subject;
+        return task is { State: TaskStates.AutoReview, PendingIntent: null }
+            && projection.CurrentRunAttempt?.AttemptId == subject.RunAttempt
+            && projection.CurrentReviewAttempt?.AttemptId == pending.ReviewAttemptId
+            && (projection.CurrentReviewAttempt.Outcome is ReviewTerminalOutcome.Pass
+                or ReviewTerminalOutcome.IntegrationBranchDefect)
+            && string.Equals(projection.CurrentReviewAttempt.TestedResultSha,
+                subject.ResultSha, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(projection.CurrentRunAttempt.ResultEnvelope?.ResultSha,
+                subject.ResultSha, StringComparison.OrdinalIgnoreCase)
+            && projection.CurrentRunAttempt.ResultEnvelope?.ImmutableRemoteRef == subject.ResultRef
+            && projection.CurrentRunAttempt.LastFence == subject.FencingToken
+            && projection.CurrentRunAttempt.AuthorityEpoch == subject.DeliveryEpoch;
     }
 
     private void ResolveSuperseded(BatchGatePendingRecord pending, string reason)
@@ -3666,17 +3699,29 @@ public sealed class BatchGatePilotHostedService : BackgroundService
     private readonly BatchGatePilotService _pilot;
     private readonly TaskScannerService _scanner;
     private readonly ILogger<BatchGatePilotHostedService> _logger;
+    private readonly bool _enabled;
 
     public BatchGatePilotHostedService(BatchGatePilotService pilot, TaskScannerService scanner,
-        ILogger<BatchGatePilotHostedService> logger)
+        ILogger<BatchGatePilotHostedService> logger, IHostEnvironment environment,
+        IConfiguration configuration)
     {
         _pilot = pilot;
         _scanner = scanner;
         _logger = logger;
+        var underTestHost = AppDomain.CurrentDomain.GetAssemblies().Any(assembly =>
+            assembly.GetName().Name?.StartsWith("xunit", StringComparison.OrdinalIgnoreCase) == true);
+        _enabled = (!underTestHost && !environment.IsEnvironment("Test")
+            && !environment.IsEnvironment("Testing"))
+            || configuration.GetValue<bool>("BatchGatePilot:RunInTestHost");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!_enabled) return;
+        // BackgroundService.StartAsync runs ExecuteAsync through its first
+        // incomplete await. The scanner may already be published at startup,
+        // so yield before the first potentially synchronous reconciliation.
+        await Task.Yield();
         await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         while (!stoppingToken.IsCancellationRequested)
@@ -3696,6 +3741,7 @@ public sealed class BatchGatePilotHostedService : BackgroundService
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        if (!_enabled) return;
         // AGT-3755: a flight that ends now must not start a tick on a stopping host.
         _pilot.BeginShutdown();
         try { await _pilot.WaitForFlightsAsync(includeFallbacks: true, cancellationToken).ConfigureAwait(false); }

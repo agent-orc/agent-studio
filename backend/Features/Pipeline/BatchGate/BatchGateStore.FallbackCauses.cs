@@ -11,7 +11,7 @@ public sealed record BatchGateFallbackCause(
 
 public sealed partial class BatchGateStore
 {
-    /// <summary>Causes kept per project; older ones are pruned when a new one is recorded.</summary>
+    /// <summary>Resolved history is bounded; unresolved causes remain as recovery handoffs.</summary>
     internal const int RetainedFallbackCauses = 200;
 
     private readonly object _fallbackCauseLock = new();
@@ -31,8 +31,14 @@ public sealed partial class BatchGateStore
             var suffix = "-" + SafeName(cause.ReviewAttemptId) + ".json";
             if (Directory.EnumerateFiles(folder, "*" + suffix).Any()) return false;
             WriteOnce(Path.Combine(folder, $"{cause.RecordedAtUtc.UtcTicks:D19}{suffix}"), cause);
-            foreach (var stale in Directory.EnumerateFiles(folder, "*.json").Order(StringComparer.Ordinal)
-                         .SkipLast(RetainedFallbackCauses).ToArray())
+            // An unresolved generation's cause is a recovery handoff. Keep it
+            // even when more than the display history limit has accumulated.
+            var unresolved = ListPending().Where(item => item.Subject.Project == cause.Project)
+                .Select(item => SafeName(item.ReviewAttemptId) + ".json")
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var stale in Directory.EnumerateFiles(folder, "*.json")
+                         .Where(path => !unresolved.Contains(Path.GetFileName(path)[20..]))
+                         .Order(StringComparer.Ordinal).SkipLast(RetainedFallbackCauses).ToArray())
                 File.Delete(stale);
             return true;
         }
