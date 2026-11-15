@@ -119,11 +119,6 @@ export class OverviewTitleBlockComponent {
   ]);
 
   /**
-   * "Promote to coding task" is offered only on a planning task whose latest
-   * run finished. Research tasks are read-only reports by design and never show
-   * it; coding tasks have nothing to promote to.
-   */
-  /**
    * A concept card after sight review whose Dossier is linked offers
    * Create implementation cards. Accepting the concept stays a separate move.
    */
@@ -133,6 +128,11 @@ export class OverviewTitleBlockComponent {
       && (job.state === TaskState.HumanReview || job.state === TaskState.Completed)
       && !!job.conceptDossier?.repoRelativePath?.trim();
   });
+  /**
+   * "Promote to coding task" is offered only on a planning task whose latest
+   * run finished. Research tasks are read-only reports by design and never show
+   * it; coding tasks have nothing to promote to.
+   */
   readonly canPromote = computed(() =>
     this.job().mode === 'planning'
     && OverviewTitleBlockComponent.FINISHED_STATES.has(this.job().state),
