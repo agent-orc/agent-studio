@@ -315,7 +315,8 @@ public sealed class TaskIntegrationStatusService
                 item => item.ParentSha, StringComparer.OrdinalIgnoreCase);
             while (!decision.Verified && decision.MissingTree is { } missing
                 && laterByCommit.TryGetValue(missing, out var parent)
-                && _git.IsManagedDocumentKeyCommit(root, missing, parent))
+                && (_git.IsManagedDocumentKeyCommit(root, missing, parent)
+                    || _git.IsManagedDecisionReceiptCommit(root, missing, parent)))
             {
                 neutralCommits.Add(missing);
                 decision = IntegrationPublicationGatePolicy.Check(verification.Sha!, tip!,
@@ -352,7 +353,7 @@ public sealed class TaskIntegrationStatusService
                 } };
             }
             var neutralEvidence = neutralCommits.Count == 0 ? string.Empty
-                : $" Gate-neutral document-key commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
+                : $" Gate-neutral Dossier descriptor commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
             if (decision.CoveringPublication is { } covering)
                 return status with { Verification = verification with
                 {

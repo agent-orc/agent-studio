@@ -238,6 +238,17 @@
         "dependencies": {
           "AgentStudio.TaskServer.Contracts": "[0.9.5, )"
         }
+      },
+      "task-server": {
+        "type": "Project",
+        "dependencies": {
+          "AgentStudio.Retention": "[0.9.5, )",
+          "AgentStudio.TaskServer.Contracts": "[0.9.5, )",
+          "Microsoft.Data.Sqlite": "[10.0.9, )",
+          "Operations.Contracts": "[0.9.5, )",
+          "Orchestration.Decisions": "[0.9.5, )",
+          "SQLitePCLRaw.lib.e_sqlite3": "[3.53.3, )"
+        }
       }
     }
   }

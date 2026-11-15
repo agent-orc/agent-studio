@@ -215,6 +215,10 @@ public static class RoutePermissionCatalog
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/claim");
         Add("PUT", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/report");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/review-package-claims");
+        Add("POST", IamPermissions.RunnerService,
+            "/api/v1/one-shot-jobs/claim", "/api/v1/one-shot-jobs/complete");
+        Add("POST", IamPermissions.WorkspaceOperate, "/api/v1/one-shot-jobs");
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/v1/one-shot-jobs/{}");
         Add("R", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/desired-state");
         Add("POST", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/observed-state");
         Add("*", IamPermissions.RunnerService,

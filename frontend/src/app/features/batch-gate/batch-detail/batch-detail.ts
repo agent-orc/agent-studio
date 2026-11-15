@@ -5,11 +5,13 @@ import { BatchGateService } from '../../../services/batch-gate.service';
 import { BatchPanelComponent } from '../batch-panel/batch-panel';
 import { BatchProvenRedComponent } from '../batch-proven-red/batch-proven-red';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { batchIsolationHold } from '../../../models/batch-isolation-hold';
+import { IsolationHoldComponent } from '../isolation-hold/isolation-hold';
 
 @Component({
   selector: 'app-batch-detail',
   standalone: true,
-  imports: [BatchPanelComponent, BatchProvenRedComponent, StatusIndicatorComponent],
+  imports: [BatchPanelComponent, BatchProvenRedComponent, StatusIndicatorComponent, IsolationHoldComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-detail.html',
   styleUrl: './batch-detail.scss',
@@ -23,6 +25,7 @@ export class BatchDetailComponent {
   private readonly gate = inject(BatchGateService);
   readonly project = computed(() => this.task().projectName);
   readonly state = computed(() => this.gate.state(this.project())());
+  readonly hold = computed(() => batchIsolationHold(this.state(), this.task().taskKey, this.task().key, this.task().displayKey, this.task().id));
   readonly pushWait = computed(() => {
     const state = this.state();
     if (!state) return null;

@@ -126,6 +126,9 @@ public static class MonolithTransitionAdapter
     public static IReadOnlyList<BatchInvariantFinding> BatchGateInvariants(BatchInvariantFacts facts)
         => BatchGateInvariantPolicy.Assess(facts);
 
+    public static BatchPendingRecoveryAction BatchPendingRecovery(BatchPendingRecoveryFacts facts)
+        => BatchPendingRecoveryPolicy.Decide(facts);
+
     public static GateQueueOverrunAction GateQueueOverrun(string? budgetName, string? budgetPhase,
         string? lane, bool currentGeneration, TimeSpan totalQueueWait = default, TimeSpan? queueWaitCap = null)
         => GateQueueStallPolicy.Decide(budgetName, budgetPhase, lane, currentGeneration,

@@ -38,13 +38,10 @@ import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { ExecutionLocationBadgeComponent } from '../../../../components/execution-location-badge/execution-location-badge.component';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
-/** Top header of the job-detail view: back button, editable title, state pill,
- * and the lane's primary triage action plus
- * an overflow menu of the remaining lane actions. The bottom-of-detail
- * triage bar that used to host these is gone (the operator reported the
- * "Human Review v" trigger row still rendering after the first attempt at folding it up). Title-edit state is owned by the parent and passed
- * via inputs/outputs.
- */
+import { BatchGateService } from '../../../../services/batch-gate.service';
+import { batchIsolationHold } from '../../../../models/batch-isolation-hold';
+import { isHeldRequeue } from './isolation-requeue';
+/** Task detail title, lane pager and primary and overflow actions. */
 @Component({
   selector: 'app-detail-header',
   standalone: true,
@@ -55,6 +52,9 @@ import { RemoteDispatchRejectionComponent } from '../../../../components/remote-
 })
 export class DetailHeaderComponent {
   readonly info = input.required<TaskInfo>();
+  private readonly batchGate = inject(BatchGateService);
+  readonly isolationHold = computed(() => batchIsolationHold(this.batchGate.state(this.info().projectName)(), this.info().taskKey, this.info().key, this.info().displayKey, this.info().id));
+  isHeldRequeue(button: TriageButton): boolean { return isHeldRequeue(button, this.info().state, this.isolationHold()); }
   readonly gateInfrastructurePark = input(false);
   readonly defaultThinkingLevel = input<string | null>(null);
   readonly headerModel = computed(() => {
@@ -229,11 +229,7 @@ export class DetailHeaderComponent {
   readonly triagePrimary = computed<TriageButton | null>(() => this.gateInfrastructurePark() || this.reviewsOnly()
     ? null : primaryActionForTask(this.info()));
 
-  /**
-   * State-dependent presentation for the Human Review acceptance primary. Null
-   * for every other primary (Run now, Stop run, ...). The acceptance label
-   * remains "Accept" while Git membership supplies the landed-status facts.
-   */
+  /** Git position refines the Human Review acceptance primary. */
   readonly mergeAcceptView = computed<MergeAcceptView | null>(() => {
     const p = this.triagePrimary();
     if (!p || p.id !== 'mark-done') return null;
@@ -297,8 +293,8 @@ export class DetailHeaderComponent {
       id: b.id,
       label: b.label,
       danger: b.variant === 'danger',
-      disabled,
       ...triageDecisionRowState(this.info(), b),
+      disabled: disabled || this.isHeldRequeue(b) || !!triageDecisionRowState(this.info(), b).disabled,
     }));
     if (this.commitActionsAvailable()) {
       if (items.length > 0) items.push({ kind: 'separator' });
@@ -325,6 +321,7 @@ export class DetailHeaderComponent {
     const p = this.triagePrimary();
     if (!p) return '';
     if (this.mutationsBlocked()) return 'Update in progress — actions paused.';
+    if (this.isHeldRequeue(p)) return `Batch flight ${this.isolationHold()?.flight} is isolating. Requeue waits until isolation ends.`;
     const refusal = this.primaryDecisionRefusal();
     if (refusal) return refusal;
     if (this.primaryBlockedByIntegration()) return acceptanceHoldReason(this.info());
@@ -333,6 +330,10 @@ export class DetailHeaderComponent {
     const merge = this.mergeAcceptView();
     if (merge?.landed && merge.statusTooltip) return `${merge.statusTooltip} (Enter)`;
     return `${label} (Enter)`;
+  }
+
+  primaryDisabled(button: TriageButton): boolean {
+    return this.mutationsBlocked() || this.triageActingId() !== null || this.primaryAwaitingGit() || this.primaryBlockedByIntegration() || !!this.primaryDecisionRefusal() || this.isHeldRequeue(button);
   }
 
   overflowTooltip(): string {
@@ -344,9 +345,8 @@ export class DetailHeaderComponent {
   onPrimaryClick(): void {
     const p = this.triagePrimary();
     if (!p) return;
-    // Hold git-dependent primaries until the branch/merge status has loaded, so
-    // Enter / click cannot trigger an acceptance while the label is still a guess.
-    if (this.primaryAwaitingGit() || this.primaryBlockedByIntegration() || this.primaryDecisionRefusal()) return;
+    // Hold acceptance until Git status loads, and requeue while isolation is active.
+    if (this.primaryAwaitingGit() || this.primaryBlockedByIntegration() || this.primaryDecisionRefusal() || this.isHeldRequeue(p)) return;
     this.emitTriage(p);
   }
 
@@ -373,7 +373,7 @@ export class DetailHeaderComponent {
       return;
     }
     const button = this.triageOverflow().find(b => b.id === ev.id);
-    if (!button) return;
+    if (!button || this.isHeldRequeue(button)) return;
     // Delete keeps its dedicated output (boardMutations.deleteFromDetail
     // owns the confirm dialog + pager-aware advance). The rest of the lane
     // actions flow through the triage controller via `triageAction`.
@@ -391,7 +391,7 @@ export class DetailHeaderComponent {
   }
 
   private emitTriage(button: TriageButton): void {
-    if (this.mutationsBlocked() || this.triageActingId() !== null) return;
+    if (this.mutationsBlocked() || this.triageActingId() !== null || this.isHeldRequeue(button)) return;
     this.triageOverflowOpen.set(false);
     this.triageAction.emit({ id: button.id, label: button.label, intent: button.intent });
   }

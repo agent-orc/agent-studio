@@ -58,8 +58,8 @@ export function recoveryInputs(overview: BackupOverview): RecoveryInput[] {
       step: 'Restore authority, re-enrol remote agents and check revocations', href: `${runbook}#fresh-host-step-8`,
     },
     {
-      name: 'Quality Studio', status: 'Excluded from archive; recreate if enabled',
-      step: 'Recreate optional service', href: `${runbook}#fresh-host-step-9`,
+      name: 'Quality Studio', status: 'Data and registry archived when present; image and repository checkouts required',
+      step: 'Restore optional service', href: `${runbook}#fresh-host-step-9`,
     },
     {
       name: 'Owner account and second factor', status: 'Not checked by Studio',

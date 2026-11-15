@@ -488,6 +488,7 @@ public static class TaskCrudEndpoints
         // card after recording the human gate.
         group.MapGet("/{jobId}/promote-concept", (string jobId, string? project, string? watchPath,
             TaskScannerService scanner,
+            AgentStudio.Pipeline.ConceptPromotionService promotion,
             AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
@@ -499,7 +500,11 @@ public static class TaskCrudEndpoints
             var plan = scanner.BuildPromoteConceptPlan(jobId, watchPath);
             return plan is null
                 ? Results.Conflict(new { error = "The concept Dossier is missing or did not pass concept review." })
-                : Results.Ok(plan);
+                : Results.Ok(plan with
+                {
+                    Recovery = AgentStudio.Pipeline.ConceptPromotionRecoveryStore.Read(info.FolderPath) is null
+                        ? null : promotion.GetRecovery(info),
+                });
         });
 
         group.MapPost("/{jobId}/promote-concept", async (
@@ -537,56 +542,78 @@ public static class TaskCrudEndpoints
             }
             catch (Exception ex)
             {
-                return Results.Conflict(new { error = ex.Message });
+                return Results.Conflict(new
+                {
+                    error = "concept-promotion-incomplete",
+                    message = ex.Message,
+                    recovery = promotion.GetRecovery(info),
+                });
             }
 
-            if (info.State == TaskStates.HumanReview)
+            try
             {
-                var now = DateTime.UtcNow;
-                pipelineLog.RecordStep(info.FolderPath, new PipelineStepExecution
+                if (info.State == TaskStates.HumanReview)
                 {
-                    StepId = AgentStudio.Pipeline.PipelineCatalogue.ConceptSightReviewGateStepId,
-                    Kind = StepKind.Orchestrator,
-                    Status = PipelineStepStatus.Passed,
-                    StartedAt = now,
-                    CompletedAt = now,
-                    Verdict = "sight-review-approved",
-                    VerdictSummary = "Human sight review approved the concept.",
-                });
-                pipelineLog.RecordStep(info.FolderPath, new PipelineStepExecution
-                {
-                    StepId = AgentStudio.Pipeline.PipelineCatalogue.ConceptPromotionStepId,
-                    Kind = StepKind.Tool,
-                    Status = PipelineStepStatus.Passed,
-                    StartedAt = now,
-                    CompletedAt = now,
-                    Verdict = result.Created.Count == 0 ? "no-implementation" : "implementation-cards-created",
-                    VerdictSummary = result.Created.Count == 0
-                        ? "Sight review completed without implementation cards."
-                        : $"Created {result.Created.Count} implementation card(s) from the Dossier.",
-                });
-                pipelineLog.Complete(info.FolderPath, now);
-                SteerPendingMarker.Clear(info.FolderPath);
-                scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
-
-                var move = await transitions.MoveAsync(
-                    jobId,
-                    TaskStates.Completed,
-                    watchPath,
-                    ct,
-                    cause: "concept-sight-review-approved",
-                    reason: "Concept sight review approved and implementation promotion completed.",
-                    transitionCause: LaneChangeCauses.Accepted,
-                    transitionDetail: "concept-sight-review");
-                if (move.Status != MoveJobStatus.Success)
-                    return Results.Conflict(new
+                    var now = DateTime.UtcNow;
+                    pipelineLog.RecordStep(info.FolderPath, new PipelineStepExecution
                     {
-                        error = move.Message ?? "Implementation cards were created, but the concept card could not be completed.",
-                        result,
+                        StepId = AgentStudio.Pipeline.PipelineCatalogue.ConceptSightReviewGateStepId,
+                        Kind = StepKind.Orchestrator,
+                        Status = PipelineStepStatus.Passed,
+                        StartedAt = now,
+                        CompletedAt = now,
+                        Verdict = "sight-review-approved",
+                        VerdictSummary = "Human sight review approved the concept.",
                     });
-            }
+                    pipelineLog.RecordStep(info.FolderPath, new PipelineStepExecution
+                    {
+                        StepId = AgentStudio.Pipeline.PipelineCatalogue.ConceptPromotionStepId,
+                        Kind = StepKind.Tool,
+                        Status = PipelineStepStatus.Passed,
+                        StartedAt = now,
+                        CompletedAt = now,
+                        Verdict = result.Created.Count == 0 ? "no-implementation" : "implementation-cards-created",
+                        VerdictSummary = result.Created.Count == 0
+                            ? "Sight review completed without implementation cards."
+                            : $"Created {result.Created.Count} implementation card(s) from the Dossier.",
+                    });
+                    pipelineLog.Complete(info.FolderPath, now);
+                    SteerPendingMarker.Clear(info.FolderPath);
+                    scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
 
-            return Results.Ok(result);
+                    var move = await transitions.MoveAsync(
+                        jobId,
+                        TaskStates.Completed,
+                        watchPath,
+                        ct,
+                        cause: "concept-sight-review-approved",
+                        reason: "Concept sight review approved and implementation promotion completed.",
+                        transitionCause: LaneChangeCauses.Accepted,
+                        transitionDetail: "concept-sight-review");
+                    if (move.Status != MoveJobStatus.Success)
+                        return Results.Conflict(new
+                        {
+                            error = "concept-promotion-incomplete",
+                            message = move.Message ?? "Implementation cards were created, but the concept card could not be completed.",
+                            recovery = promotion.GetRecovery(scanner.FindJob(jobId, watchPath) ?? info),
+                            result,
+                        });
+                }
+
+                promotion.RecordPhase(scanner.FindJob(jobId, watchPath) ?? info, "completed");
+
+                return Results.Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return Results.Conflict(new
+                {
+                    error = "concept-promotion-incomplete",
+                    message = ex.Message,
+                    recovery = promotion.GetRecovery(scanner.FindJob(jobId, watchPath) ?? info),
+                    result,
+                });
+            }
         });
 
         // AGT-2069 — declare (or clear) "bewusst keine Umsetzung" (deliberately

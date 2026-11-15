@@ -6,6 +6,7 @@
       <h2 id="task-batch-title">Batch verification</h2>
       <button type="button" class="studio-button btn btn--ghost" data-testid="task-batch-open-panel" (click)="panelOpen.set(true)">Open batch panel</button>
     </header>
+    @if (hold(); as hold) { <app-isolation-hold [hold]="hold" [project]="project()" /> }
     @if (pushWait(); as wait) {
       <p data-testid="task-integration-push-wait" role="status">
         Approved integration push pending for {{ wait.ageMinutes.toFixed(1) }} min.

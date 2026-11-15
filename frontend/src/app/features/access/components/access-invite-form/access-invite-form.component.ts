@@ -22,17 +22,29 @@ export class AccessInviteFormComponent {
   readonly displayName = signal('');
   readonly grant = signal<IamGrant | null>(null);
   readonly link = signal<{ url: string; username: string; expiresAt: string; factor: string } | null>(null);
+  readonly pending = signal<{ username: string; role: string } | null>(null);
   readonly copied = signal(false);
   readonly copyError = signal(false);
 
   canInvite(): boolean {
-    return this.username().trim().length >= 3 && !!this.grant() && !this.access.busy();
+    return this.username().trim().length >= 3 && !!this.grant() && !this.access.busy() && !this.pending();
   }
 
   async invite(): Promise<void> {
     const grant = this.grant();
     if (!grant || !this.canInvite()) return;
-    const result = await this.access.invite(this.username().trim(), this.displayName().trim(), [grant]);
+    const username = this.username().trim();
+    const role = this.access.overview()?.roles.find(item => item.id === grant.role)?.displayName ?? grant.role;
+    this.link.set(null);
+    this.copied.set(false);
+    this.copyError.set(false);
+    this.pending.set({ username, role });
+    let result: Awaited<ReturnType<AccessService['invite']>>;
+    try {
+      result = await this.access.invite(username, this.displayName().trim(), [grant]);
+    } finally {
+      this.pending.set(null);
+    }
     if (!result) return;
     const origin = typeof location === 'undefined' ? '' : location.origin;
     const factor = result.user.role === 'owner' || result.user.role === 'operator'

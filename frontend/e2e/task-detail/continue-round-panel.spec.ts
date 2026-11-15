@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { api } from '../helpers/api';
 import { createJob, getJob } from '../helpers/jobs';
 import { dismissDevErrorDialog, setTheme, type Theme } from '../helpers/theme';
+import { redHalvingState } from '../../src/app/features/batch-gate/testing/batch-fixtures';
 
 /**
  * AGT-3582: a finished card takes another round from the task detail. The
@@ -51,9 +52,14 @@ async function presentInLane(page: Page, id: string, watchPath: string, lane: st
   const marks = [id, job.key, job.jobKey].filter((value): value is string => !!value).map(value => `/${encodeURIComponent(value)}`);
   await page.route(url => marks.some(mark => url.pathname.includes(mark)), async route => {
     if (route.request().method() !== 'GET') return route.fallback();
-    const response = await route.fetch();
-    const body = (await response.text()).replaceAll('"0-backlog"', `"${lane}"`);
-    return route.fulfill({ response, body });
+    try {
+      const response = await route.fetch();
+      const body = (await response.text()).replaceAll('"0-backlog"', `"${lane}"`);
+      return route.fulfill({ response, body });
+    } catch {
+      // The card's background reads can outlive test cleanup and a deleted fixture.
+      return route.abort().catch(() => {});
+    }
   });
 }
 
@@ -189,6 +195,50 @@ for (const theme of ['light', 'dark'] as Theme[]) {
       await deleteCard(id, watchPath);
     }
   });
+}
+
+for (const theme of ['light', 'dark'] as Theme[]) {
+  for (const width of [1280, 390]) {
+    test(`active isolation previews the hold before round or requeue (${width}px, ${theme})`, async ({ page }, testInfo) => {
+      const watchPath = await pickWatchPath();
+      const { id } = await createJob({ title: `isolation-hold-${width}-${theme}-${Date.now()}`,
+        watchPath, promptMarkdown: '# Held member', targetState: '0-backlog' });
+      const key = id;
+      const state = {
+        ...redHalvingState,
+        pending: [{ ...redHalvingState.pending[0], taskKey: key }],
+        batches: redHalvingState.batches.map(batch => ({ ...batch,
+          isolationActive: batch.batchId === 'batch-7',
+          members: batch.members.map(member => ({ ...member, taskKey: key })) })),
+        members: { [key]: { status: 'in-batch', batchId: 'batch-8', phase: 'running', position: 1, size: 1 } },
+        flightClaim: { batchId: 'batch-8', stage: 'gating', stageDeadlineUtc: '2026-11-15T15:00:00Z', end: null },
+      };
+      await presentInLane(page, id, watchPath, '6-completed');
+      await routeBase(page);
+      const sent = await routeContinue(page, 409, { error: 'batch-isolation-active', message: ISOLATION_MESSAGE });
+      await page.route(/\/api\/projects\/[^/]+\/batch-gate\/state(\?|$)/, route => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(state),
+      }));
+      try {
+        await openCard(page, id, watchPath, theme);
+        await page.setViewportSize({ width, height: 900 });
+        const panel = page.getByTestId('continue-round-panel');
+        await expect(panel.getByTestId('batch-isolation-hold')).toContainText('batch-7');
+        await expect(page.getByTestId('batch-isolation-hold').first()).toContainText('Current isolation step: gating');
+        await panel.getByTestId('continue-round-open').click();
+        await panel.getByTestId('continue-round-prompt').fill('Fix the result');
+        await panel.getByTestId('continue-round-reason').fill('Gate is red');
+        await expect(panel.getByTestId('continue-round-submit')).toBeDisabled();
+        await expect(page.getByTestId('isolation-open-batch').first()).toBeVisible();
+        expect(sent).toHaveLength(0);
+        await page.screenshot({ path: evidencePath(testInfo, `isolation-hold-${width}-${theme}.png`), fullPage: true });
+        await panel.getByTestId('isolation-open-batch').click();
+        await expect(page.getByRole('button', { name: `Eject ${key}` })).toBeDisabled();
+      } finally {
+        await deleteCard(id, watchPath);
+      }
+    });
+  }
 }
 
 const CONCEPT_PLAN = {
@@ -367,6 +417,58 @@ test('a refused concept follow-up promotes the card from its Dossier proposals (
     expect(promotions).toHaveLength(1);
     expect(promotions[0].postDataJSON()).toEqual({ itemIndexes: [0, 1] });
     await expect(panel.getByTestId('continue-round-form')).toHaveCount(0);
+  } finally {
+    await deleteCard(id, watchPath);
+  }
+});
+
+test('an incomplete concept promotion shows created keys and a safe retry', async ({ page }, testInfo) => {
+  const watchPath = await pickWatchPath();
+  const id = await createConceptCard(watchPath, 'promotion-retry');
+  await presentInLane(page, id, watchPath, '5-human-review');
+  await routeBase(page);
+  await routeGuardedContinue(page);
+  let attempts = 0;
+  await page.route(/\/api\/tasks\/[^/]+\/promote-concept(\?|$)/, route => {
+    if (route.request().method() === 'GET')
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(attempts === 0
+        ? CONCEPT_PLAN : { ...CONCEPT_PLAN, recovery: {
+          phase: 'cards-recorded', created: [{ jobId: 'first-slice', taskKey: 'AGT-9001' }],
+          nextAction: 'Retry promotion. Existing cards will be reused.',
+        } }) });
+    attempts++;
+    return route.fulfill({
+      status: attempts === 1 ? 409 : 200, contentType: 'application/json',
+      body: JSON.stringify(attempts === 1 ? {
+        error: 'concept-promotion-incomplete', message: 'The Dossier could not be marked as decided.',
+        recovery: { phase: 'cards-recorded', created: [
+          { jobId: 'first-slice', taskKey: 'AGT-9001' },
+        ], nextAction: 'Retry promotion. Existing cards will be reused.' },
+      } : { source: CONCEPT_PLAN.source, created: [
+        { jobId: 'first-slice', taskKey: 'AGT-9001', title: CONCEPT_PLAN.items[0].title },
+      ] }),
+    });
+  });
+
+  try {
+    await openCard(page, id, watchPath, 'light');
+    const panel = await fillRound(page, 'continue', CODE_SHAPED_FOLLOW_UP, GUARD_REASON);
+    await panel.getByTestId('continue-round-submit').click();
+    const refusal = panel.getByTestId('continue-mode-refusal');
+    await refusal.getByTestId('continue-mode-promote').click();
+    await refusal.getByTestId('continue-mode-promote-confirm').click();
+    await expect(refusal.getByTestId('continue-mode-promote-recovery')).toContainText('AGT-9001');
+    await expect(refusal.getByTestId('continue-mode-promote-confirm')).toHaveText('Retry promotion');
+    await refusal.getByTestId('continue-mode-promote-back').click();
+    await refusal.getByTestId('continue-mode-promote').click();
+    await expect(refusal.getByTestId('continue-mode-promote-recovery')).toContainText('AGT-9001');
+    await refusal.getByTestId('continue-mode-promote-recovery').evaluate(el => el.scrollIntoView({ block: 'center' }));
+    await page.screenshot({ path: evidencePath(testInfo, 'concept-promotion-recovery-light.png') });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: evidencePath(testInfo, 'concept-promotion-recovery-dark.png') });
+    await refusal.getByTestId('continue-mode-promote-confirm').click();
+    await expect(panel.getByTestId('continue-round-form')).toHaveCount(0);
+    expect(attempts).toBe(2);
   } finally {
     await deleteCard(id, watchPath);
   }

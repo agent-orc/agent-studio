@@ -231,7 +231,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // (Review): it runs a model call public demo denies.
         // PT-4 adds persona lease claim and completion. Both execute a persona
         // occurrence and must receive the same typed public-demo denial.
-        Assert.Equal(158, routes.Count);
+        // AGT-3762 adds combined one-shot create, claim, and completion. All
+        // three execute model work through runner hosts and receive that denial.
+        Assert.Equal(161, routes.Count);
         foreach (var (routePath, path) in new[]
         {
             ("/api/tasks/{jobId}/content-review", ExecutionAdmissionPath.Review),
@@ -292,10 +294,14 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/v1/orchestration/host-decisions", ExecutionAdmissionPath.Start),
             ("/api/v1/orchestration/decision-jobs", ExecutionAdmissionPath.Start),
             ("/api/runner/personas/claim", ExecutionAdmissionPath.Claim),
-            ("/api/runner/personas/complete", ExecutionAdmissionPath.Continue)
+            ("/api/runner/personas/complete", ExecutionAdmissionPath.Continue),
+            ("/api/v1/one-shot-jobs", ExecutionAdmissionPath.Start),
+            ("/api/v1/one-shot-jobs/claim", ExecutionAdmissionPath.Claim),
+            ("/api/v1/one-shot-jobs/complete", ExecutionAdmissionPath.Continue)
         })
         {
-            var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
+            var route = Assert.Single(routes, candidate =>
+                candidate.RoutePattern.RawText?.TrimEnd('/') == routePath);
             Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
             Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         }
@@ -337,9 +343,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 13,
-                [ExecutionAdmissionPath.Start] = 35,
-                [ExecutionAdmissionPath.Continue] = 36,
+                [ExecutionAdmissionPath.Claim] = 14,
+                [ExecutionAdmissionPath.Start] = 36,
+                [ExecutionAdmissionPath.Continue] = 37,
                 [ExecutionAdmissionPath.Review] = 10,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 32,

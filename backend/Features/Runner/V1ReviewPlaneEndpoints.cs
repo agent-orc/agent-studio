@@ -65,7 +65,7 @@ public static class V1ReviewPlaneEndpoints
                 : Results.Json(response, statusCode: StatusCodes.Status426UpgradeRequired);
         });
 
-        api.MapPut("/runners/{runnerId}", (
+        api.MapPut("/runners/{runnerId}", async (
             HttpContext context,
             string runnerId,
             Contract.RegisterRunnerRequest request,
@@ -74,7 +74,9 @@ public static class V1ReviewPlaneEndpoints
             AttemptAuthorityService authority,
             TaskScannerService scanner,
             OrchestratorChatLog chat,
-            ILoggerFactory loggerFactory) =>
+            ILoggerFactory loggerFactory,
+            AgentStudio.Cli.CombinedOneShotJobs oneShotJobs,
+            CancellationToken ct) =>
         {
             if (!RunnerMatches(context, runnerId))
                 return Results.Unauthorized();
@@ -83,6 +85,7 @@ public static class V1ReviewPlaneEndpoints
                 var logger = loggerFactory.CreateLogger(LoggerName);
                 var registration = registry.RegisterWithRestartObservation(runnerId, request);
                 var registered = registration.Runner;
+                await oneShotJobs.RegisterAsync(runnerId, request, ct);
                 clients.RecordSeen(runnerId);
                 var adoptions = authority.ReAdoptRunnerAttempts(
                     runnerId,
@@ -214,7 +217,7 @@ public static class V1ReviewPlaneEndpoints
             return Results.Ok(new { recorded = true });
         });
 
-        api.MapMethods("/runners/{runnerId}/capabilities", new[] { "POST", "PUT" }, (
+        api.MapMethods("/runners/{runnerId}/capabilities", new[] { "POST", "PUT" }, async (
             HttpContext context,
             string runnerId,
             Contract.CapabilityAdvertisementRequest request,
@@ -225,7 +228,9 @@ public static class V1ReviewPlaneEndpoints
             CliQuotaFallbackService quotaRoutes,
             AttemptAuthorityService authority,
             TaskScannerService scanner,
-            IConfiguration configuration) =>
+            IConfiguration configuration,
+            AgentStudio.Cli.CombinedOneShotJobs oneShotJobs,
+            CancellationToken ct) =>
         {
             if (!RunnerMatches(context, runnerId))
                 return Results.Unauthorized();
@@ -243,6 +248,29 @@ public static class V1ReviewPlaneEndpoints
                             quotaRoutes.GetAll().Values)
                         : CodingConfiguredModelRoutes(quotaRoutes.GetAll().Values,
                             scanner.ScanAllAutomationJobs()),
+                };
+                // The monolith may already have a provider rejection or a
+                // health drain for this model. Mirror its accepted effective
+                // status, not the runner's unfiltered claim of readiness.
+                var effectiveCapabilities = request.Capabilities.Select(capability =>
+                {
+                    var effective = snapshot.Capabilities.FirstOrDefault(item =>
+                        string.Equals(item.Key, capability.Key, StringComparison.OrdinalIgnoreCase));
+                    return effective is null ? capability : capability with
+                    {
+                        Status = effective.HealthState == Contract.CapabilityHealthStates.Healthy
+                            ? effective.AdvertisedStatus : "unavailable",
+                        Detail = effective.Detail ?? capability.Detail,
+                    };
+                }).ToArray();
+                var queueSnapshot = await oneShotJobs.AdvertiseAsync(
+                    request with { Capabilities = effectiveCapabilities }, ct);
+                snapshot = snapshot with
+                {
+                    ConfiguredModelRoutes = (snapshot.ConfiguredModelRoutes ?? [])
+                        .Concat(queueSnapshot.ConfiguredModelRoutes ?? [])
+                        .Distinct()
+                        .ToArray(),
                 };
                 clients.RecordSeen(runnerId);
                 if (request.Telemetry is { } hostTelemetry)

@@ -90,11 +90,14 @@ docker run --rm --user 0 --network none -v "$data_dir/operations:/data/operation
 docker run --rm --user 0 --network none \
   -v "$archive:/inputs/archive:ro" -v "$key:/inputs/backup.key:ro" -v "$secret_key:/inputs/secrets.kek:ro" \
   -v "$volume:/work" -v "$restored_stack:/restored-stack" -v "$data_dir/origin-pull:/origin-pull" \
+  -v /srv/agent-studio:/studio-host \
   --entrypoint /bin/sh "$image" -c '
     set -e
     umask 077
     cp /inputs/archive /inputs/backup.key /inputs/secrets.kek /work/
-    chown -R 10001:10001 /work /restored-stack /origin-pull'
+    mkdir -p /studio-host/quality/data /studio-host/quality/registry
+    chmod 700 /studio-host/quality /studio-host/quality/data /studio-host/quality/registry
+    chown -R 10001:10001 /work /restored-stack /origin-pull /studio-host/quality'
 if [ -f "$archive.sha256" ]; then
   (cd "$(dirname "$archive")" && sha256sum --check --quiet "$(basename "$archive").sha256") \
     || fail 'the archive does not match its .sha256 file'
@@ -111,12 +114,14 @@ docker run --rm --user 10001:10001 "${agent[@]}" \
   -v "$data_dir/host-certificates:/data/host-certificates" -v "$data_dir/caddy-data:/data/caddy-data" \
   -v "$data_dir/operations:/data/operations" \
   -v "$data_dir/origin-pull:/data/origin-pull" -v "$restored_stack:/data/restored-stack" \
+  -v /srv/agent-studio/quality/data:/data/quality-data -v /srv/agent-studio/quality/registry:/data/quality-registry \
   "$image" --studio-backup restore --key /work/backup.key --archive /work/archive --secret-key /work/secrets.kek \
     --actor "offline:$(id -un)@$(hostname)" \
     --target workspace=/data/workspace --target home=/data/home --target projects=/data/projects \
     --target host-certificates=/data/host-certificates --target caddy-data=/data/caddy-data \
     --target origin-pull=/data/origin-pull --target stack=/data/restored-stack \
     --target operations=/data/operations \
+    --target quality-data=/data/quality-data --target quality-registry=/data/quality-registry \
     --restored-by "$(id -un)@$(hostname)" \
   || { rmdir "$restored_stack" 2>/dev/null || true
        fail 'the restore did not complete; see the message above. The targets are empty again and the workspace repository from setup.sh is back; fix the cause and run restore-backup.sh again.'; }

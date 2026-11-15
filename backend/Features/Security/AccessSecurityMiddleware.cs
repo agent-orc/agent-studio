@@ -1106,6 +1106,10 @@ public sealed class AccessSecurityMiddleware
             return RunnerScopes.Artifacts;
         if (path.StartsWith("/api/v1/orchestration/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Orchestration;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/v1/one-shot-jobs/claim", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Claim;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/v1/one-shot-jobs/complete", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Completion;
         // Keep the versioned client surface explicit. A service credential must
         // never fall through to browser-session authorization on a new route.
         if (path.StartsWith("/api/v1/runners/", StringComparison.OrdinalIgnoreCase))

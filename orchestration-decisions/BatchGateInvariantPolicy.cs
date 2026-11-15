@@ -49,6 +49,9 @@ public enum BatchInvariantKind
 
     /// <summary>A published batch whose admitted member is still queued.</summary>
     PublishedBatchUnresolvedMember,
+
+    /// <summary>A publishing batch has no queued generation to locate its remote proof.</summary>
+    PublishingBatchWithoutPending,
 }
 
 public enum BatchInvariantRepair
@@ -76,6 +79,41 @@ public sealed record BatchInvariantFinding(
     BatchInvariantKind Kind, string BatchId, string? TaskKey, string Detail,
     BatchInvariantRepair Repair);
 
+/// <summary>Journal facts for one unresolved review generation.</summary>
+public sealed record BatchPendingRecoveryFacts(
+    bool CurrentGeneration, bool InAutoReview, bool MarkerMissing,
+    bool MarkerMatchesAttempt, bool HasOwner, bool OwnerManifestExists,
+    bool FallbackActive, bool HasFallbackCause, long AgeMs, long MaximumWaitMs);
+
+public enum BatchPendingRecoveryAction
+{
+    None,
+    WaitForBatch,
+    WaitForPlanner,
+    RestoreQueuedMarker,
+    ReleaseMissingOwner,
+    ResumeFallback,
+    RetryPlanner,
+}
+
+/// <summary>Exactly one next action for an unresolved pending generation.</summary>
+public static class BatchPendingRecoveryPolicy
+{
+    public static BatchPendingRecoveryAction Decide(BatchPendingRecoveryFacts facts)
+    {
+        if (!facts.CurrentGeneration || !facts.InAutoReview || !facts.MarkerMatchesAttempt)
+            return BatchPendingRecoveryAction.None;
+        if (facts.MarkerMissing) return BatchPendingRecoveryAction.RestoreQueuedMarker;
+        if (facts.HasOwner)
+            return facts.OwnerManifestExists ? BatchPendingRecoveryAction.WaitForBatch
+                : BatchPendingRecoveryAction.ReleaseMissingOwner;
+        if (facts.FallbackActive) return BatchPendingRecoveryAction.None;
+        if (facts.HasFallbackCause) return BatchPendingRecoveryAction.ResumeFallback;
+        return facts.AgeMs >= facts.MaximumWaitMs
+            ? BatchPendingRecoveryAction.RetryPlanner : BatchPendingRecoveryAction.WaitForPlanner;
+    }
+}
+
 /// <summary>
 /// AGT-3563: the consistency rules that join a batch's phase to the members it
 /// claimed. The host collects the facts each tick and on demand, reports the
@@ -95,7 +133,8 @@ public static class BatchGateInvariantPolicy
             BatchPhase.Formed => Formed(facts),
             BatchPhase.Abandoned => Owned(facts, BatchInvariantRepair.ReleaseMember),
             // A diagnostic child never owns members; its parent does.
-            BatchPhase.Red when !facts.Diagnostic => Owned(facts, BatchInvariantRepair.PauseBatch),
+            BatchPhase.Red when !facts.Diagnostic => Red(facts),
+            BatchPhase.Publishing => Publishing(facts),
             BatchPhase.Published => Published(facts),
             _ => [],
         };
@@ -129,9 +168,39 @@ public static class BatchGateInvariantPolicy
         var unclaimable = claimed.Any(member => !member.Pending
             || member.Ownership is not (BatchMemberOwnership.ThisBatch or BatchMemberOwnership.Queued));
         return unclaimable
-            ? findings.Select(finding => finding with { Repair = BatchInvariantRepair.AbandonBatch }).ToArray()
+            ? claimed.Where(member => !member.Live && (!member.Pending
+                    || member.Ownership is not (BatchMemberOwnership.ThisBatch or BatchMemberOwnership.Queued)))
+                .Select(member => new BatchInvariantFinding(BatchInvariantKind.OrphanedFormedBatch,
+                    facts.BatchId, member.TaskKey,
+                    !member.Pending ? "member is no longer queued" : "another route owns the member",
+                    BatchInvariantRepair.AbandonBatch))
+                .Concat(findings.Select(finding => finding with { Repair = BatchInvariantRepair.AbandonBatch }))
+                .DistinctBy(finding => finding.TaskKey).ToArray()
             : findings;
     }
+
+    private static IReadOnlyList<BatchInvariantFinding> Red(BatchInvariantFacts facts)
+    {
+        var pending = facts.Members.Where(member => member.Pending).ToArray();
+        if (pending.Length == 0)
+            return [new(BatchInvariantKind.TerminalBatchOwnsMember, facts.BatchId, null,
+                "red isolation ended with no unresolved members", BatchInvariantRepair.PauseBatch)];
+        return pending
+            .Where(member => member.Pending && !member.Live
+                && member.Disposition == BatchMemberDisposition.Claimed
+                && member.Ownership is BatchMemberOwnership.ThisBatch or BatchMemberOwnership.Queued)
+            .Select(member => new BatchInvariantFinding(BatchInvariantKind.TerminalBatchOwnsMember,
+                facts.BatchId, member.TaskKey,
+                "red batch has an unresolved member after isolation stopped",
+                BatchInvariantRepair.PauseBatch))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<BatchInvariantFinding> Publishing(BatchInvariantFacts facts)
+        => facts.Members.Any(member => member.Pending) ? []
+            : [new(BatchInvariantKind.PublishingBatchWithoutPending, facts.BatchId, null,
+                "publishing batch has no queued member to locate remote proof",
+                BatchInvariantRepair.None)];
 
     private static IReadOnlyList<BatchInvariantFinding> Owned(BatchInvariantFacts facts,
         BatchInvariantRepair repair)

@@ -361,6 +361,8 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('workspace-operations')).toBeVisible();
     const backups = page.getByTestId('operations-backups');
     await expect(backups.getByTestId('operations-backups-content-list')).toHaveAttribute('href', /studio-backup-restore\.md#credential-content-list$/);
+    await expect(backups.getByTestId('operations-backups-recovery-dependency')).toContainText('Quality Studio data and registry are included when present');
+    await expect(backups.getByTestId('operations-backups-recovery-dependency')).toContainText('repository remotes');
     await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'failing');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="backup-stale"]')).toContainText('26 hours old');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="host-ca-mismatch"]')).toContainText('escrowed CA');
@@ -499,7 +501,8 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(backups.getByTestId('operations-backups-offhost-unknown').locator('tbody tr')).toHaveCount(3);
     await expect(backups.getByTestId('operations-backups-verification-proved')).toContainText('key on this host');
     await expect(backups.getByTestId('operations-backups-verification-not-proved')).toContainText('backup-key.sh id');
-    const recoveryChecks = backups.getByTestId('operations-recovery-checks').locator('li');
+    const recoverySection = backups.getByTestId('operations-recovery');
+    const recoveryChecks = recoverySection.getByTestId('operations-recovery-checks').locator('li');
     await expect(recoveryChecks).toHaveCount(6);
     await expect(backups.getByTestId('operations-recovery-checks').locator('li[data-complete="false"]')).toHaveCount(6);
     await expect(backups.getByTestId('operations-recovery')).toContainText('Re-enrol remote agent host-b');
@@ -509,6 +512,7 @@ test.describe('Project Deploy area (mocked)', () => {
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await backups.screenshot({ path: path.join(results, `operations-backups-restored-${theme}--mocked.png`) });
+      await recoverySection.screenshot({ path: path.join(results, `operations-recovery-checks-${theme}--mocked.png`) });
     }
     await page.setViewportSize({ width: 390, height: 3000 });
     await expect(receipt).toBeVisible();

@@ -110,8 +110,19 @@ test('owner enrolls an authenticator after a human-length pause on the second-fa
   await expect(gate.getByRole('heading', { name: 'Store your recovery codes' })).toBeVisible();
   await expect(gate.getByTestId('factor-recovery-codes')).toHaveText(/^([0-9A-F]{20} ?){10}$/);
   await expect(alert).toHaveCount(0);
+  const recoveryCode = (await gate.getByTestId('factor-recovery-codes').textContent())!.trim().split(/\s+/)[0];
   await capture(page, 'recovery-codes');
 
   await gate.getByRole('button', { name: 'I stored the codes' }).click();
+  await expect(gate).toHaveCount(0);
+
+  // A new browser session can unseal the enrolled factor and consume a code.
+  await page.context().clearCookies();
+  await page.reload();
+  await expect(gate.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  await gate.getByLabel('Username').fill('owner');
+  await gate.getByLabel('Password').fill(['studio', 'setup', 'passphrase'].join('-'));
+  await gate.getByLabel('Authenticator or recovery code').fill(recoveryCode);
+  await gate.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(gate).toHaveCount(0);
 });

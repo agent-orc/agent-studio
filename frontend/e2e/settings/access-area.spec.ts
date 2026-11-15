@@ -112,6 +112,45 @@ async function openAccess(page: Page) {
   return access;
 }
 
+test('a second invitation hides the first one-use link while pending', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await stubNetworkedOwner(page);
+  const access = await openAccess(page);
+  const invite = access.getByTestId('access-invite-form');
+  await invite.getByTestId('access-invite-username').fill('first.contributor');
+  await invite.getByTestId('access-grant-project').selectOption('PROJ-001');
+  await invite.getByTestId('access-grant-role').selectOption('contributor');
+  await invite.getByTestId('access-invite-submit').click();
+  await expect(invite.getByTestId('access-invite-link')).toContainText('/?invite=inv.e2e-invite');
+
+  let finishSecond!: () => void;
+  const secondResponse = new Promise<void>(resolve => { finishSecond = resolve; });
+  await page.route('**/api/auth/invitations', async route => {
+    await secondResponse;
+    await json(route, {
+      user: { id: 'usr_reviewer', username: 'second.reviewer', displayName: 'Second Reviewer', role: 'viewer', projects: ['PROJ-001'], disabled: false, mustChangePassword: true },
+      signInLink: '/?invite=inv.second-reviewer', expiresAt: '2026-11-12T09:00:00Z',
+    });
+  });
+  await invite.getByTestId('access-invite-username').fill('second.reviewer');
+  await invite.getByTestId('access-grant-role').selectOption('viewer');
+  await invite.getByTestId('access-invite-submit').click();
+  await expect(invite.getByTestId('access-invite-link')).toHaveCount(0);
+  await expect(invite.getByTestId('access-invite-copy')).toHaveCount(0);
+  await expect(invite.getByTestId('access-invite-pending')).toContainText('second.reviewer');
+  await expect(invite.getByTestId('access-invite-pending')).toContainText('Viewer');
+  await expect(invite.getByTestId('access-invite-submit')).toBeDisabled();
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await invite.getByTestId('access-invite-pending').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `invite-second-pending-1280-${theme}.png`) });
+  }
+  finishSecond();
+  await expect(invite.getByTestId('access-invite-pending')).toHaveCount(0);
+  await expect(invite.getByTestId('access-invite-link')).toContainText('/?invite=inv.second-reviewer');
+});
+
 test('Owner sees factor changes and verifies the current factor before replacement', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await stubNetworkedOwner(page);

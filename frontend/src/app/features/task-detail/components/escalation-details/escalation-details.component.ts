@@ -99,6 +99,7 @@ export class EscalationDetailsComponent {
       case 'council-reaction': return 'Council reaction';
       case 'gate-evidence': return 'Completion-gate findings';
       case 'review-evidence': return 'Recorded review evidence';
+      case 'batch-diagnostic': return 'Batch diagnostic';
       default: return 'No structured source';
     }
   }
