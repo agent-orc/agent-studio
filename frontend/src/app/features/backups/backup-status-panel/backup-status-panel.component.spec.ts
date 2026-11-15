@@ -63,6 +63,21 @@ describe('BackupStatusPanelComponent', () => {
     expect(host.querySelector('[data-testid="operations-backups-secret-key-id"]')?.textContent).toContain('0011223344556677');
   });
 
+  it('gives the owner a fresh-host handoff with every dependency and exact restore steps', async () => {
+    const host = await render(overview());
+    const handoff = host.querySelector('[data-testid="operations-backups-handoff"]')!;
+    expect(handoff).not.toBeNull();
+    for (const name of ['Archive and checksum', 'Backup key copy', 'Secret store key copy',
+      'Host CA private and public keys', 'Project Git remotes', 'Operations Server', 'Quality Studio']) {
+      expect(handoff.textContent).toContain(name);
+    }
+    expect(handoff.textContent).toContain('Not checked by Studio');
+    expect(handoff.textContent).toContain('studio-backup-20261109T060000Z-abc123');
+    expect(handoff.querySelector('a[href$="#restore-onto-a-new-host"]')).not.toBeNull();
+    expect(handoff.querySelector('a[href$="#check-the-escrowed-copies"]')).not.toBeNull();
+    expect(handoff.textContent).toContain('Do not start the stack before restore');
+  });
+
   it('renders the stale warning when the newest good backup is older than the threshold', async () => {
     const host = await render(overview({
       state: 'failing', stale: true, lastGoodAgeHours: 30,
