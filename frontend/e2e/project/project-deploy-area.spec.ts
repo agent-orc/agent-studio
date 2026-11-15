@@ -385,7 +385,8 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(handoff).toContainText('Quality Studio');
     await expect(handoff.getByRole('link', { name: 'Fetch both files from the off-host target' }))
       .toHaveAttribute('href', /#fresh-host-step-2$/);
-    await expect(handoff.getByRole('link', { name: 'Re-enrol remote agents and review revocations' }))
+    await expect(handoff).toContainText('Confirm this archive includes operations/; offline fencing required');
+    await expect(handoff.getByRole('link', { name: 'Restore authority, re-enrol remote agents and check revocations' }))
       .toHaveAttribute('href', /#fresh-host-step-8$/);
     const downloadPromise = page.waitForEvent('download');
     await handoff.getByRole('button', { name: 'Download owner handoff' }).click();
