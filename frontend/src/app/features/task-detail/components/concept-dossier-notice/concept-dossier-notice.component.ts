@@ -15,6 +15,7 @@ import { NotificationService } from '../../../../services/notification.service';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import { TaskService } from '../../../../services/task.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { discoverWorkbenchDecisionMarkup } from '../../../../services/workbench-decision-markup.util';
 import { catchError, of, switchMap } from 'rxjs';
 
@@ -24,7 +25,7 @@ type EditorKind = 'path' | 'no-dossier' | null;
   selector: 'app-concept-dossier-notice',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, StatusIndicatorComponent],
   templateUrl: './concept-dossier-notice.component.html',
   styleUrl: './concept-dossier-notice.component.scss',
 })
