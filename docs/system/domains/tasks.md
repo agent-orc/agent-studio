@@ -7,13 +7,28 @@ Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 The server first verifies the immutable result ref and exact result SHA. It
 normally attributes the fenced base to result commit range. If a continue
-round rebased away the runner's local start merge, the server uses the result's
-merge-base with the integration line and attributes only commits carrying this
-card's `Agent-Studio-Task` trailer. The existing foreign subject guard still
-rejects an owned commit whose subject names another card. The run timeline
+round merges the integration branch, commits already reachable from that
+branch's fetched tip are excluded before the foreign-task subject scan. A
+foreign-key subject on a commit outside the integration line still rejects the
+delivery. An integration merge contributes a task commit only when its remerge
+diff shows a conflict resolution made in that merge. When the result itself has
+already been published on the integration line, the inspector uses the latest
+integration merge parent as its historical exclusion tip, preserving the
+delivery's own commits. A direct fast-forward without an integration merge
+retains the immutable fenced base range.
+If a continue round rebased away the runner's local start merge, the server
+uses the result's merge-base with the integration line and attributes only
+commits carrying this card's `Agent-Studio-Task` trailer. The existing foreign
+subject guard still rejects an owned commit whose subject names another card.
+The run timeline
 records the missing base and fallback. A delivery without attributed commits
 cannot enter a batch; its completion warning is shown on Auto Review and the
 card is escalated before a gate runs.
+Startup's `integration-history-attribution-v1` repair checks recent escalated
+cards with a passing review and a completion warning naming a foreign commit.
+It verifies that commit on the fetched integration line, reattributes the
+stored review subject through the corrected range, and restores the card to
+Auto Review with a timeline entry. It starts no coding round.
 An available fenced base that is not in the result remains a recoverable
 salvage refusal and requests a merge round.
 

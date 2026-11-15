@@ -18,6 +18,62 @@ namespace AgentStudio.Tests;
 public sealed class BatchGatePilotReleaseAttributionTests : BatchGatePilotServiceTests
 {
     [Fact]
+    public void Escalated_passing_review_recovers_imported_integration_history_without_agent_round()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var baseSha = RemoteTip();
+        Git(_repo, "checkout", "-q", "develop");
+        File.WriteAllText(Path.Combine(_repo, "foreign-history.txt"), "integrated");
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-qm", "fix(DOC-9999): integrated change");
+        var foreignSha = Git(_repo, "rev-parse", "HEAD");
+        Git(_repo, "push", "-q", "origin", "develop");
+        var member = SeedMember(factory, "DOC-3789", "docs/history.md",
+            parentSha: baseSha, mergeFrom: "origin/develop");
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, member.Key);
+        ReviewSubjectStore.Write(folder, ReviewSubjectStore.Read(folder)! with
+        {
+            BaseSha = baseSha,
+            IntegrationBranch = "refs/heads/develop",
+        });
+        ClearCommits(factory, member.Key);
+        var timeline = factory.Services.GetRequiredService<TimelineLog>();
+        timeline.Append(folder, TimelineEventKinds.AgentRunFinished, TimelineActors.Agent,
+            "remote run done", member.RunAttemptId, details: new Dictionary<string, string>
+            {
+                ["commitAttributionWarning"] = $"Remote commit attribution rejected for '{member.Key}': commit {foreignSha[..10]} names foreign task 'DOC-9999'.",
+            });
+        var moved = factory.Services.GetRequiredService<TaskStateMachine>().MoveJob(
+            member.Key, TaskStates.Escalated, _watchPath,
+            expectedSourceState: TaskStates.AutoReview);
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        var sweep = new RemoteCompletionAttributionSweep(scanner,
+            factory.Services.GetRequiredService<AgentStudio.Git.GitService>(),
+            factory.Services.GetRequiredService<TaskMutationService>(),
+            factory.Services.GetRequiredService<RemoteTokenReceiptService>(),
+            Path.Combine(_workspace, "migrations", RemoteCompletionAttributionSweep.ReportFileName),
+            _clock, NullLogger<RemoteCompletionAttributionSweep>.Instance,
+            factory.Services.GetRequiredService<TaskStateMachine>(), timeline,
+            factory.Services.GetRequiredService<AttemptAuthorityService>());
+
+        var report = sweep.RunIntegrationHistoryRepairOnce();
+
+        Assert.Equal(member.Key, Assert.Single(report.Tasks, row => row.Commits > 0).TaskKey);
+        Assert.Equal(TaskStates.AutoReview, scanner.FindJob(member.Key, _watchPath)!.State);
+        Assert.Contains(scanner.FindJob(member.Key, _watchPath)!.Commits,
+            commit => commit.ResultSha == member.ResultSha);
+        Assert.DoesNotContain(scanner.FindJob(member.Key, _watchPath)!.Commits,
+            commit => commit.Sha == foreignSha);
+        Assert.Contains(timeline.ReadAll(scanner.FindJob(member.Key, _watchPath)!.FolderPath),
+            evt => evt.Kind == TimelineEventKinds.IntegrationHistoryAttributionRepaired);
+        Assert.True(sweep.RunIntegrationHistoryRepairOnce().AlreadyCompleted);
+    }
+
+    [Fact]
     public async Task Unattributable_rebased_member_is_escalated_and_the_other_members_are_released()
     {
         using var factory = BuildFactory();
