@@ -37,6 +37,10 @@
       <span class="ov-subline__project-disk" aria-hidden="true">{{ identity().initial }}</span>
       <span class="ov-subline__project-name">{{ job().projectName }}</span>
     </span>
+    @if (job().dossier; as dossier) {
+      <span class="ov-subline__sep" aria-hidden="true">·</span>
+      <app-dossier-slice-link [dossier]="dossier" [projectName]="job().projectName" testId="overview-title-dossier" />
+    }
     @if (job().creationSource === 'orchestrator') {
       <span class="ov-subline__sep" aria-hidden="true">·</span>
       <span class="ov-phase-chip" data-testid="overview-created-by-orchestrator">Created by Orchestrator</span>
