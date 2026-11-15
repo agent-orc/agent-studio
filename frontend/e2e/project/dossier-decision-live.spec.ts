@@ -189,9 +189,9 @@ async function capture(page: Page, name: string): Promise<void> {
 }
 
 /**
- * The demo seed leaves its Dossiers uncommitted, and decisions require a
- * committed descriptor. The seed commit names its own identity per command,
- * so the host still has no git identity when Studio writes the decision.
+ * Decisions require a committed descriptor. Restore this Dossier from the
+ * repository's seed commit between scenarios because the demo stack is shared.
+ * Test commits name their own identity, so Studio still has no host git identity.
  */
 function commitSeededDocs(repository: string): void {
   execFileSync('git', ['-C', repository, 'add', '--', 'docs'], { encoding: 'utf8' });
@@ -200,8 +200,8 @@ function commitSeededDocs(repository: string): void {
     execFileSync('git', ['-C', repository, '-c', 'user.name=Demo Seed', '-c', 'user.email=seed@demo.invalid',
       'commit', '-q', '-m', 'seed: demo Dossiers'], { encoding: 'utf8' });
   }
-  const seed = execFileSync('git', ['-C', repository, 'log', '-1', '--format=%H',
-    '--fixed-strings', '--grep=seed: demo Dossiers'], { encoding: 'utf8' }).trim();
+  const seed = execFileSync('git', ['-C', repository, 'rev-list', '--max-parents=0', 'HEAD'],
+    { encoding: 'utf8' }).trim();
   expect(seed).not.toBe('');
   execFileSync('git', ['-C', repository, 'restore', `--source=${seed}`, '--staged', '--worktree',
     '--', 'docs/dossiers/export-retention/workbench.json'], { encoding: 'utf8' });
