@@ -85,6 +85,9 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ sessions: [] })));
   await page.route(url => url.pathname === '/api/v1/operations/structure', route => route.fulfill(json({ nodes: [], links: [] })));
   await page.route(url => url.pathname === '/api/v1/operations/structure/library', route => route.fulfill(json({ registries: [], consumers: [] })));
+  await page.route('**/api/diagnostics/api-stalls**', route => route.fulfill(json({
+    status: 'ok', intervalMs: 1000, maxDelayMs: 0, alarmThresholdMs: 1000, alarmWindowMinutes: 5, recent: [],
+  })));
   const project = {
     sourceType: 'local-folder', id: 'PROJ-WEB', displayName: PROJECT, shortCode: 'WEB', workspaceId: 'ws',
     color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: STORAGE,
