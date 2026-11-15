@@ -7,12 +7,11 @@
           </h2>
           <span class="prt__spacer"></span>
           @if (loading()) {
-            <span class="prt__chip prt__chip--info" data-testid="product-runtime-loading">Loading…</span>
+            <app-status-indicator tone="running" label="Loading…" [compact]="true" testId="product-runtime-loading" />
           }
           @if (sourceLabel(); as src) {
-            <span class="prt__chip"
-                  [class.prt__chip--fixture]="usingFixture()"
-                  data-testid="product-runtime-source">{{ src }}</span>
+            <app-status-indicator [tone]="usingFixture() ? 'warning' : 'neutral'" [label]="src" [compact]="true"
+                                  testId="product-runtime-source" />
           }
           <button type="button"
                   class="prt__refresh"
@@ -181,22 +180,16 @@
                         (click)="select(e)">
                       <td class="prt__events-cell prt__events-cell--time">{{ formatTime(e.timestamp) }}</td>
                       <td class="prt__events-cell">
-                        <span class="prt__level"
-                              [class.prt__level--warn]="e.level === 'Warn'"
-                              [class.prt__level--error]="e.level === 'Error' || e.level === 'Fatal'">
-                          {{ e.level }}
-                        </span>
+                        <app-status-indicator [tone]="levelTone(e.level)" [label]="e.level" [compact]="true"
+                                              testId="product-runtime-event-level" />
                       </td>
                       <td class="prt__events-cell"><code>{{ e.event }}</code></td>
                       <td class="prt__events-cell">{{ e.subsystem }}</td>
                       <td class="prt__events-cell">{{ e.operation || '' }}</td>
                       <td class="prt__events-cell">
                         @if (e.status) {
-                          <span class="prt__status"
-                                [class.prt__status--ok]="e.status === 'Ok'"
-                                [class.prt__status--bad]="e.status === 'Failed' || e.status === 'Timeout'">
-                            {{ e.status }}
-                          </span>
+                          <app-status-indicator [tone]="statusTone(e.status)" [label]="e.status" [compact]="true"
+                                                testId="product-runtime-event-status" />
                         }
                       </td>
                       <td class="prt__events-cell prt__events-cell--num">
@@ -373,10 +366,10 @@
             </header>
             <dl class="prt__detail-meta">
               <div><dt>Time</dt><dd>{{ formatTime(sel.timestamp) }}</dd></div>
-              <div><dt>Level</dt><dd>{{ sel.level }}</dd></div>
+              <div><dt>Level</dt><dd><app-status-indicator [tone]="levelTone(sel.level)" [label]="sel.level" [compact]="true" testId="product-runtime-detail-level" /></dd></div>
               <div><dt>Subsystem</dt><dd>{{ sel.subsystem }}</dd></div>
               @if (sel.operation) { <div><dt>Operation</dt><dd>{{ sel.operation }}</dd></div> }
-              @if (sel.status) { <div><dt>Status</dt><dd>{{ sel.status }}</dd></div> }
+              @if (sel.status) { <div><dt>Status</dt><dd><app-status-indicator [tone]="statusTone(sel.status)" [label]="sel.status" [compact]="true" testId="product-runtime-detail-status" /></dd></div> }
               @if (sel.duration) { <div><dt>Duration</dt><dd>{{ formatMs(sel.duration.ms) }}</dd></div> }
               @if (sel.correlationId) { <div><dt>Correlation</dt><dd><code>{{ sel.correlationId }}</code></dd></div> }
               @if (sel.jobId) { <div><dt>Task</dt><dd><code>{{ sel.jobId }}</code></dd></div> }

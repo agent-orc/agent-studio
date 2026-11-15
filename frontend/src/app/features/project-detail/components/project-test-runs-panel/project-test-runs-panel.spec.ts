@@ -1,7 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { ProjectTestRunsPanelComponent } from './project-test-runs-panel';
+import { ProjectTestRunsPanelComponent, testRunResultTone } from './project-test-runs-panel';
 
 describe('ProjectTestRunsPanelComponent', () => {
   it('shows the ordered lifecycle pipeline and attached cards', async () => {
@@ -29,6 +29,15 @@ describe('ProjectTestRunsPanelComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('DEM-1');
     expect(fixture.nativeElement.querySelector('[data-testid="test-run-pipeline-summary"]').textContent).toContain('1 planned');
     expect(fixture.nativeElement.querySelector('[data-testid="test-run-planned-order"]').textContent).toContain('#1');
+    const result = fixture.nativeElement.querySelector('[data-testid="test-run-result"]') as HTMLElement;
+    expect(result.dataset['tone']).toBeTruthy();
+  });
+});
+
+describe('testRunResultTone', () => {
+  it('maps results and states, keeping finished failures non-acute, and falls back to neutral', () => {
+    expect(['passed', 'failed', 'canceled', 'running', 'planned', 'completed', 'later'].map(testRunResultTone))
+      .toEqual(['success', 'warning', 'neutral', 'running', 'neutral', 'neutral', 'neutral']);
   });
 });
 

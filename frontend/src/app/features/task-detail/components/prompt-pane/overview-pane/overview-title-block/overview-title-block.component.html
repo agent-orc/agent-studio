@@ -28,7 +28,11 @@
       {{ laneLabel(job().state) }}
     </span>
     @if (phaseLabel(job().phase, job().phaseEnteredAt, job().steerPendingSince); as pl) {
-      <span class="ov-phase-chip ov-subline__phase" data-testid="overview-title-phase">{{ pl }}</span>
+      <app-status-indicator
+        [tone]="phaseTone(job().phase)"
+        [label]="pl"
+        [compact]="true"
+        testId="overview-title-phase" />
     }
     <span class="ov-subline__sep" aria-hidden="true">·</span>
     <span class="ov-subline__project" data-testid="overview-title-project"

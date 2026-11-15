@@ -12,6 +12,3 @@
 .prompt-coverage__table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .prompt-coverage__table td { padding: var(--studio-spacing-1) var(--studio-spacing-2) var(--studio-spacing-1) 0; vertical-align: top; }
 .prompt-coverage__table code { color: var(--studio-fg-strong); font-family: var(--font-mono); font-size: 11.5px; }
-.prompt-coverage__pill { display: inline-flex; align-items: center; min-height: 18px; border: 1px solid color-mix(in srgb, var(--studio-fg-dim) 28%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--studio-fg-dim) 10%, transparent); color: var(--studio-fg-dim); padding: 0 var(--studio-spacing-2); font-size: 10.5px; font-weight: 600; line-height: 1.4; white-space: nowrap; }
-.prompt-coverage__pill--ok { border-color: color-mix(in srgb, var(--studio-accent-success) 34%, transparent); background: color-mix(in srgb, var(--studio-accent-success) 12%, transparent); color: var(--studio-accent-success-strong); }
-.prompt-coverage__pill--warn { border-color: color-mix(in srgb, var(--studio-accent-warn) 36%, transparent); background: color-mix(in srgb, var(--studio-accent-warn) 12%, transparent); color: var(--studio-accent-warn-strong); }

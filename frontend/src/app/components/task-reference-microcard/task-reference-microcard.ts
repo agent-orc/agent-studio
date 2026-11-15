@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { projectIdentity } from '../../services/project-identity.util';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import { laneName, laneSentence, laneTone } from '../../models/lane-presentation';
 import { TaskState } from '../../models/task.model';
 
@@ -28,7 +29,7 @@ export interface TaskReferenceStatus {
 @Component({
   selector: 'app-task-reference-microcard',
   standalone: true,
-  imports: [AppTooltipDirective],
+  imports: [AppTooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-reference-microcard.html',
   styleUrl: './task-reference-microcard.scss',
@@ -40,6 +41,8 @@ export class TaskReferenceMicrocardComponent {
   readonly variant = input<'default' | 'lane-dot'>('default');
   readonly testId = input('task-reference-microcard');
   private readonly navigation = inject(TaskReferenceNavigationService);
+  /** Visible state of an unknown or deleted reference (neutral, AGT-3403). */
+  readonly ghostLabel = 'Deleted or unknown';
 
   readonly color = computed(
     () => this.status().projectColor || projectIdentity(this.status().projectName).color,

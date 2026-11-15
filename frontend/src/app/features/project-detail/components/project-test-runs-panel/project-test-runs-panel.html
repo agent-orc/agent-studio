@@ -28,7 +28,6 @@
             @for (item of group.items; track item.run.id) {
               <li [attr.data-result]="item.run.result || item.run.state">
                 <div class="test-runs__identity">
-                  <span class="test-runs__dot" aria-hidden="true"></span>
                   <div><strong>{{ item.run.id }}</strong><small>{{ item.run.trigger }} · {{ item.run.host || 'host pending' }}</small></div>
                 </div>
                 <dl>
@@ -37,7 +36,8 @@
                   }
                   <div><dt>Commit</dt><dd><code>{{ shortSha(item.run.commit) }}</code> on {{ item.run.branch }}</dd></div>
                   <div><dt>Scope</dt><dd>{{ item.run.scope.level }} · {{ item.run.scope.testSet }}</dd></div>
-                  <div><dt>Result</dt><dd>{{ item.run.result || item.run.state }}</dd></div>
+                  @let result = item.run.result || item.run.state;
+                  <div><dt>Result</dt><dd><app-status-indicator [tone]="resultTone(result)" [label]="result" [compact]="true" testId="test-run-result" /></dd></div>
                   <div><dt>Duration</dt><dd>{{ item.run.durationSeconds === null ? 'Pending' : ((item.run.durationSeconds | number:'1.0-1') + ' s') }}</dd></div>
                 </dl>
                 <div class="test-runs__cards">

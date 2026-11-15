@@ -10,6 +10,18 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { formatDateTimeUtc } from '../../../../../services/format.util';
 import { MediaLightboxService } from '../../../../../services/media-lightbox.service';
 import { resolveProtocolImageSrc } from '../protocol-image-resolver';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+
+const SEVERITY_TONES: Readonly<Record<ReviewEvidenceSeverity, StatusTone>> = {
+  high: 'danger',
+  warn: 'warning',
+  info: 'info',
+};
+
+/** Tone of a review finding severity (AGT-3403); unknown severities stay neutral. */
+export function reviewEvidenceSeverityTone(severity: string): StatusTone {
+  return SEVERITY_TONES[severity as ReviewEvidenceSeverity] ?? 'neutral';
+}
 
 /**
  * Extensions we render inline as a thumbnail instead of a bare path. The
@@ -41,7 +53,7 @@ const IMAGE_REF_RE = /\.(png|jpe?g|webp|gif|avif|bmp)$/i;
   selector: 'app-review-evidence-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   templateUrl: './review-evidence-panel.component.html',
   styleUrl: './review-evidence-panel.component.scss',
 })
@@ -71,6 +83,8 @@ export class ReviewEvidencePanelComponent {
       return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     });
   });
+
+  readonly severityTone = reviewEvidenceSeverityTone;
 
   severityLabel(s: ReviewEvidenceSeverity): string {
     if (s === 'high') return 'HIGH';

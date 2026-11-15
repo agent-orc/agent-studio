@@ -37,6 +37,7 @@ import {
   type ExplorerAutoPickupAggregate,
   type ProjectAutoPickupIndicator,
 } from '../../studio-shell.auto-pickup';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { ExplorerAutoPickupIndicatorComponent } from '../explorer-auto-pickup-indicator/explorer-auto-pickup-indicator.component';
 import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 import { ExplorerWorkbenchListComponent } from '../explorer-workbench-list/explorer-workbench-list.component';
@@ -70,7 +71,7 @@ export interface ActiveExplorerWorkbench {
 @Component({
   selector: 'app-explorer-workspace-tree',
   standalone: true,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup, SectionHeaderComponent, TreeRowComponent, StudioIconComponent, EmptyStateComponent, TooltipDirective, MenuComponent, ExplorerAutoPickupIndicatorComponent, ExplorerLaneDashboardComponent, ExplorerWorkbenchListComponent, QualityStudioExplorerRowComponent],
+  imports: [CdkDrag, CdkDropList, CdkDropListGroup, SectionHeaderComponent, TreeRowComponent, StudioIconComponent, EmptyStateComponent, TooltipDirective, MenuComponent, ExplorerAutoPickupIndicatorComponent, ExplorerLaneDashboardComponent, ExplorerWorkbenchListComponent, QualityStudioExplorerRowComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './explorer-workspace-tree.component.html',

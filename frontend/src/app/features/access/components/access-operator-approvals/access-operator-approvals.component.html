@@ -70,7 +70,7 @@
               <td>{{ approval.operationTitle }}</td>
               <td><code [attr.title]="approval.parameterDigest">{{ line(approval) }}</code></td>
               <td>{{ sourceText(approval.instructionSource) }}</td>
-              <td><span class="access-badge" [attr.data-tone]="approval.state === 'used' || approval.state === 'approved' ? 'active' : 'muted'">{{ stateText(approval.state) }}</span></td>
+              <td><app-status-indicator [tone]="approval.state === 'used' || approval.state === 'approved' ? 'success' : 'neutral'" [label]="stateText(approval.state)" [compact]="true" /></td>
               <td [attr.title]="approval.decidedAt ? time(approval.decidedAt) : null">{{ person(approval.decidedBy) }}</td>
               <td>{{ resultText(approval) }}</td>
             </tr>

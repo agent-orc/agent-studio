@@ -97,17 +97,6 @@
 
 .weekly__label { font-size: 12px; font-weight: 600; color: var(--studio-fg); }
 
-.weekly__badge {
-  padding: 0 var(--studio-spacing-2);
-  border: 1px solid var(--notify-warning-border);
-  border-radius: 999px;
-  background: var(--notify-warning-tint);
-  color: var(--studio-fg-strong);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
 .weekly__stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -136,7 +125,7 @@
   color: var(--studio-fg-dim);
 }
 
-// Fallback notice: status is carried by the tint and the badge, never a side bar.
+// Fallback notice: status is carried by the tint and the status indicator, never a side bar.
 .fallback {
   display: flex;
   align-items: flex-start;
@@ -149,26 +138,7 @@
   font-size: 12px;
 }
 
-.fallback__badge {
-  flex: 0 0 auto;
-  padding: 0 var(--studio-spacing-2);
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 18px;
-  color: var(--studio-fg-strong);
-}
-
-.fallback__badge[data-state='armed'],
-.fallback__badge[data-state='engaged'] {
-  border: 1px solid var(--notify-success-border);
-  background: var(--notify-success-tint);
-}
-
-.fallback__badge[data-state='unarmed'] {
-  border: 1px solid var(--notify-error-border);
-  background: var(--notify-error-tint);
-}
+.fallback__state { flex: 0 0 auto; }
 
 .fallback__text { color: var(--studio-fg); line-height: 18px; }
 .fallback__text strong { color: var(--studio-fg-strong); }

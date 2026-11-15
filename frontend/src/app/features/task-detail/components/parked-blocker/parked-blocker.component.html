@@ -10,12 +10,18 @@
         [attr.aria-expanded]="!collapsed()" aria-controls="parked-blocker-body"
         (click)="toggleCollapsed()">
         <app-disclosure-marker [open]="!collapsed()" [size]="10" />
-        <span class="park__badge" data-testid="parked-blocker-type">{{ v.blockerLabel }}</span>
+        <app-status-indicator [tone]="v.isDecision ? 'info' : 'warning'"
+                              [label]="v.blockerLabel"
+                              testId="parked-blocker-type" />
         <span class="park__since" data-testid="parked-blocker-since">Parked {{ v.parkedFor }} ago @if (!collapsed()) { · {{ parkedAtLabel() }} }</span>
       </button>
       @if (!collapsed()) {
-        <span class="park__recall" [attr.data-tone]="v.recall.tone"
-          data-testid="parked-blocker-recall" [cacTooltip]="v.recall.detail">{{ v.recall.label }}</span>
+        <app-status-indicator class="park__recall"
+                              [tone]="recallTone(v.recall.tone)"
+                              [label]="v.recall.label"
+                              [detail]="v.recall.detail"
+                              [compact]="true"
+                              testId="parked-blocker-recall" />
       }
     </header>
     @if (collapsed()) {

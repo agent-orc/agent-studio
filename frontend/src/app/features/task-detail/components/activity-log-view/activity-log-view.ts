@@ -17,13 +17,8 @@ import {
   parseOrchestratorSteer
 } from '../activity-log.parser';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
-import {
-  RenderedTurn,
-  buildToolChips,
-  escapeForPlain,
-  isDebugNoise,
-  roleHeading,
-} from './activity-log-view-model';
+import { RenderedTurn, buildToolChips, escapeForPlain, isDebugNoise, liveStatusTone, roleHeading } from './activity-log-view-model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { ConversationHistoryWindow } from './activity-log-windowing';
 
 import { StickToBottomDirective, TooltipDirective } from 'coding-agent-chat/shared';
@@ -51,7 +46,7 @@ type ViewMode = 'conversation' | 'trace';
 @Component({
   selector: 'app-activity-log-view',
   standalone: true,
-  imports: [MarkdownViewComponent, StickToBottomDirective, TooltipDirective, MenuComponent, RuntimeSentinelViewComponent],
+  imports: [MarkdownViewComponent, StickToBottomDirective, TooltipDirective, MenuComponent, RuntimeSentinelViewComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './activity-log-view.html',
   styleUrl: './activity-log-view.scss'
@@ -177,6 +172,8 @@ export class ActivityLogViewComponent implements OnDestroy {
       this.liveTicker = null;
     }
   });
+
+  readonly liveStatusTone = liveStatusTone;
 
   readonly liveStatus = computed<LiveStatus | null>(() =>
     deriveLiveStatus(this.lines(), this.isRunning(), this.nowMs())

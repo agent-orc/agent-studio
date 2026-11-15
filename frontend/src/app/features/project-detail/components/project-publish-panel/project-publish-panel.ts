@@ -6,18 +6,46 @@ import type {
   PublishTarget,
   PublishWorkflowRun,
 } from '../../../../models/task.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { TaskService } from '../../../../services/task.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+
+const RUNNING_STATUSES = new Set(['queued', 'in_progress', 'waiting', 'requested', 'pending']);
+
+const CONCLUSION_TONES: Record<string, StatusTone> = {
+  success: 'success',
+  failure: 'danger',
+  timed_out: 'danger',
+  startup_failure: 'danger',
+  action_required: 'warning',
+  cancelled: 'neutral',
+  skipped: 'neutral',
+  neutral: 'neutral',
+  stale: 'neutral',
+};
+
+/**
+ * Raw GitHub workflow status and conclusion as one indicator: a queued or
+ * running workflow is in progress; a completed one takes the conclusion tone.
+ */
+export function publishRunStatus(run: Pick<PublishWorkflowRun, 'status' | 'conclusion'>): { label: string; tone: StatusTone } {
+  const label = run.conclusion ? `${run.status} · ${run.conclusion}` : run.status;
+  const status = (run.status ?? '').toLowerCase();
+  if (RUNNING_STATUSES.has(status)) return { label, tone: 'running' };
+  if (status === 'completed') return { label, tone: CONCLUSION_TONES[(run.conclusion ?? '').toLowerCase()] ?? 'neutral' };
+  return { label, tone: 'neutral' };
+}
 
 @Component({
   selector: 'app-project-publish-panel',
   standalone: true,
-  imports: [FormsModule, TooltipDirective],
+  imports: [FormsModule, TooltipDirective, StatusIndicatorComponent],
   templateUrl: './project-publish-panel.html',
   styleUrl: './project-publish-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectPublishPanelComponent {
+  readonly runStatus = publishRunStatus;
   readonly projectName = input.required<string>();
   readonly targets = input.required<readonly PublishTarget[]>();
 

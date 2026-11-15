@@ -10,7 +10,10 @@
      (drop)="onDrop($event)">
   @if (readOnly()) {
     <div class="md-editor__lock" data-testid="prompt-editor-lock">
-      🔒 {{ readOnlyReason() || 'Editing disabled while the CLI is running for this task. Stop it first.' }}
+      <app-status-indicator tone="info"
+                            [label]="lockReason()"
+                            [detail]="lockReason()"
+                            testId="prompt-editor-lock-state" />
     </div>
   }
   <!--
@@ -36,17 +39,10 @@
         </button>
       }
       <span class="md-editor__status" data-testid="prompt-editor-status">
-        @switch (state()) {
-          @case ('dirty') {
-            <span class="md-editor__dot md-editor__dot--dirty" [cacTooltip]="'Unsaved changes'" aria-label="Unsaved changes"></span>
-          }
-          @case ('saved') {
-            <span class="md-editor__dot md-editor__dot--saved" [cacTooltip]="'Saved'" aria-label="Saved"></span>
-          }
-          @default {
-            <span class="md-editor__dot" [cacTooltip]="'Saved'" aria-label="Saved"></span>
-          }
-        }
+        <app-status-indicator [tone]="saveState().tone"
+                              [label]="saveState().label"
+                              [compact]="true"
+                              testId="prompt-editor-save-state" />
         <button class="md-editor__icon-btn"
                 (click)="emitSave()"
                 [disabled]="readOnly()"
@@ -89,7 +85,10 @@
 
   @if (uploadError()) {
     <div class="md-editor__error" data-testid="prompt-editor-upload-error">
-      ⚠ {{ uploadError() }}
+      <app-status-indicator tone="danger"
+                            [label]="uploadError() ?? ''"
+                            [detail]="uploadError()"
+                            testId="prompt-editor-upload-error-state" />
     </div>
   }
 

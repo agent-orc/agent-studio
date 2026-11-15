@@ -110,13 +110,6 @@
   white-space: nowrap;
 }
 
-.prompt-catalogue__stale {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  color: var(--studio-accent-warn-strong);
-}
-
 .prompt-catalogue time {
   overflow: hidden;
   color: var(--studio-fg-muted);

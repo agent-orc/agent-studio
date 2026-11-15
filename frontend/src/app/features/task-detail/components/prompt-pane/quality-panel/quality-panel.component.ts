@@ -3,6 +3,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Subscription } from 'rxjs';
 import { QualityChangeRound, QualityChangeView, ReviewEvidenceEntry, TaskInfo } from '../../../../../models/task.model';
 import { QualityStudioService } from '../../../../../services/quality-studio.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
 
 const STATE_LABELS: Record<QualityChangeView['state'], string> = {
   'not-registered': 'Repository not registered', waiting: 'Waiting for review',
@@ -11,9 +12,17 @@ const STATE_LABELS: Record<QualityChangeView['state'], string> = {
   'not-reviewed': 'Not reviewed',
 };
 
+/** AGT-3403: the Quality verdict of the selected review round. */
+export const QUALITY_STATE_TONES: Readonly<Record<QualityChangeView['state'], StatusTone>> = {
+  'not-registered': 'neutral', waiting: 'neutral', reviewing: 'running', pass: 'success',
+  concerns: 'warning', block: 'danger', unavailable: 'neutral', shadow: 'info', outdated: 'neutral',
+  'not-reviewed': 'neutral',
+};
+
 @Component({
   selector: 'app-quality-panel',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './quality-panel.component.html',
   styleUrl: './quality-panel.component.scss',
@@ -94,6 +103,7 @@ export class QualityPanelComponent {
   retry(): void { this.retrySerial.update(value => value + 1); }
 
   label(state: QualityChangeView['state']): string { return STATE_LABELS[state]; }
+  tone(state: QualityChangeView['state']): StatusTone { return QUALITY_STATE_TONES[state] ?? 'neutral'; }
   short(sha: string): string { return sha.slice(0, 7); }
   isLatest(round: QualityChangeRound): boolean { return this.rounds().at(-1)?.attemptId === round.attemptId; }
   select(attemptId: string): void { this.selectedAttempt.set(attemptId); }

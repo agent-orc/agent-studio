@@ -14,6 +14,7 @@ import type {
   StepRunMode,
 } from '../../../../task-pipeline';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
+import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
 
 export interface PipelineRowVm {
   id: string;
@@ -90,6 +91,8 @@ export interface PipelineRowVm {
   aspectEvidence: PipelineAspectEvidence[];
   /** Relationship between this aspect and a review-driven coding round. */
   reviewRoundStatus?: string | null;
+  /** Status tone of {@link reviewRoundStatus} (AGT-3403). */
+  reviewRoundTone?: StatusTone;
   /**
    * Always-present "what does this step do" tooltip shown on hovering the
    * step name. Keyed by step id with a per-kind fallback so a future

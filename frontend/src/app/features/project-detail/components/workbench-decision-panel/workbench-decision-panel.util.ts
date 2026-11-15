@@ -1,3 +1,4 @@
+import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { laneName } from '../../../../models/lane-presentation';
 import {
   WorkbenchDecisionPoint,
@@ -86,4 +87,30 @@ export function createOperationId(): string {
   const random = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   return `workbench-ui-${random}`;
+}
+
+const DECISION_STAGE_TONES: Readonly<Record<string, StatusTone>> = {
+  prepared: 'info',
+  pending: 'running',
+  failed: 'danger',
+  succeeded: 'success',
+  archived: 'neutral',
+};
+
+/** Tone of the decision stage chip; a documented Dossier is done, no stage yet is an open fact. */
+export function decisionStageTone(stage: string | null | undefined, documented: boolean): StatusTone {
+  if (documented) return 'success';
+  if (!stage) return 'info';
+  return DECISION_STAGE_TONES[stage] ?? 'neutral';
+}
+
+const DECISION_OUTCOME_TONES: Readonly<Record<string, StatusTone>> = {
+  'feature-spawn': 'success',
+  archive: 'neutral',
+  rework: 'warning',
+};
+
+/** Tone of a recorded decision receipt; an unknown outcome reads neutral. */
+export function decisionOutcomeTone(outcome: string | null | undefined): StatusTone {
+  return DECISION_OUTCOME_TONES[outcome ?? ''] ?? 'neutral';
 }

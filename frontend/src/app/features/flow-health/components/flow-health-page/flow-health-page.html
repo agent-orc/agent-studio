@@ -32,7 +32,7 @@
               <td>{{ stage.waiting }}</td>
               <td>{{ age(stage.oldestMinutes) }}</td>
               <td>{{ waitTarget(stage.targetMinutes) }}</td>
-              <td><span class="fh__badge" [attr.data-status]="stage.status">{{ status(stage.status) }}</span></td>
+              <td>@let stageStatus = status(stage.status);<app-status-indicator [attr.data-status]="stage.status" [tone]="stageStatus.tone" [label]="stageStatus.label" [compact]="true" /></td>
               <td class="fh__text">{{ stage.reason }}</td>
             </tr>
           }
@@ -60,7 +60,7 @@
                 <td data-testid="flow-health-value-7d">{{ value(item, 'value7d') }}</td>
                 <td>{{ value(item, 'value30d') }}</td>
                 <td><span class="fh__trend" [attr.data-trend]="item.trend">{{ trendLabel(item.trend) }}</span></td>
-                <td><span class="fh__badge" [attr.data-status]="item.status">{{ status(item.status) }}</span></td>
+                <td>@let itemStatus = status(item.status);<app-status-indicator [attr.data-status]="item.status" [tone]="itemStatus.tone" [label]="itemStatus.label" [compact]="true" /></td>
                 <td class="fh__all">{{ value(item, 'all7d') }}</td>
               </tr>
             }

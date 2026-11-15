@@ -22,10 +22,14 @@
       </button>
     }
     @if (outcome(); as text) {
-      <p class="queue-release__status" role="status" data-testid="gate-queue-release-outcome">{{ text }}</p>
+      <p class="queue-release__status" role="status" data-testid="gate-queue-release-outcome">
+        <app-status-indicator [tone]="outcomeTone()" [label]="text" [detail]="text" [compact]="true" testId="gate-queue-release-outcome-state" />
+      </p>
     }
     @if (error(); as text) {
-      <p class="queue-release__error" role="alert">{{ text }}</p>
+      <p class="queue-release__status" role="alert">
+        <app-status-indicator tone="danger" [label]="text" [compact]="true" testId="gate-queue-release-error" />
+      </p>
     }
   </section>
 }

@@ -11,17 +11,14 @@
           @for (environment of state.environments; track environment.project + '/' + environment.environmentId) {
             <tr [attr.data-status]="environment.status" [attr.data-testid]="'health-overview-' + environment.project + '-' + environment.environmentId">
               <th>{{ environment.project }} · {{ environment.name }} <small>{{ environment.kind }}</small></th>
-              <td><span class="health-overview__dot" [attr.data-status]="environment.status" aria-hidden="true"></span>{{ statusLabel[environment.status] }}</td>
+              <td><app-status-indicator [tone]="statusTone(environment.status)" [label]="statusLabel[environment.status]" [compact]="true" testId="health-overview-status" /></td>
               <td>{{ uptime(environment.uptime24h) }}</td>
               <td>{{ uptime(environment.uptime7d) }}</td>
               <td>{{ uptime(environment.uptime30d) }}</td>
               <td>{{ latency(environment.latency24h.p50Ms) }}</td>
               <td>{{ latency(environment.latency24h.p95Ms) }}</td>
-              <td>
-                @if (environment.currentIncident; as incident) {
-                  since {{ incident.startedAt | date:'MMM d, HH:mm':'UTC' }} UTC · {{ incident.checkId }}
-                } @else if (environment.error; as message) { <small>{{ message }}</small> } @else { None }
-              </td>
+              @let incident = incidentDisplay(environment);
+              <td><app-status-indicator [tone]="incident.tone" [label]="incident.label" [detail]="incident.detail" [compact]="true" testId="health-overview-incident" /></td>
             </tr>
           }
         </tbody>

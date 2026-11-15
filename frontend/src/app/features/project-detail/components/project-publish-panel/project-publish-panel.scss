@@ -49,7 +49,7 @@
 /* Nested inside .publish__flow: muted sub-surface, small radius, never a second card. */
 .publish__notice, .publish__message, .publish__run { margin: var(--studio-spacing-3) 0 0; padding: var(--studio-spacing-3); border-radius: 6px; background: var(--studio-card-muted-bg); }
 .publish__notice { color: var(--studio-accent-warn); }
-.publish__run { display: grid; gap: var(--studio-spacing-1); }
+.publish__run { display: grid; justify-items: start; gap: var(--studio-spacing-1); }
 .publish__run a { color: var(--studio-accent); }
 button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 button:disabled { cursor: wait; opacity: 0.55; }

@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import type { BuildProfileContradiction } from '../project-build-profile-notice/project-build-profile-notice.component';
 
 const FIELD_LABELS: Record<string, string> = {
@@ -15,6 +16,7 @@ const FIELD_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-project-build-profile-contradiction-notice',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './project-build-profile-contradiction-notice.component.html',
   styleUrl: './project-build-profile-contradiction-notice.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

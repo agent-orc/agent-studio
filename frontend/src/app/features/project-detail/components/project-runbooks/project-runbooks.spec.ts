@@ -27,6 +27,9 @@ describe('ProjectRunbooksComponent', () => {
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
     expect(text).toContain('backup');
     expect(text).toContain('Owner or Maintainer approval required');
+    const state = (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>('[data-testid="runbook-run-state"]');
+    expect(state?.dataset['tone']).toBe('info');
+    expect(state?.textContent?.trim()).toBe('awaiting-approval');
     expect(text).not.toContain('stage-only');
   });
 

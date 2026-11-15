@@ -200,19 +200,6 @@
     white-space: nowrap;
   }
 
-  &__chip[data-tone="integrated"],
-  &__chip[data-tone="released"] {
-    border-color: color-mix(in srgb, var(--studio-success) 38%, var(--studio-border));
-    background: color-mix(in srgb, var(--studio-success) 10%, var(--studio-bg-elevated));
-    color: var(--studio-success);
-  }
-
-  &__chip[data-tone="deployed"] {
-    border-color: color-mix(in srgb, var(--studio-accent) 32%, var(--studio-border));
-    background: color-mix(in srgb, var(--studio-accent) 9%, var(--studio-bg-elevated));
-    color: var(--studio-fg-strong);
-  }
-
   &__chip[data-tone="task"] {
     color: var(--studio-fg-strong);
     font-family: var(--font-mono);

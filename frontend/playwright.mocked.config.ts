@@ -30,6 +30,7 @@ export default defineConfig({
       '**/persona-team/team-page.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/studio-shell/activity-bar-single-active.spec.ts',
+      '**/visual-evidence/status-indicator-surfaces.spec.ts',
       '**/cli/consumer-model-policy.spec.ts',
       '**/task-detail/task-detail-instant-navigation.spec.ts',
       '**/task-detail/concept-accept-refusal.spec.ts',

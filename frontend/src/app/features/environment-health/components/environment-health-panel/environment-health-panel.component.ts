@@ -1,16 +1,30 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { EnvironmentHealthService } from '../../services/environment-health.service';
 import {
   HEALTH_STATUS_LABEL, certificateDaysLeft, latencyLabel, uptimeLabel,
-  type EnvironmentHealthCheck, type EnvironmentHealthResponse,
+  type EnvironmentHealthCheck, type EnvironmentHealthResponse, type HealthStatus,
 } from '../../models/environment-health.model';
+
+/** Health status of an environment or check mapped onto the shared tones (AGT-3403). */
+const HEALTH_STATUS_TONE: Readonly<Record<HealthStatus, StatusTone>> = {
+  up: 'success',
+  degraded: 'warning',
+  invalid: 'warning',
+  down: 'danger',
+  unknown: 'neutral',
+};
+
+export function healthStatusTone(status: string): StatusTone {
+  return Object.hasOwn(HEALTH_STATUS_TONE, status) ? HEALTH_STATUS_TONE[status as HealthStatus] : 'neutral';
+}
 
 /** Health, uptime, latency and incidents of one project's environments (IP-14). */
 @Component({
   selector: 'app-environment-health-panel',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, StatusIndicatorComponent],
   templateUrl: './environment-health-panel.component.html',
   styleUrl: './environment-health-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -24,6 +38,7 @@ export class EnvironmentHealthPanelComponent {
   readonly statusLabel = HEALTH_STATUS_LABEL;
   readonly uptime = uptimeLabel;
   readonly latency = latencyLabel;
+  readonly statusTone = healthStatusTone;
 
   constructor() {
     effect(() => this.load(this.projectName()));
@@ -49,6 +64,12 @@ export class EnvironmentHealthPanelComponent {
     if (!sample) return 'Not probed yet';
     if (sample.ok) return sample.status ? `OK · ${sample.status}` : 'OK';
     return [sample.error ?? 'failed', sample.status].filter(item => item !== null).join(' · ');
+  }
+
+  lastResultTone(check: EnvironmentHealthCheck): StatusTone {
+    const sample = check.lastSample;
+    if (!sample) return 'neutral';
+    return sample.ok ? 'success' : 'danger';
   }
 
   certificate(check: EnvironmentHealthCheck): string | null {

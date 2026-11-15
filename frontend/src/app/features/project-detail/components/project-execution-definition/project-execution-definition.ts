@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, inject, input, signal } from '@angular/core';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ProjectPipelineDefinitionComponent } from '../project-pipeline-definition/project-pipeline-definition';
 
 interface DefinitionIssue {
@@ -51,6 +52,33 @@ interface ExecutionDefinitionResponse {
   source: string;
 }
 
+interface StatusPresentation {
+  label: string;
+  tone: StatusTone;
+}
+
+/** Whether the repository execution definition validated. */
+export function executionDefinitionValidity(valid: boolean): StatusPresentation {
+  return valid
+    ? { label: 'Valid repository definition', tone: 'success' }
+    : { label: 'Definition needs attention', tone: 'warning' };
+}
+
+/** Outcome of the last preparation manifest. */
+export function preparationManifestOutcome(succeeded: boolean): StatusPresentation {
+  return succeeded ? { label: 'Passed', tone: 'success' } : { label: 'Failed', tone: 'danger' };
+}
+
+const CACHE_TONES: Record<string, StatusTone> = {
+  hit: 'success',
+  miss: 'neutral',
+};
+
+/** Raw executor cache state per block; an unknown state is neutral. */
+export function executorCacheTone(state: string): StatusTone {
+  return CACHE_TONES[state] ?? 'neutral';
+}
+
 interface DefinitionPreview {
   definition: string;
   prepareScript: string;
@@ -62,7 +90,7 @@ interface DefinitionPreview {
 @Component({
   selector: 'app-project-execution-definition',
   standalone: true,
-  imports: [PendingButtonDirective, ProjectPipelineDefinitionComponent],
+  imports: [PendingButtonDirective, ProjectPipelineDefinitionComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-execution-definition.html',
   styleUrl: './project-execution-definition.scss',
@@ -158,6 +186,10 @@ export class ProjectExecutionDefinitionComponent implements OnInit {
       },
     });
   }
+
+  readonly definitionValidity = executionDefinitionValidity;
+  readonly manifestOutcome = preparationManifestOutcome;
+  readonly cacheTone = executorCacheTone;
 
   previewDefinition(): void {
     this.previewing.set(true);

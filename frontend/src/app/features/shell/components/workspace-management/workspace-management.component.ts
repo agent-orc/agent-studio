@@ -1,3 +1,4 @@
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -48,7 +49,7 @@ interface WorkspaceManagementRow extends RegistryWorkspaceListItem {
 @Component({
   selector: 'app-workspace-management',
   standalone: true,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup, FormsModule, TooltipDirective, SectionHeaderComponent, MenuComponent, WorkspaceQuotaDisclosureComponent],
+  imports: [StatusIndicatorComponent, CdkDrag, CdkDropList, CdkDropListGroup, FormsModule, TooltipDirective, SectionHeaderComponent, MenuComponent, WorkspaceQuotaDisclosureComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-management.component.html',
   styleUrl: './workspace-management.component.scss',

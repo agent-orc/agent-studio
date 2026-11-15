@@ -127,40 +127,8 @@
 }
 
 .overview-runs__result {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
   width: fit-content;
-  min-width: 0;
   max-width: 100%;
-  color: var(--severity-warn);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.overview-runs__result-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: currentcolor;
-}
-
-.overview-runs__result[data-status='completed'] {
-  color: var(--severity-pass);
-}
-
-.overview-runs__result[data-status='failed'] {
-  color: var(--severity-high);
-}
-
-.overview-runs__result[data-status='running'] {
-  color: var(--severity-info);
-}
-
-.overview-runs__result[data-status='unknown'] {
-  color: var(--studio-fg-muted);
 }
 
 .overview-runs__fact--numeric,

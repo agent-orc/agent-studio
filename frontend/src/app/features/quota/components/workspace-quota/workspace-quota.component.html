@@ -1,8 +1,8 @@
 <section class="workspace-quota" data-testid="workspace-quota" [attr.data-status]="snapshot()?.status">
   <header class="workspace-quota__header">
     <h3>{{ projectId() ? 'Project quota' : 'Workspace quota' }}</h3>
-    @if (stateLabel(); as label) {
-      <span class="workspace-quota__state" data-testid="workspace-quota-state">{{ label }}</span>
+    @if (state(); as quotaState) {
+      <app-status-indicator [tone]="quotaState.tone" [label]="quotaState.label" [compact]="true" testId="workspace-quota-state" />
     }
   </header>
   @if (error(); as problem) { <p role="alert">{{ problem }}</p> }

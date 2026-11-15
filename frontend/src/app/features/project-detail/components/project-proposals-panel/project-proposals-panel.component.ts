@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import { HttpClient } from '@angular/common/http';
 import { finalize } from 'rxjs';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   TaskReferenceMicrocardComponent,
   type TaskReferenceStatus,
@@ -27,15 +28,41 @@ export interface ProjectProposal {
   updatedAt: string;
 }
 
+const SEVERITY_TONES: Record<ProjectProposal['severity'], StatusTone> = {
+  critical: 'danger',
+  medium: 'warning',
+  low: 'neutral',
+};
+
+/** Only a spawned proposal is an outcome; proposed, approved and rejected stay calm. */
+const STATUS_TONES: Record<ProjectProposal['status'], StatusTone> = {
+  proposed: 'neutral',
+  approved: 'neutral',
+  rejected: 'neutral',
+  spawned: 'success',
+};
+
+/** Tone of a proposal severity; an unknown severity is neutral. */
+export function proposalSeverityTone(severity: string): StatusTone {
+  return SEVERITY_TONES[severity as ProjectProposal['severity']] ?? 'neutral';
+}
+
+/** Tone of a proposal review status; an unknown status is neutral. */
+export function proposalStatusTone(status: string): StatusTone {
+  return STATUS_TONES[status as ProjectProposal['status']] ?? 'neutral';
+}
+
 @Component({
   selector: 'app-project-proposals-panel',
   standalone: true,
-  imports: [PendingButtonDirective, TaskReferenceMicrocardComponent],
+  imports: [PendingButtonDirective, TaskReferenceMicrocardComponent, StatusIndicatorComponent],
   templateUrl: './project-proposals-panel.component.html',
   styleUrl: './project-proposals-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectProposalsPanelComponent {
+  readonly severityTone = proposalSeverityTone;
+  readonly statusTone = proposalStatusTone;
   private readonly http = inject(HttpClient);
   private readonly tasks = inject(TaskService);
   readonly projectName = input.required<string>();

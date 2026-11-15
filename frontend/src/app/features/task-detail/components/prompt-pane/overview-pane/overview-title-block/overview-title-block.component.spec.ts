@@ -107,6 +107,7 @@ describe('OverviewTitleBlockComponent', () => {
     const phase = (fixture.nativeElement as HTMLElement)
       .querySelector('[data-testid="overview-title-phase"]');
     expect(phase?.textContent).toContain('Waiting for loop continuation 0:42');
+    expect(phase?.getAttribute('data-tone')).toBe('info');
   });
 
   it('promote affordance: shown only on a finished planning task across its finished lanes', async () => {

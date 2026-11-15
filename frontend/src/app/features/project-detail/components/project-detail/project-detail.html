@@ -385,7 +385,8 @@
           <header>
             <span class="proj-detail__live-banner__icon" aria-hidden="true">{{ p.kind === 'blocked' ? '!' : '?' }}</span>
             <strong>{{ p.kind === 'blocked' ? 'Agent blocked' : 'Agent is asking for input' }}</strong>
-            <span class="proj-detail__live-banner__chip">live · {{ p.jobId }}</span>
+            <app-status-indicator class="proj-detail__live-banner__chip" [tone]="liveDecisionTone(p.kind)" [label]="'live · ' + p.jobId" [compact]="true"
+                                  [testId]="'project-detail-live-decision-state-' + p.jobId" />
           </header>
           <p class="proj-detail__live-banner__title">{{ p.title }}</p>
           <p class="proj-detail__live-banner__reason">{{ p.reason || '(no reason given by the agent)' }}</p>
@@ -416,7 +417,7 @@
       <h3>Orchestrator session</h3>
       @if (orchSession(); as os) {
         <dl class="proj-detail__paths proj-detail__session">
-          <div><dt>Status</dt><dd>Live · model {{ os.model }}</dd></div>
+          <div><dt>Status</dt><dd><app-status-indicator tone="success" [label]="'Live · model ' + os.model" [compact]="true" testId="project-detail-orchestrator-session-status" /></dd></div>
           <div><dt>Session id</dt><dd><code>{{ os.sessionId }}</code></dd></div>
           <div><dt>Booted</dt><dd>{{ formatTime(os.bootedAt) }} · {{ os.calls }} call{{ os.calls === 1 ? '' : 's' }} so far</dd></div>
           @if (os.lastError) {

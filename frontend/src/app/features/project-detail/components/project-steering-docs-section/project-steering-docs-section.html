@@ -160,7 +160,7 @@
               <div class="psd__inline-warnings" data-testid="project-steering-docs-selected-warnings">
                 @for (w of sourceWarnings(selected); track w.message) {
                   <p>
-                    <span class="psd__sev psd__sev--{{ w.severity }}">{{ w.severity }}</span>
+                    <app-status-indicator [compact]="true" [tone]="severityTone(w.severity)" [label]="w.severity" testId="project-steering-docs-warning-severity" />
                     {{ w.message }}
                   </p>
                 }
@@ -290,7 +290,7 @@
                         (keydown.enter)="onWarningClick(w)"
                         (keydown.space)="onWarningClick(w); $event.preventDefault()">
                       <header>
-                        <span class="psd__sev psd__sev--{{ w.severity }}">{{ w.severity }}</span>
+                        <app-status-indicator [compact]="true" [tone]="severityTone(w.severity)" [label]="w.severity" testId="project-steering-docs-warning-severity" />
                         <span class="psd__warn-kind">{{ humanWarningKind(w.kind) }}</span>
                       </header>
                       <p>{{ w.message }}</p>

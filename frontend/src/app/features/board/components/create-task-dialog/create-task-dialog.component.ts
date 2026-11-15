@@ -14,6 +14,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { CreateModePickerComponent } from '../create-mode-picker/create-mode-picker.component';
 import { RoutingPreviewComponent } from '../routing-preview/routing-preview.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import type { ModelRoutingRecommendation } from '../../../quota';
 import { ModelRoutingSuggestionComponent } from '../model-routing-suggestion/model-routing-suggestion.component';
 import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
@@ -45,7 +46,7 @@ const PENDING_PREFIX = 'pending-attachment-';
   selector: 'app-create-job-dialog',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent, PendingButtonDirective],
+  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent, StatusIndicatorComponent, PendingButtonDirective],
   templateUrl: './create-task-dialog.component.html',
   styleUrl: './create-task-dialog.component.scss'
 })

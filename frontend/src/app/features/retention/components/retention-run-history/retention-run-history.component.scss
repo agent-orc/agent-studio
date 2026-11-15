@@ -1,5 +1,6 @@
 :host { display: block; min-width: 0; }
-.history__schedule, .history__empty, .history__error, .history__warning { margin: 0 0 var(--studio-spacing-2); color: var(--studio-fg-muted); font-size: 0.76rem; }
+.history__schedule { display: inline-flex; margin: 0 0 var(--studio-spacing-2); }
+.history__empty, .history__error, .history__warning { margin: 0 0 var(--studio-spacing-2); color: var(--studio-fg-muted); font-size: 0.76rem; }
 .history__error { color: var(--severity-high); }
 .history__warning { color: var(--severity-medium); }
 .history__scroll { overflow-x: auto; }

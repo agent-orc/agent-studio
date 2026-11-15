@@ -6,12 +6,6 @@
 }
 .quality-panel__header { display: flex; align-items: center; gap: var(--studio-spacing-3); }
 .quality-panel h2, .quality-panel p { margin: 0; }
-.quality-panel__badge {
-  background: var(--studio-surface-muted);
-  border-radius: 999px;
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-}
-.quality-panel__badge[data-state='ready'] { background: color-mix(in srgb, var(--studio-accent-2) 16%, var(--studio-bg-elevated)); }
 .quality-panel__mapping { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-2); }
 .quality-panel input {
   color: var(--studio-fg); background: var(--studio-bg-elevated); border: 1px solid var(--studio-border-strong);

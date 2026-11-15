@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { WikiLifecycleItem, WikiNodeType, WikiPulse, WikiPulseDriftArea, WikiPulseFeedItem, WorkbenchListItem } from '../../../../../models/project-docs.model';
@@ -33,7 +34,7 @@ const FEED_COMPACT_COUNT = 8;
 @Component({
   selector: 'app-wiki-pulse',
   standalone: true,
-  imports: [StudioIconComponent, TooltipDirective, WorkbenchInboxComponent],
+  imports: [StatusIndicatorComponent, StudioIconComponent, TooltipDirective, WorkbenchInboxComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './wiki-pulse.component.html',
   styleUrl: './wiki-pulse.component.scss',

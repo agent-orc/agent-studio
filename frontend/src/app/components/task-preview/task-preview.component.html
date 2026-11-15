@@ -5,7 +5,10 @@
            [attr.data-testid]="variant() === 'card' ? 'task-card-preview' : variant() === 'chat' ? 'activity-chat-preview' : 'task-detail-preview'"
            aria-label="Card preview">
     <div class="preview__copy">
-      <strong>Preview · {{ item.status }}</strong>
+      <app-status-indicator [tone]="previewTone(item.status)"
+                            [label]="'Preview · ' + item.status"
+                            [compact]="variant() !== 'detail'"
+                            testId="task-preview-status" />
       <span>Delivery {{ item.deliverySha.substring(0, 12) }}</span>
       @if (item.status === 'ready') {
         <a [href]="item.address" target="_blank" rel="noopener noreferrer"

@@ -23,9 +23,10 @@ import { ConnectedOverlayDirective } from '../../directives/connected-overlay.di
 import { OverlayPortalDirective } from '../../directives/overlay-portal.directive';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
 import { levelMappingNote, modelAriaLabel, modelAvailabilityNote, moveRadioSelection, normalizeThinkingLevel,
-  olderModelAriaLabel, olderModelNote } from './cli-model-selector.util';
+  olderModelAriaLabel, olderModelNote, olderModelNoteTone } from './cli-model-selector.util';
 import { BetterCandidateLinesComponent } from '../better-candidate-lines/better-candidate-lines.component';
 import { ModelPriceComponent } from '../model-price/model-price.component';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 
 interface CliOption {
   id: CliType;
@@ -51,7 +52,7 @@ interface CliOption {
   selector: 'app-cli-model-selector',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [AppTooltipDirective, ConnectedOverlayDirective, OverlayPortalDirective, BetterCandidateLinesComponent, ModelPriceComponent],
+  imports: [AppTooltipDirective, ConnectedOverlayDirective, OverlayPortalDirective, BetterCandidateLinesComponent, ModelPriceComponent, StatusIndicatorComponent],
   templateUrl: './cli-model-selector.component.html',
   styleUrl: './cli-model-selector.component.scss',
 })
@@ -365,6 +366,7 @@ export class CliModelSelectorComponent {
   readonly modelAvailabilityNote = modelAvailabilityNote;
   readonly modelAriaLabel = modelAriaLabel;
   readonly olderModelNote = olderModelNote;
+  readonly olderModelNoteTone = olderModelNoteTone;
   readonly olderModelAriaLabel = olderModelAriaLabel;
   private applyCatalog(models: readonly CliModelInfo[]): void {
     const selectable = models;
