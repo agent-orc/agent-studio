@@ -3,10 +3,12 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { DetailHeaderComponent } from './detail-header.component';
 import { AuthSessionState } from '../../../../services/auth.service';
 import type { TaskInfo } from '../../../../models/task.model';
+import { BatchGateService } from '../../../../services/batch-gate.service';
+import { redHalvingState } from '../../../batch-gate/testing/batch-fixtures';
 
 const taskInfo: TaskInfo = {
   id: 'ASS-871',
@@ -44,6 +46,29 @@ const taskInfo: TaskInfo = {
  * stable across template tweaks.
  */
 describe('DetailHeaderComponent (smoke)', () => {
+  it('shows the isolation hold and disables a requeue move until it clears', async () => {
+    const active = { ...redHalvingState, pending: [{ ...redHalvingState.pending[0], taskKey: 'AGT-2' }],
+      batches: redHalvingState.batches.map(batch => batch.batchId === 'batch-7'
+        ? { ...batch, isolationActive: true } : batch) };
+    const state = signal(active);
+    await TestBed.configureTestingModule({
+      imports: [DetailHeaderComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([]),
+        { provide: BatchGateService, useValue: { state: () => state.asReadonly() } }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(DetailHeaderComponent);
+    fixture.componentRef.setInput('info', { ...taskInfo, taskKey: 'AGT-2', key: 'AGT-2', displayKey: 'AGT-2' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.isolationHold()?.flight).toBe('batch-7');
+    const move = fixture.componentInstance.triageOverflow().find(button => button.intent.kind === 'move'
+      && button.intent.targetState === '0-backlog');
+    expect(move).toBeDefined();
+    expect(fixture.componentInstance.isHeldRequeue(move!)).toBe(true);
+    state.set({ ...active, batches: active.batches.map(batch => batch.batchId === 'batch-7'
+      ? { ...batch, isolationActive: false } : batch) });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.isolationHold()).toBeNull();
+  });
   it('does not offer reissue when integration needs a server checkout', async () => {
     await TestBed.configureTestingModule({
       imports: [DetailHeaderComponent],
