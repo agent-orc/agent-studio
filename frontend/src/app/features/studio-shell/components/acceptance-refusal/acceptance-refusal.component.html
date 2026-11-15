@@ -1,0 +1,50 @@
+<span class="acceptance-refusal" data-testid="acceptance-refusal"
+      [attr.data-refusal-source]="refusal().source"
+      [attr.data-refusal-action]="refusal().action"
+      role="status">
+  <app-status-indicator class="acceptance-refusal__reason" tone="warning" [compact]="true"
+                        testId="acceptance-refusal-reason"
+                        [label]="refusal().reason" [detail]="refusal().reason" />
+  <button type="button"
+          class="studio-tab-action studio-tab-action--toggle"
+          data-testid="acceptance-refusal-action"
+          [attr.aria-haspopup]="refusal().action === 'override' ? 'dialog' : null"
+          [attr.aria-expanded]="refusal().action === 'override' ? overrideOpen() : null"
+          [disabled]="disabled() || busy()"
+          [cacTooltip]="refusal().action === 'override'
+            ? 'Accept now and record a written reason on the card'
+            : 'Run the integration into the target branch again'"
+          (click)="onAction($event)">{{ refusal().actionLabel }}</button>
+</span>
+@if (overrideOpen()) {
+  <div class="acceptance-refusal__form"
+       data-testid="acceptance-refusal-form"
+       role="dialog"
+       aria-label="Accept with owner override"
+       [appConnectedOverlay]="overrideAnchor()"
+       connectedOverlayPlacement="below"
+       connectedOverlayAlignment="end"
+       (keydown.escape)="cancelOverride()">
+    <label class="acceptance-refusal__label" for="acceptance-refusal-reason-{{ job().id }}">Reason for the override</label>
+    <p class="acceptance-refusal__hint">{{ refusal().reason }} The reason is recorded on the card.</p>
+    <textarea id="acceptance-refusal-reason-{{ job().id }}"
+              class="acceptance-refusal__input"
+              data-testid="acceptance-refusal-override-reason"
+              rows="3"
+              placeholder="Why this card is accepted now"
+              [value]="reason()"
+              [disabled]="busy()"
+              (input)="onReasonInput($event)"></textarea>
+    @if (error(); as message) {
+      <p class="acceptance-refusal__error" data-testid="acceptance-refusal-error" role="alert">{{ message }}</p>
+    }
+    <div class="acceptance-refusal__actions">
+      <button type="button" class="acceptance-refusal__button acceptance-refusal__button--primary"
+              data-testid="acceptance-refusal-submit"
+              [disabled]="!canSubmit()" (click)="acceptWithOverride()">Accept with override</button>
+      <button type="button" class="acceptance-refusal__button"
+              data-testid="acceptance-refusal-cancel"
+              [disabled]="busy()" (click)="cancelOverride()">Cancel</button>
+    </div>
+  </div>
+}
