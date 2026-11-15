@@ -49,7 +49,7 @@ export default async function globalSetup(): Promise<void> {
       if (!response.ok) throw new Error(`Prebuilt backend watch paths returned ${response.status}`);
       paths = await response.json() as { path?: string }[];
     }
-    const expected = resolve(process.env.PW_E2E_WORKSPACE!, 'projects', ['demo', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? 'demo-app' : 'agent-studio-worktree');
+    const expected = resolve(process.env.PW_E2E_WORKSPACE!, 'projects', ['demo', 'owner-day', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? 'demo-app' : 'agent-studio-worktree');
     if (!paths.some(item => item.path === expected)) {
       throw new Error('Prebuilt backend is not using the isolated Playwright workspace.');
     }
