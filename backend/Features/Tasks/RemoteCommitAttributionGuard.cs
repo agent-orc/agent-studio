@@ -18,6 +18,13 @@ public sealed record RemoteCommitAttributionResult(
 /// </summary>
 public static partial class RemoteCommitAttributionGuard
 {
+    internal static bool IsOwnedFallbackCommit(GitCommitInfo commit, string taskKey)
+    {
+        if (string.IsNullOrWhiteSpace(commit.Body)) return false;
+        var lines = commit.Body.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim()).ToArray();
+        return lines.Contains($"Agent-Studio-Task: {taskKey.Trim()}", StringComparer.OrdinalIgnoreCase);
+    }
     [GeneratedRegex(@"\b[A-Z][A-Z0-9]{1,15}-\d+\b",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex TaskKeyPattern();
