@@ -765,7 +765,12 @@ occur. It is not a claim about tunnel transfer time.
   its badge, age, and one-line reason visible when closed. Continue (reissue)
   opens a confirmation with selectable findings, an optional owner note, and
   the next agent's instructions before the move to Ready. The saved selection
-  survives review-artifact rotation. Accept with reason records an operator
+  survives review-artifact rotation. Reissue keeps the card in Escalated and
+  shows persistent pending feedback until the move request settles, even if
+  the operator switches tabs. After a successful response, the board and open
+  detail change to Ready together and the Undo action becomes available. A
+  refused reissue leaves the current tab in place and reports the refusal.
+  Accept with reason records an operator
   override for the completion gate; abort is the destructive alternative.
   When findings, review artifacts,
   and delivery context are absent, the section renders one compact empty line.
