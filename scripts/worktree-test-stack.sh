@@ -11,7 +11,7 @@
 # vars, and tears everything down cleanly.
 #
 # Commands:
-#   up [--with-frontend] [--demo]   allocate free ports, boot backend (+frontend), write env file
+#   up [--with-frontend] [--demo|--owner-day]   allocate free ports, boot backend (+frontend), write env file
 #   down                   stop frontend + backend, remove isolated workspace + state
 #   env                    print the stack env file (use: eval "$(./worktree-test-stack.sh env)")
 #   status                 report health of the stack
@@ -89,10 +89,12 @@ read_env_var() {
 cmd_up() {
   local with_frontend=0
   local demo_mode=0
+  local owner_day=0
   for a in "$@"; do
     case "$a" in
       --with-frontend) with_frontend=1 ;;
       --demo) demo_mode=1 ;;
+      --owner-day) demo_mode=1; owner_day=1 ;;
       *) err "unknown 'up' argument: $a"; exit 2 ;;
     esac
   done
@@ -128,7 +130,9 @@ cmd_up() {
 
   if [[ "${demo_mode}" -eq 1 ]]; then
     log "seeding ADR-0056 demo workspace"
-    if ! node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${workspace}"; then
+    local seed_args=(--root "${workspace}")
+    [[ "${owner_day}" -eq 1 ]] && seed_args+=(--owner-day)
+    if ! node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" "${seed_args[@]}"; then
       err "demo workspace seed failed"
       cmd_down || true
       exit 1
@@ -175,6 +179,9 @@ cmd_up() {
       "WatchPaths__1__Path=${demo_platform}"
       "WatchPaths__1__RootPath=${demo_platform}"
     )
+    if [[ "${owner_day}" -eq 1 ]]; then
+      backend_env+=("AcceptanceRail__Enabled=false")
+    fi
   fi
   if ! env "${backend_env[@]}" bash "${REPO_ROOT}/api.sh" start; then
     err "backend failed to start on :${backend_port}"
