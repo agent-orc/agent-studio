@@ -36,6 +36,7 @@ test.beforeEach(() => {
 test('a Dossier decision that cannot be saved removes its card, and the retry decides the Dossier', async ({ page, request }) => {
   const repository = resolve(process.env['PW_E2E_WORKSPACE']!, 'projects', 'demo-app');
   commitSeededDocs(repository);
+  await expect.poll(async () => (await readWorkbench(request)).workbench.decision ?? null).toBeNull();
   const lock = branchLock(repository);
   await page.setViewportSize({ width: 1280, height: 900 });
   await openDossier(page);
@@ -90,6 +91,7 @@ test('a Dossier decision that cannot be saved removes its card, and the retry de
 test('one answer is durable and open; the later answer starts one card', async ({ page, request }) => {
   const repository = resolve(process.env['PW_E2E_WORKSPACE']!, 'projects', 'demo-app');
   commitSeededDocs(repository);
+  await expect.poll(async () => (await readWorkbench(request)).workbench.decision ?? null).toBeNull();
   await page.setViewportSize({ width: 1280, height: 900 });
   await openDossier(page);
   const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
@@ -194,9 +196,20 @@ async function capture(page: Page, name: string): Promise<void> {
 function commitSeededDocs(repository: string): void {
   execFileSync('git', ['-C', repository, 'add', '--', 'docs'], { encoding: 'utf8' });
   const staged = execFileSync('git', ['-C', repository, 'diff', '--cached', '--name-only'], { encoding: 'utf8' });
-  if (!staged.trim()) return;
-  execFileSync('git', ['-C', repository, '-c', 'user.name=Demo Seed', '-c', 'user.email=seed@demo.invalid',
-    'commit', '-q', '-m', 'seed: demo Dossiers'], { encoding: 'utf8' });
+  if (staged.trim()) {
+    execFileSync('git', ['-C', repository, '-c', 'user.name=Demo Seed', '-c', 'user.email=seed@demo.invalid',
+      'commit', '-q', '-m', 'seed: demo Dossiers'], { encoding: 'utf8' });
+  }
+  const seed = execFileSync('git', ['-C', repository, 'log', '-1', '--format=%H',
+    '--fixed-strings', '--grep=seed: demo Dossiers'], { encoding: 'utf8' }).trim();
+  expect(seed).not.toBe('');
+  execFileSync('git', ['-C', repository, 'restore', `--source=${seed}`, '--staged', '--worktree',
+    '--', 'docs/dossiers/export-retention/workbench.json'], { encoding: 'utf8' });
+  const reset = execFileSync('git', ['-C', repository, 'diff', '--cached', '--name-only'], { encoding: 'utf8' });
+  if (reset.trim()) {
+    execFileSync('git', ['-C', repository, '-c', 'user.name=Demo Seed', '-c', 'user.email=seed@demo.invalid',
+      'commit', '-q', '-m', 'test: restore export retention Dossier'], { encoding: 'utf8' });
+  }
 }
 
 function branchLock(repository: string): string {
