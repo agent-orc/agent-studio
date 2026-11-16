@@ -145,10 +145,7 @@ public sealed partial class MergeIntoDevelopRunner
                         gate);
                 default:
                     return (
-                        MergeIntoIntegrationResult.Failed(
-                            gate.FailureKind == BuildTestGateFailureKind.Environment
-                                ? AcceptedIntegrationFailureCodes.GateEnvironmentFailure
-                                : AcceptedIntegrationFailureCodes.BuildGateFailed,
+                        PreMainGateBlocked(gate,
                             $"Pre-main full suite blocked the merge result {Short(mergedSha)}: {gate.Reason}. "
                             + $"'{releaseBranch}' was rolled back to {Short(preMergeTip)} and nothing was pushed."),
                         gate);

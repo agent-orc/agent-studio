@@ -50,7 +50,7 @@ public static class RunnerEndpoints
         // force every other project out before timestamps are compared.
         runnerGroup.MapGet("/orchestrator-feed",
             (HttpContext context, TaskScannerService scanner, OrchestratorLog log,
-                TimelineLog timeline, AgentStudio.Docs.WorkbenchCatalogueService workbenches,
+                TimelineLog timeline, AgentStudio.Docs.ProjectDocsService docs,
                 SteeringFeedbackProjection feedback,
                 AgentStudio.Registry.ProjectRegistry projects,
                 AgentStudio.Watcher.WatcherActivityProjector? watcherActivity) =>
@@ -162,7 +162,7 @@ public static class RunnerEndpoints
                         || ProjectAccessAuthorization.Allows(human.User, name, projects))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var ownerEntries = OwnerActivityProjection.Read(scanner.ScanAllJobsWithArchive(),
-                    timeline, workbenches, allowed);
+                    timeline, docs.GetPublishedWikiWorkbenches, allowed);
                 return Results.Ok(new { entries, ownerEntries });
             });
 

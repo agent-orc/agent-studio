@@ -645,6 +645,14 @@ public class ProjectDocsService
             _workbenches?.ListFromSource(projectName, source, includeHistory: true));
     }
 
+    /// <summary>
+    /// Every Dossier of the published Wiki snapshot, history included, without
+    /// a fill, a source resolution or a task scan. Empty until the warmup has
+    /// filled the project (AGT-3793).
+    /// </summary>
+    public IReadOnlyList<WorkbenchListItem> GetPublishedWikiWorkbenches(string projectName)
+        => _wikiContentCache.TryGetPublished(projectName)?.Workbenches?.Items ?? [];
+
     public WorkbenchCatalogue? GetWikiWorkbenchCatalogue(
         string projectName,
         bool includeHistory = false)

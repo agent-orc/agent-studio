@@ -24,6 +24,7 @@ public static class PipelineHealthConventions
     public static readonly TimeSpan ArtifactUploadAfterSettlementWindow = TimeSpan.FromHours(1);
     public const string IntegrationLaneDivergedKind = "integration-lane-diverged";
     public const string BatchAdmissionFailedKind = "batch-admission-failed";
+    public const string GateHostUnreachableKind = "gate-host-unreachable";
 }
 
 public sealed record PipelineGateContext(
@@ -280,11 +281,16 @@ public sealed class PipelineHealthService
         new(StringComparer.OrdinalIgnoreCase);
     private readonly AutoReviewQueueStagnationWatchdog? _reviewQueue;
     private readonly RemoteQueueStarvationWatchdog? _queueStarvation;
+    private readonly GateHostOutageMonitor? _gateHost;
+    private readonly BatchGateStore? _batchGates;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, DateTime>> _laneBlockedCards =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Alert identity of the review-claim stall, separate from the file-based lane drain.</summary>
     internal const string ReviewClaimStallIdentity = "review-claims:" + TaskStates.AutoReview;
+
+    /// <summary>Alert identity of the gate host health state (AGT-3792).</summary>
+    internal const string GateHostIdentity = "gate-host";
 
     public PipelineHealthService(
         PipelineHealthDetector detector,
@@ -293,7 +299,9 @@ public sealed class PipelineHealthService
         OrchestratorLog orchestratorLog,
         ILogger<PipelineHealthService> logger,
         AutoReviewQueueStagnationWatchdog? reviewQueue = null,
-        RemoteQueueStarvationWatchdog? queueStarvation = null)
+        RemoteQueueStarvationWatchdog? queueStarvation = null,
+        GateHostOutageMonitor? gateHost = null,
+        BatchGateStore? batchGates = null)
     {
         _detector = detector;
         _scanner = scanner;
@@ -302,6 +310,8 @@ public sealed class PipelineHealthService
         _logger = logger;
         _reviewQueue = reviewQueue;
         _queueStarvation = queueStarvation;
+        _gateHost = gateHost;
+        _batchGates = batchGates;
     }
 
     public void GateAcquired(PipelineGateContext gate) => _detector.GateAcquired(gate);
@@ -331,9 +341,13 @@ public sealed class PipelineHealthService
         var lanes = BuildLaneDrainHealth(project, entry.Path, now);
         var activeGate = _detector.ActiveGateHealth(project, now);
         var fingerprint = _detector.FingerprintHealth();
+        // The gate host state is read live, so the snapshot clears with the outage.
+        var gateHost = GateHostAlert(project, now);
         var alerts = _currentAlerts
             .Where(pair => pair.Key.StartsWith(project + "\0", StringComparison.OrdinalIgnoreCase))
             .Select(pair => pair.Value)
+            .Where(alert => alert.Kind != PipelineHealthConventions.GateHostUnreachableKind)
+            .Concat(gateHost is null ? [] : [gateHost])
             .OrderByDescending(alert => alert.DetectedAtUtc)
             .ToArray();
         var unhealthy = activeGate?.IsHanging == true
@@ -342,7 +356,8 @@ public sealed class PipelineHealthService
             || alerts.Any(alert => alert.Kind is PipelineHealthConventions.EvidenceFlushStalledKind
                 or PipelineHealthConventions.ArtifactUploadAfterSettlementKind
                 or PipelineHealthConventions.IntegrationLaneDivergedKind
-                or PipelineHealthConventions.BatchAdmissionFailedKind)
+                or PipelineHealthConventions.BatchAdmissionFailedKind
+                or PipelineHealthConventions.GateHostUnreachableKind)
             || _currentAlerts.ContainsKey(project + "\0" + ReviewClaimStallIdentity);
         return new PipelineHealthSnapshot(
             project,
@@ -399,6 +414,45 @@ public sealed class PipelineHealthService
     }
 
     private static string EvidenceFlushIdentity(string gitRoot) => "evidence-flush:" + gitRoot;
+
+    /// <summary>
+    /// AGT-3792: <c>gate-host-unreachable</c> while the one gate host health
+    /// state is open. It names the first failure, the last error, the batch
+    /// members of <paramref name="project"/> that wait, and what the owner can do.
+    /// </summary>
+    internal PipelineHealthAlert? GateHostAlert(string project, DateTime nowUtc)
+    {
+        if (_gateHost?.Current is not { } outage) return null;
+        var waiting = (_batchGates?.ListPending() ?? [])
+            .Where(item => string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(item => item.Subject.EnqueueSequence)
+            .Select(item => item.Subject.TaskKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return new PipelineHealthAlert(
+            PipelineHealthConventions.GateHostUnreachableKind,
+            "high",
+            GateHostOutageText.Summary(outage, _gateHost.Host),
+            GateHostOutageText.Detail(outage, _gateHost.Host, waiting),
+            outage.SinceUtc.UtcDateTime,
+            waiting.FirstOrDefault());
+    }
+
+    /// <summary>Raises the gate host state once per cooldown in every project feed, and clears it with the outage.</summary>
+    private void EvaluateGateHost(string project, string watchPath, DateTime nowUtc)
+    {
+        var key = project + "\0" + GateHostIdentity;
+        if (GateHostAlert(project, nowUtc) is { } alert)
+        {
+            EmitAlert(project, watchPath, alert with { DetectedAtUtc = nowUtc }, GateHostIdentity);
+            return;
+        }
+        if (!_currentAlerts.TryRemove(key, out _)) return;
+        // Re-arm: the next outage alarms immediately.
+        _lastAlertAt.TryRemove(key, out _);
+        _logger.LogInformation("pipeline_health_alarm_cleared kind={Kind} project={Project} at={At:O}",
+            PipelineHealthConventions.GateHostUnreachableKind, project, nowUtc);
+    }
 
     /// <summary>
     /// Raises <c>artifact-upload-after-settlement</c> in the project of the
@@ -571,6 +625,7 @@ public sealed class PipelineHealthService
         foreach (var entry in _scanner.GetWatchPaths())
         {
             ct.ThrowIfCancellationRequested();
+            EvaluateGateHost(entry.Name, entry.Path, nowUtc);
             foreach (var lane in BuildLaneDrainHealth(entry.Name, entry.Path, nowUtc).Where(item => item.IsStalled))
             {
                 var oldest = lane.OldestQueuedAtUtc is null

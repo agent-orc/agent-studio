@@ -21,6 +21,7 @@ public static class OperatorDecisionTypes
     public const string PushBlocked = "push.blocked";
     public const string QuotaExhausted = "quota.exhausted";
     public const string QuotaFallbackActive = "quota.fallback-active";
+    public const string GateHostUnreachable = "gate-host.unreachable";
     public const string DeployCompleted = "deploy.completed";
     public const string WatcherHeartbeat = "watcher.heartbeat";
 
@@ -28,7 +29,7 @@ public static class OperatorDecisionTypes
     [
         EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, BatchGateStuck, ProgressIdleWithReady,
         BatchRed, BatchIsolating, BatchRecordUnreadable, BatchRunningWithoutGate, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
-        DeployCompleted, WatcherHeartbeat,
+        GateHostUnreachable, DeployCompleted, WatcherHeartbeat,
     ];
 
     /// <summary>The type a fact key names: every key starts with its type and a <c>|</c>.</summary>
@@ -79,6 +80,8 @@ public static class OperatorOperations
         OperatorDecisionTypes.PushBlocked => [CardInspect, PushInspect],
         OperatorDecisionTypes.QuotaExhausted => [CapacityRead, RoutingChange],
         OperatorDecisionTypes.QuotaFallbackActive => [CapacityRead, RoutingChange],
+        // The repair is the gate host itself or the RemoteGate:SshHost setting (AGT-3792).
+        OperatorDecisionTypes.GateHostUnreachable => [StallsInspect, BatchTriage],
         OperatorDecisionTypes.DeployCompleted => [CardInspect],
         OperatorDecisionTypes.WatcherHeartbeat => [WatcherStatus],
         _ => [],

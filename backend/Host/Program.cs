@@ -133,6 +133,7 @@ builder.Services.AddSingleton<AgentStudio.Review.ReviewPackageFormationService>(
 builder.Services.AddSingleton<AgentStudio.Review.ReviewPackageShadowReportService>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
+builder.Services.AddSingleton<AgentStudio.Registry.ProjectServerCheckoutService>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
 builder.Services.AddSingleton<EngineBatchAdmission>();
 builder.Services.AddSingleton<OrchestrationRolloutStore>();
@@ -1179,6 +1180,15 @@ builder.Services.AddTransient<AgentStudio.Pipeline.IQualityStudioAnalysisCore>(s
         sp.GetRequiredService<ILogger<AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
+// AGT-3792: the one gate host health state. Gate transport attempts, the
+// orphan sweep and the batch gate report to it; the SSH probe checks an
+// unreachable host with backoff instead of a gate run.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IGateHostProbe, AgentStudio.Pipeline.SshGateHostProbe>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateHostOutageMonitor(
+    sp.GetRequiredService<TimeProvider>(), sp.GetService<AgentStudio.Pipeline.IGateHostProbe>(),
+    sp.GetRequiredService<IConfiguration>().GetValue<int?>(
+        AgentStudio.OrchestrationDecisions.GateHostOutagePolicy.UnreachableAfterConfigKey)
+        ?? AgentStudio.OrchestrationDecisions.GateHostOutagePolicy.DefaultUnreachableAfterFailures));
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteGateTransport>();
 builder.Services.AddHostedService<AgentStudio.Pipeline.RemoteGateOrphanSweepService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PullGateTransport>();
@@ -1484,6 +1494,9 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBlo
         .LastOrDefault(step => step.StepId == AgentStudio.Pipeline.PipelineCatalogue.MergeIntoDevelopStepId)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
     sp.GetRequiredService<ProviderLimitRegistry>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGateHostFactSource(
+    sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
@@ -2148,6 +2161,18 @@ if (runRepairSweeps) try
 catch (Exception ex)
 {
     crashRecorder.Record("IntegrationHistoryAttributionRepair", ex);
+}
+
+// Repair passing reviewed deliveries escalated because the subject guard read a
+// finding id or a key the card references as another card's work (AGT-3854).
+if (runRepairSweeps) try
+{
+    hostTimeline.Sweep("CommitSubjectKeyAttributionRepair",
+        () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunCommitSubjectKeyRepairOnce());
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("CommitSubjectKeyAttributionRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

@@ -2264,6 +2264,11 @@ export interface TaskLiveReviewRetry {
   number?: number | null;
   budget: number;
   dueAt: string;
+  /**
+   * AGT-3848: latest instant the stranding watchdog parks the card when the
+   * retry has not started after `dueAt`. Absent on payloads from older servers.
+   */
+  parkAt?: string | null;
 }
 
 export interface TaskLiveStatus {
@@ -2541,11 +2546,14 @@ export interface TaskTestEvidenceSource {
   kind: 'project-test-run' | 'review-build-tests' | 'review-aspects' | 'build-test-gate' | 'pre-develop-build-gate' | 'pre-main-test-gate' | string;
   id: string;
   commit: string;
-  result: 'passed' | 'blocked' | 'failed' | 'not-proven' | 'not-applicable' | string;
+  /** `integration-red` (AGT-3812): the command is already red on the integration branch without the change. */
+  result: 'passed' | 'blocked' | 'failed' | 'integration-red' | 'not-proven' | 'not-applicable' | string;
   observedAt: string | null;
   summary: string;
   reason: string;
   reportRef: string;
+  /** Task-folder file with the output the reason cites; set for an `integration-red` review verdict. */
+  outputRef?: string | null;
 }
 
 export interface TaskTestRunEvidence {
@@ -2590,7 +2598,7 @@ export interface ReviewAttempt {
   outcome: string | null;
   /** Quality grade A-D for a local grade attempt; null otherwise. */
   grade: string | null;
-  buildTestsResult: 'passed' | 'failed' | 'not-proven' | string;
+  buildTestsResult: 'passed' | 'failed' | 'integration-red' | 'not-proven' | string;
   buildTestsReason: string | null;
   /** Empty for a local attempt; the local grade step carries no per-aspect breakdown. */
   aspects: ReviewAspectVerdict[];

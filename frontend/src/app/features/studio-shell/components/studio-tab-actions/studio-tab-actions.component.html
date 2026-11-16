@@ -141,6 +141,8 @@
                   [appPendingButton]="triageView.actingId === primaryId"
                   [pendingLabel]="triageView.primaryLabel + '…'"
                   [cacTooltip]="triageView.primaryTooltip"
+                  [attr.aria-keyshortcuts]="primaryShortcut.keys"
+                  [attr.aria-description]="primaryShortcut.description"
                   (click)="triagePrimary.emit()">
             @if (triageView.awaitingGit) {
               <span class="studio-tab-action__skeleton" aria-hidden="true"></span>

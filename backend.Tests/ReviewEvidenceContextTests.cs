@@ -212,6 +212,31 @@ public class ReviewEvidenceContextTests : IDisposable
     }
 
     [Fact]
+    public void ReviewEvidence_CodingCardInputKeepsPathOrderAndRootStatus()
+    {
+        // AGT-3853 changes only the report review; coding reviews keep the
+        // ordinal inventory, its results/status.md excerpt and root status.md.
+        var results = Path.Combine(_jobFolder, "results");
+        Directory.CreateDirectory(Path.Combine(results, "watchdog-live"));
+        File.WriteAllText(Path.Combine(results, "status.md"), "agent summary");
+        File.WriteAllBytes(Path.Combine(results, "watchdog-live", "z.png"), [1]);
+        File.WriteAllBytes(Path.Combine(results, "a.png"), [1]);
+        // clock-independent: the fixed instant only has to be older than the files written above.
+        File.SetLastWriteTimeUtc(Path.Combine(results, "a.png"), new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        File.WriteAllText(Path.Combine(_jobFolder, "status.md"), "root status");
+
+        var evidence = ResultsInventory.RenderForReview(_jobFolder);
+
+        Assert.StartsWith("results/ folder contains 3 file(s):\n- results/a.png (1 bytes)\n- results/status.md (13 bytes)\n"
+            + "- results/watchdog-live/z.png (1 bytes)\nresults/ content SHA-256: ", evidence);
+        Assert.Contains("Head of results/status.md:\nagent summary", evidence);
+        Assert.DoesNotContain("Subfolders of results/", evidence);
+        Assert.Equal("root status", ReviewDecisionOrchestrator.LoadStatusSummary(_jobFolder));
+        var digest = evidence.Split("SHA-256: ")[1][..64];
+        Assert.Contains(digest, ResultsInventory.RenderForReview(_jobFolder, newestFirst: true));
+    }
+
+    [Fact]
     public void ReviewEvidence_ExcludesHistoryAndLinksOutsideResults()
     {
         if (OperatingSystem.IsWindows()) return;

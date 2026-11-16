@@ -28,3 +28,10 @@ Imports via `from './features/token-analysis'`. See [`index.ts`](./index.ts).
   total is re-summed from the visible slices (R3). See `token-analysis.util.ts`.
 - Filter state is the `ta=` hash segment; the route segment is untouched.
 - The quota chart shares the x axis with the time chart, never the y axis.
+- Cards rank by theoretical cost unless the owner picks tokens (`sort=tokens`
+  in `ta=`); the top-card bars and the table's usage kind columns follow that
+  measure and name it. "Cost by usage kind" splits the cost of the selected
+  period per kind, workspace-wide with one column per project, or for the one
+  project in project scope (AGT-3805).
+- Table and drill-down columns respond to the panel width (container
+  queries), because the settings page leaves the view about 720 px wide.

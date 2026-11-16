@@ -18,6 +18,7 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 import type { ModelRoutingRecommendation } from '../../../quota';
 import { ModelRoutingSuggestionComponent } from '../model-routing-suggestion/model-routing-suggestion.component';
 import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
+import { ModalFocusDirective } from '../../../../directives/modal-focus.directive';
 export interface PendingAttachment {
   id: string;
   file: File;
@@ -46,7 +47,7 @@ const PENDING_PREFIX = 'pending-attachment-';
   selector: 'app-create-job-dialog',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent, StatusIndicatorComponent, PendingButtonDirective],
+  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent, StatusIndicatorComponent, PendingButtonDirective, ModalFocusDirective],
   templateUrl: './create-task-dialog.component.html',
   styleUrl: './create-task-dialog.component.scss'
 })

@@ -14,6 +14,16 @@ public static class GateEnvironmentRetrySources
     /// a planned restart says nothing about the gate host.
     /// </summary>
     public const string Shutdown = "shutdown";
+
+    /// <summary>
+    /// AGT-3792: the replay of a card the gate transport escalated, once the
+    /// gate host answers again. Like the operator action it is the "retry the
+    /// gate" the escalation asked for, so it restarts the bounded ladder.
+    /// </summary>
+    public const string TransportRecovered = "transport-recovered";
+
+    /// <summary>Sources that restart the bounded ladder instead of spending a rung.</summary>
+    public static bool RestartsLadder(string? source) => source is Operator or TransportRecovered;
 }
 
 /// <param name="AttemptsSpent">
@@ -77,7 +87,7 @@ public static class GateEnvironmentRetryReceipts
         // restarts the bounded ladder instead of arriving into an already spent
         // budget that would park the card on its very next failure.
         var lastOperatorRetry = retries.LastOrDefault(entry =>
-            entry.Details?.GetValueOrDefault(SourceKey) == GateEnvironmentRetrySources.Operator);
+            GateEnvironmentRetrySources.RestartsLadder(entry.Details?.GetValueOrDefault(SourceKey)));
         var spent = retries.Count(entry =>
             entry.Details?.GetValueOrDefault(SourceKey) != GateEnvironmentRetrySources.Shutdown
             && (lastOperatorRetry is null || Utc(entry.Ts) > Utc(lastOperatorRetry.Ts)));

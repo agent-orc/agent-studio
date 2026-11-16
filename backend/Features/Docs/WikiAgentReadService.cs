@@ -205,6 +205,7 @@ public sealed class WikiAgentReadService
     private readonly ILogger<WikiAgentReadService> _logger;
     private readonly object _backfillGate = new();
     private readonly ConcurrentDictionary<string, TaskTarget> _targetCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _pendingRefreshes = new(StringComparer.OrdinalIgnoreCase);
 
     public WikiAgentReadService(
         TaskScannerService scanner,
@@ -252,8 +253,41 @@ public sealed class WikiAgentReadService
                 _logger.LogWarning(ex, "wiki-agent-read-write-failed task={TaskKey} page={Page}", target.TaskKey, observation.RelPath);
             }
         }
-        if (applied > 0) _docs.InvalidateWikiTreeCache();
+        if (applied > 0) ScheduleWikiRefresh(target.ProjectName);
         return applied;
+    }
+
+    /// <summary>
+    /// Delay before a live read reaches the Wiki snapshot. Reads arrive in
+    /// bursts while an agent explores docs/; one refresh per burst is enough
+    /// for an observational counter.
+    /// </summary>
+    internal TimeSpan LiveReadRefreshDelay { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Rebuilds the read project's Wiki snapshot once per burst. Before
+    /// AGT-3793 every applied CLI line rebuilt the snapshot of every project
+    /// synchronously on the CLI output path: 133 fills in 30 minutes on an
+    /// idle host, each a full docs/ projection.
+    /// </summary>
+    private void ScheduleWikiRefresh(string projectName)
+    {
+        if (string.IsNullOrWhiteSpace(projectName) || !_pendingRefreshes.TryAdd(projectName, 0)) return;
+        using (ExecutionContext.SuppressFlow())
+        {
+            _ = Task.Delay(LiveReadRefreshDelay).ContinueWith(delay =>
+            {
+                _pendingRefreshes.TryRemove(projectName, out _);
+                try
+                {
+                    _docs.InvalidateWikiContent(projectName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "wiki-agent-read-refresh-failed project={Project}", projectName);
+                }
+            }, TaskScheduler.Default);
+        }
     }
 
     /// <summary>
@@ -351,7 +385,7 @@ public sealed class WikiAgentReadService
         var key = !string.IsNullOrWhiteSpace(task.Key) ? task.Key!
             : !string.IsNullOrWhiteSpace(task.Id) ? task.Id
             : task.TaskKey;
-        return new TaskTarget(wikiDir, key);
+        return new TaskTarget(wikiDir, key, task.ProjectName);
     }
 
     private static bool PageExists(string wikiDir, string relPath)
@@ -397,7 +431,7 @@ public sealed class WikiAgentReadService
     private static DateTime NormalizeAt(DateTime at) =>
         at == default ? DateTime.UtcNow : at.ToUniversalTime();
 
-    private sealed record TaskTarget(string WikiDir, string TaskKey);
+    private sealed record TaskTarget(string WikiDir, string TaskKey, string ProjectName);
     private sealed record ReadObservation(string RelPath, DateTime At);
     private sealed class BackfillPage(string wikiDir, string relPath)
     {

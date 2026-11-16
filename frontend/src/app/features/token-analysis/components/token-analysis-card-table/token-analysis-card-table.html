@@ -1,7 +1,8 @@
 <section class="tt" data-testid="token-analysis-card-table" aria-labelledby="tt-title">
   <header class="tt__head">
     <h3 id="tt-title">Cards</h3>
-    <p>{{ cards().length }} cards · {{ fmt(totals().tokens) }} tokens · {{ usd(totals().cost) }} theoretical</p>
+    <p>{{ cards().length }} cards · {{ fmt(totals().tokens) }} tokens · {{ usd(totals().cost) }} theoretical ·
+      <span data-testid="token-analysis-table-measure">sorted by {{ measure() === 'cost' ? 'cost' : 'tokens' }}, usage kinds in {{ measure() === 'cost' ? 'USD' : 'tokens' }}</span></p>
   </header>
   <div class="tt__scroll">
     <table class="tt__table">
@@ -10,14 +11,18 @@
           <th scope="col">Card</th>
           <th scope="col">Outcome</th>
           <th scope="col" class="tt__num">Rounds</th>
+          <th scope="col" class="tt__num" [attr.aria-sort]="measure() === 'tokens' ? 'descending' : null">
+            <button type="button" class="tt__sort" data-testid="token-analysis-sort-tokens" (click)="sortChange.emit('tokens')">Tokens</button>
+          </th>
+          <th scope="col" class="tt__num" [attr.aria-sort]="measure() === 'cost' ? 'descending' : null">
+            <button type="button" class="tt__sort" data-testid="token-analysis-sort-cost" (click)="sortChange.emit('cost')">Cost</button>
+          </th>
           <th scope="col" class="tt__split">Split</th>
           @for (kind of kinds(); track kind) { <th scope="col" class="tt__num tt__kind">{{ kindLabel(kind) }}</th> }
           <th scope="col" class="tt__meta">Model</th>
           <th scope="col" class="tt__meta">Reasoning</th>
           <th scope="col" class="tt__meta">CLI</th>
           <th scope="col" class="tt__meta">Host</th>
-          <th scope="col" class="tt__num">Tokens</th>
-          <th scope="col" class="tt__num">Cost</th>
         </tr>
       </thead>
       <tbody>
@@ -46,6 +51,8 @@
               </span>
             </td>
             <td class="tt__num">{{ row.rounds ?? '' }}</td>
+            <td class="tt__num" [class.tt__strong]="measure() === 'tokens'">{{ fmt(row.total) }}</td>
+            <td class="tt__num" [class.tt__strong]="measure() === 'cost'" data-testid="token-analysis-row-cost">{{ usd(row.cost) }}@if (!row.costComplete) {<span [appTooltip]="'Some models have no list price'">*</span>}</td>
             <td class="tt__split">
               <span class="tt__bar" aria-hidden="true">
                 @for (part of row.split; track part.kind) {
@@ -53,23 +60,22 @@
                 }
               </span>
             </td>
-            @for (value of row.kinds; track $index) { <td class="tt__num tt__kind">{{ value > 0 ? fmt(value) : '' }}</td> }
+            @for (value of row.kinds; track $index) { <td class="tt__num tt__kind">{{ value > 0 ? kindValue(value) : '' }}</td> }
             <td class="tt__meta">{{ row.model }}</td>
             <td class="tt__meta">{{ row.level }}</td>
             <td class="tt__meta">{{ row.cli }}</td>
             <td class="tt__meta">{{ row.host }}</td>
-            <td class="tt__num tt__strong">{{ fmt(row.total) }}</td>
-            <td class="tt__num">{{ usd(row.cost) }}@if (!row.costComplete) {<span [appTooltip]="'Some models have no list price'">*</span>}</td>
           </tr>
         }
       </tbody>
       <tfoot>
         <tr>
-          <th scope="row" colspan="4">Sum of all rows</th>
-          @for (value of totals().kinds; track $index) { <td class="tt__num tt__kind">{{ fmt(value) }}</td> }
+          <th scope="row" colspan="3">Sum of all rows</th>
+          <td class="tt__num" [class.tt__strong]="measure() === 'tokens'" data-testid="token-analysis-table-total">{{ fmt(totals().tokens) }}</td>
+          <td class="tt__num" [class.tt__strong]="measure() === 'cost'" data-testid="token-analysis-table-cost">{{ usd(totals().cost) }}</td>
+          <td class="tt__split"></td>
+          @for (value of totals().kinds; track $index) { <td class="tt__num tt__kind">{{ kindValue(value) }}</td> }
           <td colspan="4" class="tt__meta"></td>
-          <td class="tt__num tt__strong" data-testid="token-analysis-table-total">{{ fmt(totals().tokens) }}</td>
-          <td class="tt__num">{{ usd(totals().cost) }}</td>
         </tr>
       </tfoot>
     </table>

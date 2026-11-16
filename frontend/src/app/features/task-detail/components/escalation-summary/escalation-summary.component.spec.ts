@@ -11,6 +11,7 @@ import { TaskTimelinePollService } from '../../../polling/services/task-timeline
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
 import type { TaskTimelineEvent } from '../../../task-timeline';
+import { ModalStackService } from '../../../../services/modal-stack.service';
 
 /** localStorage key the component persists per-task collapse under. */
 const COLLAPSE_KEY = 'taskboard.escalation.collapsed';
@@ -450,6 +451,31 @@ describe('EscalationSummaryComponent', () => {
     ]);
     expect((emitted[0] as { reissueInstructions: { findings: string[] } }).reissueInstructions.findings.length)
       .toBe(findings.length - 1);
+  });
+
+  it('Escape closes the confirmation, not the task detail under it, and returns focus to the opener (AGT-3831)', async () => {
+    const fixture = mount({ reviews: [] });
+    const el: HTMLElement = fixture.nativeElement;
+    const stack = TestBed.inject(ModalStackService);
+    const closeDetail = vi.fn();
+    const releaseDetail = stack.push('task-detail', closeDetail);
+    const opener = el.querySelector<HTMLButtonElement>('[data-testid="escalation-action-reissue-escalated"]')!;
+    opener.focus();
+    opener.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const confirm = el.querySelector<HTMLElement>('[data-testid="escalation-confirm"]')!;
+    expect(confirm.contains(document.activeElement)).toBe(true);
+    expect(confirm.previousElementSibling?.classList.contains('cdk-focus-trap-anchor')).toBe(true);
+    expect(confirm.nextElementSibling?.classList.contains('cdk-focus-trap-anchor')).toBe(true);
+
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="escalation-confirm"]')).toBeNull();
+    expect(closeDetail).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(opener);
+    expect(stack.depth()).toBe(1);
+    releaseDetail();
   });
 
   it('offers acceptance only with a written override reason', () => {

@@ -27,6 +27,7 @@ import {
   triageDecisionRowState,
 } from '../../state/triage-actions.model';
 import type { LandedState } from '../../../git';
+import { TASK_DETAIL_PRIMARY_SHORTCUT, taskDetailPrimaryShortcutTooltip } from '../../task-detail-keyboard.util';
 import { buildThinkingLevelIndicator } from '../../../../services/thinking-level.util';
 import { ModelLevelIndicatorComponent } from '../../../../components/model-level-indicator/model-level-indicator.component';
 import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
@@ -54,6 +55,7 @@ export class DetailHeaderComponent {
   readonly isolationHold = computed(() => batchIsolationHold(this.batchGate.state(this.info().projectName)(), this.info().taskKey, this.info().key, this.info().displayKey, this.info().id));
   isHeldRequeue(button: TriageButton): boolean { return isHeldRequeue(button, this.info().state, this.isolationHold()); }
   readonly gateInfrastructurePark = input(false);
+  readonly primaryShortcut = TASK_DETAIL_PRIMARY_SHORTCUT;
   readonly defaultThinkingLevel = input<string | null>(null);
   readonly headerModel = computed(() => {
     const info = this.info();
@@ -258,8 +260,7 @@ export class DetailHeaderComponent {
   });
   /** AGT-2795: the decision lane guard's reason, shown instead of a failing click. */
   readonly primaryDecisionRefusal = computed(() => triageDecisionRefusal(this.info(), this.triagePrimary()));
-  /** AGT-3830: a content refusal holds Accept; the Studio toolbar offers its next step. */
-  readonly primaryContentRefusal = contentRefusalOf(() => this.info(), () => this.triagePrimary());
+  readonly primaryContentRefusal = contentRefusalOf(() => this.info(), () => this.triagePrimary()); // AGT-3830: holds Accept; the toolbar offers the next step.
 
   /** Remaining lane actions + always-on Edit/Delete fallbacks. */
   readonly triageOverflow = computed<TriageButton[]>(() => this.gateInfrastructurePark() || this.reviewsOnly()
@@ -328,8 +329,8 @@ export class DetailHeaderComponent {
     const label = this.primaryLabel();
     if (this.triageActingId() === p.id) return `${label}…`;
     const merge = this.mergeAcceptView();
-    if (merge?.landed && merge.statusTooltip) return `${merge.statusTooltip} (Enter)`;
-    return `${label} (Enter)`;
+    if (merge?.landed && merge.statusTooltip) return taskDetailPrimaryShortcutTooltip(merge.statusTooltip);
+    return taskDetailPrimaryShortcutTooltip(label);
   }
 
   primaryDisabled(button: TriageButton): boolean {
@@ -344,9 +345,8 @@ export class DetailHeaderComponent {
 
   onPrimaryClick(): void {
     const p = this.triagePrimary();
-    if (!p) return;
     // Hold acceptance until Git status loads, and requeue while isolation is active.
-    if (this.primaryDisabled(p)) return;
+    if (!p || this.primaryDisabled(p)) return;
     this.emitTriage(p);
   }
 
@@ -385,7 +385,7 @@ export class DetailHeaderComponent {
     this.emitTriage(button);
   }
 
-  /** Called by the parent on Enter when no input is focused. */
+  /** Called by the parent on Enter while the card surface has focus. */
   triggerPrimary(): void {
     this.onPrimaryClick();
   }

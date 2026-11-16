@@ -680,6 +680,11 @@ public sealed record TaskLiveReviewRetry
     public int? Number { get; init; }
     public int Budget { get; init; }
     public DateTime DueAt { get; init; }
+    /// <summary>
+    /// AGT-3848: latest instant the stranding watchdog parks the card for an
+    /// operator decision when the retry has not started after <see cref="DueAt"/>.
+    /// </summary>
+    public DateTime? ParkAt { get; init; }
 }
 
 /// <summary>Wire tokens for <see cref="TaskLiveQueue.State"/>.</summary>

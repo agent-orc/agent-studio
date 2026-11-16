@@ -41,6 +41,7 @@ import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draf
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
+import { tabbableIn } from '../workbench-decision-panel/workbench-decision-focus.util';
 import { carryRecordedSelections } from '../workbench-decision-panel/workbench-decision-panel.util';
 import { DossierCardListComponent } from '../dossier-card-list/dossier-card-list.component';
 import { ConceptPromotionComponent } from '../../../../components/concept-promotion/concept-promotion.component';
@@ -176,9 +177,7 @@ export class WorkbenchViewerComponent {
       return;
     }
     if (message?.type === WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE) {
-      this.inlineActionHost()?.nativeElement
-        .querySelector<HTMLElement>('[data-testid="workbench-decision-start"]')
-        ?.focus();
+      this.focusPastFrame();
       return;
     }
     if (message?.type === WORKBENCH_DECISION_CHANGE_MESSAGE) {
@@ -281,6 +280,22 @@ export class WorkbenchViewerComponent {
         this.documentationError.set(error?.error?.error || 'The lifecycle could not be updated.');
       },
     });
+  }
+
+  /**
+   * The artifact cancels Tab on its last decision control and asks the host to
+   * move focus. Focus must always leave the frame (AGT-3829): to the first
+   * enabled decision-bar control, else to the next tabbable host element. A
+   * disabled or removed target would leave focus trapped in the frame.
+   */
+  private focusPastFrame(): void {
+    const frame = this.frame()?.nativeElement;
+    if (!frame) return;
+    const host = this.inlineActionHost()?.nativeElement;
+    const target = (host ? tabbableIn(host)[0] : undefined)
+      ?? tabbableIn(frame.ownerDocument.body).find(element =>
+        (frame.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+    target?.focus();
   }
 
   onFrameLoaded(): void {

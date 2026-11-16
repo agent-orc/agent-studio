@@ -47,9 +47,25 @@ There is no project-source selection or Project Sources administration step.
 Local project onboarding is the available product workflow. A repository URL
 does not by itself create a managed checkout.
 
-The dialog closes after the server confirms creation. The project is
-immediately present on the board. No settings file edit or backend restart is
-needed.
+On the local profile, a project with a repository URL and no checkout path
+offers **Create a server checkout now** in the dialog (on by default). The
+dialog then stays open, clones the URL on the Studio host, checks out the
+project's integration branch, and shows the progress and the resulting path.
+The checkout lands in `repository-checkouts/<project id>` next to the task
+store and becomes the project's repository path and CLI working directory.
+The clone uses the project's verified first-run credential when one exists,
+and the host's own Git access otherwise.
+
+A URL project that still has no server checkout shows one notice with
+**Create server checkout** in **Project Settings → Project basics**, above
+the board, and on each of its Ready cards, before its first card can run
+into `server-checkout-missing`. The same action is available for any project
+from the first-run checklist, whose project selector also verifies
+repository access for a project other than the first one.
+
+The dialog closes after the server confirms creation, or after **Done** when
+it created a server checkout. The project is immediately present on the
+board. No settings file edit or backend restart is needed.
 
 The first-run checklist can register the new project's credential-free clone
 URL and integration branch with the Task Server. The repository proof still

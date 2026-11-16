@@ -80,6 +80,6 @@ export class TokenAnalysisFiltersComponent {
   }
 
   reset(): void {
-    this.filtersChange.emit({ ...EMPTY_FILTERS, card: null });
+    this.filtersChange.emit({ ...EMPTY_FILTERS, sort: this.filters().sort, card: null });
   }
 }
