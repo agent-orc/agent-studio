@@ -125,7 +125,8 @@ public static class ProjectDocsEndpoints
             return Results.Ok(docs.GetWikiWorkbenchOverview(names, requested));
         });
 
-        app.MapGet("/api/projects/{projectName}/workbenches/{id}", (string projectName, string id, ProjectDocsService docs, DossierCardsService cards, WorkbenchRevisionRoundService revisions) =>
+        app.MapGet("/api/projects/{projectName}/workbenches/{id}", (string projectName, string id, ProjectDocsService docs, DossierCardsService cards, WorkbenchRevisionRoundService revisions,
+            WorkbenchPromotionService promotions) =>
         {
             var item = docs.GetWikiWorkbenchCatalogue(projectName, includeHistory: true)?.Items
                 .FirstOrDefault(candidate => candidate.Id == id);
@@ -138,6 +139,7 @@ public static class ProjectDocsEndpoints
                 {
                     Cards = cards.List(projectName, document.Workbench),
                     RevisionCard = revisions.Target(projectName, document.Workbench.SourceTaskKeys),
+                    Promotion = promotions.Resolve(projectName, document.Workbench),
                 });
         });
 

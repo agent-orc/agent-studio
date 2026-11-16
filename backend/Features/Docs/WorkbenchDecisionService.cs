@@ -465,9 +465,11 @@ public sealed class WorkbenchDecisionService
             if (task != null || !string.IsNullOrWhiteSpace(archiveReason))
                 return new(Failure(id, operationId, "validation",
                     "A recorded choice cannot carry a task draft or archive reason."));
-            if (!responses.Any(response => response.SelectedOptionIds.Count > 0))
+            // A note alone is an answer worth keeping (AGT-3875).
+            if (!responses.Any(response => response.SelectedOptionIds.Count > 0
+                    || !string.IsNullOrWhiteSpace(response.Comment)))
                 return new(Failure(id, operationId, "validation",
-                    "Select at least one decision option to record."));
+                    "Select at least one decision option or write a note to save."));
             if (spawnedTaskKeys?.Any(key => !string.IsNullOrWhiteSpace(key)) == true)
                 return new(Failure(id, operationId, "validation",
                     "A recorded choice cannot carry spawned task keys."));

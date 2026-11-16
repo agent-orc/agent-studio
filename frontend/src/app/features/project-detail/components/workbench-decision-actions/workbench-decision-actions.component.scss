@@ -13,6 +13,14 @@
   font-size: 0.72rem;
 }
 
+.decision-actions__status {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+}
+
 .decision-actions__confirmation {
   display: grid;
   gap: var(--studio-spacing-3);
@@ -68,6 +76,16 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--studio-spacing-2);
+}
+
+// The confirm row stays in view while the form scrolls inside its share (AGT-3875).
+.decision-actions__confirmation > .decision-actions__buttons {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding-block: var(--studio-spacing-2);
+  border-top: 1px solid var(--studio-border);
+  background: var(--studio-bg-elevated);
 }
 
 button {

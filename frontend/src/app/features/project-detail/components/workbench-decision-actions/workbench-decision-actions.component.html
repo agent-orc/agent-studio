@@ -78,12 +78,21 @@
   </form>
 } @else {
   <div class="decision-actions__bar">
-    <span data-testid="workbench-decision-answer-count">
-      {{ decisionPoints().length }} inline decision point{{ decisionPoints().length === 1 ? '' : 's' }}
-      · {{ answeredCount() }} of {{ decisionPoints().length }} answered
-      · {{ decisionPoints().length - answeredCount() }} still open
-      @if (document().workbench.recordedResponses?.length) { · Saved in Dossier }
-    </span>
+    <div class="decision-actions__status">
+      <span data-testid="workbench-decision-answer-count">
+        {{ decisionPoints().length }} inline decision point{{ decisionPoints().length === 1 ? '' : 's' }}
+        · {{ answeredCount() }} of {{ decisionPoints().length }} answered
+        · {{ decisionPoints().length - answeredCount() }} still open
+        @if (noteCount(); as notes) { · {{ notes }} note{{ notes === 1 ? '' : 's' }} }
+      </span>
+      @if (saveState() === 'unsaved') {
+        <app-status-indicator class="decision-actions__saved" tone="warning" label="Not saved yet" [compact]="true"
+                              testId="workbench-decision-save-state" />
+      } @else if (saveState() === 'saved') {
+        <app-status-indicator class="decision-actions__saved" tone="success" label="Saved in Dossier" [compact]="true"
+                              testId="workbench-decision-save-state" />
+      }
+    </div>
     <div class="decision-actions__buttons">
       @if (!inline()) {
         <button type="button" data-testid="workbench-decision-archive"
@@ -92,10 +101,11 @@
       <button type="button" data-testid="workbench-decision-rework"
               [attr.title]="reworkDisabledReason()"
               [disabled]="!canRequestRework()" (click)="beginRework()">Request rework</button>
-      @if (canRecordPartial()) {
+      @if (!settled()) {
         <button type="button" data-testid="workbench-decision-record"
-                [appPendingButton]="pending()" pendingLabel="Recording…"
-                (click)="recordPartial()">Record answered choices</button>
+                title="Saves the answered choices and notes in the Dossier without starting a card."
+                [disabled]="!canSaveAnswers()" [appPendingButton]="saving()" pendingLabel="Saving…"
+                (click)="saveAnswers()">Save answers</button>
       }
       <button type="button" data-testid="workbench-decision-start"
               title="Creates one combined card for every recorded selection."
