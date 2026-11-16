@@ -28,6 +28,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly RemoteDeliveryIntegrationCoordinator? _integration;
     private readonly V1ReviewExecutorRegistry? _reviewExecutors;
+    private readonly EngineReportReviewService? _reportReviews;
     private readonly ILogger<AutoReviewStrandingWatchdog> _logger;
     private readonly TimeProvider _time;
 
@@ -39,7 +40,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         StallInterventionStore records, StallInterventionReceipts receipts, IConfiguration configuration,
         ILogger<AutoReviewStrandingWatchdog> logger,
         RemoteDeliveryIntegrationCoordinator? integration = null,
-        V1ReviewExecutorRegistry? reviewExecutors = null, TimeProvider? time = null)
+        V1ReviewExecutorRegistry? reviewExecutors = null, TimeProvider? time = null,
+        EngineReportReviewService? reportReviews = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -57,6 +59,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         _configuration = configuration;
         _integration = integration;
         _reviewExecutors = reviewExecutors;
+        _reportReviews = reportReviews;
         _logger = logger;
         _time = time ?? TimeProvider.System;
     }
@@ -78,7 +81,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 BatchMemberKey(member)))
             .ToHashSet(StringComparer.Ordinal);
         var interventions = _records.All().ToList();
-        var count = 0;
+        var count = await RecoverReportReviewsAsync(interventions, now, ct);
         foreach (var card in _scanner.ScanAllAutomationJobs().Where(item =>
                      item.State == TaskStates.AutoReview && !item.Fixture))
         {
@@ -123,6 +126,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                             && capability.HealthState == "healthy")) == true;
                 var facts = new AutoReviewStrandingFacts(withoutOwner, threshold,
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
+                        || _reportReviews?.IsRunning(card) == true
                         || IntegrationGateJournal.Read(card.FolderPath) is not null
                         || card.Phase == LifecyclePhases.Integrating,
                     currentReview?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased,
@@ -310,9 +314,12 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 return (true, false,
                     $"Scheduled infrastructure retry {scheduled.RetryNumber}/{scheduled.RetryBudget}: {reason}");
             }
-            var started = TaskModes.IsReportOnly(card.Mode)
-                ? _transitions.RequeueAutoReviewPostProcessing(card, "auto-review-stranding")
-                : CreateReview(card, review, run, "auto-review-stranding");
+            if (TaskModes.IsReportOnly(card.Mode))
+            {
+                var report = StartReportReview(card, "auto-review-stranding");
+                return (report.Started, false, report.Reason);
+            }
+            var started = CreateReview(card, review, run, "auto-review-stranding");
             return (started, false, started ? "Started the missing review step." : "The missing review step could not start.");
         }
         if (action == AutoReviewStrandingAction.IntegratePerTask && review is not null && run is not null)
@@ -363,6 +370,133 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                         : "The last review is terminal with no automatic recovery owner. Requeue the review step or send this card for an operator decision."
                     : "Remote Review has no completed delivery or review step to recover. Requeue the review step or send this card for an operator decision.");
     }
+
+    /// <summary>
+    /// AGT-3797: while the engine owns Auto Review, the post-processing queue
+    /// drops a requeued report step, so the requeue was recorded as started
+    /// and nothing ran. The report review service owns the card instead, and a
+    /// step that cannot start is never recorded as started.
+    /// </summary>
+    private (bool Started, string Reason) StartReportReview(TaskInfo card, string source)
+    {
+        if (MonolithTransitionSwitch.OwnsAutoReview(_configuration))
+            return _transitions.RequeueAutoReviewPostProcessing(card, source)
+                ? (true, "Started the missing review step.")
+                : (false, "The missing review step could not start.");
+        if (_reportReviews is null)
+            return (false, "The report review could not start: no report review owner is registered while the engine owns Auto Review.");
+        var start = _reportReviews.Start(card, source);
+        return start.Started ? (true, start.Reason) : (false, "The report review could not start: " + start.Reason);
+    }
+
+    /// <summary>
+    /// AGT-3797: report cards that were stranded before the engine path had a
+    /// report review owner take that path once per delivery: a card still in
+    /// Auto Review past the threshold without a verdict, and a card this
+    /// watchdog parked as <c>auto-review-stranded</c> while the park is
+    /// unchanged, which returns to Auto Review first. The receipt keyed by the
+    /// run attempt keeps it to one pickup.
+    /// </summary>
+    private async Task<int> RecoverReportReviewsAsync(List<StallInterventionRecord> interventions,
+        DateTime now, CancellationToken ct)
+    {
+        if (_reportReviews is null || MonolithTransitionSwitch.OwnsAutoReview(_configuration)) return 0;
+        var threshold = Threshold(_configuration);
+        var count = 0;
+        foreach (var candidate in _scanner.ScanAllAutomationJobs().Where(item => !item.Fixture
+                     && TaskModes.IsReportOnly(item.Mode)
+                     && item.State is TaskStates.AutoReview or TaskStates.Escalated))
+        {
+            ct.ThrowIfCancellationRequested();
+            var card = candidate;
+            try
+            {
+                var key = CardKey(card);
+                var run = _authority.GetTaskProjection(key).CurrentRunAttempt;
+                if (run is not { State: AttemptLifecycleState.Completed }) continue;
+                var writeKey = $"report-review-recovery:{card.ProjectName}:{key}:{run.AttemptId}";
+                if (interventions.Any(item => item.WriteKey == writeKey)) continue;
+                if (_reportReviews.IsRunning(card) || !_reportReviews.IsMissing(card)) continue;
+                StallInterventionRecord? park = null;
+                if (card.State == TaskStates.Escalated)
+                {
+                    park = interventions.Where(item => item.Kind == "auto-review-stranded"
+                            && item.Project == card.ProjectName && item.AffectedCards.Contains(card.Id))
+                        .OrderByDescending(item => item.DecidedAtUtc).FirstOrDefault();
+                    if (park is null || !MatchesPark(park, card)) continue;
+                }
+                else if (now - card.EnteredLaneAt <= threshold
+                    || _queue.PositionOf(card.ProjectName, card.Id) is not null
+                    || WaitsForModelHost(card))
+                    continue;
+
+                var before = card.State;
+                string detail;
+                var started = false;
+                if (park is not null)
+                {
+                    var moved = await _transitions.MoveAsync(card.Id, TaskStates.AutoReview, card.WatchPath, ct,
+                        cause: "system:report-review-recovery", expectedSourceState: TaskStates.Escalated,
+                        expectedSourceEnteredLaneAt: park.ParkedAtUtc,
+                        expectedSourceTaskJsonWriteTicks: park.ParkedTaskWriteTicks,
+                        transitionCause: LaneChangeCauses.Delivered, transitionDetail: "report-review-recovery");
+                    if (moved.Status == MoveJobStatus.Success)
+                    {
+                        var restored = park with
+                        {
+                            Undoable = false, RevertedBy = "report-review-recovery",
+                            Outcome = "Auto Review was restored to run the report review of the unchanged delivery.",
+                        };
+                        _records.Save(restored);
+                        _receipts.Publish(restored, _records.All());
+                    }
+                    card = moved.Status == MoveJobStatus.Success
+                        ? _scanner.FindJob(card.Id, card.WatchPath) ?? card
+                        : card;
+                    detail = moved.Status == MoveJobStatus.Success ? ""
+                        : $"The parked card could not return to Auto Review: {moved.Status} {moved.Message}";
+                }
+                else detail = "";
+                if (detail.Length == 0)
+                {
+                    var start = StartReportReview(card, "report-review-recovery");
+                    started = start.Started;
+                    detail = start.Reason;
+                }
+                var record = new StallInterventionRecord
+                {
+                    Id = StallInterventionStore.IdFor(writeKey), WriteKey = writeKey,
+                    Subject = "auto-review:" + key, Kind = "report-review-recovery",
+                    Host = "task-server", Action = "StartReportReview", Autonomy = "A1",
+                    Disposition = "act", ReasonCode = "report-review-no-owner",
+                    Status = started ? StallInterventionStatuses.Verified : StallInterventionStatuses.Failed,
+                    Project = card.ProjectName, AffectedCards = [card.Id],
+                    Observed = $"Report card in {before} had no report verdict for run {run.AttemptId}.",
+                    Done = detail,
+                    Why = "The engine's CreateReview decision gave this report delivery no review owner (AGT-3797).",
+                    Before = before, After = started ? TaskStates.AutoReview : before,
+                    Receipt = detail, DecidedAtUtc = now, ResolvedAtUtc = now,
+                    RunAttemptId = run.AttemptId,
+                };
+                _records.Save(record);
+                _receipts.Publish(record, _records.All());
+                interventions.Add(record);
+                count++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "report-review-recovery-failed task={TaskKey}", card.TaskKey);
+            }
+        }
+        return count;
+    }
+
+    /// <summary>A report review that waits for a model host is owned by the host-wait rule.</summary>
+    private bool WaitsForModelHost(TaskInfo card)
+        => _pipeline.Read(card.FolderPath)?.Steps.Any(step =>
+            step.StepId == PipelineCatalogue.RequirementFitStepId
+            && step.Status == PipelineStepStatus.Pending
+            && step.Reason?.StartsWith("waiting for a host with ", StringComparison.Ordinal) == true) == true;
 
     internal static string ReviewFailureDetail(ReviewAttemptDto review)
         => $"{ReviewAttemptChainEntry.ClassificationLabel(review.Outcome, review.FailureClassification)}: "
