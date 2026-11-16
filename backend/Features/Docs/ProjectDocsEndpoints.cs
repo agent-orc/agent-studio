@@ -197,7 +197,7 @@ public static class ProjectDocsEndpoints
                             Outcome = body.Outcome,
                         }, card));
                 }
-                var result = decisions.Confirm(projectName, id, body, card?.Key);
+                var result = decisions.Confirm(projectName, id, body, card?.Key, card?.Route);
                 // The descriptor is a docs/ file, so the warm wiki cache must
                 // not keep serving the pre-decision bytes.
                 if (result.Success) docs.InvalidateWikiContent(projectName);

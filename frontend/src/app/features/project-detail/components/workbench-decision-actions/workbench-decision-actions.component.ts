@@ -29,12 +29,15 @@ import {
   bounded,
   cardPrompt,
   createOperationId,
+  defaultAgent,
   featureTaskDraft,
   laneLabel,
   readDefaultCli,
   readDefaultModel,
   readDefaultThinkingLevel,
   reworkPrompt,
+  reworkRouteChange,
+  revisionCardRoute,
   selectedDecisionText,
   taskKeyTail,
   unlinkedCardFailure,
@@ -98,6 +101,11 @@ export class WorkbenchDecisionActionsComponent {
   readonly revisionCard = computed(() => this.document().revisionCard ?? null);
   readonly revisionCardLane = computed(() => laneLabel(this.revisionCard()?.lane ?? null));
   readonly reworkAvailable = computed(() => this.revisionCard()?.available === true);
+  /** The revision card's route; a rework starts on it so it never reroutes the card unasked (AGT-3838). */
+  readonly revisionRoute = computed(() => revisionCardRoute(this.revisionCard()));
+  readonly routeChange = computed(() =>
+    this.mode() === 'rework' ? reworkRouteChange(this.revisionRoute(), this.agent()) : null);
+  private readonly keepsRevisionRoute = computed(() => this.mode() === 'rework' && this.revisionRoute() !== null);
   readonly reworkDisabledReason = computed(() => this.reworkAvailable()
     ? null
     : this.revisionCard()?.reason
@@ -193,9 +201,9 @@ export class WorkbenchDecisionActionsComponent {
     this.resetFeedback();
     const operationId = createOperationId();
     const draft = this.drafts.beginRework(this.projectName(), this.document().workbench.id, {
-      actor: this.actor(), operationId, cliType: this.cliType(), model: this.model(),
-      thinkingLevel: this.thinkingLevel(),
+      actor: this.actor(), operationId, ...(this.revisionRoute() ?? this.agent()),
     }, this.responses());
+    this.restoreAgent(draft);
     this.operationId.set(draft.operationId ?? operationId);
     this.request.set(draft.request ?? '');
     this.mode.set('rework');
@@ -207,9 +215,12 @@ export class WorkbenchDecisionActionsComponent {
     event?.preventDefault();
     event?.stopPropagation();
     if (this.pending()) return;
+    const leavingRework = this.keepsRevisionRoute();
     this.drafts.closeAction(this.projectName(), this.document().workbench.id);
     this.mode.set(null);
     this.operationId.set('');
+    // The card's route was a rework preselection; a combined task starts on the browser default again.
+    if (leavingRework) { this.restoreAgent(defaultAgent()); this.preselectDefaultModel(); }
     queueMicrotask(() => this.focusPrimaryAction());
   }
 
@@ -388,15 +399,15 @@ export class WorkbenchDecisionActionsComponent {
     if (draft.thinkingLevel !== undefined) this.thinkingLevel.set(draft.thinkingLevel);
   }
 
-  /** Preselect the picker default once per Dossier, preserving later explicit choices. */
+  /** Preselect the picker default once per Dossier, preserving explicit choices and a rework's card route. */
   private preselectDefaultModel(): void {
-    if (this.model().trim()) return;
+    if (this.model().trim() || this.keepsRevisionRoute()) return;
     const cli = this.cliType();
     const project = this.projectName();
     const id = this.document().workbench.id;
     this.catalog.ensure(cli).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: models => {
-        if (this.model().trim() || this.cliType() !== cli
+        if (this.model().trim() || this.cliType() !== cli || this.keepsRevisionRoute()
           || this.projectName() !== project || this.document().workbench.id !== id) return;
         const preferred = models.find(model => model.available !== false && model.isDefault);
         if (!preferred) return;
