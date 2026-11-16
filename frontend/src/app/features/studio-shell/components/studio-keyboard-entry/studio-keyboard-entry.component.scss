@@ -1,5 +1,7 @@
 :host { display: contents; }
 
+.studio-skip-links { position: fixed; inset: 0 auto auto 0; }
+
 // Off screen until focused, then painted over the titlebar's top-left corner.
 .studio-skip-link {
   position: fixed;

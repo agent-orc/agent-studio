@@ -58,9 +58,9 @@
                 [href]="cli.cliId.toLowerCase() === 'gemini' ? '#/workspace/settings/caps' : '#/workspace/settings/tokens/' + cli.cliId.toLowerCase()"
                 [attr.data-state]="v.state" [attr.data-usage-trigger]="'cli:' + cli.cliId.toLowerCase()"
                 [attr.aria-label]="usageName(cli)" [title]="usageTooltip(cli)">
-          <strong>{{ v.name }}</strong>
-          @if (v.weekly.reported) { <span>WK {{ v.weekly.value }}</span> }
-          @if (v.session.reported) { <span>Session {{ v.session.value }}</span> }
+          <strong>{{ v.name }} </strong>
+          @if (v.weekly.reported) { <span>WK {{ v.weekly.value }} </span> }
+          @if (v.session.reported) { <span>Session {{ v.session.value }} </span> }
           @if (v.state === 'stale') { <span class="statusbar__age">{{ age(cli.fetchedAt) }}</span> }
         </a>
         @if (hostProblem(cli.cliId); as problem) {
