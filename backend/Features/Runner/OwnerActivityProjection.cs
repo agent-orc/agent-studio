@@ -12,16 +12,22 @@ public static class OwnerActivityProjection
         string Topic, string Summary, string? Reasoning, string? JobId,
         string? DossierId);
 
+    /// <summary>
+    /// Owner rows of the timeline and of the Dossier decisions.
+    /// <paramref name="dossiers"/> answers from the published Wiki snapshot: a
+    /// live catalogue resolved the Wiki source and walked docs/ of every
+    /// project on each feed poll, about 50 Git processes per request (AGT-3793).
+    /// </summary>
     public static List<Entry> Read(
         IEnumerable<TaskInfo> tasks, TimelineLog timeline,
-        WorkbenchCatalogueService workbenches, IReadOnlySet<string> allowedProjects)
+        Func<string, IEnumerable<WorkbenchListItem>> dossiers, IReadOnlySet<string> allowedProjects)
     {
         var entries = new List<Entry>();
         foreach (var task in tasks.Where(task => !task.Fixture && allowedProjects.Contains(task.ProjectName)))
             entries.AddRange(FromTimeline(task, timeline.ReadAll(task.FolderPath)));
 
         foreach (var project in allowedProjects)
-            foreach (var dossier in workbenches.List(project, includeHistory: true)?.Items ?? [])
+            foreach (var dossier in dossiers(project))
                 if (FromDossier(project, dossier) is { } entry) entries.Add(entry);
 
         return entries.OrderByDescending(entry => entry.Ts).Take(500).ToList();

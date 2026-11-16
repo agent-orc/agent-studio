@@ -285,6 +285,25 @@ public sealed class TaskCoreCacheTests : IDisposable
     }
 
     [Fact]
+    public void UnchangedResidentFact_ReusesItsRecord_AndAChangedSidecarRebuildsIt()
+    {
+        // AGT-3793: an idle index refresh must not reserialize and rehash
+        // every archived card whose fact instance and sidecars are unchanged.
+        var task = MakeTask("AGT-3793", TaskStates.Archive);
+        File.WriteAllText(Path.Combine(task.FolderPath, "status.md"), "First status");
+        var first = TaskCoreRecord.Create(task);
+
+        Assert.Same(first, TaskCoreRecord.Create(task, previous: first));
+        Assert.NotSame(first, TaskCoreRecord.Create(task with { Title = "Renamed" }, previous: first));
+
+        File.WriteAllText(Path.Combine(task.FolderPath, "status.md"), "Second, longer status");
+        var changed = TaskCoreRecord.Create(task, previous: first);
+        Assert.NotSame(first, changed);
+        Assert.Equal("Second, longer status", changed.Status.Text);
+        Assert.NotEqual(first.Version, changed.Version);
+    }
+
+    [Fact]
     public void CoreProjection_PreservesEveryTaskReference()
     {
         var id = "task-" + new string('x', 195);
