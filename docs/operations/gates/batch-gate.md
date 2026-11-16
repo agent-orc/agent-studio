@@ -434,6 +434,24 @@ batch verification is re-enabled, and its gate is retried.
   after each gate, and at the publication decision and the push. The state
   reports the project's current or last claim as `flightClaim`. On 2 November
   2026 only an API restart freed a hung flight's slot.
+- AGT-3882: the project reservation is fair to a reserving flight. While a
+  flight is in `Reserving`, no new per-task integration of the project starts
+  (`per-task-integration`, and `per-task-fallback-integration` after a green
+  per-task fallback gate). Each waits until the flight holds its reservation;
+  a running one finishes. Approved integration pushes go first, because the
+  flight waits for them to reach origin. So the wait is bounded by the
+  longest running per-task gate, not by new arrivals. Batch pre-checks take
+  no reservation and keep running on their own gate slot. The state reports
+  `flightReservationWait`: the job holding the reservation (kind, task key,
+  since when), the jobs queued ahead, the held-back per-task integrations,
+  the pending pushes, and `gateSlots`. Each batch row carries the same reason
+  as `reservationWaitsFor`. If the reservation deadline still passes while a
+  running per-task integration holds the reservation, the expiry is
+  `ReservationHeldByJob`. Its reason names the job, and the batch keeps its
+  queue position instead of going behind the next formed batch. The expiry
+  still counts against the retry budget, so a job that never ends pauses the
+  batch to a visible gate. On 16 November 2026 a flight sat in `Reserving`
+  for more than 90 minutes while per-task gates started one after another.
 - AGT-3562: a flight that completes or fails (its batch ran a gate, or left
   the formed phase other than by retirement before replay) starts the next
   eligible formed batch of its project at once, instead of on the next hosted
