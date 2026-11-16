@@ -64,7 +64,9 @@ export class TokenAnalysisCardTableComponent {
     const rest = this.remainders()
       .filter(remainder => remainder.totalTokens > 0)
       .map(remainder => this.row({
-        project: remainder.project, jobId: '', key: null, title: 'Usage outside cards (project chat, orchestrator)',
+        project: remainder.project, jobId: '', key: null,
+        title: remainder.project === 'Unattributed one-shot jobs'
+          ? 'Unattributed one-shot jobs' : 'Usage outside cards (project chat, orchestrator, one-shot jobs)',
         state: null, taskType: '', tags: [], outcome: '', rounds: 0, inFlight: false,
         firstActivity: null, lastActivity: null, totalTokens: remainder.totalTokens, costUsd: remainder.costUsd,
         costComplete: remainder.slices.every(slice => slice.priced), slices: remainder.slices,

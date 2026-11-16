@@ -120,7 +120,7 @@ public static class UsageCockpitEndpoints
                     if (current.ProjectId is null) continue;
                     costInputs[index] = current with { Entries = workspaceUsage.MergeInto(current.ProjectId, current.Entries) };
                 }
-                costInputs.Add(new UsageCostInput(null, "Unattributed", unattributed,
+                costInputs.Add(new UsageCostInput(null, "Unattributed one-shot jobs", unattributed,
                     new ProjectTokenDataFreshness
                     {
                         Status = unassignedCount == 0 ? "complete" : "partial",
@@ -131,7 +131,7 @@ public static class UsageCockpitEndpoints
             }
             catch (Exception)
             {
-                costInputs.Add(new UsageCostInput(null, "Unattributed", [],
+                costInputs.Add(new UsageCostInput(null, "Unattributed one-shot jobs", [],
                     new ProjectTokenDataFreshness { Status = "unavailable",
                         Warning = "The workspace token bus could not be read." }));
             }

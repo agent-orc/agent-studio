@@ -75,9 +75,16 @@ public sealed class TokenAnalysisService
             }
             samples.AddRange(Samples(build.Remainder, from));
         }
+        var unattributedItems = TokenAnalysisFold.RemainderItems(_pricing,
+            workspaceRows.Where(row => row.ProjectName is null).Select(row => row.Entry));
+        var unattributedSlices = TokenAnalysisFold.Slices(
+            unattributedItems.Where(item => item.At >= from && item.At < to));
+        if (unattributedSlices.Count > 0)
+            remainders.Add(new TokenAnalysisProjectRemainder("Unattributed one-shot jobs",
+                unattributedSlices.Sum(TokenAnalysisFold.SliceTotal),
+                unattributedSlices.Sum(slice => slice.CostUsd), unattributedSlices));
         // Quota windows are account-wide: unattributed workspace rows count too.
-        samples.AddRange(Samples(TokenAnalysisFold.RemainderItems(_pricing,
-            workspaceRows.Where(row => row.ProjectName is null).Select(row => row.Entry)), from));
+        samples.AddRange(Samples(unattributedItems, from));
 
         if (workspaceWarning is not null)
             freshness.Add(new ProjectTokenDataFreshness { Status = "partial", Warning = workspaceWarning });

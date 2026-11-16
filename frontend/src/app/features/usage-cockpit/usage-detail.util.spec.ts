@@ -125,7 +125,7 @@ describe('reconciliation', () => {
 
   it('lists unattributed last and marks unknown rows as incomplete', () => {
     const view = buildUsageDetailView(snapshot(), NOW).cost;
-    expect(view.projects.map(p => p.name)).toEqual(['Agent Studio', 'Docs', 'Unattributed']);
+    expect(view.projects.map(p => p.name)).toEqual(['Agent Studio', 'Docs', 'Unattributed one-shot jobs']);
     expect(view.reconcile).toEqual({ todayRemainder: '$0.01', weekRemainder: '$0.01', complete: true });
 
     const partial = snapshot();

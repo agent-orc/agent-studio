@@ -66,6 +66,7 @@ export interface UsageCostProjection {
   todayUsd: number | null;
   weekUsd: number | null;
   projects: UsageProjectCost[];
+  oneShotSources?: { source: string; todayUsd: number; weekUsd: number }[];
   coverage: UsageSourceState;
   pricingVersion: string;
   normalizationVersion: string;
