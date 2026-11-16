@@ -74,7 +74,7 @@
           <span class="pbc__error" role="alert" data-testid="project-basics-save-error">{{ error }}</span>
         } @else if (savedMessage(); as message) {
           <span class="pbc__saved" data-testid="project-basics-save-success">{{ message }}</span>
-        } @else if (dirty() && !canSave()) {
+        } @else if (!saving() && dirty() && !validationValid()) {
           <span>Resolve the highlighted fields before saving.</span>
         }
       </div>

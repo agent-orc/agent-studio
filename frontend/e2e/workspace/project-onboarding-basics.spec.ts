@@ -540,9 +540,12 @@ test.describe('project onboarding and editable project basics', () => {
 
   test('Project Settings edits the same basics and sends a PUT payload', async ({ page }) => {
     let submitted: Record<string, unknown> | null = null;
+    let finishSave!: () => void;
+    const pendingSave = new Promise<void>(resolve => { finishSave = resolve; });
     await page.route('**/api/projects/PROJ-023', async (route) => {
       if (route.request().method() !== 'PUT') return route.continue();
       submitted = route.request().postDataJSON() as Record<string, unknown>;
+      await pendingSave;
       project = {
         ...project,
         workspaceId: String(submitted.workspaceId),
@@ -582,6 +585,9 @@ test.describe('project onboarding and editable project basics', () => {
     await save.click();
 
     await expect.poll(() => submitted).not.toBeNull();
+    await expect(save).toHaveAttribute('data-pending-label', 'Saving project basics...');
+    await expect(card).not.toContainText('Resolve the highlighted fields before saving.');
+    finishSave();
     await expect(card.getByTestId('project-basics-save-success')).toContainText('Saved');
     expect(submitted).toMatchObject({
       workspaceId: 'ws-default',

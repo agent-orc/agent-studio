@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { catchError, forkJoin, of } from 'rxjs';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
@@ -67,6 +67,11 @@ export class ProjectBasicsCardComponent {
   private readonly serverCheckout = inject(ServerCheckoutStore);
   private checkoutRequestVersion = 0;
 
+  @HostListener('window:beforeunload', ['$event'])
+  warnBeforeUnload(event: BeforeUnloadEvent): void {
+    if (this.saving()) event.preventDefault();
+  }
+
   readonly workspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
   readonly project = signal<RegistryProjectSummary | null>(null);
   readonly loading = signal(true);
@@ -109,6 +114,7 @@ export class ProjectBasicsCardComponent {
     projects: this.allProjects(),
     currentProjectId: this.project()?.id,
   }));
+  readonly validationValid = computed(() => projectBasicsAreValid(this.validation()));
   readonly dirty = computed(() => {
     const project = this.project();
     if (!project) return false;
@@ -125,7 +131,7 @@ export class ProjectBasicsCardComponent {
       || (value.agentOverrideEnabled && value.modelDefault.trim() !== (project.modelDefault ?? ''));
   });
   readonly canSave = computed(() =>
-    !this.loading() && !this.saving() && this.dirty() && projectBasicsAreValid(this.validation()),
+    !this.loading() && !this.saving() && this.dirty() && this.validationValid(),
   );
   readonly remoteRepositoryWarning = computed(() =>
     !!this.remoteExecutionLocation()
