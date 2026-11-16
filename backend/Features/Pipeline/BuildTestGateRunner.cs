@@ -268,6 +268,8 @@ public sealed record BuildTestGateResult(
     public TestSelectionAudit? TestSelection { get; init; }
     public string? TestSelectionAuditDigest { get; init; }
     public IReadOnlyList<BuildTestGateFinding> Findings { get; init; } = [];
+    /// <summary>AGT-3866: the critical file system measured when this gate failed, if any.</summary>
+    public GateDiskPressureEvidence? DiskPressure { get; init; }
 
     /// <summary>
     /// AGT-2853: a red test step spent its one targeted re-run

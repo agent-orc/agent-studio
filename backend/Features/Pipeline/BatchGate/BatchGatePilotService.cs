@@ -13,7 +13,8 @@ using HostDiskPressureDecision = AgentStudio.TaskServer.Contracts.HostDiskPressu
 using HostDiskPressureLevel = AgentStudio.TaskServer.Contracts.HostDiskPressureLevel;
 using HostDiskPressurePolicy = AgentStudio.TaskServer.Contracts.HostDiskPressurePolicy;
 using HostDiskPressureThresholds = AgentStudio.TaskServer.Contracts.HostDiskPressureThresholds;
-using HostFilesystemProbe = AgentStudio.TaskServer.Contracts.HostFilesystemProbe;
+using HostFilesystemProbes = AgentStudio.TaskServer.Contracts.HostFilesystemProbes;
+using IHostFilesystemProbe = AgentStudio.TaskServer.Contracts.IHostFilesystemProbe;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -66,6 +67,7 @@ public sealed partial class BatchGatePilotService
     private readonly GateQueueStallMonitor _queueStalls;
     private bool _diskCritical;
     private string? _diskPauseReason;
+    private readonly IHostFilesystemProbe _diskProbe;
     private DateTimeOffset _nextStorageRetentionAt;
     private readonly GateHostOutageMonitor _hostOutage;
 
@@ -148,7 +150,13 @@ public sealed partial class BatchGatePilotService
         _healthAlerts = healthAlerts;
         _services = services;
         _configuration = configuration;
+        // AGT-3866: a test host pins the probe; measuring the machine that
+        // runs the suite paused every tick once its disk passed 95 %.
+        _diskProbe = services?.GetService<IHostFilesystemProbe>() ?? HostFilesystemProbes.Default;
     }
+
+    /// <summary>The file system probe disk admission reads; guard tests assert test hosts pin it.</summary>
+    internal IHostFilesystemProbe DiskProbe => _diskProbe;
 
     public async Task<BatchGatePendingRecord> EnqueueAsync(TaskInfo task, ReviewAttemptDto review,
         RunAttemptDto sourceRun, DateTimeOffset reviewedAtUtc, CancellationToken ct)
@@ -1915,9 +1923,9 @@ public sealed partial class BatchGatePilotService
                 // retry. The second infrastructure red remains a visible pause.
                 if (_load?.Current.Throttle != false)
                 {
-                    RecordVerdict(run, gate, "infrastructure-red");
+                    RecordVerdict(run, gate, InfrastructureVerdict(gate));
                     State(manifest, BatchPhase.Paused, assembly.CandidateSha,
-                        lease.Fence, "GateInfra: no healthy host for same-SHA retry");
+                        lease.Fence, InfrastructurePause(gate, "no healthy host for same-SHA retry"));
                     return;
                 }
                 gate = await RunGateAsync(run, repo, cancellation.Token, null, gated: gated,
@@ -1937,9 +1945,9 @@ public sealed partial class BatchGatePilotService
                 }
                 if (gate.IsInfrastructureFailure)
                 {
-                    RecordVerdict(run, gate, "infrastructure-red");
+                    RecordVerdict(run, gate, InfrastructureVerdict(gate));
                     State(manifest, BatchPhase.Paused, assembly.CandidateSha,
-                        lease.Fence, "GateInfra: second infrastructure red");
+                        lease.Fence, InfrastructurePause(gate, "second infrastructure red"));
                     return;
                 }
             }
@@ -2286,7 +2294,8 @@ public sealed partial class BatchGatePilotService
             }
             var verdict = RecordVerdict(probeRun, gate,
                 classification == BatchGateFailureClass.Pass ? "pass"
-                : heldByHost ? GateHostUnavailableVerdict : classification.ToString());
+                : heldByHost ? GateHostUnavailableVerdict
+                : gate.DiskPressure is not null ? GateDiskPressure.Verdict : classification.ToString());
             // A host-held flight is no InfrastructureRed attempt: it spends no isolation retry.
             State(diagnostic, classification == BatchGateFailureClass.Pass
                     ? BatchPhase.Green : BatchPhase.Red,
@@ -2655,7 +2664,7 @@ public sealed partial class BatchGatePilotService
                 }
                 if (_load?.Current.Throttle == true) overloadMinutes += .25;
             }
-            result = await gateTask.ConfigureAwait(false);
+            result = WithLocalDiskPressure(await gateTask.ConfigureAwait(false));
         }
         finally
         {
@@ -3059,6 +3068,7 @@ public sealed partial class BatchGatePilotService
                     PostStepMode.Fail,
                     TimeSpan.FromMinutes(_settings.Get(pending.Subject.Project)
                         .BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
+                gate = WithLocalDiskPressure(gate);
             }
             catch (OperationCanceledException) when (!stopping.IsCancellationRequested
                 && FallbackFlightStalled(pending.ReviewAttemptId))
@@ -3617,11 +3627,15 @@ public sealed partial class BatchGatePilotService
         if (infrastructure && !capacity)
         {
             category = HumanReviewEscalationCategories.GateInfrastructure;
-            reason = HumanReviewEscalation.FormatReason(category,
-                "The verification gate could not run or complete. "
-                + "Check the remote gate host and worker, then retry the gate. "
-                + "You can also disable batch verification for this project. "
-                + "Gate detail: " + reason.Trim().TrimEnd('.'));
+            reason = HumanReviewEscalation.FormatReason(category, GateDiskPressure.Names(reason)
+                // AGT-3866: a full disk is named, not reported as a generic gate failure.
+                ? "The verification gate failed while the gate host was under disk pressure. "
+                    + "Free disk space on the gate host, then retry the gate. "
+                    + "Gate detail: " + reason.Trim().TrimEnd('.')
+                : "The verification gate could not run or complete. "
+                    + "Check the remote gate host and worker, then retry the gate. "
+                    + "You can also disable batch verification for this project. "
+                    + "Gate detail: " + reason.Trim().TrimEnd('.'));
         }
         var red = new BatchGateOutcome(occurrenceKey ?? FallbackRedKey(pending), reason, Failed: true,
             Infrastructure: infrastructure);
@@ -3816,6 +3830,26 @@ public sealed partial class BatchGatePilotService
                 ?? IntegrationTestModes.Resolve(settings)) != IntegrationTestModes.PostMerge;
     }
 
+    /// <summary>
+    /// AGT-3866: a gate that failed while this host's own disk admission is
+    /// critical names that file system. A worker that measured critical disk
+    /// on the gate host already attached its own evidence.
+    /// </summary>
+    private BuildTestGateResult WithLocalDiskPressure(BuildTestGateResult gate)
+        => gate.Verdict != BuildTestGateVerdict.Fail || gate.DiskPressure is not null
+            ? gate
+            : GateDiskPressure.Attach(gate, DiskPressure(), Environment.MachineName);
+
+    internal const string DiskPauseReasonPrefix = "Batch gate paused by disk pressure: ";
+
+    private static string InfrastructureVerdict(BuildTestGateResult gate)
+        => gate.DiskPressure is not null ? GateDiskPressure.Verdict : "infrastructure-red";
+
+    private static string InfrastructurePause(BuildTestGateResult gate, string detail)
+        => gate.DiskPressure is { } disk
+            ? "GateInfra: " + GateDiskPressure.Describe(disk)
+            : "GateInfra: " + detail;
+
     private HostDiskPressureDecision DiskPressure()
     {
         if (_configuration is null)
@@ -3828,7 +3862,7 @@ public sealed partial class BatchGatePilotService
         if (!string.IsNullOrWhiteSpace(work)) paths.Add(("runner work", work));
         var containers = _configuration["DiskPressure:ContainerStoragePath"];
         if (!string.IsNullOrWhiteSpace(containers)) paths.Add(("container storage", containers));
-        var disks = HostFilesystemProbe.Measure(paths);
+        var disks = _diskProbe.Measure(paths);
         var thresholds = new HostDiskPressureThresholds(
             _configuration.GetValue("DiskPressure:WarningFreeBytes", 30L * 1024 * 1024 * 1024),
             _configuration.GetValue("DiskPressure:WarningFreePercent", 15d),
@@ -3840,7 +3874,7 @@ public sealed partial class BatchGatePilotService
             _logger.LogWarning("batch-gate-disk-admission state={State} reason={Reason}",
                 critical ? "paused" : "resumed", decision.Reason);
         _diskCritical = critical;
-        _diskPauseReason = critical ? decision.Reason : null;
+        _diskPauseReason = critical ? DiskPauseReasonPrefix + decision.Reason : null;
         return decision;
     }
 

@@ -514,6 +514,10 @@ builder.Services.AddSingleton<CodexSignInCoordinator>();
 builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
+// AGT-3866: every disk-pressure consumer measures through this probe. The
+// process default is the real file system; test projects pin it at module load.
+builder.Services.AddSingleton<AgentStudio.TaskServer.Contracts.IHostFilesystemProbe>(
+    _ => AgentStudio.TaskServer.Contracts.HostFilesystemProbes.Default);
 builder.Services.AddSingleton<ApiHostDiskService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiHostDiskService>());
 builder.Services.AddSingleton<EnvironmentFlowService>();
