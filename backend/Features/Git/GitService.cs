@@ -274,6 +274,12 @@ public record MergeIntoIntegrationResult(
     public bool GateExecuted { get; init; }
 
     /// <summary>
+    /// AGT-3811: why no merge gate ran on this fresh merge, in owner wording.
+    /// Null when a gate ran or the merge was not the lane's own.
+    /// </summary>
+    public string? GateSkipReason { get; init; }
+
+    /// <summary>
     /// AGT-3434: the merge gate stood on the per-task batch fallback verdict for
     /// the same tree on the same integration tip and ran no suite.
     /// </summary>
