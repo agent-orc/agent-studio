@@ -65,10 +65,16 @@ Concept-fit receives a bounded snapshot of the published Dossier index,
 `workbench.json`, and local files linked from them. Its round diff shows what
 changed, while the snapshot supplies unchanged Dossier content. A missing,
 unreadable, or over-budget file is named in the prompt so the aspect cannot
-infer completeness from a truncated excerpt. For older settled concept reviews,
-completion accepts a whole-prompt review hash as current only while the current
-authored version equals the delivery version and the reviewed whole-prompt hash
-still matches `prompt.md`.
+infer completeness from a truncated excerpt. The plan builder wraps the
+snapshot in `ConceptDossierSnapshotSpan` markers. The review runner keeps that
+span whole: its 120,000-character authored-context cap applies only to the
+brief and instructions around it. The span counts against the diff budget, so
+on a large Dossier the diff is cut (and named) instead of the snapshot
+(AGT-3881, after the AGT-3876 Dossier lost its middle).
+
+For older settled concept reviews, completion accepts a whole-prompt review
+hash as current only while the current authored version equals the delivery
+version and the reviewed whole-prompt hash still matches `prompt.md`.
 
 ## Aspect prompt cache
 
