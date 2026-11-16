@@ -56,11 +56,11 @@
         @let v = usageView(cli);
         <button type="button" class="statusbar__item statusbar__item--btn statusbar__usage-entry" [attr.data-testid]="'footer-usage-' + cli.cliId"
                 [attr.data-state]="v.state" [attr.data-usage-trigger]="'cli:' + cli.cliId.toLowerCase()"
-                [attr.aria-label]="v.ariaLabel" [title]="usageTooltip(cli)"
+                [attr.aria-label]="usageName(cli)" [title]="usageTooltip(cli)"
                 (click)="openUsageDetail.emit({ section: 'cli', cliId: cli.cliId })">
-          <strong>{{ v.name }}</strong>
-          @if (v.weekly.reported) { <span>WK {{ v.weekly.value }}</span> }
-          @if (v.session.reported) { <span class="statusbar__usage-session">Session {{ v.session.value }}</span> }
+          <strong>{{ v.name }} </strong>
+          @if (v.weekly.reported) { <span>WK {{ v.weekly.value }} </span> }
+          @if (v.session.reported) { <span class="statusbar__usage-session">Session {{ v.session.value }} </span> }
           @if (v.state === 'stale') { <span class="statusbar__age">{{ age(cli.fetchedAt) }}</span> }
         </button>
         @if (hostProblem(cli.cliId); as problem) {

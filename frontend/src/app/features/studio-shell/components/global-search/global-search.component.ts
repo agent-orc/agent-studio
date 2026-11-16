@@ -75,6 +75,10 @@ export class GlobalSearchComponent {
         this.modalDispose = null;
         const opener = this.previousFocus;
         this.previousFocus = null;
+        // A close from outside (the shell's Ctrl+K) leaves no query behind either.
+        this.query.set('');
+        this.cancel();
+        this.reset();
         queueMicrotask(() => { if (opener?.isConnected) opener.focus(); });
       }
       return;
@@ -321,12 +325,8 @@ export class GlobalSearchComponent {
 
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent): void {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-      event.preventDefault();
-      if (this.open()) this.close();
-      else this.show();
-      return;
-    }
+    // Ctrl+K / Cmd+K belongs to the shell (StudioKeyboardEntryComponent): this
+    // palette loads on first use, so its own listener came too late (AGT-3833).
     if (!this.open()) return;
     const results = this.flatResults();
     if (event.key === 'ArrowDown' && results.length) {

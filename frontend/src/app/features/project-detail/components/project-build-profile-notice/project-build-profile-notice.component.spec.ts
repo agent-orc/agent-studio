@@ -2,6 +2,38 @@ import { TestBed } from '@angular/core/testing';
 import { ProjectBuildProfileNoticeComponent } from './project-build-profile-notice.component';
 
 describe('ProjectBuildProfileNoticeComponent', () => {
+  it('links to the checkout path when the repository is unavailable', async () => {
+    await TestBed.configureTestingModule({ imports: [ProjectBuildProfileNoticeComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectBuildProfileNoticeComponent);
+    fixture.componentRef.setInput('summary', {
+      profile: null,
+      gateApplicable: false,
+      verifyPlan: { source: 'none', commands: [] },
+      verifyDefinition: {
+        state: 'checkout-missing',
+        path: '.agent-studio/project.yml',
+        message: 'Checkout missing.',
+        exampleStack: null,
+        exampleDefinition: null,
+        examplePrepareScript: null,
+      },
+    });
+    fixture.detectChanges();
+
+    const notice = fixture.nativeElement.querySelector('[data-testid="project-settings-no-verify-commands"]') as HTMLElement;
+    expect(notice.textContent).toContain('checkout is missing');
+    expect(notice.textContent).not.toContain('cannot be derived');
+    expect(notice.textContent).not.toContain('custom repository');
+    expect(notice.querySelector('[data-testid="project-settings-verify-example"]')).toBeNull();
+    const link = notice.querySelector('a') as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe('#project-basics-repository-path');
+    const target = document.createElement('input');
+    target.id = 'project-basics-repository-path';
+    fixture.nativeElement.append(target);
+    link.click();
+    expect(document.activeElement).toBe(target);
+  });
+
   it.each([
     [null, 'No BuildProfile is declared and no verify commands can be derived.'],
     [{ status: 'declared' }, 'The declared BuildProfile and repository layout provide no verify commands.'],

@@ -1,6 +1,21 @@
-<p data-testid="server-checkout-remedy" role="status">
-  This project needs a checkout on the Studio server before integration can finish.
-  <a [attr.href]="settingsHref()">Open Project Settings</a>
-  to set the checkout path. <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/networked-task-server.md#project-checkouts"
-     target="_blank" rel="noopener noreferrer">Read the setup guide</a>, then retry integration.
-</p>
+<div class="remedy" data-testid="server-checkout-remedy" role="status">
+  @if (checkoutReady()) {
+    <p>
+      The Studio server now has a checkout for this project. Retry integration merges the same reviewed
+      delivery; no new coding run is needed.
+    </p>
+    <button type="button" class="remedy__retry" data-testid="server-checkout-retry"
+      [disabled]="mutationsBlocked() || retrying()"
+      [appPendingButton]="retrying()" pendingLabel="Retrying integration…"
+      (click)="retry()">Retry integration</button>
+  } @else {
+    <p>
+      This project needs a checkout on the Studio server before integration can finish.
+      <a [attr.href]="settingsHref()">Open Project Settings</a>
+      to set the checkout path. <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/networked-task-server.md#project-checkouts"
+         target="_blank" rel="noopener noreferrer">Read the setup guide</a>, then retry integration.
+    </p>
+  }
+  @if (outcome(); as message) { <p data-testid="server-checkout-retry-outcome">{{ message }}</p> }
+  @if (error(); as message) { <p role="alert" data-testid="server-checkout-retry-error">{{ message }}</p> }
+</div>

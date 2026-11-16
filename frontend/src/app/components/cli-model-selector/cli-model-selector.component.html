@@ -13,7 +13,7 @@
   (click)="openPicker($event)"
   (contextmenu)="openPicker($event)">
   <span class="model-selector__icon" aria-hidden="true">{{ cliIcon() }}</span>
-  <span class="model-selector__name">{{ displayName() }}</span>
+  <span class="model-selector__name">{{ displayName() }} </span>
   @if (thinkingLevel(); as level) {
     <span class="model-selector__level">{{ level }}</span>
   }

@@ -61,6 +61,54 @@ public sealed class GateRunLedgerTests : IDisposable
         Assert.Equal(4.5, row.HostLoadEnd);
     }
 
+    [Theory]
+    [InlineData("flaky-suspect-regate:parent", "flaky-suspect-regate")]
+    [InlineData("infrastructure-red", "infrastructure-retry")]
+    public void Same_code_reruns_carry_their_minutes_by_purpose(string trigger, string purpose)
+    {
+        var start = new DateTimeOffset(2026, 11, 16, 3, 0, 0, TimeSpan.Zero);
+        var request = new BuildTestGateRequest("/tmp/repo", new string('a', 40), "batch-gate")
+        {
+            Project = "PROJ-002", GateId = "batch-gate", LedgerCards = ["AGT-3858"],
+            LedgerType = "clean-diagnostic-rerun", LedgerTriggerEvent = trigger,
+        };
+        var result = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 180_000, "", "ok", false, false)
+        {
+            GateRunId = "regate-run",
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                Phase = "flaky-rerun", StartedAtUtc = start.AddMinutes(2),
+                CompletedAtUtc = start.AddMinutes(3), ExitCode = 0,
+            }],
+        };
+        var row = GateRunLedger.FromResult(request, result, start, start.AddMinutes(3), start, null, null);
+
+        Assert.Equal(120_000, row.SameCodeRerunMs![purpose]);
+        Assert.Equal(60_000, row.SameCodeRerunMs[SameCodeRerunPurposes.FlakyTestRerun]);
+        var ledger = new GateRunLedger(_root, new FakeTimeProvider(start));
+        ledger.Append(row);
+        ledger.Append(Row("first", "batch-gate", start));
+        var summary = ledger.Summary(new BatchGateStore(Path.Combine(_root, "store")), "PROJ-002",
+            DateOnly.FromDateTime(start.UtcDateTime));
+        Assert.Equal(2, summary.SameCodeRerunMinutesByPurpose![purpose]);
+        Assert.Equal(1, summary.SameCodeRerunMinutesByPurpose[SameCodeRerunPurposes.FlakyTestRerun]);
+        Assert.Null(Assert.Single(ledger.ReadAll("PROJ-002"), item => item.RunId == "first").SameCodeRerunMs);
+    }
+
+    [Fact]
+    public void A_first_gate_of_new_code_records_no_same_code_rerun()
+    {
+        var request = new BuildTestGateRequest("/tmp/repo", new string('a', 40), "batch-gate")
+        {
+            Project = "PROJ-002", GateId = "batch-gate", LedgerTriggerEvent = "red-candidate:parent",
+            LedgerType = "clean-diagnostic-rerun",
+        };
+        var result = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 60_000, "", "ok", false, false);
+        var at = new DateTimeOffset(2026, 11, 16, 3, 0, 0, TimeSpan.Zero);
+
+        Assert.Null(GateRunLedger.FromResult(request, result, at, at.AddMinutes(1), at, null, null).SameCodeRerunMs);
+    }
+
     [Fact]
     public void Daily_minutes_reconcile_with_host_execution_facts()
     {
