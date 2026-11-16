@@ -54,4 +54,16 @@ describe('Explorer auto-pickup state model', () => {
       autoProjects: ['alpha', 'beta'],
     });
   });
+
+  it('uses project pickup settings when a remote project has no local runner', () => {
+    const result = deriveProjectAutoPickupByName(
+      {},
+      {},
+      [{ name: 'remote-auto' }, { name: 'remote-manual' }],
+      { 'remote-auto': 'auto', 'remote-manual': 'manual' },
+    );
+
+    expect(result.get('remote-auto')?.state).toBe('active');
+    expect(result.get('remote-manual')?.state).toBe('manual');
+  });
 });

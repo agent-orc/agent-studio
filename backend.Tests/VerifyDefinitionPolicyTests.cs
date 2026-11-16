@@ -120,6 +120,17 @@ public sealed class VerifyDefinitionPolicyTests : IDisposable
     }
 
     [Fact]
+    public void Inspect_MissingCheckout_DoesNotClaimCommandsCannotBeDerivedOrGuessAStack()
+    {
+        var report = VerifyDefinitionPolicy.Inspect(Path.Combine(_root, "absent"), null);
+
+        Assert.Equal(VerifyDefinitionState.CheckoutMissing, report.State);
+        Assert.Contains("checkout", report.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("no build or test command", report.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(report.Example);
+    }
+
+    [Fact]
     public void Inspect_InvalidDefinition_SaysWhyItIsInvalid()
     {
         WriteDefinition("schemaVersion: 1\nstack: [custom]\ncommands:\n  prepare: .agent-studio/prepare\n  test: [make test]\n",

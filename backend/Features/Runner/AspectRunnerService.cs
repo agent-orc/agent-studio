@@ -665,6 +665,7 @@ public sealed class AspectRunnerService
             ["recent_log"] = inputs.RecentLog,
             ["diff_summary"] = inputs.DiffSummary,
             ["status_summary"] = inputs.StatusSummary,
+            ["status_report_note"] = inputs.StatusReportNote,
             ["results_inventory"] = string.IsNullOrWhiteSpace(inputs.ResultsInventory)
                 ? "No results/ inventory available."
                 : inputs.ResultsInventory,
@@ -1001,6 +1002,14 @@ public sealed record AspectRunInputs(
     /// authoritative over broader Dossier or wishlist text in the task body.
     /// </summary>
     public string AcceptanceScope { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Requirement-fit note on where round requirements are reported, rendered
+    /// into the <c>status_report_note</c> slot. A remote coding review plan sets
+    /// it when the generated summary points to <c>results/status.md</c>
+    /// (AGT-3880); empty renders nothing.
+    /// </summary>
+    public string StatusReportNote { get; init; } = string.Empty;
 
     /// <summary>Exact frozen delivery checked by this local aspect, when available.</summary>
     public string? ReviewedResultSha { get; init; }

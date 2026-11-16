@@ -13,14 +13,14 @@
 } @else if (reserveChevron()) {
   <span class="tree-row__chev tree-row__chev--placeholder" aria-hidden="true"></span>
 }
-<button type="button"
+<button #row type="button"
         class="tree-row"
         [class.tree-row--active]="active()"
         [class.tree-row--root]="level() === 'root'"
         [class.tree-row--child]="level() === 'child'"
         [attr.data-testid]="testid()"
         [disabled]="disabled()"
-        [attr.aria-label]="ariaLabel()"
+        [attr.aria-label]="accessibleName()"
         [attr.aria-controls]="ariaControls()"
         [attr.aria-current]="ariaCurrent()"
         [attr.aria-expanded]="chevron() === null ? null : (chevron() === 'expanded')"
@@ -36,7 +36,8 @@
   } @else if (glyphChar(); as gc) {
     <span class="tree-row__glyph"
           [style.background]="glyphColor()">
-      <span aria-hidden="true">{{ gc }}</span>
+      <!-- Drawn by CSS: the letter is decoration, not part of the row's visible label. -->
+      <span class="tree-row__glyph-char" aria-hidden="true" [attr.data-glyph]="gc"></span>
       <span class="tree-row__glyph-overlay"
             [attr.data-testid]="testid() ? testid() + '-glyph-overlay' : null">
         <ng-content select="[glyphOverlay]"></ng-content>
@@ -46,10 +47,10 @@
     <span class="tree-row__glyph-icon tree-row__glyph-icon--placeholder" aria-hidden="true"></span>
   }
   <span class="tree-row__name"
-        [attr.data-testid]="testid() ? testid() + '-name' : null">{{ label() }}</span>
+        [attr.data-testid]="testid() ? testid() + '-name' : null">{{ label() }} </span>
   <ng-content></ng-content>
   @if (meta(); as m) {
-    <span class="tree-row__meta">{{ m }}</span>
+    <span class="tree-row__meta">{{ m }} </span>
   }
   @if (count() !== null) {
     <app-count-badge [value]="count()" [tone]="active() ? 'active' : 'default'" />

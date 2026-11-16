@@ -4,6 +4,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ExecutionAssignmentCardComponent } from './execution-assignment-card';
 import { RemoteHostsService, type RemoteHost } from '../../../remote-hosts';
+import { TaskService } from '../../../../services/task.service';
 
 describe('ExecutionAssignmentCardComponent', () => {
   it('warns when automatic pickup is routed local and coding is denied', () => {
@@ -107,6 +108,7 @@ describe('ExecutionAssignmentCardComponent', () => {
     request.flush({ pickupMode: 'paused', executionLocation: 'agent-runner-01' });
 
     expect(fixture.componentInstance.pickupMode()).toBe('paused');
+    expect(TestBed.inject(TaskService).projectPickupModes()['Agent Studio']).toBe('paused');
     expect(fixture.componentInstance.selectedHostId()).toBe('agent-runner-01');
     flushRunnerInfrastructureFailures(http);
     http.verify();
