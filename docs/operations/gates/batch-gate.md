@@ -373,6 +373,47 @@ batch verification is re-enabled, and its gate is retried.
   queue stall report, the card timeline and the operator feed); a stalled
   engine decision or a flight that would not stop escalates the card as
   `GateInfra`.
+- AGT-3856 extends the AGT-3466 slot rules from slots to concurrent full
+  suites. On 3 and 4 November 2026 per-card full suites used 1,752.6 of 2,749
+  gate minutes, 36 of the 40 green ones were followed by a batch gate for the
+  same card, and a published batch gate took a median 13.7 minutes with at
+  most two gates on the host and 27.6 minutes with more. Two rules apply:
+  - While a batch gate runs, at most one other full suite of this API process
+    starts on the gate host (`BatchGateLookAheadPlanner.CompanionSuiteRefusal`,
+    applied by `BatchLaneAdmissionGateRunner` to every gate request). Batch
+    gates, isolation children and base checks are the batch lane and never
+    wait; pre-checks, narrowed checks and build-only gates are no full suite.
+    A held suite waits before it is dispatched. The batch state lists it under
+    `laneAdmission.waiting` with the reason, a per-task fallback member reads
+    `waitKind: batch-slot`, and the batch panel shows "Held for the batch
+    lane". Per-task fallbacks still never start while a batch is formed or
+    running; the new rule holds the other gate kinds (merge, review and other
+    projects' gates). Claimed batch gates run at the Task Server and are not
+    counted.
+  - A per-card green suite is not started for a card a batch gates anyway
+    (`BatchGateLookAheadPlanner.PerTaskSuiteRefusal`). The check runs right
+    before a per-task fallback gate starts, after its slot and batch waits,
+    because partners arrive while it waits. It refuses a card that is a member
+    of a formed or running batch, and a card the planner sent to the per-task
+    route only for lack of a partner (`close condition reached below minimum
+    batch size`, or the threshold `oldest eligible card reached deadline
+    without a batch partner`) once enough partners can close a batch with it:
+    cards eligible now, other lone cards that wait for their own suite, or
+    cards that finish their pre-check before its deadline. A high-risk card,
+    an operator close-now (the look-ahead reason now reads `operator close-now
+    below minimum batch size`) and a scope or pause route keep their suite.
+    Each review generation is refused at most once, so a card cannot starve.
+    The refused card returns to the batch queue with its passed review. The
+    refusal is durable (`suite-refusals/<project>/`): the card timeline gets
+    `batch-per-task-suite-refused`, the lane log a `requeued` entry with
+    `per-task-suite-refused: <reason>`, the state member reads `pending` with
+    reason `per-task-suite-refused` and the text in `reasonDetail`, and the
+    state lists the last 20 under `suiteRefusals`. The card badge reads
+    "Batch pending · per-card suite not started".
+  The daily ledger summary reports `perCardSuites`: green per-task fallback
+  suites requested that day, how many of their cards went through a batch
+  gate within two days, and that share. The median batch gate is
+  `medianBatchGateMinutes` of the same summary.
 - AGT-3498: when a formed batch's base moves before replay, the worker checks
   each member's current review and immutable delivery against the new base.
   Compatible members close together in one successor linked by

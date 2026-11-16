@@ -466,7 +466,7 @@ public sealed partial class BatchGatePilotService
             HasLiveFlight, RecoveryStatus,
             ActiveIsolationFlights(project), LeaseDeadlineDeferred()(project),
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
-            _diskPauseReason, ConfiguredGateSlots());
+            _diskPauseReason, ConfiguredGateSlots(), Service<BatchLaneAdmission>()?.Snapshot());
     }
 
     private IReadOnlySet<string> ActiveIsolationFlights(string project)
@@ -2908,6 +2908,13 @@ public sealed partial class BatchGatePilotService
                     FallbackStage(pending, PerTaskFallbackWaitKinds.BatchSlot);
                     await Task.Delay(250, ct).ConfigureAwait(false);
                 }
+                // AGT-3856: partners can arrive while the suite waits. A card a
+                // batch gates anyway returns to the batch queue instead.
+                if (recordInStore && PerTaskSuiteRefusal(pending, subject.BaseSha) is { } refusal)
+                {
+                    RefusePerTaskSuite(task, pending, refusal);
+                    return false;
+                }
                 FallbackStage(pending, PerTaskFallbackWaitKinds.GateRunning);
                 started = _time.GetUtcNow();
                 // AGT-3466: the per-task slot taken above already keeps the batch slot free.
@@ -2923,6 +2930,12 @@ public sealed partial class BatchGatePilotService
                         RequiredTestLevel = level,
                         ReserveBatchSlot = ConfiguredGateSlots() > 1,
                         TestExecution = _settings.Get(pending.Subject.Project).TestExecution,
+                        // AGT-3856: the suite waits while a batch gate and one other full suite run.
+                        OnBatchLaneWaiting = reason =>
+                        {
+                            FallbackStage(pending, PerTaskFallbackWaitKinds.BatchSlot);
+                            Lane(pending, "gate-token-waiting", level: level, reason: reason);
+                        },
                         OnMachineGateSlotWaiting = (busy, total) =>
                         {
                             FallbackStage(pending, PerTaskFallbackWaitKinds.MachineGateSlot);

@@ -191,6 +191,15 @@ public static class MonolithTransitionAdapter
     public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
         => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
 
+    public static string? BatchCompanionSuiteRefusal(int batchGatesRunning, int companionSuitesRunning)
+        => BatchGateLookAheadPlanner.CompanionSuiteRefusal(batchGatesRunning, companionSuitesRunning);
+
+    public static bool BatchPartnerMissingRoute(string? planEvent)
+        => BatchGateLookAheadPlanner.PartnerMissingRoute(planEvent);
+
+    public static string? PerTaskSuiteRefusal(PerTaskSuiteFacts facts)
+        => BatchGateLookAheadPlanner.PerTaskSuiteRefusal(facts);
+
     public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
         DateTimeOffset nowUtc)
         => BatchGateStartPolicy.Order(formed, nowUtc);

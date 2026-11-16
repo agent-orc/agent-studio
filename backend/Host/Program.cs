@@ -1216,9 +1216,15 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateRunLedger(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "gate-run-ledger"),
     logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.GateRunLedger>>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
+// AGT-3856: while a batch gate runs, at most one other full suite starts.
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchLaneAdmission>(sp =>
+    new AgentStudio.Pipeline.BatchLaneAdmission(
+        logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.BatchLaneAdmission>>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner>(sp =>
     new AgentStudio.Pipeline.LedgeredBuildTestGateRunner(
-        sp.GetRequiredService<AgentStudio.Pipeline.RemoteBuildTestGateRunner>(),
+        new AgentStudio.Pipeline.BatchLaneAdmissionGateRunner(
+            sp.GetRequiredService<AgentStudio.Pipeline.RemoteBuildTestGateRunner>(),
+            sp.GetRequiredService<AgentStudio.Pipeline.BatchLaneAdmission>()),
         sp.GetRequiredService<AgentStudio.Pipeline.GateRunLedger>(),
         sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>(),
         sp.GetRequiredService<ILogger<AgentStudio.Pipeline.LedgeredBuildTestGateRunner>>()));

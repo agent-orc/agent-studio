@@ -98,6 +98,9 @@ public sealed record BuildTestGateRequest(
     public Action? OnSourceReady { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
     public Action<int, int>? OnMachineGateSlotAcquired { get; init; }
+    /// <summary>AGT-3856: the full suite waits for the batch lane, with the refusal reason.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Action<string>? OnBatchLaneWaiting { get; init; }
     public int GateSlots { get; init; } = 1;
     /// <summary>Opportunistic work may use only slots after the first regular gate slot.</summary>
     public bool ReserveBatchSlot { get; init; }

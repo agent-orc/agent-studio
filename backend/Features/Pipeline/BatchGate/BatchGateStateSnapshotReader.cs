@@ -33,7 +33,8 @@ public static class BatchGateStateSnapshotReader
         IReadOnlySet<string>? activePerTaskFlights = null,
         BatchGateInvariantReport? invariants = null,
         string? diskPauseReason = null,
-        int? configuredGateSlots = null)
+        int? configuredGateSlots = null,
+        BatchLaneAdmissionSnapshot? laneAdmission = null)
     {
         // AGT-3569: the durable claim on the project's flight slot, live or last ended.
         var flightClaim = store.ReadFlightClaim(project);
@@ -48,6 +49,10 @@ public static class BatchGateStateSnapshotReader
             .OrderBy(item => item.Subject.EnqueueSequence).ToArray();
         var preChecks = store.ListPreChecks(project).OrderByDescending(item => item.CompletedAtUtc).ToArray();
         var fallbackCauses = store.ListFallbackCauses(project);
+        // AGT-3856: per-card suites refused because a batch gates the card anyway.
+        var suiteRefusals = store.ListSuiteRefusals(project);
+        var refusalByAttempt = suiteRefusals.GroupBy(item => item.ReviewAttemptId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         var allPending = store.ListAllPending();
         var pendingByAttempt = allPending.GroupBy(item => item.ReviewAttemptId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
@@ -342,10 +347,12 @@ public static class BatchGateStateSnapshotReader
         {
             var cause = causes.LastOrDefault(entry => entry.ReviewAttemptId == item.ReviewAttemptId);
             var wait = waits.GetValueOrDefault(item.ReviewAttemptId);
+            var refusal = cause is null ? refusalByAttempt.GetValueOrDefault(item.ReviewAttemptId) : null;
             members[item.Subject.TaskKey] = new { status = cause is null && wait is null ? "pending" : "fallback",
                 batchId = cause?.BatchId,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
-                reason = cause?.Rule, reasonDetail = cause?.Event,
+                reason = cause?.Rule ?? (refusal is null ? null : BatchGatePilotService.SuiteRefusedReason),
+                reasonDetail = cause?.Event ?? refusal?.Reason,
                 fallbackRule = cause?.Rule, fallbackEvent = cause?.Event,
                 waitKind = wait?.Kind, waitingFor = wait?.Detail, waitSinceUtc = wait?.SinceUtc,
                 engineRunId = wait?.EngineRunId, engineStatus = wait?.EngineStatus,
@@ -479,6 +486,15 @@ public static class BatchGateStateSnapshotReader
             flightClaim,
             fallbackWaits = fallbackWaits ?? [],
             fallbackStalls = store.ListFallbackStalls(project, 20),
+            suiteRefusals = suiteRefusals.Reverse().Take(20).ToArray(),
+            laneAdmission = laneAdmission is null ? null : new
+            {
+                laneAdmission.BatchGates,
+                laneAdmission.CompanionSuites,
+                laneAdmission.Limit,
+                // Host-wide: a suite of any project waits for this batch lane.
+                laneAdmission.Waiting,
+            },
             isolationFindings = store.ListIsolationFindings(project)
                 .Where(finding => finding.Status != "proven-red"
                     || DeterministicIsolationFinding(store, projectManifests, finding))

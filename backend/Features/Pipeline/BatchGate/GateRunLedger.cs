@@ -28,13 +28,25 @@ public sealed record GateRunDailySummary(DateOnly Day,
     double CardsPublishedPerHour, double? MedianBatchGateMinutes,
     double? P90BatchGateMinutes, double? HostMinutes, double? ReconciliationPercent,
     IReadOnlyDictionary<string, BatchPhasePercentiles>? PhaseMinutes = null,
-    double? DiagnosticRerunShare = null, BatchPreCheckYield? PreCheckYield = null);
+    double? DiagnosticRerunShare = null, BatchPreCheckYield? PreCheckYield = null,
+    PerCardSuiteFollowUp? PerCardSuites = null);
+
+/// <summary>
+/// AGT-3856: green per-task fallback suites requested on the day, how many of
+/// their cards went through a batch gate afterwards (within
+/// <see cref="GateRunLedger.FollowUpDays"/> days), and that share. On 3 and 4
+/// November 2026 it was 36 of 40; the admission rule aims below 10%.
+/// </summary>
+public sealed record PerCardSuiteFollowUp(int GreenSuites, int FollowedByBatchGate, double? Share);
 
 /// <summary>Instance-local records outside the workspace repository. Ninety days are retained.</summary>
 public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null,
     ILogger<GateRunLedger>? logger = null)
 {
     public const int RetentionDays = 90;
+
+    /// <summary>Days after a green per-card suite in which a batch gate of the same card counts as its follow-up.</summary>
+    public const int FollowUpDays = 2;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly object _writeLock = new();
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
@@ -165,7 +177,25 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
             rows.Length > 0 && host > 0 ? Math.Abs(sum - host) / host * 100 : null,
             BatchMemberTimelineProjection.Phases(timelines),
             timelines.Length == 0 ? null : (double)timelines.Count(item => item.DiagnosticRerun) / timelines.Length,
-            yield);
+            yield,
+            PerCardSuites(rows, Enumerable.Range(0, FollowUpDays + 1)
+                .SelectMany(offset => ReadAll(project, day.AddDays(offset))).ToArray()));
+    }
+
+    /// <summary>
+    /// AGT-3856: of the green per-task fallback suites in <paramref name="dayRows"/>,
+    /// the ones whose card a later batch gate row in <paramref name="laterRows"/> tested again.
+    /// </summary>
+    internal static PerCardSuiteFollowUp PerCardSuites(IReadOnlyList<GateRunLedgerRow> dayRows,
+        IReadOnlyList<GateRunLedgerRow> laterRows)
+    {
+        var green = dayRows.Where(row => row.Type == "per-task-fallback"
+            && row.Outcome == nameof(BuildTestGateVerdict.Ok) && row.Cards.Count > 0).ToArray();
+        var batches = laterRows.Where(row => row.Type == "batch-gate").ToArray();
+        var followed = green.Count(row => batches.Any(batch => batch.RequestedAtUtc >= row.FinishedAtUtc
+            && batch.Cards.Intersect(row.Cards, StringComparer.Ordinal).Any()));
+        return new PerCardSuiteFollowUp(green.Length, followed,
+            green.Length == 0 ? null : (double)followed / green.Length);
     }
 
     private void Prune(DateTime before)

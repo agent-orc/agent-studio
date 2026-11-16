@@ -231,6 +231,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                     OnMachineGateWaiting = null,
                     OnMachineGateSlotAcquired = null,
                     OnMachineGateSlotWaiting = null,
+                    OnBatchLaneWaiting = null,
                     DurationClass = estimate.Class,
                 }, changedFiles, profile, mode, checked((int)Math.Ceiling(timeout.TotalSeconds)), overallSeconds)
             { CachePath = cache, SourceFromCache = warm,

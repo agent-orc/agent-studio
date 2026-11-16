@@ -28,6 +28,9 @@
         <app-batch-proven-red [project]="project()" [finding]="finding" />
       </div>
     }
+    @if (item.status === 'pending' && item.reason === 'per-task-suite-refused') {
+      <p data-testid="task-batch-suite-refusal" role="status">Per-card suite not started: {{ item.reasonDetail }}</p>
+    }
     @if (item.status === 'review-fix') {
       <p data-testid="task-batch-review-fix" role="status">{{ item.reasonDetail }}</p>
     }
