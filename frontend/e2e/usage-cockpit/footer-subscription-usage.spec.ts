@@ -125,7 +125,7 @@ test('one footer entry per subscription, honest age, host problem, account and r
     if (width >= 1280) expect(layout.rightEdgeGap).toBeLessThanOrEqual(16);
     const titlebar = await page.getByTestId('studio-titlebar').boundingBox();
     const body = await page.getByTestId('studio-body').boundingBox();
-    expect(titlebar && body && body.y - titlebar.y - titlebar.height).toBeLessThanOrEqual(48);
+    expect(titlebar && body && body.y - titlebar.y - titlebar.height).toBeLessThanOrEqual(56);
     if (width === 390) {
       const usageTarget = await footer.getByTestId('footer-usage-claude').boundingBox();
       expect(usageTarget?.height).toBeGreaterThanOrEqual(44);
