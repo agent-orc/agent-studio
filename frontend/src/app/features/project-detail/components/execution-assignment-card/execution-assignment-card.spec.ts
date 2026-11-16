@@ -24,6 +24,8 @@ describe('ExecutionAssignmentCardComponent', () => {
 
     expect(fixture.nativeElement.querySelector('[data-testid="local-coding-disabled-warning"]')?.textContent)
       .toContain('Local coding is disabled');
+    expect(fixture.nativeElement.querySelector('[data-testid="project-execution-probe"]')?.disabled).toBe(true);
+    expect(fixture.nativeElement.textContent).toContain('Select a remote runner to check delivery readiness.');
     flushRunnerInfrastructureFailures(http);
     http.verify();
   });
@@ -112,9 +114,7 @@ describe('ExecutionAssignmentCardComponent', () => {
     http.verify();
   });
 
-  it('reports all four readiness checks independently', async () => {
-    vi.useFakeTimers();
-    try {
+  it('uses the server probe for a main-integrating project with a ready delivery preflight', async () => {
       TestBed.configureTestingModule({
         imports: [ExecutionAssignmentCardComponent],
         providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
@@ -125,19 +125,26 @@ describe('ExecutionAssignmentCardComponent', () => {
 
       const http = TestBed.inject(HttpTestingController);
       http.expectOne('/api/projects/settings').flush({
-        'Agent Studio': { pickupMode: 'auto', executionLocation: 'agent-runner-01', integrationBranch: 'develop' },
+        'Agent Studio': { pickupMode: 'auto', executionLocation: 'agent-runner-01', integrationBranch: 'main' },
       });
       flushHostRegistryFailure(http);
       fixture.componentInstance.hostRegistry.hosts.update((hosts) => [...hosts, {
         id: 'agent-runner-01', name: 'agent-runner-01', role: 'remote', serviceRole: 'coding',
         address: null, clientId: 'agent-runner-01', status: 'online', os: 'Linux',
         lastHeartbeatAt: null, uptimeLabel: null, stats: null,
-        capabilities: ['git', 'node 22'],
-        cliQuotas: [{ cliType: 'codex', plan: null, windowLabel: 'weekly', usedPct: 0, resetLabel: null }],
+        capabilities: [], cliQuotas: [],
       } as RemoteHost]);
 
       const probe = fixture.componentInstance.runProbe();
-      await vi.runAllTimersAsync();
+      const request = http.expectOne('/api/projects/Agent%20Studio/execution-readiness-probe');
+      expect(request.request.method).toBe('POST');
+      expect(request.request.body).toEqual({ hostId: 'agent-runner-01' });
+      request.flush([
+        { key: 'code', label: 'Code channel', passed: true, detail: 'Delivery preflight passed.' },
+        { key: 'branch', label: 'Integration branch', passed: true, detail: 'Integration branch main is available.' },
+        { key: 'toolchain', label: 'Toolchain', passed: true, detail: 'Detected stack is available.' },
+        { key: 'noop', label: 'Host readiness', passed: true, detail: 'Host is online.' },
+      ]);
       await probe;
 
       expect(fixture.componentInstance.checks().map((check) => [check.key, check.state])).toEqual([
@@ -147,11 +154,9 @@ describe('ExecutionAssignmentCardComponent', () => {
         ['noop', 'passed'],
       ]);
       expect(fixture.componentInstance.probePassed()).toBe(true);
+      expect(fixture.componentInstance.checks()[1].label).toBe('Integration branch');
       flushRunnerInfrastructureFailures(http);
       http.verify();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it('shows the assigned project delivery failure, reason, and provider refusal', () => {
