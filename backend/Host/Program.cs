@@ -708,6 +708,7 @@ builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
             sp.GetRequiredService<TimeProvider>())
         : new UnboundHostedVolumeBackupEngine());
 builder.Services.AddSingleton<HostedVolumeBackupService>();
+builder.Services.AddSingleton<ManagedDatabaseCredentials>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<HostedVolumeBackupWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();

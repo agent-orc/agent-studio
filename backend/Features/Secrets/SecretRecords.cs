@@ -98,6 +98,9 @@ public sealed record SecretWorkload(
     public const string DeployJob = "deploy-job";
     public const string TaskRun = "task-run";
 
+    /// <summary>A run-zone host reading the managed database credentials of an environment placed on it (AGT-3877).</summary>
+    public const string RunTarget = "run-target";
+
     public SecretActor Actor => SecretActor.Workload(Identity);
 }
 

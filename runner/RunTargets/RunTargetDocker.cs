@@ -30,6 +30,15 @@ public interface IRunTargetDocker
     /// <summary>HTTP GET from inside the edge container, the same path public traffic takes.</summary>
     Task<bool> ProbeAsync(string url, CancellationToken ct);
     Task<RunTargetDockerResult> ReloadEdgeAsync(CancellationToken ct);
+
+    /// <summary>Creates a labelled named volume unless it exists. Compose only references it, so no compose command removes it.</summary>
+    Task<RunTargetDockerResult> EnsureVolumeAsync(string volume, CancellationToken ct);
+
+    /// <summary>Removes a named volume and its data; a missing volume is a success.</summary>
+    Task<RunTargetDockerResult> RemoveVolumeAsync(string volume, CancellationToken ct);
+
+    /// <summary>Runs a command inside a running container; <see cref="RunTargetDockerResult.Detail"/> holds its output on success.</summary>
+    Task<RunTargetDockerResult> ExecAsync(string container, IReadOnlyList<string> command, CancellationToken ct);
 }
 
 /// <summary>Docker CLI implementation. Every process goes through <see cref="ProcessRunner"/>.</summary>
@@ -115,6 +124,27 @@ public sealed class DockerCliRunTarget(string docker = "docker") : IRunTargetDoc
     public Task<RunTargetDockerResult> ReloadEdgeAsync(CancellationToken ct)
         => Run(["exec", "-w", "/etc/caddy", RunTargetNames.EdgeContainer,
             "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"], ct);
+
+    public async Task<RunTargetDockerResult> EnsureVolumeAsync(string volume, CancellationToken ct)
+    {
+        if ((await RunWithOutput(["volume", "inspect", volume, "--format", "{{.Name}}"], ct)).Ok)
+            return RunTargetDockerResult.Success;
+        return await Run(["volume", "create", "--label", "agent-studio.run-target=database", volume], ct);
+    }
+
+    public async Task<RunTargetDockerResult> RemoveVolumeAsync(string volume, CancellationToken ct)
+    {
+        var removed = await RunWithOutput(["volume", "rm", volume], ct);
+        if (removed.Ok) return RunTargetDockerResult.Success;
+        // As for networks: confirm absence with a successful list before acknowledging the deletion.
+        var listed = await RunWithOutput(["volume", "ls", "--format", "{{.Name}}"], ct);
+        if (!listed.Ok) return listed;
+        return listed.Detail.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Contains(volume, StringComparer.Ordinal)
+            ? removed : RunTargetDockerResult.Success;
+    }
+
+    public Task<RunTargetDockerResult> ExecAsync(string container, IReadOnlyList<string> command, CancellationToken ct)
+        => RunWithOutput(["exec", container, .. command], ct);
 
     private async Task<RunTargetDockerResult> Run(IReadOnlyList<string> arguments, CancellationToken ct)
     {

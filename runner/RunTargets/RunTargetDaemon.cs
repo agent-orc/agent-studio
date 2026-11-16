@@ -120,7 +120,7 @@ public sealed class RunTargetDaemon(
             if (!await controlPlane.ReportJobAsync(report, ct))
                 log($"run-target: Studio no longer holds deploy job {report.JobId}; the next poll reconciles it");
         }
-        await controlPlane.PostObservedStateAsync(new(result.Observations), ct);
+        await controlPlane.PostObservedStateAsync(new(result.Observations, result.Databases), ct);
     }
 
     private async Task SuperviseWithoutStudioAsync(string reason, CancellationToken ct)
@@ -139,6 +139,7 @@ public sealed class RunTargetDaemon(
     public static RunTargetDaemon Create(RunTargetOptions options, HttpClient http, Action<string> log)
     {
         static Task Delay(TimeSpan wait, CancellationToken ct) => Task.Delay(wait, TimeProvider.System, ct);
+        var client = new RunTargetClient(http, options.HostId);
         var reconciler = new RunTargetReconciler(
             new DockerCliRunTarget(),
             new FileRunTargetSecretSource(options.SecretDirectory),
@@ -147,7 +148,8 @@ public sealed class RunTargetDaemon(
             options.Reconciler,
             TimeProvider.System,
             Delay,
-            log);
-        return new(new RunTargetClient(http, options.HostId), reconciler, options.PollInterval, Delay, log);
+            log,
+            new CachedRunTargetCredentials(client, log));
+        return new(client, reconciler, options.PollInterval, Delay, log);
     }
 }

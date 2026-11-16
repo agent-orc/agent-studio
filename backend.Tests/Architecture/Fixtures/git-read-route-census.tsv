@@ -227,6 +227,7 @@
 /api/projects/{projectName}/design/references/{fileName}	free	-	-	-
 /api/projects/{projectName}/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/health	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/environments/{environmentId}/databases/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/telemetry/logs	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/telemetry/metrics	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/telemetry/metrics/names	reachable	frozen	Deploy and environments	Environment declarations from the Git fact store
