@@ -37,7 +37,7 @@ public static class GateEnvironmentRetryReasons
         NoCodeDelivery => "This task delivers no code, so there is no integration to retry.",
         AcceptanceIntegrationInFlight =>
             "An acceptance integration for this task is already running; wait for it to settle before retrying.",
-        NotAGateEnvironmentFailure => "This task has no gate-environment integration failure to retry.",
+        NotAGateEnvironmentFailure => "This task has no integration failure that can be replayed for the same delivery.",
         NoPassedReview => "The current delivery has no settled passed review to reuse.",
         _ => "This task is not in a gate-environment retry state.",
     };
@@ -81,7 +81,10 @@ public sealed record GateEnvironmentRetryDecision(
 /// A merge holds the in-flight gate journal, or an acceptance transaction
 /// outside Auto Review is integrating the card.
 /// </param>
-/// <param name="IsGateEnvironmentFailure">The latest integration failed on the gate environment.</param>
+/// <param name="IsGateEnvironmentFailure">
+/// The latest integration failed on the gate environment, or on a missing
+/// server checkout that now exists (AGT-3810, operator replay only).
+/// </param>
 /// <param name="ReviewPassed">The latest review for the delivery SHA ended in Pass.</param>
 /// <param name="AttemptsSpent">Automatic rungs already spent on this delivery SHA.</param>
 /// <param name="Backoff">The bounded ladder.</param>

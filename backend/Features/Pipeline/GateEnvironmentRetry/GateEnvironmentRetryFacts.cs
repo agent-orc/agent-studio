@@ -133,7 +133,7 @@ public static class GateEnvironmentRetryFactsReader
             Lanes.Contains(task.State),
             AcceptanceIntegrationPolicy.IsIntegrationRequired(task),
             acceptanceInFlight,
-            IsGateEnvironmentFailure(integration),
+            IsOperatorReplayable(integration),
             reviewPassed,
             attemptsSpent,
             options.Backoff,
@@ -153,6 +153,18 @@ public static class GateEnvironmentRetryFactsReader
 
     private static readonly string ShutdownCancellationReason =
         $"Gate cancelled: {GateCancellationReasons.Shutdown}.";
+
+    /// <summary>
+    /// The failures "Retry integration" may replay against the same reviewed
+    /// delivery: every gate-environment fault the ladder replays, plus a missing
+    /// server checkout once the checkout exists (AGT-3810). The checkout case
+    /// stays off the automatic ladder; only an owner who configured the
+    /// checkout knows when a replay can succeed. The sweep therefore selects
+    /// its candidates with <see cref="IsGateEnvironmentFailure"/>.
+    /// </summary>
+    public static bool IsOperatorReplayable(TaskIntegrationStatus? integration)
+        => IsGateEnvironmentFailure(integration)
+           || integration?.Failure is { Code: AcceptedIntegrationFailureCodes.ServerCheckoutMissing, ReplayAvailable: true };
 
     /// <summary>
     /// The host-side integration faults this ladder replays. CAC-18 keeps a gate
