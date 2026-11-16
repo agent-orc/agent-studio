@@ -81,6 +81,18 @@ public sealed class ReportContentReviewService
     }
 
     /// <summary>
+    /// The content verdict the current delivery already has for its current
+    /// brief, or null while the review step is missing (AGT-3797).
+    /// </summary>
+    public ReportContentReviewResult? CurrentVerdict(TaskInfo task)
+    {
+        if (IsMissing(task)) return null;
+        var facts = CompletionContentEvidence.Read(task, _authority);
+        return new(true, facts.ContentStatus,
+            $"Requirement fit of the report: {facts.ContentStatus}. {facts.ContentSummary}".Trim());
+    }
+
+    /// <summary>
     /// Why Review results cannot run for this card, or null when it can: a
     /// planning or research card waiting for a person, whose current delivery
     /// still lacks its content verdict. A present verdict, also concerns, is
@@ -197,6 +209,9 @@ public sealed class ReportContentReviewService
             string.Equals(item.Aspect, AspectId, StringComparison.OrdinalIgnoreCase));
         if (verdict is null)
             return new(false, null, "The requirement-fit review returned no verdict.");
+        // AGT-3797: a dead reviewer is not a verdict on the report.
+        if (verdict.IsInfraFailure)
+            return new(false, null, "The requirement-fit review failed: " + verdict.Summary);
         var status = AspectVerdictParsing.StatusToken(verdict.Status);
         return new(true, status, $"Requirement fit of the report: {status}. {verdict.Summary}".Trim());
     }

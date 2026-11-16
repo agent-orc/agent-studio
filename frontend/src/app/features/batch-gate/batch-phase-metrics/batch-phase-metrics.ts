@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
-import type { BatchGateState } from '../../../models/batch-gate.model';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { sameCodeRerunLine, type BatchGateState } from '../../../models/batch-gate.model';
 
 @Component({
   selector: 'app-batch-phase-metrics',
@@ -12,6 +12,7 @@ export class BatchPhaseMetricsComponent {
   private static nextId = 0;
   readonly headingId = `batch-phase-${++BatchPhaseMetricsComponent.nextId}`;
   readonly summary = input<BatchGateState['dailySummary']>();
+  readonly sameCodeReruns = computed(() => sameCodeRerunLine(this.summary()?.sameCodeRerunMinutesByPurpose));
   readonly rows = [
     { key: 'reviewToPreCheck', label: 'Review pass to pre-check end' },
     { key: 'formationWait', label: 'Pre-check end to batch start' },

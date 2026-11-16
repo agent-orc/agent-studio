@@ -6,6 +6,14 @@
         target="_blank" rel="noopener noreferrer">supported deploy procedure</a>.</p>
     <p class="update__target">Expected commit <code>{{ host.expectedCommit || 'not reported' }}</code>
       · image <code data-testid="review-host-expected-digest">{{ host.expectedImageRef || 'not pinned' }}</code></p>
+    @if (drainedSince() || switchStartedAt()) {
+      <p class="update__times">
+        @if (drainedSince(); as since) { <span data-testid="review-host-drained-since">Drained since
+          <time [attr.datetime]="since" [attr.title]="since">{{ since | date:'short' }}</time></span> }
+        @if (switchStartedAt(); as switched) { <span data-testid="review-host-switch-started">Switch started at
+          <time [attr.datetime]="switched" [attr.title]="switched">{{ switched | date:'short' }}</time></span> }
+      </p>
+    }
     <ol class="update__steps" aria-label="Review host update progress">
       <li [attr.data-state]="stepState(0)">Drain <span>{{ stepLabel(0) }}</span></li>
       <li [attr.data-state]="stepState(1)">Quiet point <span>{{ stepLabel(1) }}</span></li>

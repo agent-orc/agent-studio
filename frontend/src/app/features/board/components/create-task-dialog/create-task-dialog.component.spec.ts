@@ -6,7 +6,8 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { CreateTaskDialogComponent } from './create-task-dialog.component';
 import { AuthSessionState } from '../../../../services/auth.service';
-import { TaskState } from '../../../../models/task.model';
+import { TaskState, type TagRegistryEntry } from '../../../../models/task.model';
+import { TagRegistryStore } from '../../../../services/tag-registry.store';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -107,5 +108,70 @@ describe('CreateTaskDialogComponent (smoke)', () => {
     expect(fixture.componentInstance.segmentedLaneOptions().map(lane => lane.value))
       .toEqual([TaskState.Backlog, TaskState.Ready]);
     expect(fixture.componentInstance.newTargetState()).toBe(TaskState.Backlog);
+  });
+});
+
+/**
+ * AGT-3834 (playthrough AGT-3796 F7): the dialog opened in the Prompt field,
+ * every tag, lane, type and mode option was its own Tab stop, and Title was
+ * 55 Tab stops from Create.
+ */
+describe('CreateTaskDialogComponent keyboard path (AGT-3834)', () => {
+  const TABBABLE = 'button, input, select, textarea, a[href], [tabindex]';
+
+  async function mount() {
+    await TestBed.configureTestingModule({
+      imports: [CreateTaskDialogComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    TestBed.inject(TagRegistryStore).tags.set(Array.from({ length: 37 }, (_, i) => (
+      { id: `tag-${i}`, label: `Tag ${i}`, color: '#888888' } as TagRegistryEntry)));
+    const fixture = TestBed.createComponent(CreateTaskDialogComponent);
+    fixture.componentRef.setInput('cliTypeDraft', 'claude');
+    fixture.componentRef.setInput('watchPaths', [{ path: '/tmp/p', name: 'Project' }]);
+    fixture.componentInstance.newTitle.set('Fix the board');
+    fixture.componentInstance.newPrompt.set('Describe the fix');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    await Promise.resolve();
+    const root = fixture.nativeElement as HTMLElement;
+    const byTestId = (id: string) => root.querySelector(`[data-testid="${id}"]`) as HTMLElement;
+    return { fixture, root, byTestId };
+  }
+
+  /** Sequential Tab order the browser would walk (no positive tabindex is used). */
+  function tabStops(root: HTMLElement): HTMLElement[] {
+    return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((el) =>
+      !(el as HTMLButtonElement).disabled
+      && el.getAttribute('tabindex') !== '-1'
+      && !(el instanceof HTMLInputElement && el.type === 'file'));
+  }
+
+  it('focuses Title, the first field, on open', async () => {
+    const { byTestId } = await mount();
+    await Promise.resolve();
+    expect(document.activeElement).toBe(byTestId('create-title'));
+  });
+
+  it('makes lane, type, mode and tags one Tab stop each', async () => {
+    const { root, byTestId } = await mount();
+    const stops = tabStops(root);
+    for (const group of ['create-lane-picker', 'create-task-type', 'create-mode-toolbar', 'create-tags', 'create-prompt-actions']) {
+      expect(stops.filter((el) => byTestId(group).contains(el)).length, group).toBe(1);
+    }
+    expect(stops).toContain(byTestId('create-lane-1-preparation'));
+    expect(stops).toContain(byTestId('create-task-type-chore'));
+    expect(stops).toContain(byTestId('create-mode-coding'));
+    expect(byTestId('create-tags').getAttribute('role')).toBe('group');
+    expect(byTestId('create-tag-tag-0').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('reaches Create from Title in no more than 10 Tab stops', async () => {
+    const { root, byTestId } = await mount();
+    const stops = tabStops(root);
+    const from = stops.indexOf(byTestId('create-title'));
+    const to = stops.indexOf(byTestId('create-submit'));
+    expect(from).toBeGreaterThanOrEqual(0);
+    expect(to - from).toBeLessThanOrEqual(10);
   });
 });

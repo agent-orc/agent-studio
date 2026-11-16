@@ -98,6 +98,7 @@
                autocomplete="off"
                [placeholder]="networked() ? '/srv/projects/my-repo' : 'C:\\Projects\\my-repo'"
                [attr.data-testid]="fieldTestid('repository-path')"
+               [id]="fieldTestid('repository-path')"
                [disabled]="disabled()"
                [attr.aria-invalid]="errorFor('repositoryPath') ? 'true' : null"
                [ngModel]="repositoryPath()"

@@ -2,6 +2,7 @@ import { SegmentedControlComponent } from '../../../../components/segmented-cont
 import { ChangeDetectionStrategy, Component, model } from '@angular/core';
 import type { TaskMode } from '../../../../models/task.model';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { RovingFocusDirective } from '../../../../directives/roving-focus.directive';
 
 interface ModeOption {
   readonly value: TaskMode;
@@ -25,7 +26,7 @@ interface ModeOption {
   selector: 'app-create-mode-picker',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SegmentedControlComponent, TooltipDirective],
+  imports: [SegmentedControlComponent, TooltipDirective, RovingFocusDirective],
   templateUrl: './create-mode-picker.component.html',
   styleUrl: './create-mode-picker.component.scss',
 })
