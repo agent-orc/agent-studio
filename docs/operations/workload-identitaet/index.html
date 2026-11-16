@@ -351,7 +351,7 @@
 
 <section id="anlass">
 <h2><span class="number">01</span> Anlass</h2>
-<p>Im Dossier <a href="../operations/integrierte-plattform/index.html">Integrierte Plattform</a> hat der Owner IP-D10 „Wie weisen sich Aufträge und Apps aus?“ mit A beantwortet: eigene signierte Identität je Auftrag und Deployment im SPIFFE-Format, OIDC-Föderation zu Cloud-Zielen statt gespeicherter Schlüssel. Dazu die Anmerkung vom 16. November 2026: „Hier bin ich unsicher und hätte gerne noch ein Dossier, das mir das Thema aufbereitet.“ Dieses Dossier soll die Entscheidung mit Verständnis bestätigen oder ändern lassen. Es setzt kein Fachwissen über Identitäts-Infrastruktur voraus.</p>
+<p>Im Dossier <a href="../integrierte-plattform/index.html">Integrierte Plattform</a> hat der Owner IP-D10 „Wie weisen sich Aufträge und Apps aus?“ mit A beantwortet: eigene signierte Identität je Auftrag und Deployment im SPIFFE-Format, OIDC-Föderation zu Cloud-Zielen statt gespeicherter Schlüssel. Dazu die Anmerkung vom 16. November 2026: „Hier bin ich unsicher und hätte gerne noch ein Dossier, das mir das Thema aufbereitet.“ Dieses Dossier soll die Entscheidung mit Verständnis bestätigen oder ändern lassen. Es setzt kein Fachwissen über Identitäts-Infrastruktur voraus.</p>
 <div class="callout" data-tone="accent">
   <h3>Kurzfassung</h3>
   <ul>
@@ -747,14 +747,14 @@
 </ul>
 <h3>Repository</h3>
 <ul>
-  <li>Dossiers: <a href="../operations/integrierte-plattform/index.html">Integrierte Plattform</a> (AGT-W81, IP-D7 bis IP-D10, §9), <a href="../security-model/index.html">Security model</a> (AGT-3353, SM-6, SM-9, SM-11, SM-12), <a href="../credentials-and-logins/index.html">Credentials and logins</a> (AGT-2968).</li>
+  <li>Dossiers: <a href="../integrierte-plattform/index.html">Integrierte Plattform</a> (AGT-W81, IP-D7 bis IP-D10, §9), <a href="../../security-model/index.html">Security model</a> (AGT-3353, SM-6, SM-9, SM-11, SM-12), <a href="../../credentials-and-logins/index.html">Credentials and logins</a> (AGT-2968).</li>
   <li>Code, Stand 16. November 2026: die in <a href="#heute">Heutiger Stand</a> genannten Dateien unter <code>backend/</code>, <code>runner/</code>, <code>task-server/</code>, <code>contracts/</code> und <code>cli-hosting/</code>; Dokumentation <code>docs/operations/security/secret-provider.md</code>, <code>docs/operations/security/overview.md</code>, <code>docs/operations/setup/linux-runner-host.md</code>, <code>docs/operations/remote-task-server-local-studio.md</code>, <code>docs/system/domains/runner.md</code>.</li>
 </ul>
 </section>
   <!-- agent-studio:implementation-section:start -->
   <section id="implementation" data-document-section="implementation">
     <h2><span class="number">12</span> Umsetzung</h2>
-    <p>Die Umsetzung ist in <code>workbench.json</code> in neun Scheiben geschnitten (WI-0 bis WI-8), in Lieferreihenfolge und mit Abhängigkeiten. WI-0 veröffentlicht dieses Dossier unter <code>docs/operations/workload-identitaet/</code> und setzt den Verweis aus IP-D10; eine Konzept-Lieferung darf nur ihr eigenes Verzeichnis ändern. Umsetzungs-Scheiben tragen ihren Stand hier ein; der Entscheidungsteil oben bleibt unverändert.</p>
+    <p>Die Umsetzung ist in <code>workbench.json</code> in acht Scheiben geschnitten (WI-1 bis WI-8), in Lieferreihenfolge und mit Abhängigkeiten. Umsetzungs-Scheiben tragen ihren Stand hier ein; der Entscheidungsteil oben bleibt unverändert.</p>
     <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
 <!-- agent-studio:implementation-log:end -->
