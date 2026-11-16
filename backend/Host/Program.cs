@@ -1282,6 +1282,8 @@ if (!publicDemoExecutionProfile)
 builder.Services.AddSingleton<AgentStudio.Runner.PostAbortReviewStepService>();
 builder.Services.AddSingleton<AutoReviewStatusSnapshot>();
 builder.Services.AddSingleton<ReportContentReviewService>();
+// AGT-3797: reviews report deliveries in Auto Review while the engine owns it.
+builder.Services.AddSingleton<EngineReportReviewService>();
 builder.Services.AddSingleton<ReviewDecisionOrchestrator>();
 // Keep the review and delivery workers available for runtime profile rollback.
 if (!publicDemoExecutionProfile)
