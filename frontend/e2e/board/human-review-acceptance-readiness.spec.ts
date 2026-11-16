@@ -298,8 +298,8 @@ test.describe('Human Review acceptance readiness', () => {
     await page.getByTestId('workspace-settings-rail-workspaces').click();
     const projectRow = page.getByTestId('settings-project-row').filter({ hasText: PROJECT });
     await expect(projectRow).toBeVisible();
-    page.once('dialog', dialog => dialog.accept());
     await projectRow.getByTestId('settings-project-archive').click();
+    await page.getByTestId('confirm-dialog').getByRole('button', { name: 'Archive project' }).click();
     await expect(projectRow).toHaveCount(0);
     await page.getByTestId('studio-tab-list').getByRole('tab', { name: 'lane-filter-count' }).click();
     await expect(page.getByTestId('studio-archived-project-notice')).toContainText('Readiness fixture is archived');
