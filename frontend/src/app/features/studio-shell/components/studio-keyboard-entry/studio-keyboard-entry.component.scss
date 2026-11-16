@@ -1,0 +1,24 @@
+:host { display: contents; }
+
+// Off screen until focused, then painted over the titlebar's top-left corner.
+.studio-skip-link {
+  position: fixed;
+  top: var(--studio-spacing-2);
+  left: var(--studio-spacing-2);
+  z-index: var(--studio-z-overlay-modal);
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-action-radius-sm);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-strong);
+  font-size: 13px;
+  text-decoration: none;
+  transform: translateY(calc(-100% - var(--studio-spacing-4)));
+
+  &:focus,
+  &:focus-visible {
+    transform: none;
+    outline: 2px solid var(--studio-accent-strong);
+    outline-offset: 1px;
+  }
+}

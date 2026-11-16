@@ -427,6 +427,22 @@ public sealed class MonolithOrchestrationApplier(
                     ?? throw new InvalidDataException("The coding review subject is invalid.");
                 ReviewSubjectStore.Write(task.FolderPath, subject);
             }
+            // AGT-3797: a report delivery mints no ReviewAttempt, so CreateReview
+            // starts its report review; without one the card had no owner.
+            else if (decision?.Action is null or TransitionAction.CreateReview
+                && services.GetService<EngineReportReviewService>() is { } reportReviews
+                && reportReviews.Owns(task))
+            {
+                var started = reportReviews.Start(task, "engine-create-review");
+                if (!started.Started && !reportReviews.IsRunning(task))
+                    operatorLog.Append(task.WatchPath, new OrchestratorLogEntry
+                    {
+                        Kind = OrchestratorLogKinds.Alert,
+                        Topic = "report-review-not-started",
+                        JobId = task.Id,
+                        Summary = $"The report review of \"{task.Title ?? task.Id}\" did not start: {started.Reason}",
+                    });
+            }
         }
 
         if (decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound

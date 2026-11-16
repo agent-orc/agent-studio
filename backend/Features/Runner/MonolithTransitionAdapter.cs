@@ -58,6 +58,12 @@ public static class MonolithTransitionAdapter
     public static TransitionDecision StageCoding(string taskId, string attemptId, string? targetState)
         => StageDecisionPolicy.Coding(taskId, attemptId, targetState);
 
+    public static bool ReportReviewHostRuns(bool reportOnly, bool monolithOwnsAutoReview)
+        => ReportReviewPolicy.HostRunsReportReview(reportOnly, monolithOwnsAutoReview);
+
+    public static ReportReviewDecision ReportReviewSettle(ReportReviewOutcomeFacts facts)
+        => ReportReviewPolicy.Settle(facts);
+
     public static StagePolicyDecision StageGateTransition(string taskId, string attemptId,
         int failed, int roundsUsed, int roundsAllowed,
         bool infrastructureFailure = false, bool interventionRequired = false)

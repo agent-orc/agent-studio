@@ -156,8 +156,24 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
         var record = Assert.Single(factory.Services.GetRequiredService<StallInterventionStore>().All());
         Assert.Equal(AutoReviewStrandingAction.Escalate.ToString(), record.Action);
-        Assert.Contains("minutes overdue and never started", record.Done, StringComparison.Ordinal);
+        Assert.Contains("minutes overdue", record.Done, StringComparison.Ordinal);
         Assert.DoesNotContain("retry limit reached", record.Done, StringComparison.Ordinal);
+        Assert.Contains("retry 1 of 2", record.Done, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"{dueAt:yyyy-MM-dd HH:mm:ss} UTC", record.Done, StringComparison.Ordinal);
+        Assert.Contains("retry scheduler did not start it", record.Done, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("scheduled retry", record.Why, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("no running step, review, scheduled retry", record.Why, StringComparison.OrdinalIgnoreCase);
+        var parked = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        Assert.Contains("retry scheduler did not start it", parked.ParkedBlocker!.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("retry limit reached", parked.ParkedBlocker.Reason, StringComparison.OrdinalIgnoreCase);
+
+        var undone = await watchdog.UndoParkAsync(record.Id, "operator");
+        Assert.True(undone.Undone, undone.Message);
+        _time.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var reparked = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        Assert.DoesNotContain("no active owner for 0 minutes", reparked.ParkedBlocker!.Reason,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private TaskLiveQueue LiveQueue(WebApplicationFactory<Program> factory)
