@@ -706,6 +706,10 @@ export class StudioShellComponent {
 
   /** Open or focus a Project URL preview as a shell tab. */
   openUrlPreview(e: { projectName: string; urlId: string }): void {
+    if (e.urlId === 'repo') {
+      this.tabState.open({ kind: 'hub', projectName: e.projectName, section: 'git' });
+      return;
+    }
     this.tabState.open({ kind: 'url-preview', projectName: e.projectName, urlId: e.urlId });
   }
 
