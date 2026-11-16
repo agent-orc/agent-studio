@@ -293,7 +293,8 @@ public static class PickupHoldPolicy
                     PickupHoldResolutionKinds.RestoreRunnerCapability,
                     "Restore the runner capability",
                     $"Give {Describe(rejection.RunnerName, rejection.RunnerId)} what it reported missing, or route this project at a runner that has it.",
-                    Action: RemedyAction.Route(RemedyRoutes.ExecutionHosts, task.ProjectName)),
+                    // AGT-3840: open the refusing runner and its missing key, not the host list.
+                    Action: RemedyAction.ExecutionHost(rejection.RunnerId, rejection.Capability, task.ProjectName)),
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.RetryDispatch,
                     "Re-offer the card",

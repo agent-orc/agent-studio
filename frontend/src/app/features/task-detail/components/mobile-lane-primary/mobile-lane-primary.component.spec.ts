@@ -50,7 +50,7 @@ describe('MobileLanePrimaryComponent', () => {
     fixture.componentRef.setInput('job', { id: 'DEMO-19', taskKey: 'wp::DEMO-19', state: '5-human-review', watchPath: '/wp' } as TaskInfo);
     fixture.componentRef.setInput('primary', { ...accept, refusal: {
       reason: 'The requirement-fit review returned concerns.', action: 'review-again', actionLabel: 'Review again',
-      source: 'readiness', replacesAccept: true,
+      source: 'readiness', replacesAccept: true, secondary: { action: 'override', actionLabel: 'Accept with a reason…' },
     } });
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;

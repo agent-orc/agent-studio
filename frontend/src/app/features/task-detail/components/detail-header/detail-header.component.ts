@@ -40,6 +40,7 @@ import { BatchGateService } from '../../../../services/batch-gate.service';
 import { batchIsolationHold } from '../../../../models/batch-isolation-hold';
 import { isHeldRequeue } from './isolation-requeue';
 import { contentRefusalOf } from './content-refusal';
+import { injectAcceptanceRefusalTooltip } from '../../state/acceptance-refusal.model';
 /** Task detail title, lane pager and primary and overflow actions. */
 @Component({
   selector: 'app-detail-header',
@@ -237,11 +238,7 @@ export class DetailHeaderComponent {
   });
 
   /** Effective primary label (state-aware for the Human Review acceptance). */
-  readonly primaryLabel = computed(() => {
-    const p = this.triagePrimary();
-    if (!p) return '';
-    return this.mergeAcceptView()?.acceptLabel ?? p.label;
-  });
+  readonly primaryLabel = computed(() => this.mergeAcceptView()?.acceptLabel ?? this.triagePrimary()?.label ?? '');
 
   /** Primary-action ids held while their integration verdict is unknown. */
   private readonly GIT_DEPENDENT_PRIMARY_IDS: ReadonlySet<string> = new Set(['mark-done']);
@@ -318,6 +315,7 @@ export class DetailHeaderComponent {
     return items;
   });
 
+  readonly acceptanceRefusalTip = injectAcceptanceRefusalTooltip(() => this.info());
   primaryTooltip(): string {
     const p = this.triagePrimary();
     if (!p) return '';
@@ -326,6 +324,7 @@ export class DetailHeaderComponent {
     const refusal = this.primaryDecisionRefusal() ?? this.primaryContentRefusal();
     if (refusal) return refusal;
     if (this.primaryBlockedByIntegration()) return acceptanceHoldReason(this.info());
+    if (p.id === 'mark-done' && this.acceptanceRefusalTip()) return this.acceptanceRefusalTip()!;
     const label = this.primaryLabel();
     if (this.triageActingId() === p.id) return `${label}…`;
     const merge = this.mergeAcceptView();

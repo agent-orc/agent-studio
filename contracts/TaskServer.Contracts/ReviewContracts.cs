@@ -237,7 +237,9 @@ public sealed record ReviewClaimResponse(
     string? Reason = null,
     IReadOnlyList<string>? MissingCapabilities = null,
     IReadOnlyList<ReviewUnclaimableAttemptDto>? UnclaimableAttempts = null,
-    string? AdmissionReason = null);
+    string? AdmissionReason = null,
+    // AGT-3840: capability keys the operator asked this executor to re-probe.
+    IReadOnlyList<string>? ReprobeCapabilities = null);
 
 /// <summary>Typed cause of an empty review claim (AGT-2987).</summary>
 public static class ReviewClaimEmptyReasons

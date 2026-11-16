@@ -66,7 +66,7 @@ import { ExplorerSectionsService } from './services/explorer-sections.service';
 import { ExplorerWorkbenchStateService } from './services/explorer-workbench-state.service';
 import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.project-rows';
 import { StudioTab, studioTabKey } from './studio-shell.types';
-import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
+import { tabAccessibleName, taskIdFromKey, titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
 import { requestErrorMessage } from './studio-shell.request-error';
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
@@ -1144,7 +1144,7 @@ export class StudioShellComponent {
         return 'Dossiers';
       case 'task': {
         const job = this.findJob(tab.taskKey);
-        return job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey);
+        return job?.title || job?.key || job?.id || taskIdFromKey(tab.taskKey);
       }
       case 'hub': {
         const area = this.projectAreaLabel(tab.section);
@@ -1163,7 +1163,7 @@ export class StudioShellComponent {
         return tab.commitSha;
       case 'activity': {
         const job = this.findJob(tab.taskKey);
-        return `Activity · ${job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey)}`;
+        return `Activity · ${job?.title || job?.key || job?.id || taskIdFromKey(tab.taskKey)}`;
       }
       case 'url-preview':
         return this.findProjectUrl(tab.projectName, tab.urlId)?.label || tab.urlId;
@@ -1186,7 +1186,7 @@ export class StudioShellComponent {
   tabPrefix(tab: StudioTab): string | null {
     switch (tab.kind) {
       case 'task':
-        return this.findJob(tab.taskKey)?.key || this.taskIdFromKey(tab.taskKey);
+        return this.findJob(tab.taskKey)?.key || taskIdFromKey(tab.taskKey);
       case 'board':
         return tab.projectName === '__all__' ? 'All' : this.projectShortLabel(tab.projectName);
       case 'hub':
@@ -1201,7 +1201,7 @@ export class StudioShellComponent {
     switch (tab.kind) {
       case 'task': {
         const job = this.findJob(tab.taskKey);
-        return job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey);
+        return job?.title || job?.key || job?.id || taskIdFromKey(tab.taskKey);
       }
       case 'board': return 'Board';
       case 'hub': {
@@ -1219,14 +1219,10 @@ export class StudioShellComponent {
   }
 
   tabVisibleTitle(tab: StudioTab): string { return truncateTabTitle(this.tabTitle(tab)); }
+  tabName(tab: StudioTab): string { return tabAccessibleName(this.tabPrefix(tab), this.tabVisibleTitle(tab), this.tabLabel(tab)); }
 
-  /** A task key is persisted as `<watchPath>::<jobId>`. During shell restore
-   * the tab can render before board data resolves, so its safe fallback must
-   * be the user-facing job id rather than the filesystem-bearing key. */
-  private taskIdFromKey(taskKey: string): string {
-    const separator = taskKey.lastIndexOf('::');
-    return separator >= 0 ? taskKey.slice(separator + 2) : taskKey;
-  }
+  /** The tablist owns only the strip's tab buttons; their close buttons stay outside it. */
+  readonly tabSelectIds = computed(() => this.tabs().map((_, index) => `studio-tab-select-${index}`).join(' '));
 
   /** Leading icon for the tab strip. Deck tabs show their active section's
    *  rail icon (e.g. `book` for Wiki); other kinds render none here. */

@@ -2,6 +2,9 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
 import { AcceptanceRefusalComponent } from './acceptance-refusal.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
@@ -28,6 +31,8 @@ async function mount(refusal: AcceptanceRefusal,
     imports: [AcceptanceRefusalComponent],
     providers: [
       provideZonelessChangeDetection(),
+      provideHttpClient(),
+      provideHttpClientTesting(),
       { provide: TaskService, useValue: { moveJob, retryIntegration, reviewContentAgainstCurrentBrief, refresh, ...tasks } },
       { provide: NotificationService, useValue: { success, error } },
     ],
@@ -57,6 +62,15 @@ async function mount(refusal: AcceptanceRefusal,
 
 describe('AcceptanceRefusalComponent (AGT-3704)', () => {
   afterEach(() => TestBed.resetTestingModule());
+
+  it('opens the round from the toolbar when an override cannot admit the card (AGT-3867)', async () => {
+    const { click, moveJob } = await mount({ reason: 'The required report is missing.', action: 'send-round',
+      actionLabel: 'Send a round…', source: 'hold' });
+    const open = vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'openRound').mockImplementation(() => undefined);
+    await click('acceptance-refusal-action');
+    expect(open).toHaveBeenCalledWith(JOB, 'toolbar');
+    expect(moveJob).not.toHaveBeenCalled();
+  });
 
   it('names the reason next to its one action', async () => {
     const { host } = await mount(OVERRIDE);
@@ -110,6 +124,7 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
     const CONTENT: AcceptanceRefusal = {
       reason: 'The requirement-fit review returned concerns: The result SHA is absent from the delivery brief.',
       action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
+      secondary: { action: 'override', actionLabel: 'Accept with a reason…' },
     };
 
     it('offers Review again as the primary and Accept with a reason beside the reason', async () => {
@@ -123,6 +138,16 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
       await click('acceptance-refusal-action');
       expect(reviewContentAgainstCurrentBrief).toHaveBeenCalledWith('AGT-3649', '/project/tasks');
       expect(refresh).toHaveBeenCalledWith(true);
+    });
+
+    it('opens the round beside Review again when no override can admit the card (AGT-3867)', async () => {
+      const { click, find, moveJob } = await mount({ ...CONTENT,
+        secondary: { action: 'send-round', actionLabel: 'Send a round…' } });
+      const open = vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'openRound').mockImplementation(() => undefined);
+      await click('acceptance-refusal-send-round');
+      expect(open).toHaveBeenCalledWith(JOB, 'toolbar');
+      expect(find('acceptance-refusal-form')).toBeNull();
+      expect(moveJob).not.toHaveBeenCalled();
     });
 
     it('opens the written-reason form from Accept with a reason', async () => {

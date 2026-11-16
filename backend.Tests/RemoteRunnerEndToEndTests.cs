@@ -5645,6 +5645,10 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         var work = Assert.Single(draining.Running);
         Assert.Equal("review", work.Kind);
         Assert.Equal(running.AttemptId, work.AttemptId);
+        // AGT-3852: the host switch is refused before the quiet point.
+        Assert.Equal(System.Net.HttpStatusCode.Conflict,
+            (await management.PostAsync($"/api/clients/{reviewRunnerId}/deploy-switch", null)).StatusCode);
+        Assert.Null(draining.SwitchStartedAt);
 
         // A second queued review stays unclaimed while the executor drains.
         const string secondTask = TaskKey + "-QUEUED";
@@ -5666,10 +5670,23 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         Assert.True(drained.Drained);
         Assert.Empty(drained.Running);
 
+        // AGT-3852: the recorded switch start is what a reload or a second
+        // operator reads back; a repeated start keeps the first time.
+        var switchStart = await management.PostAsync($"/api/clients/{reviewRunnerId}/deploy-switch", null);
+        switchStart.EnsureSuccessStatusCode();
+        var started = (await switchStart.Content.ReadFromJsonAsync<AgentStudio.Clients.ClientDrainStatus>(ApiJson))!;
+        Assert.NotNull(started.SwitchStartedAt);
+        (await management.PostAsync($"/api/clients/{reviewRunnerId}/deploy-switch", null)).EnsureSuccessStatusCode();
+        var reloaded = (await management.GetFromJsonAsync<AgentStudio.Clients.ClientDrainStatus>(
+            $"/api/clients/{reviewRunnerId}/drain-status", ApiJson))!;
+        Assert.Equal(started.SwitchStartedAt, reloaded.SwitchStartedAt);
+        Assert.Equal(drained.DrainRequestedAt, reloaded.DrainRequestedAt);
+
         (await management.PostAsync($"/api/clients/{reviewRunnerId}/resume", null)).EnsureSuccessStatusCode();
         var resumed = (await management.GetFromJsonAsync<AgentStudio.Clients.ClientDrainStatus>(
             $"/api/clients/{reviewRunnerId}/drain-status", ApiJson))!;
         Assert.False(resumed.Draining);
+        Assert.Null(resumed.SwitchStartedAt);
     }
 
     /// <summary>A coding run settled with a result and one review attempt over it.</summary>

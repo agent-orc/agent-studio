@@ -1,3 +1,4 @@
+import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
 import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { catchError, forkJoin, of, switchMap } from 'rxjs';
 import type { CliType } from '../../../../models/task.model';
@@ -153,8 +154,6 @@ export class QuotaForecastPanelComponent implements OnInit {
 
   when(iso: string | null): string {
     if (!iso) return 'unknown';
-    return new Date(iso).toLocaleString('en-US', {
-      weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
-    });
+    return formatZonedTime(iso, browserTimeZone()) ?? 'unknown';
   }
 }

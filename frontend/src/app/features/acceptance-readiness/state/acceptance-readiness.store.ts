@@ -13,10 +13,17 @@ import type {
 } from '../models/acceptance-readiness.model';
 import { groupByReadiness, readinessKey, readyJobs, type ReadinessGroup } from '../models/acceptance-readiness-groups.util';
 
+/**
+ * Where the round was opened. Each host renders only its own drafts, so the
+ * board lane, the card detail and the task toolbar never stack two dialogs.
+ */
+export type AcceptanceRoundOrigin = 'board' | 'detail' | 'toolbar';
+
 /** A round the owner is reviewing before it is sent. */
 export interface AcceptanceRoundDraft {
   readonly job: TaskInfo;
   readonly item: AcceptanceReadinessItem;
+  readonly origin: AcceptanceRoundOrigin;
 }
 
 const BATCH_POLL_MS = 250;
@@ -56,35 +63,14 @@ export class AcceptanceReadinessStore {
     return this.checked() ? groupByReadiness(jobs, this.items(), this.filter()) : null;
   }
 
-  readyAmong(jobs: readonly TaskInfo[]): TaskInfo[] {
-    return readyJobs(jobs, this.items());
+  /** The open round draft of `origin`, or null when another host opened it. */
+  draftFor(origin: AcceptanceRoundOrigin): AcceptanceRoundDraft | null {
+    const draft = this.roundDraft();
+    return draft?.origin === origin ? draft : null;
   }
 
-  /**
-   * AGT-3830: checks one open Human Review card and merges its answer, so a
-   * card opened without the board (a phone, a deep link, Needs you) reads
-   * the same readiness the lane shows. Concurrent checks of a card coalesce.
-   */
-  async check(job: Pick<TaskInfo, 'id' | 'taskKey' | 'watchPath' | 'state'>): Promise<void> {
-    const key = readinessKey(job);
-    if (job.state !== TaskState.HumanReview || this.checking.has(key)) return;
-    this.checking.add(key);
-    try {
-      const report = await firstValueFrom(this.http.post<AcceptanceReadinessReport>(
-        '/api/tasks/acceptance-readiness', { items: [{ jobId: job.id, watchPath: job.watchPath }] },
-      ));
-      const item = report.items.find(candidate => candidate.taskKey === job.taskKey || candidate.jobId === job.id);
-      this.items.update(current => {
-        const next = new Map(current);
-        if (item) next.set(key, item);
-        else next.delete(key);
-        return next;
-      });
-    } catch {
-      // A failed check leaves the last answer; the lane check reports errors.
-    } finally {
-      this.checking.delete(key);
-    }
+  readyAmong(jobs: readonly TaskInfo[]): TaskInfo[] {
+    return readyJobs(jobs, this.items());
   }
 
   /** Runs the completion checks for the lane's cards without moving any of them. */
@@ -108,6 +94,37 @@ export class AcceptanceReadinessStore {
       this.error.set(errorMessage(err, 'The acceptance checks could not run.'));
     } finally {
       this.loading.set(false);
+    }
+  }
+
+  /**
+   * AGT-3867: checks one Human Review card, for its detail and toolbar, and
+   * merges the answer without touching the lane's grouping state. A failed
+   * check keeps the last answer: the detail then offers no speculative step.
+   * AGT-3830: a card opened without the board (a phone, a deep link, Needs
+   * you) reads the same readiness the lane shows. Concurrent checks of a
+   * card coalesce.
+   */
+  async checkCard(job: Pick<TaskInfo, 'id' | 'taskKey' | 'watchPath' | 'state'>): Promise<void> {
+    const key = readinessKey(job);
+    if (job.state !== TaskState.HumanReview || this.checking.has(key)) return;
+    this.checking.add(key);
+    try {
+      const report = await firstValueFrom(this.http.post<AcceptanceReadinessReport>(
+        '/api/tasks/acceptance-readiness',
+        { items: [{ jobId: job.id, watchPath: job.watchPath }] },
+      ));
+      const item = report.items.find(entry => entry.taskKey === job.taskKey || entry.jobId === job.id);
+      this.items.update(current => {
+        const next = new Map(current);
+        if (item) next.set(key, item);
+        else next.delete(key);
+        return next;
+      });
+    } catch {
+      // The board check and the server refusal still name the reason.
+    } finally {
+      this.checking.delete(key);
     }
   }
 
@@ -143,11 +160,11 @@ export class AcceptanceReadinessStore {
     await this.refresh(lane.filter(job => !this.results().some(result => result.accepted && result.jobId === job.id)));
   }
 
-  openRound(job: TaskInfo): void {
+  openRound(job: TaskInfo, origin: AcceptanceRoundOrigin = 'board'): void {
     const item = this.itemFor(job);
     if (!item?.round) return;
     this.roundError.set(null);
-    this.roundDraft.set({ job, item });
+    this.roundDraft.set({ job, item, origin });
   }
 
   closeRound(): void {

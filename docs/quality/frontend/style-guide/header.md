@@ -60,14 +60,16 @@ menu. `studio-tab-actions` owns these controls (`ccc0039eb`, AGT-2819).
 The acceptance refusal (`app-acceptance-refusal`, AGT-3704) renders only for a
 Human Review Accept that is held by its integration verdict or was refused by
 the server. It shows the reason as a compact warning indicator and exactly one
-action: Retry integration for a failed integration, otherwise Accept with
-override, which asks for a written reason. It is omitted during the bounded
+action: Retry integration for a failed integration, Send a round… when no
+override can admit the card (AGT-3867), otherwise Accept with override, which
+asks for a written reason. It is omitted during the bounded
 Git wait (the primary's skeleton is that progress) and when the attempt-gap
 notice owns the refusal. The reason truncates first at narrow widths; its
 tooltip keeps the full sentence. AGT-3830: a content refusal (acceptance readiness
 `review-concerns` or `no-content-verdict`, or a server `completion-content-gap`)
 replaces Accept instead of preceding it: Review again is the primary, Accept
-with a reason… sits beside it, and the reason reads the same words as the board
+with a reason… sits beside it (Send a round… where the completion policy lets
+no override admit the card, AGT-3867), and the reason reads the same words as the board
 and Needs you. The open card checks its own readiness through
 `POST /api/tasks/acceptance-readiness`. After a refused click the visible
 refusal takes focus; refusals do not raise a sticky notice over the header. The primary action can be Run now

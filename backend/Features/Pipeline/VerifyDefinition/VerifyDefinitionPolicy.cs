@@ -8,6 +8,9 @@ namespace AgentStudio.Pipeline;
 /// <summary>Where the verify commands of a repository come from (AGT-3428).</summary>
 public enum VerifyDefinitionState
 {
+    /// <summary>The repository checkout cannot be read, so discovery has not run.</summary>
+    CheckoutMissing,
+
     /// <summary>project.yml, a build profile, or the repository layout yields at least one command.</summary>
     Derived,
 
@@ -115,6 +118,11 @@ public static class VerifyDefinitionPolicy
     public static VerifyDefinitionReport Inspect(string? repositoryPath, BuildProfile? profile)
     {
         var root = repositoryPath ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            return new VerifyDefinitionReport(
+                VerifyDefinitionState.CheckoutMissing,
+                VerifyPlan.SourceNone,
+                "The repository checkout is missing. Set the repository checkout path in Project basics, then check the build and test commands.");
         var plan = VerifyCommandPlanner.Plan(root, profile);
         var state = Classify(plan);
         if (state != VerifyDefinitionState.Missing) return new VerifyDefinitionReport(state, plan.Source);

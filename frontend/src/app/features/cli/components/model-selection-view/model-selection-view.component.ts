@@ -1,3 +1,4 @@
+import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { QuotaApiService } from '../../../quota';
 import type { ActiveModelSwitch, EffectiveModelSelection, ModelSelectionEvent, SelectionRoute } from '../../../quota/services/quota-api.service';
@@ -124,7 +125,7 @@ export class ModelSelectionViewComponent implements OnInit {
     return `/?job=${encodeURIComponent(item.taskKey ?? '')}`;
   }
   formatTime(value: string | null): string {
-    return value ? new Date(value).toLocaleString('en-US') : 'Not known';
+    return formatZonedTime(value, browserTimeZone()) ?? 'Not known';
   }
 
   private writeUrl(): void {

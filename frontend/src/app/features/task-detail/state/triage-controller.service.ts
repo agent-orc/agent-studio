@@ -11,8 +11,8 @@ import { describeMoveRefusal } from '../../../models/lane-move-guard';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
-import { AcceptanceRefusalStore, serverAcceptanceRefusal } from './acceptance-refusal.model';
-import { AcceptanceReadinessStore } from '../../acceptance-readiness/state/acceptance-readiness.store';
+import { AcceptanceRefusalStore, acceptanceRefusalSentence, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { AcceptanceReadinessStore, acceptanceOverrideAllowed } from '../../acceptance-readiness';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import {
   archiveIntegrationVerdict,
@@ -272,7 +272,7 @@ export class TriageController {
         this.clearActing();
         const refusal = typeof err?.error?.error === 'string' ? err.error.error.trim() : '';
         const message = err?.status === 409 && err?.error?.code === 'completion-content-gap'
-          ? `${(refusal || 'Completion refused: the current brief has no passing content verdict.').replace(/^Completion refused:\s*/i, 'Acceptance needs content review: ')} Complete the required review for the current brief, or use a written operator override, then try Accept again.`
+          ? contentGapBanner(refusal)
           : err?.status === 409 && err?.error?.code === 'run-attempt-missing'
             ? 'Acceptance needs an operator override. Add a written reason in the acceptance section below, then accept with override.'
             : err?.status === 409 && err?.error?.code === 'integration-dead-end'
@@ -294,12 +294,14 @@ export class TriageController {
         }
         if (ev.targetState === '6-completed' && err?.status === 409
             && err?.error?.code === 'completion-content-gap') {
-          // AGT-3830: no sticky toast over the header. The refusal replaces
-          // Accept on the reopened card (toolbar or phone) with its next step,
-          // its reason takes focus, and `task-move-refusal` announces it.
+          // AGT-3867: the server's own reason, never a guessed brief
+          // mismatch. AGT-3830: no sticky toast over the header. The refusal
+          // replaces Accept on the reopened card (toolbar or phone) with its
+          // next step, its reason takes focus, and `task-move-refusal`
+          // announces it.
           this.acceptanceRefusals.record(serverAcceptanceRefusal(info, err));
           this.acceptanceRefusals.requestFocus(info.taskKey);
-          void this.acceptanceReadiness.check(info);
+          void this.acceptanceReadiness.checkCard(info);
           this.jobService.refresh(true);
           return;
         }
@@ -651,4 +653,16 @@ export class TriageController {
     }
   }
 
+}
+
+/**
+ * AGT-3867: the banner of a content refusal names the server's reason and
+ * only the next steps the detail offers. An override is named only where the
+ * completion policy lets it admit the card.
+ */
+function contentGapBanner(refusal: string): string {
+  const reason = acceptanceRefusalSentence(refusal || 'Completion refused: the current brief has no passing content verdict.');
+  return acceptanceOverrideAllowed(refusal)
+    ? `${reason} Send a round to close the gap, review again, or accept with a written reason under Acceptance next steps.`
+    : `${reason} Send a round to close the gap under Acceptance next steps; an override cannot replace the missing report.`;
 }

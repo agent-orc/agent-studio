@@ -3,13 +3,24 @@ using AgentStudio.Diagnostics;
 
 namespace AgentStudio.Pipeline;
 
+/// <summary>
+/// <see cref="FlakySuspectRun"/> (AGT-3858): the run is a batch red that no
+/// isolation child reproduced and whose same-code re-gate did not reproduce it.
+/// </summary>
 public sealed record BatchTestFailure(string TestName, string BatchId, string RunId,
-    IReadOnlyList<string> Members, DateTimeOffset AtUtc, string ErrorExcerpt, bool FlakyRerunPassed);
+    IReadOnlyList<string> Members, DateTimeOffset AtUtc, string ErrorExcerpt, bool FlakyRerunPassed,
+    bool FlakySuspectRun = false);
 
+/// <summary>
+/// <see cref="FlakySuspect"/> holds for three batches with pairwise disjoint
+/// member sets, or since AGT-3858 for any failure in a flaky suspect run
+/// (<see cref="FlakySuspectRuns"/>).
+/// </summary>
 public sealed record BatchTestFailureRank(string TestName, int Batches, int Runs,
     int DistinctMemberSets, DateTimeOffset FirstFailureUtc, DateTimeOffset LastFailureUtc,
     string LatestErrorExcerpt, bool FlakyRerunPassed, bool FlakySuspect,
-    IReadOnlyList<string> BatchIds, IReadOnlyList<BatchTestFailure> Failures);
+    IReadOnlyList<string> BatchIds, IReadOnlyList<BatchTestFailure> Failures,
+    int FlakySuspectRuns = 0);
 
 public sealed record BatchTestFailureReport(string Project, int WindowDays,
     IReadOnlyList<BatchTestFailureRank> Tests, int PendingEvidenceRuns);
@@ -17,11 +28,14 @@ public sealed record BatchTestFailureReport(string Project, int WindowDays,
 /// <summary>Pure window and attribution policy. A common member can explain repeated reds.</summary>
 public static class BatchGateFailureRanking
 {
+    /// <param name="flakySuspectRuns">AGT-3858: <c>batchId/runId</c> of the active flaky suspect runs.</param>
     public static IReadOnlyList<BatchTestFailureRank> Rank(IEnumerable<BatchTestFailure> failures,
-        DateTimeOffset now, int windowDays = 7)
+        DateTimeOffset now, int windowDays = 7, IReadOnlySet<string>? flakySuspectRuns = null)
     {
         var cutoff = now.AddDays(-windowDays);
         return failures.Where(f => f.AtUtc >= cutoff && f.AtUtc <= now)
+            .Select(f => flakySuspectRuns?.Contains(f.BatchId + "/" + f.RunId) == true
+                ? f with { FlakySuspectRun = true } : f)
             .GroupBy(f => f.TestName, StringComparer.Ordinal)
             .Select(group =>
             {
@@ -36,14 +50,16 @@ public static class BatchGateFailureRanking
                     suspect = sets[i].Length > 0 && sets[j].Length > 0 && sets[k].Length > 0
                         && Disjoint(sets[i], sets[j]) && Disjoint(sets[i], sets[k])
                         && Disjoint(sets[j], sets[k]);
+                var suspectRuns = ordered.Where(f => f.FlakySuspectRun)
+                    .Select(f => f.BatchId + "/" + f.RunId).Distinct(StringComparer.Ordinal).Count();
                 return new BatchTestFailureRank(group.Key, batches.Length,
                     ordered.Select(f => f.RunId).Distinct(StringComparer.Ordinal).Count(),
                     sets.Select(set => string.Join("\n", set)).Distinct(StringComparer.Ordinal).Count(),
                     ordered[0].AtUtc, ordered[^1].AtUtc,
                     ordered.LastOrDefault(f => f.ErrorExcerpt.Length > 0)?.ErrorExcerpt ?? "",
-                    ordered.Any(f => f.FlakyRerunPassed), suspect,
+                    ordered.Any(f => f.FlakyRerunPassed), suspect || suspectRuns > 0,
                     batches.OrderByDescending(batch => batch.Max(f => f.AtUtc)).Select(batch => batch.Key).ToArray(),
-                    ordered.Reverse().ToArray());
+                    ordered.Reverse().ToArray(), suspectRuns);
             })
             .OrderByDescending(row => row.FlakySuspect).ThenByDescending(row => row.Batches)
             .ThenByDescending(row => row.Runs).ThenByDescending(row => row.LastFailureUtc).ToArray();

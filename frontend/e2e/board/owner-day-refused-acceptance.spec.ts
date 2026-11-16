@@ -87,7 +87,12 @@ for (const view of VIEWS) {
     await open(page, card, view.width, view.theme);
     const accept = plainAccept(page, view.width);
     await expect(accept).toBeVisible({ timeout: 15_000 });
-    pretendReady = false;
+    // Stop pretending only once the click sent the move: the detail's own
+    // readiness re-checks (AGT-3867 next steps) would otherwise replace
+    // Accept before the click lands.
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.endsWith('/move') && request.method() === 'POST') pretendReady = false;
+    });
     const move = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/move') && r.request().method() === 'POST');
     await accept.click();
     expect((await move).status()).toBe(409);

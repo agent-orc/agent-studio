@@ -88,3 +88,48 @@ describe('SegmentedControlComponent', () => {
     expect(light.querySelector('.segmented__icon')).toBeNull();
   });
 });
+
+describe('SegmentedControlComponent keyboard (AGT-3834)', () => {
+  function setup(rovingFocus = true) {
+    TestBed.configureTestingModule({
+      imports: [SegmentedControlComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(SegmentedControlComponent<'a' | 'b' | 'c'>);
+    fixture.componentRef.setInput('options', [
+      { value: 'a', label: 'A', testid: 'opt-a' },
+      { value: 'b', label: 'B', testid: 'opt-b' },
+      { value: 'c', label: 'C', testid: 'opt-c' },
+    ]);
+    fixture.componentRef.setInput('value', 'b');
+    fixture.componentRef.setInput('rovingFocus', rovingFocus);
+    fixture.detectChanges();
+    const el = (id: string) => fixture.nativeElement.querySelector(`[data-testid="opt-${id}"]`) as HTMLButtonElement;
+    return { fixture, el };
+  }
+
+  it('is one Tab stop, on the selected option', async () => {
+    const { fixture, el } = setup();
+    await fixture.whenStable();
+    expect(['a', 'b', 'c'].map((id) => el(id).getAttribute('tabindex'))).toEqual(['-1', '0', '-1']);
+  });
+
+  it('moves focus with the arrow keys and selects with a click (Space/Enter)', async () => {
+    const { fixture, el } = setup();
+    await fixture.whenStable();
+    const emitted: string[] = [];
+    fixture.componentInstance.valueChange.subscribe((v) => emitted.push(v));
+    el('b').focus();
+    el('b').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(el('c'));
+    expect(emitted).toEqual([]);
+    el('c').click();
+    expect(emitted).toEqual(['c']);
+  });
+
+  it('leaves Tab order to an enclosing group when rovingFocus is off', async () => {
+    const { fixture, el } = setup(false);
+    await fixture.whenStable();
+    expect(['a', 'b', 'c'].map((id) => el(id).getAttribute('tabindex'))).toEqual([null, null, null]);
+  });
+});

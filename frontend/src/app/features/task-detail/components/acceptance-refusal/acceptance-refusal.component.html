@@ -19,20 +19,20 @@
     <button type="button"
             [class]="actionClass()"
             data-testid="acceptance-refusal-action"
-            [attr.aria-haspopup]="refusal().action === 'override' ? 'dialog' : null"
+            [attr.aria-haspopup]="refusal().action === 'override' || refusal().action === 'send-round' ? 'dialog' : null"
             [attr.aria-expanded]="refusal().action === 'override' ? overrideOpen() : null"
             [disabled]="disabled() || busy()"
             [cacTooltip]="actionTooltip()"
             (click)="onAction($event)">{{ refusal().actionLabel }}</button>
-    @if (refusal().action === 'review-again') {
+    @if (refusal().secondary; as secondary) {
       <button type="button"
               [class]="secondaryClass()"
-              data-testid="acceptance-refusal-override"
+              [attr.data-testid]="secondary.action === 'send-round' ? 'acceptance-refusal-send-round' : 'acceptance-refusal-override'"
               aria-haspopup="dialog"
-              [attr.aria-expanded]="overrideOpen()"
+              [attr.aria-expanded]="secondary.action === 'override' ? overrideOpen() : null"
               [disabled]="disabled() || busy()"
-              [cacTooltip]="'Accept now and record a written reason on the card'"
-              (click)="toggleOverride($event)">Accept with a reason…</button>
+              [cacTooltip]="secondaryTooltip()"
+              (click)="onSecondary($event)">{{ secondary.actionLabel }}</button>
     }
   </span>
   @if (error() && !overrideOpen()) {
@@ -70,4 +70,7 @@
               [disabled]="busy()" (click)="cancelOverride()">Cancel</button>
     </div>
   </div>
+}
+@if (roundDraft(); as draft) {
+  <app-acceptance-round-dialog [draft]="draft" />
 }

@@ -43,6 +43,6 @@
     </div>
   }
 </section>
-@if (store.roundDraft(); as draft) {
+@if (store.draftFor('board'); as draft) {
   <app-acceptance-round-dialog [draft]="draft" />
 }

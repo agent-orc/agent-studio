@@ -51,6 +51,7 @@ import {
   LanePagerService,
   AcceptanceRefusalStore,
   acceptanceRefusalFor,
+  acceptanceRefusalTooltip,
   overflowActionsFor,
   primaryActionForTask,
   mergeAcceptViewFor,
@@ -371,7 +372,7 @@ export class App implements OnInit, OnDestroy {
     const key = info?.taskKey;
     const state = info?.state;
     if (!info || !key || state !== TaskState.HumanReview) return;
-    untracked(() => { if (!this.acceptanceReadiness.itemFor(info)) void this.acceptanceReadiness.check(info); });
+    untracked(() => { if (!this.acceptanceReadiness.itemFor(info)) void this.acceptanceReadiness.checkCard(info); });
   });
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
@@ -1383,7 +1384,9 @@ export class App implements OnInit, OnDestroy {
       primaryTooltip: this.studioPrimaryDecisionRefusal()
         ?? (this.studioPrimaryBlockedByIntegration()
           ? acceptanceHoldReason(this.selectedJob()!.info)
-          : taskDetailPrimaryShortcutTooltip(this.studioMergeAcceptView()?.statusTooltip || label)),
+          : this.studioAcceptanceRefusal()
+            ? acceptanceRefusalTooltip(this.studioAcceptanceRefusal()!)
+            : taskDetailPrimaryShortcutTooltip(this.studioMergeAcceptView()?.statusTooltip || label)),
       awaitingGit: this.studioPrimaryAwaitingGit(),
       blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
       blockedByDecision: !!this.studioPrimaryDecisionRefusal(),

@@ -9,6 +9,7 @@ import {
   WORKBENCH_DECISION_CHANGE_MESSAGE,
   WORKBENCH_DECISION_HYDRATE_MESSAGE,
   buildIsolatedHtmlSrcdoc,
+  focusScrollRegions,
   openIsolatedHtmlExternalLink,
   resolveIsolatedHtmlNavigation,
 } from './sandboxed-html.util';
@@ -132,6 +133,74 @@ describe('sandboxed HTML navigation', () => {
   });
 });
 
+describe('Dossier decision controls in the isolated frame', () => {
+  // The DEMO-W2 seed shape: a heading, then list options with a bold label and a description.
+  const point = '<div data-decision-id="window" data-decision-kind="single">'
+    + '<h3>How long are exports kept?</h3><ul>'
+    + '<li data-option-id="window-7"><b>7 days</b>: smallest footprint.</li>'
+    + '<li data-option-id="window-30"><b>30 days (recommended)</b>: covers a billing cycle.</li>'
+    + '</ul><label>Optional note <textarea data-comment="Note"></textarea></label></div>'
+    + '<section data-decision-id="proof" data-decision-kind="confirm">'
+    + '<span data-option-id="proof-receipt"><input type="checkbox"> Keep a receipt</span></section>';
+
+  function enhance(html: string): Document {
+    const srcdoc = buildIsolatedHtmlSrcdoc(html, { workbenchDecisions: true });
+    const doc = new DOMParser().parseFromString(srcdoc, 'text/html');
+    const scripts = Array.from(doc.querySelectorAll('script'));
+    const bridge = scripts[scripts.length - 1].textContent ?? '';
+    const frameWindow = { addEventListener: () => undefined };
+    const parent = { postMessage: vi.fn() };
+    new Function('document', 'window', 'parent', bridge)(doc, frameWindow, parent);
+    return doc;
+  }
+
+  it('makes the option text the label of its control, so a tap on the text selects it', () => {
+    const doc = enhance(point);
+    const option = doc.querySelector('[data-option-id="window-30"]')!;
+    const label = option.querySelector('label[data-studio-decision-option]')!;
+    const input = label.querySelector<HTMLInputElement>('input[data-studio-decision-control]')!;
+    const text = label.querySelector<HTMLElement>('[data-studio-decision-text]')!;
+
+    expect(label.parentElement).toBe(option);
+    expect(input.type).toBe('radio');
+    expect(text.textContent).toBe('30 days (recommended): covers a billing cycle.');
+    text.querySelector('b')!.click();
+    expect(input.checked).toBe(true);
+  });
+
+  it('keeps an authored control and wraps its text in the same label', () => {
+    const doc = enhance(point);
+    const option = doc.querySelector('[data-option-id="proof-receipt"]')!;
+    const label = option.querySelector('label[data-studio-decision-option]')!;
+    const input = option.querySelectorAll('input');
+
+    expect(input).toHaveLength(1);
+    expect(input[0].parentElement).toBe(label);
+    label.querySelector<HTMLElement>('[data-studio-decision-text]')!.click();
+    expect(input[0].checked).toBe(true);
+  });
+
+  it('names each decision point as a group with its question', () => {
+    const doc = enhance(point);
+    const single = doc.querySelector('[data-decision-id="window"]')!;
+    const confirm = doc.querySelector('[data-decision-id="proof"]')!;
+    const question = doc.getElementById(single.getAttribute('aria-labelledby')!);
+
+    expect(single.getAttribute('role')).toBe('radiogroup');
+    expect(question?.textContent).toBe('How long are exports kept?');
+    expect(confirm.getAttribute('role')).toBe('group');
+    expect(confirm.getAttribute('aria-label')).toBe('proof');
+  });
+
+  it('lays the option out as control plus one text block with a 24 px target', () => {
+    const srcdoc = buildIsolatedHtmlSrcdoc(point, { workbenchDecisions: true });
+
+    expect(srcdoc).not.toMatch(/\[data-option-id\]\s*\{[^}]*display:\s*flex/);
+    expect(srcdoc).toMatch(/\[data-studio-decision-option\]\s*\{[^}]*display: flex[^}]*min-height: 24px/);
+    expect(srcdoc).toMatch(/\[data-studio-decision-text\]\s*\{[^}]*display: block/);
+  });
+});
+
 describe('external links from isolated HTML frames', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -192,5 +261,34 @@ describe('external links from isolated HTML frames', () => {
 
     expect(asked).toEqual([]);
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('scroll regions in isolated HTML (AGT-3835)', () => {
+  function scrolling(el: HTMLElement, scrolls: boolean): void {
+    Object.defineProperty(el, 'clientWidth', { configurable: true, value: 300 });
+    Object.defineProperty(el, 'scrollWidth', { configurable: true, value: scrolls ? 600 : 300 });
+  }
+
+  it('makes a scrolling table focusable and releases it once it fits', () => {
+    document.body.innerHTML = '<table style="display: block; overflow-x: auto"><tr><td>wide</td></tr></table>'
+      + '<pre style="overflow-x: auto"><a href="#x">link</a></pre><p>text</p>';
+    const table = document.querySelector('table')!;
+    const pre = document.querySelector('pre')!;
+    scrolling(table, true);
+    scrolling(pre, true);
+
+    focusScrollRegions(document);
+    expect(table.getAttribute('tabindex')).toBe('0');
+    expect(pre.hasAttribute('tabindex')).toBe(false);
+    expect(document.querySelector('p')!.hasAttribute('tabindex')).toBe(false);
+
+    scrolling(table, false);
+    focusScrollRegions(document);
+    expect(table.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('runs inside every isolated frame', () => {
+    expect(buildIsolatedHtmlSrcdoc('<p>x</p>')).toContain('data-studio-scroll-focus');
   });
 });

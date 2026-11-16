@@ -1,24 +1,24 @@
 <section class="token-usage" data-testid="token-usage-section">
   <aside class="token-usage__tree" aria-label="Token usage sections" data-testid="token-usage-tree">
     <div class="token-usage__tree-group">Scope</div>
-    <button type="button" [class.token-usage__tree-item--active]="page() === 'workspace'"
-            [attr.aria-current]="page() === 'workspace' ? 'page' : null"
+    <button type="button" [class.token-usage__tree-item--active]="activePage() === 'workspace'"
+            [attr.aria-current]="activePage() === 'workspace' ? 'page' : null"
             data-testid="token-usage-nav-workspace" (click)="pageChange.emit('workspace')">
       <strong>Workspace &amp; projects</strong><span>Recorded token spend and project filters</span>
     </button>
-    <button type="button" [class.token-usage__tree-item--active]="page() === 'analysis'"
-            [attr.aria-current]="page() === 'analysis' ? 'page' : null"
+    <button type="button" [class.token-usage__tree-item--active]="activePage() === 'analysis'"
+            [attr.aria-current]="activePage() === 'analysis' ? 'page' : null"
             data-testid="token-usage-nav-analysis" (click)="pageChange.emit('analysis')">
       <strong>Card analysis</strong><span>Spend per card</span>
     </button>
     <div class="token-usage__tree-group">CLI accounts</div>
-    <button type="button" [class.token-usage__tree-item--active]="page() === 'claude'"
-            [attr.aria-current]="page() === 'claude' ? 'page' : null"
+    <button type="button" [class.token-usage__tree-item--active]="activePage() === 'claude'"
+            [attr.aria-current]="activePage() === 'claude' ? 'page' : null"
             data-testid="token-usage-nav-claude" (click)="pageChange.emit('claude')">
       <strong>Claude</strong><span>Account quota windows and burn</span>
     </button>
-    <button type="button" [class.token-usage__tree-item--active]="page() === 'codex'"
-            [attr.aria-current]="page() === 'codex' ? 'page' : null"
+    <button type="button" [class.token-usage__tree-item--active]="activePage() === 'codex'"
+            [attr.aria-current]="activePage() === 'codex' ? 'page' : null"
             data-testid="token-usage-nav-codex" (click)="pageChange.emit('codex')">
       <strong>Codex</strong><span>Account quota windows and burn</span>
     </button>
@@ -75,7 +75,8 @@
       [timeline24h]="usage.timeline24h()"
       [timeline7d]="usage.timeline7d()"
       [refreshing]="usage.refreshing()[cliPage()]"
-      (refresh)="usage.refreshOne(cliPage())" />
+      (refresh)="usage.refreshOne(cliPage())"
+      (openAnalysis)="pageChange.emit('analysis')" />
     }
   }
   }

@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { dismissDevErrorDialog } from '../helpers/theme';
+import { SNAPSHOT } from '../../src/mockups/usage-chips/app/usage-chips.fixtures';
 
 const JOB_ID = 'core-token-usage-fixture';
 const WATCH_PATH = 'C:/fixtures/agent-taskboard';
@@ -20,6 +21,7 @@ function jobDetail() {
     info: {
       id: JOB_ID,
       jobKey: `${WATCH_PATH}::${JOB_ID}`,
+      taskKey: `${WATCH_PATH}::${JOB_ID}`,
       title: 'CORE CLI-footer token usage fixture',
       state: '4-auto-review',
       agent: 'codex',
@@ -252,6 +254,10 @@ async function installFixtureRoutes(page: Page, tokenRunCount = 4) {
     devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
   })));
   await page.route('**/api/clients', route => route.fulfill(json([])));
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, route => route.fulfill(json([])));
+  await page.route(/\/api\/(?:projects|v1\/projects(?:\?|$))/, route => route.fulfill(json([])));
+  await page.route('**/api/projects/*/workbenches**', route => route.fulfill(json({ items: [] })));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill(json(structuredClone(SNAPSHOT))));
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ items: [] })));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({
     snapshots: [],
@@ -404,4 +410,48 @@ for (const runCase of [
       });
     }
   }
+}
+
+// AGT-3794-F13: at the default 1280 px split layout the Overview pane is about
+// 340 px wide. The per-run tokens and cost must stay rendered there (duration
+// may collapse first) and the task total title must not be cut off.
+for (const theme of ['light', 'dark'] as const) {
+  test(`run rows keep tokens and cost in the default 1280 px split layout in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.addInitScript(({ selectedTheme }) => {
+      localStorage.setItem('atp.studio.theme', selectedTheme);
+    }, { selectedTheme: theme });
+    await installFixtureRoutes(page, 4);
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+
+    const usage = page.getByTestId('pipeline-token-usage');
+    await expect(usage).toBeVisible({ timeout: 10_000 });
+    await dismissDevErrorDialog(page);
+
+    const paneWidth = await page.getByTestId('overview-pipeline').evaluate(el => el.getBoundingClientRect().width);
+    expect(paneWidth).toBeLessThan(620);
+
+    const runs = page.getByTestId('pipeline-token-usage-run');
+    await expect(runs).toHaveCount(4);
+    for (let i = 0; i < 4; i++) {
+      const run = runs.nth(i);
+      const total = run.getByTestId('pipeline-token-usage-run-total');
+      const cost = run.getByTestId('pipeline-token-usage-run-cost');
+      expect(await total.boundingBox(), `run ${i} tokens rendered`).not.toBeNull();
+      expect(await cost.boundingBox(), `run ${i} cost rendered`).not.toBeNull();
+      await expect(total).not.toHaveText('');
+      await expect(cost).toContainText('$');
+    }
+
+    const title = page.locator('[data-testid="pipeline-token-usage-total"] .ptu__sum-title');
+    await expect(title).toHaveText('All runs · task total');
+    const clipped = await title.evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    expect(clipped).toBe(false);
+    expect(await page.getByTestId('pipeline-token-usage-grand-total-tokens').boundingBox()).not.toBeNull();
+    expect(await page.getByTestId('pipeline-token-usage-grand-total-cost').boundingBox()).not.toBeNull();
+
+    await usage.screenshot({
+      path: join(RESULTS_DIR || 'test-results', `pipeline-token-usage-1280-split-${theme}.png`),
+    });
+  });
 }

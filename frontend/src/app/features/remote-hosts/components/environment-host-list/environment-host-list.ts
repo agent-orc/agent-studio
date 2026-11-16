@@ -4,6 +4,7 @@ import type { RemoteHost } from '../../models/remote-host.model';
 import { roleSlotTotal } from '../../models/role-slots';
 import { groupNotEnrolled } from '../../models/host-summary';
 import { hostStatusIndicatorTone, hostStatusLabel } from '../../models/remote-host.model';
+import { heldCauseLabel } from '../../../../models/held-capability-cause';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { differsFromStableLabel, type StableReleaseIdentity } from '../../models/host-release-drift';
 
@@ -27,6 +28,20 @@ export class EnvironmentHostListComponent {
   /** "differs from Stable 3d61e8b" for a machine whose worst role is another build (AGT-3689). */
   differsLabel(group: PhysicalHostGroup): string | null {
     return group.machine.releaseDrift?.state === 'differs' ? differsFromStableLabel(this.stableRelease()) : null;
+  }
+  /**
+   * AGT-3840: an Online role can still hold a key that waiting work needs;
+   * the row names it so the list is no longer a dead end.
+   */
+  heldLabel(role: RemoteHost): string | null {
+    const held = role.status === 'retired' ? [] : role.heldCapabilities ?? [];
+    if (!held.length) return null;
+    return held.length === 1 ? `Held: ${held[0].key}` : `Held: ${held[0].key} +${held.length - 1}`;
+  }
+  heldTitle(role: RemoteHost): string {
+    return (role.heldCapabilities ?? [])
+      .map(hold => `${hold.key} · ${heldCauseLabel(hold.cause)}${hold.detail ? ': ' + hold.detail : ''}`)
+      .join('\n');
   }
   hasGroup(name: string): boolean { return this.groups().some(group => group.name === name); }
   notEnrolled(group: PhysicalHostGroup): boolean { return groupNotEnrolled(group, this.now()); }

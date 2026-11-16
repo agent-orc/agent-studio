@@ -12,6 +12,8 @@ import {
   AcceptanceRefusalStore,
   type AcceptanceRefusal,
 } from '../../state/acceptance-refusal.model';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
+import { AcceptanceRoundDialogComponent } from '../../../acceptance-readiness/lazy';
 
 /** A refusal request for focus is honoured only this long after the refusal. */
 const FOCUS_WINDOW_MS = 10_000;
@@ -41,7 +43,7 @@ function isVisible(el: HTMLElement): boolean {
   selector: 'app-acceptance-refusal',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [StatusIndicatorComponent, ConnectedOverlayDirective, TooltipDirective],
+  imports: [StatusIndicatorComponent, ConnectedOverlayDirective, TooltipDirective, AcceptanceRoundDialogComponent],
   templateUrl: './acceptance-refusal.component.html',
   styleUrl: './acceptance-refusal.component.scss',
 })
@@ -72,12 +74,23 @@ export class AcceptanceRefusalComponent {
     'override': 'Accept now and record a written reason on the card',
     'review-again': 'Run the content review again against the current brief',
     'retry-integration': 'Run the integration into the target branch again',
+    'send-round': 'Review and send the prefilled round that closes the gap',
   })[this.refusal().action]);
+  readonly secondaryTooltip = computed(() => this.refusal().secondary?.action === 'send-round'
+    ? 'Review and send the prefilled round that closes the gap'
+    : 'Accept now and record a written reason on the card');
   readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length > 0);
 
   private readonly tasks = inject(TaskService);
   private readonly notifications = inject(NotificationService);
   private readonly refusals = inject(AcceptanceRefusalStore);
+  private readonly readiness = inject(AcceptanceReadinessStore);
+
+  /** AGT-3867: the round this toolbar opened, when an override cannot admit the card. */
+  readonly roundDraft = computed(() => {
+    const draft = this.readiness.draftFor('toolbar');
+    return draft && draft.job.id === this.job().id ? draft : null;
+  });
 
   private readonly focusReason = effect(() => {
     const request = this.refusals.focusRequest();
@@ -110,6 +123,19 @@ export class AcceptanceRefusalComponent {
     }
     if (this.refusal().action === 'review-again') {
       this.reviewAgain();
+      return;
+    }
+    if (this.refusal().action === 'send-round') {
+      this.readiness.openRound(this.job(), 'toolbar');
+      return;
+    }
+    this.toggleOverride(event);
+  }
+
+  onSecondary(event: MouseEvent): void {
+    if (this.disabled() || this.busy()) return;
+    if (this.refusal().secondary?.action === 'send-round') {
+      this.readiness.openRound(this.job(), 'toolbar');
       return;
     }
     this.toggleOverride(event);
