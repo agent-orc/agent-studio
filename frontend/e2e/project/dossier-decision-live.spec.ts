@@ -121,6 +121,135 @@ test('one answer is durable and open; the later answer starts one card', async (
   await capture(page, 'dossier-both-answered');
 });
 
+// AGT-3829: decide DEMO-W2 with the keyboard only. Focus must never drop to the
+// body, and no Tab press may leave it on the control it started from.
+test('the keyboard reaches, opens, confirms, and leaves the Dossier decision', async ({ page, request }) => {
+  const repository = resolve(process.env['PW_E2E_WORKSPACE']!, 'projects', 'demo-app');
+  commitSeededDocs(repository);
+  await expect.poll(async () => (await readWorkbench(request)).workbench.decision ?? null).toBeNull();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('atp.studio.theme')) localStorage.setItem('atp.studio.theme', 'light');
+    localStorage.setItem('defaultCliType', 'claude');
+  });
+  await page.goto('/');
+  const dismiss = page.getByTestId('crash-recovery-dismiss').first();
+  if (await dismiss.isVisible().catch(() => false)) await dismiss.click({ force: true });
+  const keys = new FocusWalk(page);
+
+  // Open the Dossier from Needs you: focus lands on its heading, not the body.
+  await page.getByTestId('studio-attention-trigger').focus();
+  await page.keyboard.press('Enter');
+  const row = page.getByTestId('studio-attention-list').getByTestId('attention-row')
+    .filter({ hasText: 'Export retention' }).first();
+  await row.getByTestId('attention-row-action').focus();
+  await page.keyboard.press('Enter');
+  const overviewOpen = page.getByTestId(`workbench-overview-open-${PROJECT}-${WORKBENCH_ID}`);
+  if (!await page.getByTestId('workbench-viewer').isVisible().catch(() => false)
+      && await overviewOpen.isVisible({ timeout: 5_000 }).catch(() => false)) {
+    await overviewOpen.focus();
+    await page.keyboard.press('Enter');
+  }
+  await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => keys.describe()).toBe('workbench-viewer-title');
+  await page.screenshot({ path: resolve(RESULTS, 'keyboard-dossier-heading.png') });
+
+  // Unanswered: Tab from the last decision note leaves the frame.
+  const firstPoint = 'frame:radio:window-7';
+  await keys.tabUntil(focus => focus.startsWith('frame:radio:'), 40);
+  expect(await keys.describe()).toBe(firstPoint);
+  await keys.tabUntil(focus => focus === LAST_NOTE, 6);
+  await keys.tab();
+  expect(keys.last()).not.toMatch(/^frame:/);
+  await page.screenshot({ path: resolve(RESULTS, 'keyboard-dossier-left-frame-unanswered.png') });
+
+  // Back into the frame, answer both points with the keyboard.
+  await keys.tabUntil(focus => focus.startsWith('frame:radio:window-'), 20, true);
+  await page.keyboard.press('ArrowDown');
+  await keys.tabUntil(focus => focus.startsWith('frame:radio:proof-'), 4);
+  await page.keyboard.press('Space');
+  const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+  await expect(frame.locator('[data-decision-id] input[type="radio"]:checked')).toHaveCount(2);
+  const inline = page.getByTestId('workbench-inline-decision-action');
+  await expect(inline).toContainText('2 of 2 answered');
+  await keys.tabUntil(focus => focus === LAST_NOTE, 4);
+  await keys.tab();
+  expect(keys.last()).toMatch(/^workbench-decision-(rework|start)$/);
+  await keys.tabUntil(focus => focus === 'workbench-decision-start', 4);
+
+  // The form takes focus, Escape hands it back, and Tab from the frame reaches the form.
+  await page.keyboard.press('Enter');
+  await expect.poll(() => keys.describe()).toBe('workbench-decision-title');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => keys.describe()).toBe('workbench-decision-start');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => keys.describe()).toBe('workbench-decision-title');
+  await keys.tabUntil(focus => focus === LAST_NOTE, 20, true);
+  await keys.tab();
+  expect(keys.last()).toBe('workbench-decision-title');
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type(`Implement export retention by keyboard ${Date.now().toString(36)}`);
+  await page.screenshot({ path: resolve(RESULTS, 'keyboard-dossier-form.png') });
+  await keys.tabUntil(focus => focus === 'workbench-decision-confirm', 20);
+  await expect(inline.getByTestId('workbench-decision-confirm')).toBeEnabled({ timeout: 30_000 });
+
+  // After Confirm, focus lands on the receipt and Tab moves on from it.
+  await page.keyboard.press('Enter');
+  await expect(inline.getByTestId('workbench-decision-created-tasks')).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => keys.describe()).toBe('workbench-decision-receipt');
+  await page.screenshot({ path: resolve(RESULTS, 'keyboard-dossier-receipt.png') });
+  await keys.tab();
+  expect((await readWorkbench(request)).workbench.status).toBe('decided');
+  writeFileSync(resolve(RESULTS, 'keyboard-dossier-focus-walk.txt'), keys.log.join('\n') + '\n');
+});
+
+const LAST_NOTE = 'frame:textarea:deletion-proof';
+
+/** Records every focus stop; a Tab press may not land on the body or stay on its control. */
+class FocusWalk {
+  readonly log: string[] = [];
+  private readonly stops: string[] = [];
+  constructor(private readonly page: Page) {}
+
+  last(): string { return this.stops.at(-1) ?? ''; }
+
+  async tab(reverse = false): Promise<string> {
+    const before = await this.describe();
+    await this.page.keyboard.press(reverse ? 'Shift+Tab' : 'Tab');
+    const after = await this.describe();
+    this.stops.push(after);
+    this.log.push(`${reverse ? 'shift+tab' : 'tab'} ${after}`);
+    expect(after, `focus after ${reverse ? 'Shift+Tab' : 'Tab'} from ${before}`).not.toBe('body');
+    expect(after, `Tab from ${before} did not move focus`).not.toBe(before);
+    return after;
+  }
+
+  async tabUntil(done: (focus: string) => boolean, limit: number, reverse = false): Promise<void> {
+    for (let press = 0; press < limit; press++) if (done(await this.tab(reverse))) return;
+    throw new Error(`Focus did not reach the target within ${limit} presses:\n${this.log.slice(-limit).join('\n')}`);
+  }
+
+  /** `frame:<kind>:<decision or option>` inside the artifact, else the host control's test id. */
+  async describe(): Promise<string> {
+    const host = await this.page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || active === document.body) return 'body';
+      if (active.matches('[data-testid="workbench-viewer-frame"]')) return 'frame';
+      return active.getAttribute('data-testid') || `${active.tagName.toLowerCase()}#${active.id}:${(active.getAttribute('aria-label') || active.textContent || '').trim().slice(0, 40)}`;
+    });
+    if (host !== 'frame') return host;
+    const frame = await (await this.page.getByTestId('workbench-viewer-frame').elementHandle())?.contentFrame();
+    return await frame!.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || active === document.body) return 'frame:body';
+      const option = active.closest('[data-option-id]')?.getAttribute('data-option-id');
+      const point = active.closest('[data-decision-id]')?.getAttribute('data-decision-id');
+      const kind = active instanceof HTMLInputElement ? active.type : active.tagName.toLowerCase();
+      return `frame:${kind}:${option ?? point ?? (active.textContent || '').trim().slice(0, 40)}`;
+    });
+  }
+}
+
 async function openDossier(page: Page): Promise<void> {
   await page.addInitScript(({ project, workbenchId }) => {
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
