@@ -11,18 +11,22 @@ import {
   input,
   output,
   signal,
+  untracked,
   ChangeDetectorRef,
   OnDestroy,
 } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ModalStackService } from '../../services/modal-stack.service';
 import { OverlayPortalRef, OverlayPortalService } from '../../services/overlay-portal.service';
+import { focusedElementOutside, returnFocusToOpener } from '../../directives/modal-focus.directive';
 import {
   MenuItem,
   MenuItemClickEvent,
   MenuPlacement,
   MenuRow,
 } from './menu.types';
+
+const FOCUSABLE_TRIGGER = 'button, a[href], input, select, textarea, [tabindex]';
 
 /**
  * <app-menu> — F23 shared context-menu surface.
@@ -39,11 +43,12 @@ import {
  * `position: fixed` so it escapes parent stacking / overflow contexts.
  *
  * Keyboard:
- *   - Esc                 → closeRequest
+ *   - Esc                 → focus returns to the trigger, closeRequest
  *   - ArrowDown / ArrowUp → move focus across rows, skipping headers,
  *                           separators, and disabled rows
  *   - Home / End          → first / last focusable row
- *   - Enter / Space       → activate row → itemClick + closeRequest
+ *   - Enter / Space       → activate row → focus returns to the trigger,
+ *                           itemClick + closeRequest
  *
  * Aria:
  *   - panel: role="menu"
@@ -85,6 +90,8 @@ export class MenuComponent implements OnDestroy {
   private readonly overlayPortal = inject(OverlayPortalService);
   private readonly destroyRef = inject(DestroyRef);
   private modalStackDispose: (() => void) | null = null;
+  /** Element that had focus when the menu opened; Escape and selection return focus to it. */
+  private opener: HTMLElement | null = null;
   private portalRef: OverlayPortalRef | null = null;
   private repositionAttached = false;
   private readonly reposition = () => this.recomputePosition();
@@ -118,8 +125,14 @@ export class MenuComponent implements OnDestroy {
         this.focusedIndex.set(null);
         this.releaseModalStack();
         this.releasePortal();
+        // The owner closed the menu (backdrop, trigger toggle): keep focus
+        // off the body if it was inside the removed panel.
+        const opener = this.opener;
+        this.opener = null;
+        returnFocusToOpener(opener, this.host.nativeElement);
         return;
       }
+      this.opener ??= untracked(() => this.captureOpener());
       // Register with the modal-stack so Escape closes the menu first instead
       // of skipping past it to whatever modal hosts the menu (e.g. the
       // task-detail panel pushed onto the stack by job-detail). Without this
@@ -155,7 +168,7 @@ export class MenuComponent implements OnDestroy {
     this.modalStackDispose = this.modalStack.pushUntilDestroyed(
       `app-menu:${this.testIdPrefix()}`,
       () => {
-        this.closeRequest.emit();
+        this.close();
         return true;
       },
       this.destroyRef,
@@ -191,10 +204,32 @@ export class MenuComponent implements OnDestroy {
     this.closeRequest.emit();
   }
 
+  /** Keyboard close: focus goes back to the trigger before the panel is removed. */
+  private close(): void {
+    this.restoreFocus();
+    this.closeRequest.emit();
+  }
+
+  /**
+   * Focus the trigger first, so a dialog that the selected row opens records
+   * the trigger, not the removed row, as the element to return to.
+   */
+  private restoreFocus(): void {
+    const opener = this.opener;
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+  }
+
+  private captureOpener(): HTMLElement | null {
+    const anchor = this.anchorEl();
+    if (anchor && anchor.matches(FOCUSABLE_TRIGGER) && !anchor.hasAttribute('disabled')) return anchor;
+    return focusedElementOutside(this.host.nativeElement);
+  }
+
   onRowClick(index: number): void {
     const items = this.items();
     const item = items[index];
     if (!item || item.kind !== 'row' || item.disabled) return;
+    this.restoreFocus();
     this.itemClick.emit({ id: item.id, item });
     this.closeRequest.emit();
   }
@@ -219,7 +254,7 @@ export class MenuComponent implements OnDestroy {
       case 'Escape': {
         event.preventDefault();
         event.stopPropagation();
-        this.closeRequest.emit();
+        this.close();
         break;
       }
       case 'ArrowDown': {
@@ -274,7 +309,7 @@ export class MenuComponent implements OnDestroy {
     if (ke.key !== 'Escape') return;
     ke.preventDefault();
     ke.stopPropagation();
-    this.closeRequest.emit();
+    this.close();
   }
 
   // ---------------------------------------------------------------------------

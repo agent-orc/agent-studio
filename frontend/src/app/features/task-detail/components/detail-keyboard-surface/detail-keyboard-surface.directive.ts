@@ -36,6 +36,7 @@ const KEY_OWNERS = [
   standalone: true,
   host: {
     tabindex: '0',
+    'data-detail-keyboard-surface': '',
   },
 })
 export class DetailKeyboardSurfaceDirective implements AfterViewInit {

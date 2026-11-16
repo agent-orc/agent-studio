@@ -169,6 +169,8 @@
                 [disabled]="primaryDisabled(primary)"
                 [appPendingButton]="triageActingId() === primary.id" [pendingLabel]="primaryLabel() + '…'"
                 [cacTooltip]="primaryTooltip()"
+                [attr.aria-keyshortcuts]="primaryShortcut.keys"
+                [attr.aria-description]="primaryShortcut.description"
                 (click)="onPrimaryClick()">
           @if (primaryAwaitingGit()) {
             <span class="detail__triage-primary-skeleton" aria-hidden="true"></span>
