@@ -2,7 +2,10 @@
 
 namespace AgentStudio.Projects;
 
+using System.Net.Http.Json;
 using AgentStudio.Git;
+using AgentStudio.Host;
+using AgentStudio.Management;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Registry;
@@ -109,6 +112,51 @@ public static class ProjectSettingsEndpoints
 {
     public static void MapProjectSettingsEndpoints(this WebApplication app)
     {
+        app.MapPost("/api/projects/{projectName}/execution-readiness-probe", async Task<IResult> (
+            string projectName, ProjectExecutionProbeRequest request,
+            ProjectSettingsService settings, TaskScannerService scanner, ProjectRegistry projects,
+            ClientIdentityStore clients, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
+            IConfiguration configuration, IHttpClientFactory httpClients, CancellationToken ct) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(item =>
+                string.Equals(item.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            var project = projects.FindByIdOrDisplayName(projectName);
+            if (entry is null || project is null) return Results.NotFound(new { error = "Project not found." });
+            var projectSettings = settings.Get(projectName);
+            if (!ProjectExecutionPolicy.IsAssignedRemote(projectSettings, request.HostId, request.HostId))
+                return Results.BadRequest(new { error = "Host is not assigned to this project." });
+
+            var repository = RemoteProjectRepositoryResolver.Resolve(project, projectSettings.IntegrationBranch);
+            var preflight = clients.FindRunnerProjectPreflight(request.HostId, project.Id);
+            if (repository is null || preflight is null ||
+                !string.Equals(preflight.RegistrationFingerprint,
+                    AgentStudio.Tasks.ProjectDeliveryPreflightFingerprint.Create(repository), StringComparison.Ordinal))
+                preflight = null;
+
+            var root = string.IsNullOrWhiteSpace(entry.RepositoryPath) ? entry.RootPath : entry.RepositoryPath;
+            var definition = Directory.Exists(root) ? ProjectDefinitionReader.ReadWorkspace(root).Definition : null;
+            IReadOnlyList<AgentStudio.TaskServer.Contracts.RunnerCapabilitySnapshotDto> snapshots = hosts.ListCapabilitySnapshots();
+            if (TaskServerPlaneProxy.IsConfigured(configuration))
+            {
+                try
+                {
+                    snapshots = await httpClients.CreateClient(TaskServerPlaneProxy.ClientName)
+                        .GetFromJsonAsync<AgentStudio.TaskServer.Contracts.RunnerCapabilitySnapshotDto[]>(
+                            "/api/v1/management/remote-hosts", ct) ?? [];
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+                {
+                    SilentCatch.Warn(ex, "Project execution readiness host snapshot unavailable");
+                    snapshots = [];
+                }
+            }
+            var host = snapshots.FirstOrDefault(item =>
+                string.Equals(item.RunnerId, request.HostId, StringComparison.OrdinalIgnoreCase));
+            return Results.Ok(ProjectExecutionReadinessProbe.Evaluate(
+                repository?.DefaultBranch ?? projectSettings.IntegrationBranch,
+                definition?.Stack ?? [], preflight, host?.Capabilities ?? [], host?.Status));
+        }).RequirePermission(IamPermissions.ProjectRead);
+
         app.MapGet("/api/projects/{projectName}/chat-metadata", (
             string projectName, ProjectSettingsService settings, TaskScannerService scanner,
             ProjectRegistry projects, WorkspaceSettingsService workspaceSettings) =>
