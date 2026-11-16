@@ -123,10 +123,12 @@ stack. In a managed task, its screenshots and axe reports go to
 bash scripts/presentation-capture/run-accessibility.sh after
 ```
 
-The spec checks the board and the Task, Activity, and Result tabs at 1280 and
-390 CSS pixels in light and dark themes. It reports all axe violations and
-asserts zero affected nodes for `button-name`, `aria-prohibited-attr`,
-`aria-hidden-focus`, and `label`. The `before` argument captures baseline rail
+The spec checks the board, Needs you, a Human Review card (Task, Activity, and
+Result tabs on the wide layout), an escalated card, a Dossier, and the usage
+sheet at 1280 and 390 CSS pixels in light and dark themes. It runs the WCAG 2
+A/AA, 2.1 A/AA, and 2.2 AA axe rules, reports every violation, and fails on any
+critical or serious one (AGT-3835). Each state also leaves an `a11y-*.png`
+review screenshot. The `before` argument captures baseline rail
 screenshots without running assertions. It restores the audited rail's
 pre-fix accessibility attributes in the browser; the visual markup is the same.
 

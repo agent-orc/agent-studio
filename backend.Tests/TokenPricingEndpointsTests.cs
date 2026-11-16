@@ -5,9 +5,8 @@ namespace AgentStudio.Tests;
 
 /// <summary>
 /// Locks the pure selection rule behind <c>GET /api/token-pricing/unpriced-models</c>:
-/// the diagnostic list is exactly the workspace aggregate's rows the pinned
-/// TokenEconomy catalog does not recognize at all, so a catalog gap is
-/// visible instead of only showing up as a silent "Unknown" cost (AGT-2752).
+/// the diagnostic list includes every workspace model row with an unpriced
+/// historical call, including models known only at later dates.
 /// </summary>
 public class TokenPricingEndpointsTests
 {
@@ -33,26 +32,30 @@ public class TokenPricingEndpointsTests
     }
 
     [Fact]
-    public void SelectUnpricedModels_ReturnsOnlyRowsAbsentFromCatalog()
+    public void SelectUnpricedModels_ReturnsRowsWithoutHistoricalPrices()
     {
         var aggregate = TokenSummaryFold.ForWorkspace([
             ("proj-a", new TokenSummary(
-                "proj-a", 2, 2, 1_100, 100, 0, 0, 1.23m, AllModelsPriced: false, UnknownModelCount: 1,
+                "proj-a", 4, 4, 1_150, 115, 0, 0, 1.23m, AllModelsPriced: false, UnknownModelCount: 1,
                 ByModel: [
                     Model("claude-opus-4-7", calls: 1, input: 1_000, output: 100, inCatalog: true),
                     Model("Future Model", calls: 1, input: 100, output: 10, inCatalog: false)
                         with { ModelId = "some-future-model" },
+                    Model("Dated Model", calls: 2, input: 50, output: 5, inCatalog: true)
+                        with { ModelId = "dated-model", ModelPriced = false, EstimatedApiCostUsd = 0m },
                 ],
                 FirstActivity: null, LastActivity: null, Disclaimer: TokenCostDisclaimer.Text)),
         ]);
 
         var unpriced = TokenPricingEndpoints.SelectUnpricedModels(aggregate);
 
-        var row = Assert.Single(unpriced);
+        Assert.Equal(2, unpriced.Count);
+        var row = unpriced[0];
         Assert.Equal("some-future-model", row.Model);
         Assert.Equal(1, row.Calls);
         Assert.Equal(110L, row.TotalTokens);
         Assert.Equal(0m, row.RecordedCostUsd);
+        Assert.Equal("dated-model", unpriced[1].Model);
     }
 
     [Fact]

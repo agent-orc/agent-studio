@@ -84,6 +84,8 @@ public sealed class UsageCockpitContractTests
         Assert.Null(cost.Projects[0].TodayUsd);
         Assert.Equal("partial", cost.Projects[1].Coverage.Status);
         Assert.Equal(0m, cost.TodayUsd);
+        Assert.Equal(1, cost.UnpricedTodayRuns);
+        Assert.Equal(1, cost.UnpricedWeekRuns);
         Assert.Null(UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar, [unavailable]).TodayUsd);
     }
 

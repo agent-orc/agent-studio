@@ -1,5 +1,6 @@
 <div class="segmented"
      role="group"
+     [appRovingFocus]="rovingFocus()"
      [attr.aria-label]="ariaLabel()">
   @for (option of options(); track trackOption($index, option)) {
     <button type="button"
@@ -9,6 +10,7 @@
             [attr.aria-pressed]="option.value === value()"
             [disabled]="disabled() || option.disabled === true"
             [attr.data-testid]="option.testid ?? null"
+            data-roving-item
             [cacTooltip]="option.tooltip ?? ''"
             (click)="select(option)">
       @if (option.icon; as icon) {

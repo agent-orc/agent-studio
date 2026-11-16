@@ -21,6 +21,7 @@
       <div>
         <dt>Today</dt>
         <dd class="usage-detail__num" data-testid="usage-detail-today">{{ c.today }}</dd>
+        @if (c.unpricedTodayRuns) { <dd>Priced subtotal + <a href="#/workspace/settings/tokens">{{ c.unpricedTodayRuns }} {{ c.unpricedTodayRuns === 1 ? 'run' : 'runs' }} without price</a></dd> }
         @if (c.dayStart; as s) {
           <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time></dd>
           <dd class="usage-detail__utc" data-testid="usage-detail-day-utc">{{ s.utc }} to {{ c.dayEnd?.utc }}</dd>
@@ -30,6 +31,7 @@
       <div>
         <dt>This week</dt>
         <dd class="usage-detail__num" data-testid="usage-detail-week">{{ c.week }}</dd>
+        @if (c.unpricedWeekRuns) { <dd>Priced subtotal + <a href="#/workspace/settings/tokens">{{ c.unpricedWeekRuns }} {{ c.unpricedWeekRuns === 1 ? 'run' : 'runs' }} without price</a></dd> }
         @if (c.weekStart; as s) {
           <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time></dd>
           <dd class="usage-detail__utc" data-testid="usage-detail-week-utc">{{ s.utc }} to {{ c.weekEnd?.utc }}</dd>

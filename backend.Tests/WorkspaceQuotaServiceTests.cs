@@ -65,6 +65,28 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     }
 
     [Fact]
+    public void Unknown_model_keeps_tokens_and_marks_the_priced_subtotal()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+             Path.Combine(_root, "unpriced"), "Unpriced", workspace.Id, _clock);
+        SeedTask(project.StorageLocation, "unpriced-card", new
+        {
+            calls = 1, inputTokens = 10, outputTokens = 5, totalTokens = 15,
+            entries = new[] { new { ts = _clock.GetUtcNow().UtcDateTime,
+                model = "demo-unpriced-model", inputTokens = 10, outputTokens = 5 } },
+        });
+        services.GetRequiredService<TaskScannerService>().InvalidateCache();
+        var usage = services.GetRequiredService<WorkspaceQuotaService>().Snapshot(workspace.Id).Usage;
+        Assert.Equal(15, usage.ModelTokens);
+        Assert.Equal(0, usage.ModelCostUsd);
+        Assert.Equal(1, usage.UnpricedRuns);
+    }
+
+    [Fact]
     public void Owner_override_is_audited_persisted_and_expires_at_week_rollover()
     {
         Directory.CreateDirectory(_root);

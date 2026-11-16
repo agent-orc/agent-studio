@@ -11,7 +11,8 @@ using AgentStudio.Tasks;
 namespace AgentStudio.Quota;
 
 public sealed record QuotaLimits(long? ModelTokensPerWeek, decimal? ComputeCoreHoursPerWeek, int? HostingSlots);
-public sealed record QuotaUsage(long ModelTokens, decimal ModelCostUsd, decimal ComputeCoreHours, int HostingSlots);
+public sealed record QuotaUsage(long ModelTokens, decimal ModelCostUsd, decimal ComputeCoreHours, int HostingSlots,
+    int UnpricedRuns = 0);
 public sealed record QuotaConsumer(string ProjectId, string Project, string? CardId, long ModelTokens, decimal ComputeCoreHours);
 public sealed record QuotaProjectConsumer(string ProjectId, string Project, long ModelTokens, decimal ComputeCoreHours);
 public sealed record QuotaSnapshot(string WorkspaceId, string? ProjectId, DateTime WeekStartUtc, DateTime WeekEndUtc,
@@ -553,6 +554,7 @@ public sealed class WorkspaceQuotaService
             {
                 ModelTokens = sum.ModelTokens + p.Daily[day].ModelTokens,
                 ModelCostUsd = sum.ModelCostUsd + p.Daily[day].ModelCostUsd,
+                UnpricedRuns = sum.UnpricedRuns + p.Daily[day].UnpricedRuns,
                 ComputeCoreHours = sum.ComputeCoreHours + p.Daily[day].ComputeCoreHours,
             })).ToArray();
         var consumers = projects.SelectMany(p => p.Consumers).ToList();
@@ -577,7 +579,7 @@ public sealed class WorkspaceQuotaService
         var hostingCount = view.Environments.Count(key => ids.Any(id =>
             key.StartsWith(id + "/", StringComparison.OrdinalIgnoreCase)));
         var total = new QuotaUsage(daily.Sum(d => d.ModelTokens), daily.Sum(d => d.ModelCostUsd),
-            daily.Sum(d => d.ComputeCoreHours), hostingCount);
+            daily.Sum(d => d.ComputeCoreHours), hostingCount, daily.Sum(d => d.UnpricedRuns));
         var remaining = new QuotaUsage(Math.Max(0, (limits?.ModelTokensPerWeek ?? 0) - total.ModelTokens), 0,
             Math.Max(0, (limits?.ComputeCoreHoursPerWeek ?? 0) - total.ComputeCoreHours),
             Math.Max(0, (limits?.HostingSlots ?? 0) - total.HostingSlots));
@@ -689,6 +691,7 @@ public sealed class WorkspaceQuotaService
         }
         var unattributedDaily = Enumerable.Range(0, 7).Select(_ => new QuotaUsage(0, 0, 0, 0)).ToArray();
         var unattributedConsumers = new List<QuotaConsumer>();
+        var unattributedUnpricedRunIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var project in projects)
         {
             var daily = Enumerable.Range(0, 7).Select(_ => new QuotaUsage(0, 0, 0, 0)).ToArray();
@@ -700,6 +703,7 @@ public sealed class WorkspaceQuotaService
                 foreach (var alias in task.Aliases.Where(a => !string.IsNullOrWhiteSpace(a)))
                     cards.TryAdd(alias!, task.Card);
             var ledger = _tokens.LoadSnapshot(project.DisplayName, project.StorageLocation);
+            var unpricedRunIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var meterWarning = ledger.Freshness.Status == "complete" ? null
                 : ledger.Freshness.Warning ?? $"The token ledger is {ledger.Freshness.Status}.";
             foreach (var entry in (workspaceRows?.MergeInto(project.Id, ledger.Entries) ?? ledger.Entries)
@@ -711,8 +715,12 @@ public sealed class WorkspaceQuotaService
                 var count = WorkspaceQuotaPolicy.ModelTokens(usage.InputTokens, usage.OutputTokens,
                     usage.CacheReadTokens, usage.CacheCreationTokens);
                 var day = Math.Clamp((int)(at.Date - start).TotalDays, 0, 6);
+                var price = Price(usage, at);
+                var unpricedRun = count > 0 && price is null
+                    && unpricedRunIds.Add(entry.JobId ?? $"receipt:{at.Ticks}:{day}");
                 daily[day] = daily[day] with { ModelTokens = daily[day].ModelTokens + count,
-                    ModelCostUsd = daily[day].ModelCostUsd + Price(usage, at) };
+                    ModelCostUsd = daily[day].ModelCostUsd + (price ?? 0),
+                    UnpricedRuns = daily[day].UnpricedRuns + (unpricedRun ? 1 : 0) };
                 var card = entry.JobId is null ? null : cards.GetValueOrDefault(entry.JobId, entry.JobId);
                 consumers.Add(new(project.Id, project.DisplayName, card, count, 0));
             }
@@ -738,10 +746,14 @@ public sealed class WorkspaceQuotaService
             var count = WorkspaceQuotaPolicy.ModelTokens(usage.InputTokens, usage.OutputTokens,
                 usage.CacheReadTokens, usage.CacheCreationTokens);
             var day = Math.Clamp((int)(at.Date - start).TotalDays, 0, 6);
+            var price = Price(usage, at);
+            var unpricedRun = count > 0 && price is null
+                && unattributedUnpricedRunIds.Add(entry.JobId ?? $"receipt:{at.Ticks}:{day}");
             unattributedDaily[day] = unattributedDaily[day] with
             {
                 ModelTokens = unattributedDaily[day].ModelTokens + count,
-                ModelCostUsd = unattributedDaily[day].ModelCostUsd + Price(usage, at),
+                ModelCostUsd = unattributedDaily[day].ModelCostUsd + (price ?? 0),
+                UnpricedRuns = unattributedDaily[day].UnpricedRuns + (unpricedRun ? 1 : 0),
             };
             unattributedConsumers.Add(new("unattributed", "Unattributed one-shot jobs", null, count, 0));
         }
@@ -803,20 +815,20 @@ public sealed class WorkspaceQuotaService
         return total;
     }
 
-    private decimal Price(OrchestratorTokenUsage usage, DateTime at)
+    private decimal? Price(OrchestratorTokenUsage usage, DateTime at)
     {
         try
         {
             var estimate = _pricing.Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
                 usage.CacheReadTokens, usage.CacheCreationTokens, at);
-            return estimate.ModelKnown ? estimate.Total : 0;
+            return estimate.ModelKnown ? estimate.Total : null;
         }
         catch (Exception ex)
         {
             // The USD figure is informational; token admission does not depend on it.
             if (_unpricedModels.TryAdd(usage.Model ?? "", 0))
                 _logger?.LogWarning(ex, "workspace-quota-pricing-failed model={Model}", usage.Model);
-            return 0;
+            return null;
         }
     }
 

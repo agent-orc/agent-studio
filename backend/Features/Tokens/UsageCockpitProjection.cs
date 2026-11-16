@@ -11,7 +11,7 @@ public sealed record UsageCalendar(
 public sealed record UsageSourceState(string Status, DateTime? ObservedAt, int? TtlSeconds, string? Reason = null);
 
 public sealed record UsageProjectCost(string? ProjectId, string Name, decimal? TodayUsd, decimal? WeekUsd,
-    UsageSourceState Coverage, DateTime? LatestReceiptAt = null);
+    UsageSourceState Coverage, DateTime? LatestReceiptAt = null, int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0);
 
 public sealed record UsageOneShotCost(string Source, decimal TodayUsd, decimal WeekUsd);
 
@@ -20,6 +20,7 @@ public sealed record UsageCostProjection(
     IReadOnlyList<UsageProjectCost> Projects, UsageSourceState Coverage,
     string PricingVersion, string NormalizationVersion, string LedgerEndpointTemplate,
     DateTime? LatestReceiptAt = null, decimal? DailyBudgetUsd = null, decimal? WeeklyBudgetUsd = null,
+    int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0,
     IReadOnlyList<UsageOneShotCost>? OneShotSources = null);
 
 public sealed record UsageCostInput(string? ProjectId, string Name,
@@ -105,6 +106,10 @@ public static class UsageCockpitProjection
             var available = source.Freshness.Status != "unavailable";
             decimal today = 0, week = 0;
             var unpriced = false;
+            var unpricedTodayRuns = 0;
+            var unpricedWeekRuns = 0;
+            var unpricedWeekIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var unpricedTodayIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var legacyUnknown = false;
             DateTime? newest = null;
             foreach (var entry in source.Entries)
@@ -122,8 +127,20 @@ public static class UsageCockpitProjection
                     estimate = pricing.Estimate(usage.Model, usage.InputTokens,
                         usage.OutputTokens, usage.CacheReadTokens, usage.CacheCreationTokens, at);
                 }
-                catch (Exception) { unpriced = true; continue; }
-                if (!estimate.ModelKnown) { unpriced = true; continue; }
+                catch (Exception) {
+                    unpriced = true;
+                    var runId = entry.JobId ?? $"receipt:{at.Ticks}";
+                    if (unpricedWeekIds.Add(runId)) unpricedWeekRuns++;
+                    if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;
+                    continue;
+                }
+                if (!estimate.ModelKnown) {
+                    unpriced = true;
+                    var runId = entry.JobId ?? $"receipt:{at.Ticks}";
+                    if (unpricedWeekIds.Add(runId)) unpricedWeekRuns++;
+                    if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;
+                    continue;
+                }
                 if (ProviderUsageNormalization.IsOpenAiModel(usage.Model)
                     && usage.CacheReadTokens > 0 && usage.InputIncludesCached is null)
                     legacyUnknown = true;
@@ -148,7 +165,8 @@ public static class UsageCockpitProjection
                 new UsageSourceState(status, observedAt,
                     source.ProjectId is null ? 0 : ProjectTokenLedger.SnapshotTtlSeconds,
                     reason.Length == 0 ? null : reason),
-                source.LatestReceiptAt is { } receiptAt ? AsUtc(receiptAt) : null));
+                source.LatestReceiptAt is { } receiptAt ? AsUtc(receiptAt) : null,
+                unpricedTodayRuns, unpricedWeekRuns));
         }
         var known = children.Where(child => child.TodayUsd is not null || child.WeekUsd is not null).ToList();
         var overall = known.Count == 0 ? "unavailable"
@@ -164,6 +182,8 @@ public static class UsageCockpitProjection
             ProviderUsageNormalization.OpenAiInputIncludesCachedV1,
             "/api/projects/{project}/token-usage/summary",
             LatestReceiptAt: children.Select(child => child.LatestReceiptAt).Max(),
+            UnpricedTodayRuns: children.Sum(child => child.UnpricedTodayRuns),
+            UnpricedWeekRuns: children.Sum(child => child.UnpricedWeekRuns),
             OneShotSources: oneShotCalls.GroupBy(call => call.Source, StringComparer.OrdinalIgnoreCase)
                 .Select(group => new UsageOneShotCost(group.Key,
                     group.Where(call => call.At >= calendar.DayStartUtc && call.At < calendar.DayEndUtc).Sum(call => call.Cost),

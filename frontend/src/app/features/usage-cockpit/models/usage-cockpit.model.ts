@@ -55,6 +55,8 @@ export interface UsageProjectCost {
   name: string;
   todayUsd: number | null;
   weekUsd: number | null;
+  unpricedTodayRuns?: number;
+  unpricedWeekRuns?: number;
   coverage: UsageSourceState;
   latestReceiptAt?: string | null;
 }
@@ -65,6 +67,8 @@ export interface UsageCostProjection {
   /** null means unknown, never zero. */
   todayUsd: number | null;
   weekUsd: number | null;
+  unpricedTodayRuns?: number;
+  unpricedWeekRuns?: number;
   projects: UsageProjectCost[];
   oneShotSources?: { source: string; todayUsd: number; weekUsd: number }[];
   coverage: UsageSourceState;

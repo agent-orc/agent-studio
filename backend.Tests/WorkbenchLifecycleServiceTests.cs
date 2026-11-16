@@ -123,6 +123,79 @@ public sealed class WorkbenchLifecycleServiceTests : IDisposable
     }
 
     [Fact]
+    public void Catalogue_AcceptedConceptWithAnOpenSlice_KeepsMarkDocumentedClosedAndNamesTheSlice()
+    {
+        // AGT-3837: the concept card is accepted, one promoted slice is done and
+        // one is still open. The slices are linked only through task.json dossier.
+        WriteConceptWorkbench("delivery", sliceCount: 2);
+        var entry = "docs/workbenches/delivery/index.html";
+        WriteTask("AGT-1", TaskStates.Completed, dossier: new { path = entry });
+        WriteTask("AGT-2", TaskStates.Completed, dossier: new { path = entry, implementationIndex = 0 });
+        WriteTask("AGT-3", TaskStates.Ready, dossier: new { path = entry, implementationIndex = 1 });
+        var (catalogue, lifecycle, cards) = ServicesWithCards();
+
+        var document = catalogue.Read("Project", "delivery")!;
+        var documentation = document.Workbench.Documentation!;
+        var list = cards.List("Project", document.Workbench);
+
+        Assert.False(documentation.Eligible);
+        Assert.Equal(1, documentation.OpenCount);
+        Assert.Contains($"AGT-3 ({TaskStates.Ready})", documentation.BlockedReason);
+        Assert.DoesNotContain("AGT-2", documentation.BlockedReason);
+        Assert.Equal(
+            list.Cards.Select(card => card.Key).Order(),
+            documentation.References.Select(reference => reference.Key).Order());
+        Assert.Equal((2, 1), (list.ImplementationSlices, list.CompletedSlices));
+
+        var before = File.ReadAllText(Descriptor("delivery"));
+        var result = lifecycle.Document("Project", "delivery", Request(document));
+
+        Assert.False(result.Success);
+        Assert.Equal("references-not-terminal", result.ErrorCode);
+        Assert.Contains("AGT-3", result.Error);
+        Assert.Equal(before, File.ReadAllText(Descriptor("delivery")));
+    }
+
+    [Fact]
+    public void Catalogue_CountsASliceThatOnlyThePromotionLedgerNames()
+    {
+        WriteConceptWorkbench("delivery", sliceCount: 2);
+        var entry = "docs/workbenches/delivery/index.html";
+        var concept = WriteTask("AGT-1", TaskStates.Completed, dossier: new { path = entry });
+        WriteTask("AGT-2", TaskStates.Completed, dossier: new { path = entry, implementationIndex = 0 });
+        WriteTask("AGT-3", TaskStates.Ready);
+        Directory.CreateDirectory(Path.Combine(concept, ".metadata"));
+        File.WriteAllText(Path.Combine(concept, ".metadata", "spawned-tasks.jsonl"),
+            JsonSerializer.Serialize(new { reason = $"concept-promotion:{entry}:1", targetKey = "AGT-3" }) + "\n");
+        var (catalogue, _, cards) = ServicesWithCards();
+
+        var document = catalogue.Read("Project", "delivery")!;
+        var list = cards.List("Project", document.Workbench);
+
+        Assert.False(document.Workbench.Documentation!.Eligible);
+        Assert.Contains("AGT-3", document.Workbench.Documentation.BlockedReason);
+        Assert.Equal(1, list.Cards.Single(card => card.Key == "AGT-3").ImplementationIndex);
+        Assert.Equal((2, 1), (list.ImplementationSlices, list.CompletedSlices));
+    }
+
+    [Fact]
+    public void Catalogue_OffersMarkDocumentedOnceEverySliceIsTerminal()
+    {
+        WriteConceptWorkbench("delivery", sliceCount: 2);
+        var entry = "docs/workbenches/delivery/index.html";
+        WriteTask("AGT-1", TaskStates.Completed, dossier: new { path = entry });
+        WriteTask("AGT-2", TaskStates.Completed, dossier: new { path = entry, implementationIndex = 0 });
+        WriteTask("AGT-3", TaskStates.Archive, dossier: new { path = entry, implementationIndex = 1 });
+        var (catalogue, _, _) = ServicesWithCards();
+
+        var documentation = catalogue.Read("Project", "delivery")!.Workbench.Documentation!;
+
+        Assert.True(documentation.Eligible);
+        Assert.Null(documentation.BlockedReason);
+        Assert.Equal(3, documentation.TotalCount);
+    }
+
+    [Fact]
     public void Document_LeavesTheOriginalDescriptorWhenTheAtomicWriteFails()
     {
         WriteWorkbench("delivery", "decided", ["AGT-1"]);
@@ -229,7 +302,7 @@ public sealed class WorkbenchLifecycleServiceTests : IDisposable
           """);
     }
 
-    private void WriteTask(string key, string state, string[]? workbenchKeys = null)
+    private string WriteTask(string key, string state, string[]? workbenchKeys = null, object? dossier = null)
     {
         var id = key.ToLowerInvariant();
         var dir = Path.Combine(_tasks, state, id);
@@ -243,7 +316,21 @@ public sealed class WorkbenchLifecycleServiceTests : IDisposable
             order = 1,
             agent = "codex",
             references = workbenchKeys == null ? null : new { workbenches = workbenchKeys },
+            dossier,
         }));
+        return dir;
+    }
+
+    /// <summary>A decided concept Dossier whose source concept card is AGT-1.</summary>
+    private void WriteConceptWorkbench(string id, int sliceCount)
+    {
+        WriteWorkbench(id, "decided", []);
+        var descriptor = JsonNode.Parse(File.ReadAllText(Descriptor(id)))!.AsObject();
+        descriptor["sourceTaskKeys"] = new JsonArray("AGT-1");
+        descriptor["implementationTasks"] = new JsonArray(Enumerable.Range(1, sliceCount)
+            .Select(index => (JsonNode)new JsonObject { ["title"] = $"Slice {index}" })
+            .ToArray());
+        File.WriteAllText(Descriptor(id), descriptor.ToJsonString());
     }
 
     private string Descriptor(string id) =>
@@ -251,6 +338,13 @@ public sealed class WorkbenchLifecycleServiceTests : IDisposable
 
     private (WorkbenchCatalogueService Catalogue, WorkbenchLifecycleService Lifecycle) Services(
         IAtomicJsonFileWriter? writer = null)
+    {
+        var (catalogue, lifecycle, _) = ServicesWithCards(writer);
+        return (catalogue, lifecycle);
+    }
+
+    private (WorkbenchCatalogueService Catalogue, WorkbenchLifecycleService Lifecycle, DossierCardsService Cards)
+        ServicesWithCards(IAtomicJsonFileWriter? writer = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -263,7 +357,7 @@ public sealed class WorkbenchLifecycleServiceTests : IDisposable
         var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var catalogue = new WorkbenchCatalogueService(scanner, registry, git);
-        return (catalogue, new WorkbenchLifecycleService(catalogue, git, writer));
+        return (catalogue, new WorkbenchLifecycleService(catalogue, git, writer), new DossierCardsService(scanner));
     }
 
     private sealed class FailingWriter : IAtomicJsonFileWriter

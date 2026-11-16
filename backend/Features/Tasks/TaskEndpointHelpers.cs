@@ -384,6 +384,21 @@ internal static class TaskEndpointHelpers
                 : job);
 
     /// <summary>
+    /// AGT-3810: a delivered card of a project without a server checkout has no
+    /// Git projection. It keeps the integration failure its last merge attempt
+    /// recorded, so the card can offer that failure's remedy. A card that
+    /// already carries a verdict passes through untouched.
+    /// </summary>
+    internal static IEnumerable<TaskInfo> WithRecordedIntegrationFailure(
+        this IEnumerable<TaskInfo> jobs,
+        TaskIntegrationStatusService integration)
+    {
+        var list = jobs as IReadOnlyList<TaskInfo> ?? jobs.ToList();
+        var recorded = integration.BuildRecordedFailuresWithoutCheckout(list.Where(job => job.Integration is null));
+        return recorded.Count == 0 ? list : list.WithIntegrationStatus(recorded);
+    }
+
+    /// <summary>
     /// AGT-3621: a card whose delivery contract expects no repository change is
     /// <c>not-applicable</c> without any Git fact. While the Git projection is
     /// still warming for a new card, the detail read says so instead of leaving

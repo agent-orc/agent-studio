@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
+import { tabAccessibleName, titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
 
 describe('studio tab labels', () => {
   it('truncates long labels at a word boundary', () => {
@@ -14,5 +14,20 @@ describe('studio tab labels', () => {
 
   it('keeps a short title unchanged', () => {
     expect(truncateTabTitle('Board')).toBe('Board');
+  });
+});
+
+describe('tabAccessibleName (AGT-3835)', () => {
+  it('starts with the prefix chip and title a task tab shows', () => {
+    expect(tabAccessibleName('DEMO-5', 'Add CSV export to reports', 'Add CSV export to reports'))
+      .toBe('DEMO-5 Add CSV export to reports');
+  });
+
+  it('keeps a full label that already reads like the visible text', () => {
+    expect(tabAccessibleName('DEMO', 'Deck', 'DEMO · Deck')).toBe('DEMO · Deck');
+  });
+
+  it('appends the full label when the strip shows a shorter form', () => {
+    expect(tabAccessibleName('All', 'Board', 'All projects · Board')).toBe('All Board, All projects · Board');
   });
 });

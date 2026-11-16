@@ -384,6 +384,8 @@ export interface UsageCostDetailView {
   coverageReason: string | null;
   today: string;
   week: string;
+  unpricedTodayRuns: number;
+  unpricedWeekRuns: number;
   budgetDaily: string | null;
   budgetDailyRemaining: string | null;
   budgetWeekly: string | null;
@@ -502,6 +504,8 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     coverageReason: costStateReason(cost, chip.state),
     today: usd(cost.todayUsd) ?? NOT_AVAILABLE,
     week: usd(cost.weekUsd) ?? NOT_AVAILABLE,
+    unpricedTodayRuns: cost.unpricedTodayRuns ?? 0,
+    unpricedWeekRuns: cost.unpricedWeekRuns ?? 0,
     budgetDaily: usd(cost.dailyBudgetUsd),
     budgetDailyRemaining: remaining(cost.dailyBudgetUsd, cost.todayUsd),
     budgetWeekly: usd(cost.weeklyBudgetUsd),
