@@ -466,7 +466,8 @@ public sealed partial class BatchGatePilotService
             HasLiveFlight, RecoveryStatus,
             ActiveIsolationFlights(project), LeaseDeadlineDeferred()(project),
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
-            _diskPauseReason, ConfiguredGateSlots());
+            _diskPauseReason, ConfiguredGateSlots(),
+            CodeBatchEnabled(project) ? _reservations?.GetBatchWait(project) : null);
     }
 
     private IReadOnlySet<string> ActiveIsolationFlights(string project)
@@ -1697,7 +1698,7 @@ public sealed partial class BatchGatePilotService
             acquired = _reservations is null || manifest.StackedOnBatchId is not null ? null
                 : await _reservations.AcquireBatchAsync(manifest.Scope.Project,
                     marker => IsStalePush(manifest.Scope.Project, marker, fetchedBases, flightToken),
-                    flightToken, fetchedBases.Clear)
+                    flightToken, fetchedBases.Clear, manifest.BatchId)
                     .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested
