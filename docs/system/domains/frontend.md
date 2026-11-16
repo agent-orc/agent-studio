@@ -942,6 +942,10 @@ occur. It is not a claim about tunnel transfer time.
   decision-pending status or decision-ready phase opens that count; unsaved
   browser selections do not close it. An active Dossier with open decisions
   stays under `Needs a decision` until the recorded decision closes them.
+  A rework receipt remains visible after its source card's agent run finishes.
+  The viewer projects the run as updated, unchanged, or failed, links the card,
+  and restores decision actions even when the agent retained the receipt and
+  left the Dossier content unchanged.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's

@@ -309,7 +309,7 @@ export interface WorkbenchRevisionCard {
 
 /** What happened to the follow-up round a confirmed rework request asked for. */
 export interface WorkbenchRevisionRound {
-  status: 'started' | 'queued' | 'saved' | 'failed';
+  status: 'started' | 'queued' | 'saved' | 'failed' | 'updated' | 'unchanged';
   taskKey: string;
   title: string | null;
   queueReason: string | null;
@@ -519,6 +519,7 @@ export interface WorkbenchDocument {
   entryFingerprint?: string | null;
   cards?: DossierCardList | null;
   revisionCard?: WorkbenchRevisionCard | null;
+  revisionRound?: WorkbenchRevisionRound | null;
 }
 
 export interface DossierCardList {

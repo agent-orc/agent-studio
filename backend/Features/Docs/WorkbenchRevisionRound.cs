@@ -39,6 +39,19 @@ public sealed record WorkbenchRevisionRoundResult(
 /// </summary>
 public static class WorkbenchRevisionCardPolicy
 {
+    public static string? RoundOutcome(DateTime confirmedAtUtc, string? entryFingerprint,
+        string? sourceEntryFingerprint, IReadOnlyList<TimelineEvent> events)
+    {
+        var finished = events.LastOrDefault(item => item.Kind == TimelineEventKinds.AgentRunFinished
+            && item.Ts > confirmedAtUtc);
+        if (finished == null) return null;
+        var status = finished.Details?.GetValueOrDefault("status");
+        if (status != "completed") return "failed";
+        return sourceEntryFingerprint != null && entryFingerprint != null
+            && !string.Equals(sourceEntryFingerprint, entryFingerprint, StringComparison.OrdinalIgnoreCase)
+            ? "updated" : "unchanged";
+    }
+
     public static WorkbenchRevisionCard Resolve(
         string projectName, IReadOnlyList<string> sourceTaskKeys, IReadOnlyList<TaskInfo> tasks)
     {
@@ -123,10 +136,25 @@ public static class WorkbenchRevisionCardPolicy
 /// follow-up round, so the run starts or queues through the same admission as
 /// any operator continue instead of depending on an orchestrator chat turn.
 /// </summary>
-public sealed class WorkbenchRevisionRoundService(TaskScannerService scanner, TaskRunnerService runner)
+public sealed class WorkbenchRevisionRoundService(TaskScannerService scanner, TaskRunnerService runner, TimelineLog timeline)
 {
     public WorkbenchRevisionCard Target(string projectName, IReadOnlyList<string> sourceTaskKeys) =>
         WorkbenchRevisionCardPolicy.Resolve(projectName, sourceTaskKeys, scanner.ScanAllJobsWithArchive());
+
+    public WorkbenchRevisionRoundResult? SettledRound(string projectName, WorkbenchDocument document)
+    {
+        var decision = document.Workbench.Decision;
+        if (decision is not { Outcome: "rework", State: "pending", RevisionTaskKey: not null }
+            || !DateTime.TryParse(decision.ConfirmedAt, out var confirmed)) return null;
+        var task = scanner.ScanAllJobsWithArchive().FirstOrDefault(item =>
+            string.Equals(item.ProjectName, projectName, StringComparison.OrdinalIgnoreCase)
+            && (string.Equals(item.Key, decision.RevisionTaskKey, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(item.Id, decision.RevisionTaskKey, StringComparison.OrdinalIgnoreCase)));
+        if (task == null) return null;
+        var outcome = WorkbenchRevisionCardPolicy.RoundOutcome(confirmed.ToUniversalTime(),
+            document.EntryFingerprint, decision.SourceEntryFingerprint, timeline.ReadAll(task.FolderPath));
+        return outcome == null ? null : new(outcome, task.Key ?? task.Id, task.Title, null, null);
+    }
 
     public async Task<WorkbenchRevisionRoundResult> StartAsync(
         string projectName, WorkbenchRevisionCard card, string prompt, string actor,

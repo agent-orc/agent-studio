@@ -332,7 +332,7 @@ export class WorkbenchViewerComponent {
         this.lastUpdatedAtUtc.set(new Date().toISOString());
         if (document.workbench.decision?.state === 'succeeded')
           this.decisionDrafts.discard(project, id);
-        if (reworkRevisionLanded(document)) this.decisionDrafts.discard(project, id);
+        if (reworkRevisionSettled(document)) this.decisionDrafts.discard(project, id);
         this.decisionResponses.set(initialDecisionResponses(
           document, this.decisionDrafts.draft(project, id)?.responses ?? null));
         this.loading.set(false);
@@ -357,7 +357,7 @@ function initialDecisionResponses(
 ): WorkbenchDecisionResponse[] {
   const discovered = discoverWorkbenchDecisionMarkup(document.html);
   const decision = document.workbench.decision;
-  if (reworkRevisionLanded(document))
+  if (reworkRevisionSettled(document))
     return carryRecordedSelections(decision?.responses ?? document.workbench.recordedResponses,
       discovered.points, discovered.responses);
   const restored = saved ? normalizeWorkbenchDecisionResponses(saved, discovered.points) : null;
@@ -370,6 +370,13 @@ function reworkRevisionLanded(document: WorkbenchDocument): boolean {
     && Boolean(decision.sourceEntryFingerprint)
     && Boolean(document.entryFingerprint)
     && decision.sourceEntryFingerprint !== document.entryFingerprint;
+}
+
+function reworkRevisionSettled(document: WorkbenchDocument): boolean {
+  return reworkRevisionLanded(document)
+    || document.revisionRound?.status === 'updated'
+    || document.revisionRound?.status === 'unchanged'
+    || document.revisionRound?.status === 'failed';
 }
 
 /** `entryPath` is repo-root relative (`docs/...`); the asset resolver wants it docs-root relative. */

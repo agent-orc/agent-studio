@@ -1477,6 +1477,7 @@ public record WorkbenchDocument(WorkbenchListItem Workbench, string Html, string
     public DossierCardList? Cards { get; init; }
     /// <summary>The card a rework request would run its revision on (AGT-3703).</summary>
     public WorkbenchRevisionCard? RevisionCard { get; init; }
+    public WorkbenchRevisionRoundResult? RevisionRound { get; init; }
 }
 
 public sealed record WorkbenchDecisionProjection(

@@ -138,6 +138,7 @@ public static class ProjectDocsEndpoints
                 {
                     Cards = cards.List(projectName, document.Workbench),
                     RevisionCard = revisions.Target(projectName, document.Workbench.SourceTaskKeys),
+                    RevisionRound = revisions.SettledRound(projectName, document),
                 });
         });
 
