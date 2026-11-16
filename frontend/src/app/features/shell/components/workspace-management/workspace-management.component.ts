@@ -18,6 +18,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { RegistryProjectSummary, RegistryWorkspaceListItem } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
+import { ProjectLifecycleDialogService } from '../../../../services/project-lifecycle-dialog.service';
 import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
 import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
@@ -34,19 +35,8 @@ interface WorkspaceManagementRow extends RegistryWorkspaceListItem {
   synthetic?: 'unassigned';
 }
 
-/**
- * AGT-2035 — Workspace management, extracted from the studio-shell sidebar
- * "Settings" panel into a standalone section of the consolidated
- * Workspace-settings view. Per the operator direction this is a **global**
- * setting: the registry of every workspace + its projects, with rename / color
- * / reorder / delete / project-move / short-code / archive.
- *
- * Self-contained: it owns its own registry list + mutation state and re-pulls
- * on {@link WorkspaceManagerService.registryChanged}, so nothing outside this
- * section has to feed it. Inline-rename state + project drag-and-drop are still
- * delegated to {@link WorkspaceSettingsService} (unchanged from when this lived
- * on the shell).
- */
+/** Global workspace registry section. Reloads when the manager's registry
+ * revision changes; inline rename, drag, and delete use WorkspaceSettingsService. */
 @Component({
   selector: 'app-workspace-management',
   standalone: true,
@@ -60,6 +50,7 @@ export class WorkspaceManagementComponent implements OnInit {
   private readonly workspaceManager = inject(WorkspaceManagerService);
   private readonly projectLookup = inject(ProjectLookupService);
   private readonly operatorAttention = inject(OperatorAttentionService);
+  private readonly lifecycleDialogs = inject(ProjectLifecycleDialogService);
   readonly wsSettings = inject(WorkspaceSettingsService);
 
   readonly registryWorkspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
@@ -305,15 +296,17 @@ export class WorkspaceManagementComponent implements OnInit {
   }
 
   isProjectBusy(projectId: string): boolean {
-    return this.registryProjectBusyId() === projectId || this.wsSettings.movingProjectId() === projectId;
+    return this.registryProjectBusyId() === projectId || this.wsSettings.movingProjectId() === projectId
+      || this.wsSettings.deletingProjectId() === projectId;
   }
 
   /** F45b — archive (or un-archive) a project. */
-  toggleRegistryProjectArchived(projId: string, archived: boolean): void {
-    const verb = archived ? 'Un-archive' : 'Archive';
-    const ok = window.confirm(`${verb} project ${projId}? Archived projects are hidden from the tree by default.`);
+  async toggleRegistryProjectArchived(project: RegistryProjectSummary): Promise<void> {
+    const ok = await this.lifecycleDialogs.confirmArchive({
+      projectId: project.id, displayName: project.displayName, shortCode: project.shortCode,
+    }, project.archived);
     if (!ok) return;
-    this.runProjectPatch(projId, { archived: !archived });
+    this.runProjectPatch(project.id, { archived: !project.archived });
   }
 
   private runProjectPatch(projId: string, patch: {

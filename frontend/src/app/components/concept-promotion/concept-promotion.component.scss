@@ -44,8 +44,12 @@
 .promotion__slices {
   display: grid;
   gap: var(--studio-spacing-1);
+  // The list scrolls so Create cards and the Dossier below stay in view (AGT-3875).
+  max-height: min(40vh, 24rem);
   margin: 0;
   padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   list-style: none;
 }
 
