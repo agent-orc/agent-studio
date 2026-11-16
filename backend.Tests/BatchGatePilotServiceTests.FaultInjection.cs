@@ -20,10 +20,12 @@ public sealed class BatchGatePilotFaultInjectionTests : BatchGatePilotServiceTes
     // Durable batch authority writes of each uninterrupted scenario. The
     // counting facts pin them, so the crash theories cover every write.
     // AGT-3569 added the flight claim: its grant, step changes and release,
-    // and the formed journal entry naming each claim.
+    // and the formed journal entry naming each claim. AGT-3858 added the
+    // isolation's flaky-suspect mark and its one same-code re-gate child
+    // before the reproduced red reaches the per-card suite.
     private const int PublicationWrites = 52;
     private const int BaseMoveWrites = 59;
-    private const int IsolationWrites = 77;
+    private const int IsolationWrites = 95;
 
     // Each scenario's crash points are their own test class, so the gate runs
     // them in parallel with the rest of the suite instead of after this class.

@@ -9,8 +9,8 @@ import { getJobDetail } from '../helpers/jobs';
  * path). The reported bug was that users could not attach screenshots:
  * the dialog had no visible drop zone and paste only fired inside the
  * textarea, so Ctrl+V on an empty dialog was a silent no-op. After the
- * fix, paste is bound on the dialog wrapper and the prompt textarea
- * auto-focuses on open so Ctrl+V works without an extra click.
+ * fix, paste is bound on the dialog wrapper, and the dialog takes focus
+ * on open (on Title since AGT-3834) so Ctrl+V works without an extra click.
  */
 
 interface WatchPath { path: string; name?: string }

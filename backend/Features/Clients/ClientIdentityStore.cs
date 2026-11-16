@@ -349,8 +349,30 @@ public class ClientIdentityStore
             if (!_byId.TryGetValue(id, out var existing)
                 || existing.Kind == ClientIdentityKind.Retired
                 || existing.RetireRequestedAt is not null) return null;
-            if (existing.DrainRequestedAt is null) return existing;
-            var updated = existing with { DrainRequestedAt = null };
+            if (existing.DrainRequestedAt is null && existing.DeploySwitchStartedAt is null) return existing;
+            var updated = existing with { DrainRequestedAt = null, DeploySwitchStartedAt = null };
+            WriteLocked(updated);
+            SetRecordLocked(updated);
+            return updated;
+        }
+    }
+
+    /// <summary>
+    /// AGT-3852: records the start of the deploy host switch on a drained
+    /// identity. The first recorded start stays, so a second operator or a
+    /// retry cannot move the verification baseline. Null when the identity is
+    /// unknown, retired, or not draining.
+    /// </summary>
+    public ClientIdentity? RecordDeploySwitchStart(string id)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            if (!_byId.TryGetValue(id, out var existing)
+                || existing.Kind == ClientIdentityKind.Retired
+                || existing.DrainRequestedAt is null) return null;
+            if (existing.DeploySwitchStartedAt is not null) return existing;
+            var updated = existing with { DeploySwitchStartedAt = DateTime.UtcNow };
             WriteLocked(updated);
             SetRecordLocked(updated);
             return updated;
@@ -368,6 +390,7 @@ public class ClientIdentityStore
                 Kind = ClientIdentityKind.Service,
                 DrainRequestedAt = null,
                 RetireRequestedAt = null,
+                DeploySwitchStartedAt = null,
                 RunnerDaemonState = "stopped",
                 RunnerActiveSlots = 0,
                 RunnerAvailableSlots = 0

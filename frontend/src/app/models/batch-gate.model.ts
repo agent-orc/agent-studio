@@ -51,6 +51,8 @@ export interface BatchGateState {
     phaseMinutes?: Record<string, { p50: number | null; p90: number | null; cards: number }>;
     diagnosticRerunShare?: number | null;
     preCheckYield?: { runs: number; red: number; cardsKeptOut: number; costMinutes: number } | null;
+    /** AGT-3858: minutes spent gating already gated code, by purpose. */
+    sameCodeRerunMinutesByPurpose?: Record<string, number> | null;
   } | null;
   reviewFixWaits?: { taskKey: string; reviewAttemptId: string; round: number; maximum: number; aspects: string[] }[];
   preChecksRun?: number;
@@ -95,6 +97,10 @@ export interface BatchGateState {
     members: { taskKey: string; disposition?: string; replay: BatchReplay; released: boolean }[];
     runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; hang?: string | null; evidenceAvailable?: boolean; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
     publication?: BatchPublication | null;
+    /** AGT-3858: this red names no culprit; its cohort is re-gated once on the same code. */
+    flakySuspect?: BatchFlakySuspect | null;
+    /** AGT-3858: set on a re-gate child, the red run it repeats. */
+    sameCodeRerunOfRunId?: string | null;
   }[];
   members: Record<string, BatchMemberState>;
   /** AGT-3710: formed batches waiting for the project's flight, first in, first out. */
@@ -103,6 +109,44 @@ export interface BatchGateState {
   isolationFindings?: BatchIsolationFinding[];
   /** AGT-3681: batch records the store could not read; `batches` leaves those batches out. */
   quarantined?: BatchQuarantinedRecord[];
+}
+
+/** AGT-3858: a red batch run no isolation child reproduced, and its one same-code re-gate. */
+export interface BatchFlakySuspect {
+  redRunId: string;
+  failedTests: string[];
+  markedAtUtc: string;
+  /** False once the re-gate reproduced the red. */
+  active: boolean;
+  regate?: { regateBatchId: string; memberKeys: string[]; outcome: 'passed' | 'reproduced' | 'inconclusive' | string;
+    minutes: number; recordedAtUtc: string } | null;
+}
+
+/** AGT-3858: what the batch article says about a red no isolation child reproduced. */
+export function batchFlakySuspectLabel(suspect: BatchFlakySuspect): string {
+  const tests = suspect.failedTests.length ? ` Failing tests: ${suspect.failedTests.join(', ')}.` : '';
+  const regate = suspect.regate;
+  const minutes = regate ? ` (${regate.minutes.toFixed(1)} min)` : '';
+  if (!regate) return `Flaky suspect: no isolation child reproduced this red. The cohort is re-gated once on the same code.${tests}`;
+  if (regate.outcome === 'passed')
+    return `Flaky suspect: no isolation child reproduced this red, and the same-code re-gate passed${minutes}. No per-card suite ran.${tests}`;
+  if (regate.outcome === 'reproduced')
+    return `Not flaky: the same-code re-gate reproduced this red${minutes}. Its members continue through their own gates.${tests}`;
+  return `Flaky suspect: the same-code re-gate gave no test verdict${minutes}. Its members continue through their own gates.${tests}`;
+}
+
+const SAME_CODE_RERUN_LABELS: Record<string, string> = {
+  'flaky-suspect-regate': 'flaky suspect re-gates',
+  'flaky-test-rerun': 'failed-test reruns',
+  'infrastructure-retry': 'retries after an infrastructure red',
+};
+
+/** AGT-3858: today's same-code rerun minutes by purpose, or null when there were none. */
+export function sameCodeRerunLine(minutes: Record<string, number> | null | undefined): string | null {
+  const entries = Object.entries(minutes ?? {}).filter(([, value]) => value > 0);
+  if (!entries.length) return null;
+  return 'Same-code reruns: ' + entries.map(([purpose, value]) =>
+    `${value.toFixed(1)} min ${SAME_CODE_RERUN_LABELS[purpose] ?? purpose}`).join(' · ') + '.';
 }
 
 /** One unreadable manifest, state or run record of the batch store (AGT-3681). */
@@ -357,9 +401,11 @@ export interface BatchTestFailureRank {
   latestErrorExcerpt: string;
   flakyRerunPassed: boolean;
   flakySuspect: boolean;
+  /** AGT-3858: red runs of this test that no isolation child or same-code re-gate reproduced. */
+  flakySuspectRuns?: number;
   batchIds: string[];
   failures: { testName: string; batchId: string; runId: string; members: string[];
-    atUtc: string; errorExcerpt: string; flakyRerunPassed: boolean }[];
+    atUtc: string; errorExcerpt: string; flakyRerunPassed: boolean; flakySuspectRun?: boolean }[];
 }
 
 export interface BatchTestFailureReport {

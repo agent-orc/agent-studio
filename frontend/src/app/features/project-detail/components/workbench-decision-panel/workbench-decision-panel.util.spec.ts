@@ -4,7 +4,14 @@ import {
   WorkbenchDecisionResponse,
   WorkbenchDocument,
 } from '../../../../models/project-docs.model';
-import { carryRecordedSelections, reworkPrompt, revisionRoundText } from './workbench-decision-panel.util';
+import {
+  agentRouteAfter,
+  agentRouteText,
+  carryRecordedSelections,
+  reworkPrompt,
+  revisionRoundText,
+  sameAgentRoute,
+} from './workbench-decision-panel.util';
 
 const POINTS: WorkbenchDecisionPoint[] = [
   {
@@ -80,5 +87,27 @@ describe('revisionRoundText', () => {
       .toBe('Revision round queued on AGT-3649 · Concept. Another card holds the slot.');
     expect(revisionRoundText({ ...base, status: 'failed', detail: 'No runner configured.' }))
       .toContain('could not start: No runner configured.');
+  });
+});
+
+describe('agent route helpers (AGT-3838)', () => {
+  const codex = { cliType: 'codex', model: 'gpt-5-codex', thinkingLevel: 'medium' };
+
+  it('keeps every part the request leaves blank, as the continue admission does', () => {
+    expect(sameAgentRoute(codex, agentRouteAfter(codex, { cliType: 'codex', model: '', thinkingLevel: null })))
+      .toBe(true);
+    expect(sameAgentRoute(codex, agentRouteAfter(codex, {
+      cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high',
+    }))).toBe(false);
+  });
+
+  it('drops the card thinking level when the model changes', () => {
+    expect(agentRouteAfter(codex, { cliType: 'claude', model: 'claude-opus-4-6', thinkingLevel: null }))
+      .toEqual({ cliType: 'claude', model: 'claude-opus-4-6', thinkingLevel: null });
+  });
+
+  it('names CLI defaults for blank parts', () => {
+    expect(agentRouteText(codex)).toBe('codex · gpt-5-codex · medium');
+    expect(agentRouteText({ cliType: 'claude' })).toBe('claude · model default');
   });
 });

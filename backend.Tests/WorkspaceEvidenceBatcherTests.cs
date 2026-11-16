@@ -216,6 +216,127 @@ public sealed class WorkspaceEvidenceBatcherTests : IDisposable
             StringComparison.Ordinal);
     }
 
+    // ---- Ignored paths (AGT-3865) -------------------------------------------
+
+    [Fact]
+    public void FlushDue_BucketWithIgnoredAndNormalPaths_CommitsTheNormalOnes()
+    {
+        var time = new FakeTimeProvider(new DateTime(2026, 11, 16, 12, 0, 0, DateTimeKind.Utc));
+        var batcher = BuildBatcher(time, debounce: 5, maxDelay: 60,
+            new Dictionary<string, string?> { ["WorkspaceArtifacts:MaximumFileBytes"] = "1024" });
+        File.WriteAllText(Path.Combine(_root, ".gitignore"),
+            "results/\n*.log.1\nlogs/batch-fallback-review_*.json\nprojects/scratch/\n");
+        RunGit(_root, "add", ".gitignore");
+        RunGit(_root, "commit", "-q", "-m", "ignore runtime output");
+
+        // The live producer: oversized files the repository ignores used to
+        // become `:(exclude)` pathspecs on `git add`, and git refuses an add
+        // whose explicit pathspec names an ignored path.
+        var taskDir = Path.Combine(_watchPath, TaskStates.Progress, "ASS-20");
+        WriteLarge(Path.Combine(taskDir, "results", "screenshot.png"));
+        WriteLarge(Path.Combine(taskDir, "logs", "cli-output.log.1"));
+        WriteLarge(Path.Combine(_watchPath, "logs", "batch-fallback-review_1.json"));
+        WriteEvidence("ASS-20", "run.md", "evidence\n");
+        var scratch = Path.Combine(_root, "projects", "scratch");
+        Directory.CreateDirectory(scratch);
+        File.WriteAllText(Path.Combine(scratch, "note.md"), "ignored watch path\n");
+
+        batcher.Ingest(Request("ASS-20", TaskStates.Ready, TaskStates.Progress));
+        batcher.Ingest(new WorkspaceEvidenceRequest(scratch, "scratch", "ASS-21", TaskStates.Ready, TaskStates.Progress));
+        time.Advance(TimeSpan.FromSeconds(6));
+
+        var flush = Assert.Single(batcher.FlushDue());
+        Assert.True(flush.Result.DidCommit, flush.Result.Error);
+        var committed = CommittedFiles();
+        Assert.Contains($"projects/demo/{TaskStates.Progress}/ASS-20/run.md", committed);
+        Assert.DoesNotContain(committed, path => path.Contains("results/", StringComparison.Ordinal)
+            || path.EndsWith(".log.1", StringComparison.Ordinal)
+            || path.Contains("batch-fallback-review_", StringComparison.Ordinal)
+            || path.StartsWith("projects/scratch/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FlushDue_AllIgnoredBucket_IsDroppedWithoutFailureLoop()
+    {
+        var time = new FakeTimeProvider(new DateTime(2026, 11, 16, 12, 0, 0, DateTimeKind.Utc));
+        var batcher = BuildBatcher(time, debounce: 5, maxDelay: 60);
+        File.WriteAllText(Path.Combine(_root, ".gitignore"), "projects/scratch/\n");
+        RunGit(_root, "add", ".gitignore");
+        RunGit(_root, "commit", "-q", "-m", "ignore scratch");
+        var scratch = Path.Combine(_root, "projects", "scratch");
+        Directory.CreateDirectory(Path.Combine(scratch, "results"));
+        File.WriteAllText(Path.Combine(scratch, "results", "out.json"), "{}\n");
+        var commitsBefore = CountCommits();
+
+        batcher.Ingest(new WorkspaceEvidenceRequest(scratch, "scratch", "ASS-22", TaskStates.Ready, TaskStates.Progress));
+        time.Advance(TimeSpan.FromSeconds(6));
+
+        var flush = Assert.Single(batcher.FlushDue());
+        Assert.True(flush.Result.Success, flush.Result.Error);
+        Assert.False(flush.Result.DidCommit);
+        Assert.Equal("all-paths-ignored", flush.Result.Error);
+        time.Advance(TimeSpan.FromSeconds(60));
+        Assert.Empty(batcher.FlushDue());
+        Assert.Equal(commitsBefore, CountCommits());
+    }
+
+    [Fact]
+    public void FlushDue_FailingBucket_IsSplitAndTheFailingWatchPathDropped()
+    {
+        var time = new FakeTimeProvider(new DateTime(2026, 11, 16, 12, 0, 0, DateTimeKind.Utc));
+        var bad = Path.Combine(_root, "projects", "bad");
+        Directory.CreateDirectory(bad);
+        var calls = new List<string>();
+        var config = BatcherConfig(debounce: 5, maxDelay: 60, extra: null);
+        var batcher = new WorkspaceEvidenceBatcher(
+            new WorkspaceArtifactCommitService(config, NullLogger<WorkspaceArtifactCommitService>.Instance),
+            config, NullLogger.Instance, time, push: null)
+        {
+            CommitEvidence = (_, watchPaths, _, _) =>
+            {
+                calls.Add(string.Join("+", watchPaths.Select(Path.GetFileName)));
+                return watchPaths.Contains(bad)
+                    ? WorkspaceArtifactCommitResult.Failed("git-add", "refused")
+                    : WorkspaceArtifactCommitResult.Committed("abc1234", 0, "evidence");
+            },
+        };
+
+        batcher.Ingest(Request("ASS-23", TaskStates.Ready, TaskStates.Progress));
+        batcher.Ingest(new WorkspaceEvidenceRequest(bad, "bad", "ASS-24", TaskStates.Ready, TaskStates.Progress));
+        time.Advance(TimeSpan.FromSeconds(6));
+
+        var flush = Assert.Single(batcher.FlushDue());
+        Assert.False(flush.Result.Success);
+        Assert.Contains("dropped 1 of 2 watch paths", flush.Result.Error);
+        Assert.Contains("git-add: refused", flush.Result.Error);
+        Assert.Equal(3, calls.Count);
+        Assert.Equal(["bad", Project], calls.Skip(1).ToList());
+
+        time.Advance(TimeSpan.FromSeconds(60));
+        Assert.Empty(batcher.FlushDue());
+        Assert.Equal(3, calls.Count);
+    }
+
+    [Fact]
+    public void SummarizeGitError_IgnoredPathsRefusal_NamesCountAndFirstPaths()
+    {
+        var paths = Enumerable.Range(1, 456)
+            .Select(i => $"projects/agent-taskboard/tasks/002/AGT-{i:D4}/results")
+            .ToList();
+        var error = "The following paths are ignored by one of your .gitignore files:\n"
+            + string.Join("\n", paths)
+            + "\nhint: Use -f if you really want to add them.\n"
+            + "hint: Turn this message off by running\n";
+
+        var summary = WorkspaceArtifactCommitService.SummarizeGitError(error);
+
+        Assert.Equal(
+            "456 paths ignored by .gitignore (projects/agent-taskboard/tasks/002/AGT-0001/results, "
+            + "projects/agent-taskboard/tasks/002/AGT-0002/results, "
+            + "projects/agent-taskboard/tasks/002/AGT-0003/results, +453 more)",
+            summary);
+    }
+
     // ---- Foreign-repo guard ------------------------------------------------
 
     [Fact]
@@ -471,21 +592,34 @@ public sealed class WorkspaceEvidenceBatcherTests : IDisposable
 
     // ---- helpers -----------------------------------------------------------
 
-    private WorkspaceEvidenceBatcher BuildBatcher(FakeTimeProvider time, int debounce, int maxDelay)
+    private WorkspaceEvidenceBatcher BuildBatcher(
+        FakeTimeProvider time, int debounce, int maxDelay, IDictionary<string, string?>? extra = null)
     {
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["WorkspaceEvidence:Enabled"] = "true",
-                ["WorkspaceEvidence:DebounceSeconds"] = debounce.ToString(),
-                ["WorkspaceEvidence:MaxDelaySeconds"] = maxDelay.ToString(),
-                ["WorkspaceEvidence:IndexLockRetryBackoffMs"] = "0",
-            })
-            .Build();
+        var config = BatcherConfig(debounce, maxDelay, extra);
         var commit = new WorkspaceArtifactCommitService(
             config, NullLogger<WorkspaceArtifactCommitService>.Instance);
         return new WorkspaceEvidenceBatcher(
             commit, config, NullLogger.Instance, time, push: null);
+    }
+
+    private static IConfiguration BatcherConfig(int debounce, int maxDelay, IDictionary<string, string?>? extra)
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["WorkspaceEvidence:Enabled"] = "true",
+            ["WorkspaceEvidence:DebounceSeconds"] = debounce.ToString(),
+            ["WorkspaceEvidence:MaxDelaySeconds"] = maxDelay.ToString(),
+            ["WorkspaceEvidence:IndexLockRetryBackoffMs"] = "0",
+        };
+        foreach (var (key, value) in extra ?? new Dictionary<string, string?>()) values[key] = value;
+        return new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+    }
+
+    private static void WriteLarge(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var stream = File.Create(path);
+        stream.SetLength(4096);
     }
 
     private static IConfiguration EmptyConfig() =>
