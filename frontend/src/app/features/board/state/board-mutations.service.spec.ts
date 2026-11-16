@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatchMoveJobResponse, TaskInfo } from '../../../models/task.model';
+import { TaskState } from '../../../models/task.model';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { NotificationService } from '../../../services/notification.service';
@@ -258,6 +259,48 @@ describe('BoardMutationsService Ready queue edge (AGT-3588)', () => {
     const service = setup(vi.fn(() => of(null)));
     service.moveToQueueEdge(card('a1'), 'top');
     expect(taskService['reorderJobs']).not.toHaveBeenCalled();
+  });
+});
+
+describe('BoardMutationsService detail lane move', () => {
+  function setup(execution: TaskInfo['execution'] = null) {
+    const info = { id: 'AGT-1', taskKey: '/project::AGT-1', title: 'First task',
+      watchPath: '/project', state: TaskState.Preparation, execution } as TaskInfo;
+    const moved = { info: { ...info, state: TaskState.Ready } };
+    const taskService = {
+      findLaneIndex: vi.fn(() => 0), applyOptimisticMove: vi.fn(),
+      beginOptimisticPersist: vi.fn(), endOptimisticPersist: vi.fn(),
+      moveJob: vi.fn(() => of({})), getDetail: vi.fn(() => of(moved)),
+    };
+    const selection = {
+      selected: signal(null), triageLaneState: TaskState.Preparation,
+      advanceAfterMutation: vi.fn(() => false),
+    };
+    const undo = { offerLaneRevert: vi.fn(), cancelActive: vi.fn() };
+    TestBed.configureTestingModule({ providers: [
+      provideZonelessChangeDetection(), BoardMutationsService, NotificationService,
+      { provide: TaskService, useValue: taskService },
+      { provide: TaskSelectionService, useValue: selection },
+      { provide: ErrorDialogService, useValue: { show: vi.fn() } },
+      { provide: ConfirmDialogService, useValue: { confirm: vi.fn() } },
+      { provide: UndoController, useValue: undo },
+    ] });
+    return { service: TestBed.inject(BoardMutationsService), info, moved, taskService, selection, undo };
+  }
+
+  it('keeps a lone Preparation card in detail after promotion and calls the first queue Queued', () => {
+    const { service, info, moved, selection, undo } = setup();
+    service.changeStateFromDetail(info, TaskState.Ready);
+    expect(selection.advanceAfterMutation).toHaveBeenCalledWith(info.taskKey, true);
+    expect(selection.selected()).toEqual(moved);
+    expect(selection.triageLaneState).toBe(TaskState.Ready);
+    expect(undo.offerLaneRevert).toHaveBeenCalledWith(expect.objectContaining({ actionLabel: 'Queued' }));
+  });
+
+  it('calls a return to Ready Requeued after a recorded execution', () => {
+    const { service, info, undo } = setup({ status: 'completed' } as TaskInfo['execution']);
+    service.changeStateFromDetail(info, TaskState.Ready);
+    expect(undo.offerLaneRevert).toHaveBeenCalledWith(expect.objectContaining({ actionLabel: 'Requeued' }));
   });
 });
 

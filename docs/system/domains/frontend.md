@@ -492,6 +492,10 @@ A refused optimistic triage move restores the original task, lane-pager
 snapshot, route, and active task tab together. The detail shows the refusal
 beside the action with the next step. If an error dialog opens, closing it
 returns focus to the failed action.
+When a move empties the captured lane, the detail stays on the moved task and
+refreshes its new lane state. A first move to Ready is labelled "Queued";
+"Requeued" requires a recorded execution. Preparation's empty Activity view
+names Promote to Ready and Run now as the controls for starting work.
 
 Each Wiki/Dossier tab owns a history stack containing its current target and up
 to 49 earlier or forward targets. Normal link navigation truncates that tab's

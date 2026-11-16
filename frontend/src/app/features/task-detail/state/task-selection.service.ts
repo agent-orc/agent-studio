@@ -1459,13 +1459,14 @@ export class TaskSelectionService {
    * no preceding board click); in the latter case the caller's default
    * post-mutation behaviour - usually `closeDetail()` - still applies.
    */
-  advanceAfterMutation(departingJobKey: string): boolean {
+  advanceAfterMutation(departingJobKey: string, keepMovedCardWhenEmpty = false): boolean {
     const snapBefore = this.pager.snapshot();
     const wasInSnapshot = !!snapBefore && snapBefore.jobs.some(j => j.taskKey === departingJobKey);
     if (wasInSnapshot) this.persistCurrentPagerInHistory();
     const entry = this.pager.removeAndAdvance(departingJobKey);
     if (!entry) {
       if (wasInSnapshot) {
+        if (keepMovedCardWhenEmpty) return false;
         // Snapshot existed and the departing job was in it: removeAndAdvance
         // cleared the iteration. Close the panel and toast so the user knows
         // they finished the lane.

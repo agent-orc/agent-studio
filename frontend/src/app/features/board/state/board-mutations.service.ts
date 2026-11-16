@@ -228,7 +228,7 @@ export class BoardMutationsService {
     const actionLabel = targetState === TaskState.Completed
         ? laneName(TaskState.Completed)
         : targetState === TaskState.Ready
-          ? 'Requeued'
+          ? info.execution ? 'Requeued' : 'Queued'
           : targetState === TaskState.Archive ? 'Archived' : 'Moved';
     this.undo.offerLaneRevert({
       jobId: info.id,
@@ -255,7 +255,7 @@ export class BoardMutationsService {
         // fall back to re-fetching the just-moved job so the lane dropdown
         // reflects the new state without surprising the user with a forced
         // close.
-        const advanced = this.jobSelection.advanceAfterMutation(info.taskKey);
+        const advanced = this.jobSelection.advanceAfterMutation(info.taskKey, true);
         if (!advanced) {
           // Re-anchor the triage lane to the user-chosen target so the
           // app-shell's external-advance effect does not interpret the user's
