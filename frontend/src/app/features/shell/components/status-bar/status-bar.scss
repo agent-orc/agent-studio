@@ -82,6 +82,7 @@ app-status-bar {
 .statusbar__item.statusbar__host-problem { border: 1px solid var(--studio-border); }
 .statusbar__item--btn {
   cursor: pointer;
+  text-decoration: none;
   transition: background 0.12s ease, color 0.12s ease;
 }
 .statusbar__item--btn:hover {

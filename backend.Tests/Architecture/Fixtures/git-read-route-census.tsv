@@ -478,6 +478,7 @@
 /api/workspace/tokens/analysis	free	-	-	-
 /api/workspace/tokens/expensive-jobs	free	-	-	-
 /api/workspace/tokens/expensive-jobs/cached	free	-	-	-
+/api/workspace/tokens/subscription-week	free	-	-	-
 /api/workspace/tokens/timeline	free	-	-	-
 /api/workspace/tokens/timeline/cached	free	-	-	-
 /api/workspaces	free	-	-	-

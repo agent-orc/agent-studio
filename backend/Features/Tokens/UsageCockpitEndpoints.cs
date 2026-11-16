@@ -10,7 +10,7 @@ using AgentStudio.Tasks;
 namespace AgentStudio.Tokens;
 
 public sealed record UsageCliWindow(string Id, string Label, double? UsedPct, DateTime? ResetAtUtc,
-    string? ResetLabel, string? SuspiciousReason);
+    string? ResetLabel, string? SuspiciousReason, DateTime? StartAtUtc = null);
 public sealed record UsageCli(string CliId, bool Primary, string? Plan, string? Source,
     IReadOnlyList<UsageCliWindow> Windows, DateTime? FetchedAt, int TtlSeconds,
     bool Suspicious, string? SuspiciousReason, DateTime? ProbeFailedAt,
@@ -264,7 +264,7 @@ public static class UsageCockpitEndpoints
             windowIds[key] = ordinal + 1;
             return new UsageCliWindow(ordinal == 0 ? key : $"{key}-{ordinal + 1}",
                 window.Label, window.UsedPct, window.ResetAt, window.ResetLabel,
-                window.ProjectionSuspiciousReason);
+                window.ProjectionSuspiciousReason, window.ObservedStartAt);
         }).ToList();
         return new UsageCli(snapshot.CliType, primary, snapshot.Plan, snapshot.Source,
             windows,

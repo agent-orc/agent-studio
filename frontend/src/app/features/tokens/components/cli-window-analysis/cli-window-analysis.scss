@@ -37,6 +37,10 @@ ul { margin: 0; padding-left: var(--studio-spacing-4); color: var(--studio-fg-di
 @media (max-width: 900px) { .cwa__levels, .cwa__windows, .cwa__lower { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; } }
 .cwa__effort-note { margin: var(--studio-spacing-3) 0 0; color: var(--studio-fg-dim); font-size: 0.72rem; }
+.cwa__notice { margin: var(--studio-spacing-3) 0; }
+.cwa__receipt-total { margin-top: var(--studio-spacing-1); font-variant-numeric: tabular-nums; }
+.cwa__account-select { display: flex; align-items: center; gap: var(--studio-spacing-2); color: var(--studio-fg-dim); font-size: 0.72rem; }
+.cwa__account-select select { padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 1px solid var(--studio-border); border-radius: 5px; background: var(--studio-bg-editor); color: var(--studio-fg); font: inherit; }
 .cwa__link { padding: 0; border: 0; background: none; color: var(--studio-tooltip-link); font: inherit; cursor: pointer; }
 .cwa__link:hover { background: none; text-decoration: underline; }
 .cwa__link:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }

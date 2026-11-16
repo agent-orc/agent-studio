@@ -1,8 +1,10 @@
 import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate, TokenTimeline } from '../../models/tokens.model';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { TokensApiService } from '../../services/tokens-api.service';
+import type { SubscriptionWeek } from '../../models/subscription-week.model';
 
 type AnalysisPeriod = '1h' | '24h' | '7d';
 
@@ -18,6 +20,7 @@ interface StreamPart { label: string; tokens: number; pct: number; }
   styleUrl: './cli-window-analysis.scss',
 })
 export class CliWindowAnalysisComponent {
+  private readonly api = inject(TokensApiService);
   readonly cliType = input.required<'claude' | 'codex'>();
   readonly quotaRows = input<CliUsageQuotaRow[]>([]);
   readonly tokens = input<TokenSummaryAggregate | null>(null);
@@ -30,9 +33,29 @@ export class CliWindowAnalysisComponent {
   readonly openAnalysis = output<void>();
 
   readonly period = signal<AnalysisPeriod>('24h');
+  readonly selectedSubscriptionKey = signal<string | null>(null);
   readonly periods: readonly AnalysisPeriod[] = ['1h', '24h', '7d'];
   readonly segmentedPeriods = this.periods.map(value => ({ value, label: value, testid: 'cli-window-period-' + value }));
-  readonly row = computed(() => this.quotaRows().find(row => row.cliType === this.cliType()) ?? null);
+  readonly accounts = computed(() => this.quotaRows().filter(row => row.cliType === this.cliType()));
+  readonly row = computed<CliUsageQuotaRow | null>(() => {
+    const accounts = this.accounts();
+    if (accounts.length === 0) return null;
+    return accounts.find(row => row.subscriptionKey === this.selectedSubscriptionKey()) ?? accounts[0];
+  });
+  readonly subscriptionKey = computed(() => this.row()?.subscriptionKey ?? null);
+  readonly subscriptionWeek = signal<SubscriptionWeek | null>(null);
+  readonly subscriptionWeekError = signal(false);
+  private readonly loadWeek = effect(onCleanup => {
+    const cli = this.cliType();
+    const key = this.subscriptionKey();
+    this.subscriptionWeek.set(null);
+    this.subscriptionWeekError.set(false);
+    const request = this.api.getSubscriptionWeek(cli, key).subscribe({
+      next: value => this.subscriptionWeek.set(value),
+      error: () => this.subscriptionWeekError.set(true),
+    });
+    onCleanup(() => request.unsubscribe());
+  });
   readonly label = computed(() => this.cliType() === 'claude' ? 'Claude' : 'Codex');
   readonly cliModels = computed(() => (this.tokens()?.byModel ?? []).filter(row => this.modelMatches(row.model)));
   readonly capturedTokens = computed(() => this.cliModels().reduce((sum, model) => sum + this.modelTotal(model), 0)
@@ -86,12 +109,23 @@ export class CliWindowAnalysisComponent {
     if (match) return Number(match[1]);
     return /week|7\s*d/i.test(label) ? 168 : 24;
   }
+  windowPeriod(window: { label: string; resetAt: string | null; observedStartAt?: string | null }): string | null {
+    if (!/week|7\s*d/i.test(window.label) || !window.resetAt) return null;
+    const end = Date.parse(window.resetAt);
+    if (!Number.isFinite(end)) return null;
+    return `${this.formatUtc(window.observedStartAt ?? new Date(end - 7 * 86_400_000).toISOString())} to ${this.formatUtc(window.resetAt)}`;
+  }
   formatTokens(value: number): string {
     if (value < 1_000) return value.toLocaleString('en-US');
     if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}K`;
     return `${(value / 1_000_000).toFixed(2)}M`;
   }
   formatPct(value: number | null): string { return value == null ? 'Unknown' : `${value.toFixed(1)}% / h`; }
+  capturedShare(tokens: number, total: number): string { return total > 0 ? `${(tokens / total * 100).toFixed(1)}%` : '0%'; }
+  selectSubscription(event: Event): void {
+    this.selectedSubscriptionKey.set((event.target as HTMLSelectElement).value || null);
+  }
+  formatUtc(value: string | null): string { return value ? new Date(value).toLocaleString('en-GB', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' }) + ' UTC' : 'Unknown'; }
 
   private adhocTotal(): number {
     const value = this.adhoc();

@@ -79,6 +79,7 @@ describe('CLI chip view', () => {
     expect([view.weekly.tag, view.weekly.value, view.session.tag, view.session.value]).toEqual(['WK', '15%', '5H', '32%']);
     expect(view.ariaLabel).toBe('Codex, weekly 15 percent used, current five-hour window 32 percent used. Open usage.');
     expect(view.detail).toContain('Weekly: 15% used, resets Tue 29 Sept, 09:00 Europe/Berlin (Tue 29 Sept, 07:00 UTC)');
+    expect(view.detail).toContain('provider week Tue 22 Sept, 09:00 Europe/Berlin (Tue 22 Sept, 07:00 UTC) to Tue 29 Sept');
   });
 
   it('never borrows the weekly value for an unreported session window', () => {
@@ -86,6 +87,12 @@ describe('CLI chip view', () => {
     expect(view.session).toMatchObject({ tag: 'Session', value: 'N/A', reported: false });
     expect(view.ariaLabel).toContain('current session not reported');
     expect(view.ariaLabel).not.toMatch(/session[^.]*0 percent/);
+  });
+
+  it('uses the provider-observed weekly start when the cycle resets early', () => {
+    const observed = cli({ windows: [{ ...cli().windows[0], startAtUtc: '2026-09-23T07:00:00Z' }] });
+    expect(buildCliChipView('codex', observed, ZONE, NOW).detail)
+      .toContain('provider week Wed 23 Sept, 09:00 Europe/Berlin');
   });
 
   it('uses 5H only when the provider reports a five-hour window', () => {

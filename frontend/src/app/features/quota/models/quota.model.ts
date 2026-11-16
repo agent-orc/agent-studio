@@ -20,11 +20,13 @@ export interface QuotaWindow {
   limit: number | null;
   unit: string | null;
   resetAt: string | null;
+  observedStartAt?: string | null;
   resetLabel: string | null;
 }
 
 export interface QuotaSnapshot {
   cliType: CliType;
+  subscriptionKey?: string | null;
   fetchedAt: string;
   /** CLI `--version` output recorded alongside this probe. */
   cliVersion?: string | null;
