@@ -153,7 +153,7 @@
     </button>
   }
   @if (hasTriageActions()) {
-    <div class="detail__triage" data-testid="triage-panel" data-triage-root>
+    <div class="detail__triage" data-testid="triage-panel" data-triage-root [appDecisionFocus]="info()">
       @if (info().qualityStudioVerdict; as qualityVerdict) { <span data-testid="human-decision-quality-verdict">Quality: {{ qualityVerdict }}</span> }
       <span class="detail__triage-counter visually-hidden"
             data-testid="triage-counter"

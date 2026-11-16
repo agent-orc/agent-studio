@@ -3,6 +3,11 @@
      [class.studio--activitybar-right]="activityBarSide() === 'right'"
      data-testid="app-root"
      data-studio="root">
+  <!-- AGT-3833: skip links are the first Tab stops; Ctrl+K / Cmd+K lives here
+       because the search palette below loads on first use. -->
+  <app-studio-keyboard-entry [main]="studioMain"
+                             [needsYouAvailable]="headerCockpit.shellAccess.operator()"
+                             (searchShortcut)="globalSearchOpen.set(!globalSearchOpen())" />
   <!-- ============ Titlebar ============ -->
   <!-- One navigation row. Optional controls carry
        `data-nav-inline-from`; below that tier they live in the text-only
@@ -474,7 +479,7 @@
       </div>
 
       <div class="studio-editor__body">
-        <div class="studio-editor__main">
+        <div #studioMain class="studio-editor__main" id="studio-main" tabindex="-1" data-testid="studio-main">
         <!--
           Tab content is projected from the parent (app.html). The parent
           owns the dashboard/detail bindings and just picks the right markup

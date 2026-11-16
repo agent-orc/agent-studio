@@ -1,4 +1,6 @@
 import { AfterViewInit, Directive, ElementRef, HostListener, inject, input } from '@angular/core';
+import { DECISION_FOCUS_SELECTOR } from '../../../../components/decision-focus/decision-focus.directive';
+import { DecisionFocusRequestService } from '../../../../services/decision-focus-request.service';
 
 const ARROW_KEY_STEP_PX = 48;
 const VIEWPORT_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End']);
@@ -38,6 +40,7 @@ const KEY_OWNERS = [
 })
 export class DetailKeyboardSurfaceDirective implements AfterViewInit {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly decisionFocus = inject(DecisionFocusRequestService);
 
   /** Optional active descendant that owns scrolling instead of the host. */
   readonly detailKeyboardScrollTarget = input<string | null>(null);
@@ -47,6 +50,8 @@ export class DetailKeyboardSurfaceDirective implements AfterViewInit {
   ngAfterViewInit(): void {
     if (!this.detailKeyboardInitialFocus()) return;
     queueMicrotask(() => {
+      // A card opened to be decided on keeps focus on its decision area (AGT-3833).
+      if (this.decisionFocus.wants() || document.activeElement?.closest(DECISION_FOCUS_SELECTOR)) return;
       const host = this.host.nativeElement;
       const detail = host.closest('.detail__panes, app-task-detail, app-job-detail') ?? host.parentElement;
       const prompt = detail?.querySelector<HTMLElement>('[data-testid="pane-prompt-body"]') ?? null;

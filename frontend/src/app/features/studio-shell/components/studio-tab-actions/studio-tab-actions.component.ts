@@ -17,6 +17,7 @@ import { laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import { stateLabel as fmtStateLabel } from '../../../../services/format.util';
 import type { RunActivityBadge } from '../../../../services/run-activity.util';
 import type { TaskDetail, TaskRunActivityKind } from '../../../../models/task.model';
+import { DecisionFocusDirective } from '../../../../components/decision-focus/decision-focus.directive';
 import type { AcceptanceRefusal } from '../../../task-detail/runtime';
 import { AcceptanceRefusalComponent } from '../acceptance-refusal/acceptance-refusal.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
@@ -102,6 +103,7 @@ export interface StudioTabTriage {
     ExecutionLocationBadgeComponent,
     PendingButtonDirective,
     AcceptanceRefusalComponent,
+    DecisionFocusDirective,
   ],
   templateUrl: './studio-tab-actions.component.html',
   styleUrl: './studio-tab-actions.component.scss',

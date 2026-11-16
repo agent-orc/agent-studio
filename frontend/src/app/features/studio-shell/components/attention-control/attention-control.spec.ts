@@ -179,7 +179,7 @@ describe('AttentionControlComponent', () => {
     await fixture.whenStable();
     (rows()[1].querySelector('[data-testid="attention-row-action"]') as HTMLButtonElement).click();
     await fixture.whenStable();
-    expect(openReferenceOrNotify).toHaveBeenCalledWith('AGT-2');
+    expect(openReferenceOrNotify).toHaveBeenCalledWith('AGT-2', { focusDecision: true });
     expect(rows()).toHaveLength(0);
 
     trigger.click();
