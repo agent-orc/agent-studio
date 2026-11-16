@@ -1,4 +1,5 @@
 using System.Globalization;
+using AgentStudio.Review;
 
 namespace AgentStudio.TestRuns;
 
@@ -112,44 +113,68 @@ internal static class TaskScopedTestEvidenceReader
         var attemptId = frontmatter.GetValueOrDefault("attemptId") ?? Path.GetFileNameWithoutExtension(path);
         var outcome = frontmatter.GetValueOrDefault("outcome");
         var reportRef = Path.GetFileName(path);
+        // The report links each aspect to its file and carries six columns
+        // (Aspect | Status | Classification | Evidence checked | Missing |
+        // Summary); older reports carry the plain four-column form (AGT-3812).
         var verdictRows = ReadTable(text, "## Aspect verdicts")
             .Where(columns => columns.Count >= 4 && !IsTableHeader(columns))
-            .Select(columns => new ReviewVerdictRow(columns[0], columns[1], columns[2], columns[3]))
+            .Select(columns => columns.Count >= 6
+                ? new ReviewVerdictRow(MarkdownLinkLabel(columns[0]), columns[1], columns[2], columns[5], columns[3])
+                : new ReviewVerdictRow(MarkdownLinkLabel(columns[0]), columns[1], columns[2], columns[3]))
             .ToList();
-        var commandSteps = ReadTable(text, "## Command evidence")
+        var commandRows = ReadTable(text, "## Command evidence")
             .Where(columns => columns.Count >= 3 && !IsTableHeader(columns))
+            .ToList();
+        // A baseline or clean-repeat run of the same step is not a separate
+        // candidate verdict the report owes.
+        var commandSteps = commandRows
+            .Where(columns => columns[1].Equals("candidate", StringComparison.OrdinalIgnoreCase))
             .Select(columns => columns[2])
             .Where(IsBuildVerifyStep)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var buildRows = verdictRows
             .Where(row => row.Aspect.Equals("build-tests", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var buildStepByRow = buildRows
             .Select((row, index) => StepId(row.Summary)
+                                    ?? CitedStep(row.EvidenceChecked)
                                     ?? (index < commandSteps.Count ? commandSteps[index] : null))
             .ToList();
         var buildSteps = buildStepByRow
             .OfType<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var integrationRef = ReadBulletValue(text, "Integration ref");
+        var integrationRed = buildRows
+            .Select((row, index) => (Row: row, Step: buildStepByRow[index]))
+            .Where(item => IntegrationBranchRedFinding.IsIntegrationBranchDefect(item.Row.Classification))
+            .Select(item => IntegrationBranchRedFinding.FromVerdict(
+                item.Step,
+                item.Row.Summary,
+                item.Row.EvidenceChecked,
+                step => CommandCell(commandRows, step, baseline: false),
+                integrationRef,
+                step => OutputLink(commandRows, step)))
+            .ToList();
         var buildResult = buildRows.Count == 0
             ? "not-proven"
-            : buildRows.All(row => row.Status.Equals("pass", StringComparison.OrdinalIgnoreCase))
-                ? "passed"
-                : "failed";
+            : buildRows.Any(row => !row.Status.Equals("pass", StringComparison.OrdinalIgnoreCase)
+                                   && !IntegrationBranchRedFinding.IsIntegrationBranchDefect(row.Classification))
+                ? "failed"
+                : integrationRed.Count > 0
+                    ? IntegrationRedResult
+                    : "passed";
         var buildResultLabel = buildResult switch
         {
             "passed" => "Pass",
             "failed" => "Failed",
+            IntegrationRedResult => "Integration branch red",
             _ => "Not proven",
         };
-        var preExisting = buildRows
-            .Where(row => row.Classification.Equals("IntegrationBranchDefect", StringComparison.OrdinalIgnoreCase))
-            .Select(row => TrimSentence(row.Summary))
-            .ToList();
         var buildReason = buildResult switch
         {
-            "passed" when preExisting.Count > 0 => Sentence(string.Join("; ", preExisting)),
+            IntegrationRedResult => string.Join(" ", integrationRed.Select(finding => finding.Sentence)),
             "passed" when buildSteps.Count > 0 => Sentence($"{NaturalList(buildSteps)} passed"),
             "passed" => "All build-tests verdicts passed.",
             "failed" => FailedBuildReason(buildRows, buildStepByRow),
@@ -178,8 +203,16 @@ internal static class TaskScopedTestEvidenceReader
             WorkerReleaseId: string.IsNullOrWhiteSpace(workerRelease) ? null : workerRelease,
             DaemonReleaseId: string.IsNullOrWhiteSpace(daemonRelease) ? null : daemonRelease,
             VerifyReuse: string.IsNullOrWhiteSpace(verifyReuse) ? null : verifyReuse,
-            WorkerReleaseStable: string.IsNullOrWhiteSpace(stableNotice) ? null : stableNotice);
+            WorkerReleaseStable: string.IsNullOrWhiteSpace(stableNotice) ? null : stableNotice,
+            IntegrationBranchRed: integrationRed);
     }
+
+    /// <summary>
+    /// Source result of a review build-tests verdict whose command is already
+    /// red on the integration branch without the change (AGT-3812). It is not
+    /// a pass: the change's own tests were never seen green.
+    /// </summary>
+    internal const string IntegrationRedResult = "integration-red";
 
     private static IReadOnlyList<TaskTestEvidenceSource> ReadRemoteReview(string path)
     {
@@ -202,6 +235,8 @@ internal static class TaskScopedTestEvidenceReader
                 Summary = $"Review build-tests {fact.BuildResultLabel} at {Short(fact.Commit)}{stepSuffix}",
                 Reason = fact.BuildReason,
                 ReportRef = fact.ReportRef,
+                OutputRef = fact.IntegrationBranchRed?.Select(finding => finding.OutputRef)
+                    .FirstOrDefault(output => !string.IsNullOrWhiteSpace(output)),
             },
         };
 
@@ -356,6 +391,71 @@ internal static class TaskScopedTestEvidenceReader
         return end > start ? summary[start..end] : null;
     }
 
+    private static string? CitedStep(string? evidenceChecked)
+    {
+        if (string.IsNullOrWhiteSpace(evidenceChecked)) return null;
+        return evidenceChecked.Split(';')
+            .Select(part => part.Trim())
+            .Where(part => part.StartsWith("command:", StringComparison.OrdinalIgnoreCase))
+            .Select(part => part["command:".Length..].Trim())
+            .FirstOrDefault(step => step.Length > 0);
+    }
+
+    private static string MarkdownLinkLabel(string value)
+    {
+        if (!value.StartsWith('[') || !value.EndsWith(')')) return value;
+        var separator = value.IndexOf("](", StringComparison.Ordinal);
+        return separator > 1 ? value[1..separator] : value;
+    }
+
+    /// <summary>The file a <c>[label](file)</c> cell links to, or null for an unlinked cell.</summary>
+    private static string? MarkdownLinkTarget(string value)
+    {
+        if (!value.StartsWith('[') || !value.EndsWith(')')) return null;
+        var separator = value.IndexOf("](", StringComparison.Ordinal);
+        if (separator <= 0) return null;
+        var target = value[(separator + 2)..^1].Trim();
+        return target.Length == 0 || target.Contains('/') || target.Contains('\\') ? null : target;
+    }
+
+    private static string? CommandCell(IReadOnlyList<IReadOnlyList<string>> rows, string step, bool baseline) =>
+        rows.Where(columns => columns.Count >= 6
+                              && columns[2].Equals(step, StringComparison.OrdinalIgnoreCase)
+                              && IsBaselineWorkspace(columns[1]) == baseline)
+            .Select(columns => columns[5].Trim('`'))
+            .FirstOrDefault();
+
+    /// <summary>
+    /// The stdout of the step's integration-branch run, the output that shows
+    /// the branch is red; the candidate's stdout when no baseline row links one.
+    /// </summary>
+    private static string? OutputLink(IReadOnlyList<IReadOnlyList<string>> rows, string step)
+    {
+        string? Link(bool baseline) => rows
+            .Where(columns => columns.Count >= 9
+                              && columns[2].Equals(step, StringComparison.OrdinalIgnoreCase)
+                              && IsBaselineWorkspace(columns[1]) == baseline
+                              && (baseline || columns[1].Equals("candidate", StringComparison.OrdinalIgnoreCase)))
+            .Select(columns => MarkdownLinkTarget(columns[8]))
+            .FirstOrDefault(target => target is not null);
+        return Link(baseline: true) ?? Link(baseline: false);
+    }
+
+    private static bool IsBaselineWorkspace(string workspace) =>
+        workspace.StartsWith("baseline", StringComparison.OrdinalIgnoreCase);
+
+    private static string? ReadBulletValue(string text, string label)
+    {
+        var marker = $"- {label}:";
+        foreach (var rawLine in text.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.StartsWith(marker, StringComparison.OrdinalIgnoreCase))
+                return line[marker.Length..].Trim().Trim('`');
+        }
+        return null;
+    }
+
     private static string FailedBuildReason(
         IReadOnlyList<ReviewVerdictRow> rows,
         IReadOnlyList<string?> steps)
@@ -440,7 +540,8 @@ internal sealed record ReviewVerdictRow(
     string Aspect,
     string Status,
     string Classification,
-    string Summary);
+    string Summary,
+    string? EvidenceChecked = null);
 
 /// <summary>
 /// Plain facts parsed from one <c>remote-review-grade-*.md</c> report:
@@ -486,4 +587,9 @@ internal sealed record RemoteReviewAttemptFacts(
     /// The report's <c>workerReleaseStable</c> sentence when the grading release
     /// was not the Stable build at the time the report arrived (AGT-3689).
     /// </summary>
-    string? WorkerReleaseStable = null);
+    string? WorkerReleaseStable = null,
+    /// <summary>
+    /// Build-tests verdicts whose command is already red on the integration
+    /// branch without the change (AGT-3812); empty when none is.
+    /// </summary>
+    IReadOnlyList<AgentStudio.Review.IntegrationBranchRedFinding>? IntegrationBranchRed = null);

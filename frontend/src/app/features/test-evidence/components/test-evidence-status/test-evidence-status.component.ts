@@ -57,6 +57,7 @@ export const TEST_EVIDENCE_STATE_TONES: Readonly<Record<TestEvidenceState, Statu
 export const TEST_EVIDENCE_SOURCE_TONES: Readonly<Record<string, StatusTone>> = {
   passed: 'success',
   blocked: 'warning',
+  'integration-red': 'warning',
   failed: 'danger',
   'not-proven': 'neutral',
   'not-applicable': 'neutral',
@@ -68,6 +69,35 @@ export function testEvidenceStateTone(state: string | null | undefined): StatusT
 
 export function testEvidenceSourceTone(result: string | null | undefined): StatusTone {
   return (result && Object.hasOwn(TEST_EVIDENCE_SOURCE_TONES, result) ? TEST_EVIDENCE_SOURCE_TONES[result] : null) ?? 'neutral';
+}
+
+/**
+ * Link to a file in the task folder, or null for a ref that is absent or
+ * leaves the folder.
+ */
+export function taskFileHref(task: Pick<TaskInfo, 'id' | 'watchPath'>, ref: string | null | undefined): string | null {
+  const jobId = task.id?.trim();
+  const fileRef = ref?.trim().replace(/\\/g, '/');
+  if (!jobId || !fileRef || fileRef.startsWith('/') || fileRef.split('/').some(part => !part || part === '.' || part === '..')) {
+    return null;
+  }
+  const path = fileRef.split('/').map(encodeURIComponent).join('/');
+  const watchPath = task.watchPath?.trim();
+  const query = [
+    watchPath ? `watchPath=${encodeURIComponent(watchPath)}` : '',
+    'scope=workspace',
+  ].filter(Boolean).join('&');
+  return `/api/tasks/${encodeURIComponent(jobId)}/files/${path}?${query}`;
+}
+
+/**
+ * AGT-3812: the newest review build-tests verdict when it does not prove the
+ * change green, so acceptance surfaces can say why: the integration branch is
+ * red, the verdict is missing, or the build failed.
+ */
+export function reviewBuildTestsGap(evidence: TaskTestRunEvidence | null | undefined): TaskTestEvidenceSource | null {
+  const source = (evidence?.sources ?? []).find(item => item.kind === 'review-build-tests');
+  return source && source.result !== 'passed' && source.result !== 'not-applicable' ? source : null;
 }
 
 @Component({
@@ -115,18 +145,11 @@ export class TestEvidenceStatusComponent {
   }
 
   reportHref(source: TaskTestEvidenceSource): string | null {
-    const jobId = this.task().id?.trim();
-    const reportRef = source.reportRef?.trim().replace(/\\/g, '/');
-    if (!jobId || !reportRef || reportRef.startsWith('/') || reportRef.split('/').some(part => !part || part === '.' || part === '..')) {
-      return null;
-    }
-    const path = reportRef.split('/').map(encodeURIComponent).join('/');
-    const watchPath = this.task().watchPath?.trim();
-    const query = [
-      watchPath ? `watchPath=${encodeURIComponent(watchPath)}` : '',
-      'scope=workspace',
-    ].filter(Boolean).join('&');
-    return `/api/tasks/${encodeURIComponent(jobId)}/files/${path}?${query}`;
+    return taskFileHref(this.task(), source.reportRef);
+  }
+
+  outputHref(source: TaskTestEvidenceSource): string | null {
+    return taskFileHref(this.task(), source.outputRef);
   }
 
   private sourceLabel(kind: string): string {

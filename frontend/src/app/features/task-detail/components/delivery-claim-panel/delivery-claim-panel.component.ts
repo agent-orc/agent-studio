@@ -20,6 +20,7 @@ import { NotificationService } from '../../../../services/notification.service';
 import { IntegrationDeadEndComponent } from '../integration-dead-end/integration-dead-end.component';
 import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-notice/acceptance-attempt-gap-notice.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { reviewBuildTestsGap, taskFileHref } from '../../../test-evidence/components/test-evidence-status/test-evidence-status.component';
 
 /** Tri-state containment answer. `unknown` is a question, never a negative. */
 export type DeliveryIntegrationState =
@@ -346,6 +347,24 @@ export class DeliveryClaimPanelComponent {
       && review.deliveryBriefVersion === review.currentBriefVersion
       && review.reviewBriefVersion === review.currentBriefVersion;
   });
+
+  /**
+   * AGT-3812: the review build-tests verdict that keeps the grounds from being
+   * green, with the sentence that says why (integration branch red, verdict
+   * missing, build failed) and a link to the cited output.
+   */
+  readonly buildTestsGap = computed(() => {
+    const source = reviewBuildTestsGap(this.job().testEvidence);
+    if (!source) return null;
+    return {
+      result: source.result,
+      reason: source.reason?.trim() || source.summary,
+      outputHref: taskFileHref(this.job(), source.outputRef),
+      reportHref: taskFileHref(this.job(), source.reportRef),
+    };
+  });
+
+  readonly groundsPassed = computed(() => this.contentPassed() && !this.buildTestsGap());
 
   briefLabel(version: string | null | undefined): string {
     return version ? version.slice(0, 12) : 'unknown';
