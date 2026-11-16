@@ -94,7 +94,7 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
                 ledger.LoadSnapshot("alpha", _alpha).Freshness),
             new UsageCostInput("beta", "beta", ledger.LoadSnapshot("beta", _beta).Entries,
                 ledger.LoadSnapshot("beta", _beta).Freshness),
-        ]);
+        ], Now);
 
         var adhoc = aggregator.AdHocAggregate();
         var record = PipelineRecord();

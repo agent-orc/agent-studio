@@ -486,10 +486,7 @@ test.describe('Execution Hosts settings section', () => {
       const panel = page.getByTestId('remote-hosts-panel');
       await expect(panel).toBeVisible();
       if (width === 1280) await expect(page.getByTestId('studio-sidebar')).toBeVisible();
-      else {
-        await page.getByTestId('studio-ab-explorer').click();
-        await expect(page.getByTestId('studio-sidebar')).toBeHidden();
-      }
+      else await expect(page.getByTestId('studio-sidebar')).toBeHidden();
       const header = panel.locator('app-environment-header');
       await header.scrollIntoViewIfNeeded();
       await expect(header).toBeInViewport();

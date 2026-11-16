@@ -85,7 +85,11 @@ test.describe('F38: pane-tab indicator states', () => {
         await tablist.evaluate(element => {
           element.classList.remove('pane-tabs--header');
           element.classList.add('pane-tabs--pill');
-          element.closest('app-pane-tabs')?.classList.remove('pane-tabs-host--header');
+          const host = element.closest<HTMLElement>('app-pane-tabs');
+          host?.classList.remove('pane-tabs-host--header');
+          // The component still runs its header overflow measurement; keep the
+          // host as wide as the header so every tab stays inline (AGT-3836).
+          if (host) host.style.width = '100%';
         });
         await expect(tablist).toHaveClass(/pane-tabs--pill/);
         await tablist.screenshot({ path: join(output, `pane-tabs-pill-${theme}--real.png`), animations: 'disabled' });

@@ -84,6 +84,7 @@ import { TaskDefaultsControlComponent } from './components/task-defaults-control
 import { DevelopStateIndicatorComponent } from './components/develop-state-indicator/develop-state-indicator.component';
 import { AttentionControlComponent } from './components/attention-control/attention-control';
 import { StatusIndicatorComponent } from '../../components/status-indicator/status-indicator.component';
+import { StudioTabOverflowComponent } from './components/studio-tab-overflow/studio-tab-overflow';
 import type { MagazineChild } from '../magazine/magazine-view/magazine-view';
 import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 
@@ -102,7 +103,7 @@ import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioKeyboardEntryComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent, StatusIndicatorComponent],
+  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioKeyboardEntryComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent, StatusIndicatorComponent, StudioTabOverflowComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -116,10 +117,9 @@ export class StudioShellComponent {
   private readonly jobService = inject(TaskService);
   readonly clientService = inject(ClientService);
   /**
-   * Backend-known project names (from the WatchPaths config). The
-   * shell uses this so projects with zero working-set jobs still
-   * appear in the picker / explorer. Defaults to [] so legacy hosts
-   * that don't pass it keep their job-derived behaviour.
+   * Backend-known project names (from the WatchPaths config), so projects with zero working-set
+   * jobs still appear in the picker / explorer. Defaults to [] so legacy hosts that don't pass
+   * it keep their job-derived behaviour.
    */
   readonly knownProjectNames = input<readonly string[]>([]);
   readonly openTaskProjectName = input<string | null>(null);
@@ -130,9 +130,8 @@ export class StudioShellComponent {
   readonly projectWatchPaths = input<readonly WatchPathEntry[]>([]);
 
   /**
-   * Host-computed badge for the Filters activity-bar item. The host owns
-   * the distinction between real filters and view/scope state, while this
-   * shell owns the rail button that renders the count.
+   * Host-computed badge for the Filters activity-bar item. The host owns the distinction between
+   * real filters and view/scope state; this shell owns the rail button that renders the count.
    */
   readonly filterBadgeCount = input<number | null>(null);
 
@@ -169,6 +168,7 @@ export class StudioShellComponent {
 
   readonly tabs = this.tabState.tabs;
   readonly activeKey = this.tabState.activeKey;
+  readonly tabOverflowEntries = computed(() => this.tabs().map(tab => ({ key: this.tabKey(tab), label: this.tabLabel(tab) })));
   readonly activeTab = this.tabState.activeTab;
   readonly structureComponent = signal<Type<unknown> | null>(null);
   readonly magazineComponent = signal<Type<unknown> | null>(null);

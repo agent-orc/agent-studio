@@ -478,6 +478,9 @@
                  aria-hidden="true"></div>
           }
         </div>
+        @if (tabs().length > 1) {
+          <app-studio-tab-overflow [entries]="tabOverflowEntries()" [activeKey]="activeKey()" (tabSelect)="selectTab($event)" />
+        }
         <div class="studio-tabbar__actions" data-testid="studio-tab-actions">
           @if (!productWithoutProject()) {
             <ng-content select="[studioTabActions]"></ng-content>

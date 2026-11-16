@@ -72,9 +72,10 @@
       @if (usage.snapshot()?.cost; as cost) {
         @let c = costView();
         <button type="button" class="statusbar__item statusbar__item--btn statusbar__usage-entry" data-testid="footer-usage-cost"
-                [attr.data-state]="c.state" data-usage-trigger="cost" [title]="c.detail"
+                [attr.data-state]="c.state" data-usage-trigger="cost" [title]="c.detail" [attr.aria-label]="c.ariaLabel"
                 (click)="openUsageDetail.emit({ section: 'cost', cliId: null })">
           <strong>Today</strong> <span>{{ c.value }}</span>
+          @if (c.state === 'partial') { <span>Partial</span> }
           @if (c.state === 'stale') { <span class="statusbar__age">{{ age(cost.coverage.observedAt) }}</span> }
         </button>
       }
