@@ -574,6 +574,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `empty-state-refresh.spec.ts` | studio-shell · refreshed empty state |
 | `explorer-project-board-and-view-links.spec.ts` | Explorer · project links to Board / Deck / Wiki / Dossiers |
 | `header-toolbar-polish.spec.ts` | Header toolbar polish |
+| `modal-focus-keyboard.spec.ts` | Needs you, Add task, escalation confirmation, project picker, card menu and usage sheet keep keyboard focus at 1280 px (AGT-3831) |
 | `hub-project-wiki-switch.spec.ts` | Project ⇄ Wiki switch with the Hub tab already open (AGT-2023) |
 | `navigation-no-deadend.spec.ts` | studio-shell · navigation has no dead end |
 | `project-hub-git-view.spec.ts` | Project Hub · Git View (mocked) |

@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
@@ -230,6 +231,55 @@ describe('MenuComponent', () => {
     panel()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     fixture.detectChanges();
     expect(host.open()).toBe(false);
+  });
+
+  it('Escape returns focus to the trigger instead of the body (AGT-3831)', async () => {
+    host.items.set([{ kind: 'row', id: 'a', label: 'A' }]);
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="host-trigger"]')!;
+    trigger.focus();
+    host.open.set(true);
+    fixture.detectChanges();
+    await flush();
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(rowById('a'));
+
+    rowById('a')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(host.open()).toBe(false);
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('selecting a row returns focus to the trigger before itemClick fires (AGT-3831)', async () => {
+    host.items.set([{ kind: 'row', id: 'a', label: 'A' }]);
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="host-trigger"]')!;
+    let focusAtClick: Element | null = null;
+    host.open.set(true);
+    fixture.detectChanges();
+    await flush();
+    fixture.detectChanges();
+    const menu = fixture.debugElement.query(By.directive(MenuComponent)).componentInstance as MenuComponent;
+    const sub = menu.itemClick.subscribe(() => { focusAtClick = document.activeElement; });
+
+    panel()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    fixture.detectChanges();
+    expect(focusAtClick).toBe(trigger);
+    expect(document.activeElement).toBe(trigger);
+    sub.unsubscribe();
+  });
+
+  it('the owner closing the menu while a row has focus keeps focus off the body (AGT-3831)', async () => {
+    host.items.set([{ kind: 'row', id: 'a', label: 'A' }]);
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="host-trigger"]')!;
+    host.open.set(true);
+    fixture.detectChanges();
+    await flush();
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(rowById('a'));
+
+    host.open.set(false);
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it('the panel testId is composed from testIdPrefix', async () => {
