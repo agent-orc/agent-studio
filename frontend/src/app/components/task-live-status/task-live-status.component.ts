@@ -10,6 +10,7 @@ import { TaskReferenceNavigationService } from '../../services/task-reference-na
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
 import { openReviewLossHost, reviewLossHeadline, type ReviewLossHeadline } from './review-loss-headline';
+import { reviewUnclaimableHeadline } from './review-unclaimable-headline';
 import { BatchGateService } from '../../services/batch-gate.service';
 import { batchMemberFor } from '../../models/batch-gate.model';
 import { batchAction, humanReviewAction, nextForHold, nextForTask, postProcessingWait,
@@ -35,6 +36,8 @@ interface LiveStatusView {
   /** AGT-3579: runner reason code when the runner is not picking this card. */
   waitReason?: string;
   loss?: ReviewLossHeadline;
+  /** AGT-3840: the key the review executor lacks, with its host as a link. */
+  unclaimable?: ReviewLossHeadline;
   /** AGT-3617: the cause card this card is held behind, linked from the headline. */
   hold?: CauseHold;
 }
@@ -197,6 +200,19 @@ export class TaskLiveStatusComponent {
           ? `Reviewing on ${executor}`
           : `Reviewing on ${executor} since ${clock(since)}`,
         detail: activityDetail(task, status.latestEventAt, this.now()),
+        next,
+        attempt: status.attempt,
+      };
+    }
+    // AGT-3840: a refused claim names the missing key and its host ahead of
+    // host load; the probe detail is the detail line.
+    const unclaimable = reviewUnclaimableHeadline(status.queue);
+    if (unclaimable) {
+      return {
+        tone: 'stalled',
+        headline: unclaimable.text,
+        unclaimable,
+        detail: status.queue?.unclaimable?.detail || activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,
       };

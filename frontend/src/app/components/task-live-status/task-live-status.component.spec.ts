@@ -401,6 +401,47 @@ describe('TaskLiveStatusComponent', () => {
     expect(root.textContent).not.toContain('Waiting for review slot');
   });
 
+  // AGT-3840 (playthrough AGT-3649): a review held on a missing provider-auth
+  // key read "Review host saturated" for 20 minutes. The key and its host win,
+  // and the host links to its Execution Hosts row focused on that key.
+  it('names the missing review capability and its host ahead of host load', () => {
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 1,
+        activeStep: null,
+        nextSteps: [],
+        queue: {
+          kind: 'review',
+          state: 'queued',
+          reason: 'Review cannot be claimed: kori-review-01-runner on host kori-review-01 lacks provider-auth:codex (probe indeterminate).',
+          unclaimable: {
+            capabilities: ['provider-auth:codex'],
+            executorId: 'kori-review-01-runner',
+            hostId: 'kori-review-01',
+            cause: 'probe-indeterminate',
+            detail: 'codex login status timed out after 30s',
+            observedAt: new Date().toISOString(),
+          },
+        },
+        latestEventAt: new Date().toISOString(),
+      },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.dataset['liveTone']).toBe('stalled');
+    const headline = root.querySelector('[data-testid="task-live-review-unclaimable"]') as HTMLElement;
+    expect(headline.textContent?.replace(/\s+/g, ' ').trim())
+      .toBe('Review held: provider-auth:codex missing on kori-review-01 · probe indeterminate');
+    const link = root.querySelector('[data-testid="task-live-unclaimable-host-link"]') as HTMLAnchorElement;
+    expect(link.textContent).toBe('kori-review-01');
+    expect(link.getAttribute('href'))
+      .toBe('#/workspace/settings/environment?host=kori-review-01-runner&capability=provider-auth%3Acodex');
+    expect(root.textContent).toContain('codex login status timed out after 30s');
+    expect(root.textContent).not.toContain('saturated');
+    expect(root.textContent).not.toContain('Waiting for review slot');
+  });
+
   // AGT-3848 (S6-F2): the retry came due and never started; the card stops promising it.
   it('reads an overdue retry as stalled and names when the watchdog parks the card', () => {
     const dueAt = new Date(Date.now() - 67_000).toISOString();

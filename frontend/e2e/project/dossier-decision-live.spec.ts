@@ -121,6 +121,110 @@ test('one answer is durable and open; the later answer starts one card', async (
   await capture(page, 'dossier-both-answered');
 });
 
+// AGT-3832: on a phone the option text is the target, each point is a named
+// group, the text wraps as one block, and the header keeps every control on-screen.
+const PHONE_POINTS = [
+  { option: 'window-30', question: 'Which retention window becomes the durable default?' },
+  { option: 'proof-receipt', question: 'Do we owe a customer proof that an expired export was deleted?' },
+];
+
+test.describe('on a phone', () => {
+  test.use({ hasTouch: true });
+
+  for (const theme of ['light', 'dark'] as Theme[]) {
+    test(`tapping option text answers both DEMO-W2 points and confirms (${theme})`, async ({ page, request }) => {
+      const repository = resolve(process.env['PW_E2E_WORKSPACE']!, 'projects', 'demo-app');
+      commitSeededDocs(repository);
+      await expect.poll(async () => (await readWorkbench(request)).workbench.decision ?? null).toBeNull();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.emulateMedia({ colorScheme: theme });
+      await page.addInitScript(value => localStorage.setItem('atp.studio.theme', value), theme);
+      await openDossier(page);
+      await expectPhoneHeaderOnScreen(page, theme);
+
+      const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+      for (const point of PHONE_POINTS) {
+        const group = frame.getByRole('radiogroup', { name: point.question });
+        await expect(group).toBeVisible({ timeout: 30_000 });
+        const option = group.locator(`[data-option-id="${point.option}"]`);
+        const label = option.locator('label');
+        const text = option.locator('[data-studio-decision-text]');
+        await text.scrollIntoViewIfNeeded();
+        const target = await label.boundingBox();
+        expect(target!.width).toBeGreaterThanOrEqual(24);
+        expect(target!.height).toBeGreaterThanOrEqual(24);
+        // One wrapping text block: the bold label starts the line its description continues.
+        const layout = await text.evaluate(element => {
+          const bold = element.querySelector('b')!.getBoundingClientRect();
+          const block = element.getBoundingClientRect();
+          return { boldTop: bold.top, blockTop: block.top, blockWidth: block.width,
+            rowWidth: element.parentElement!.getBoundingClientRect().width };
+        });
+        expect(Math.abs(layout.boldTop - layout.blockTop)).toBeLessThan(4);
+        expect(layout.blockWidth).toBeGreaterThan(layout.rowWidth * 0.7);
+        await text.tap();
+        await expect(option.locator('input')).toBeChecked();
+        await expect(group.getByRole('radio', { checked: true })).toHaveCount(1);
+      }
+      await page.screenshot({ path: resolve(RESULTS, `dossier-phone-answered-${theme}-390.png`) });
+
+      await revealAction(page);
+      const inline = page.getByTestId('workbench-inline-decision-action');
+      await expect(inline).toContainText('2 of 2 answered');
+      await inline.getByTestId('workbench-decision-start').tap();
+      const title = `Implement export retention on a phone ${theme} ${Date.now().toString(36)}`;
+      await inline.getByTestId('workbench-decision-title').fill(title);
+      const shell = await page.getByTestId('workbench-viewer-frame-shell').boundingBox();
+      const frameBox = await page.getByTestId('workbench-viewer-frame').boundingBox();
+      expect(frameBox!.height).toBeGreaterThan(shell!.height * 0.5);
+      await page.screenshot({ path: resolve(RESULTS, `dossier-phone-confirm-${theme}-390.png`) });
+      await inline.getByTestId('workbench-decision-confirm').tap();
+      await expect(inline.getByTestId('workbench-decision-created-tasks')).toContainText(title, { timeout: 30_000 });
+      expect((await readWorkbench(request)).workbench.status).toBe('decided');
+      await page.screenshot({ path: resolve(RESULTS, `dossier-phone-decided-${theme}-390.png`) });
+    });
+  }
+});
+
+/** The key and title do not overlap, and every header control and the details close stay on-screen. */
+async function expectPhoneHeaderOnScreen(page: Page, theme: Theme): Promise<void> {
+  const header = page.getByTestId('workbench-viewer-header');
+  await expect(page.getByTestId('workbench-viewer-title')).toBeVisible({ timeout: 30_000 });
+  const geometry = await header.evaluate(element => {
+    const box = (target: Element | null) => {
+      if (!target) return null;
+      const { left, right, top, bottom } = target.getBoundingClientRect();
+      return { left, right, top, bottom };
+    };
+    return {
+      key: box(element.querySelector('[data-testid="workbench-viewer-key"]')),
+      title: box(element.querySelector('[data-testid="workbench-viewer-title"]')),
+      children: Array.from(element.children)
+        .filter(child => child.getBoundingClientRect().width > 0)
+        .map(child => ({ name: child.tagName.toLowerCase() + '.' + child.className, ...box(child)! })),
+    };
+  });
+  const viewport = page.viewportSize()!.width;
+  for (const child of geometry.children) {
+    expect(child.left, child.name).toBeGreaterThanOrEqual(0);
+    expect(child.right, child.name).toBeLessThanOrEqual(viewport);
+  }
+  if (geometry.key) {
+    const overlaps = geometry.key.right > geometry.title!.left && geometry.key.left < geometry.title!.right
+      && geometry.key.bottom > geometry.title!.top && geometry.key.top < geometry.title!.bottom;
+    expect(overlaps).toBe(false);
+  }
+  await page.getByTestId('workbench-viewer-details-trigger').tap();
+  const close = page.getByTestId('workbench-viewer-details-popover').getByRole('button', { name: 'Close details' });
+  await expect(close).toBeInViewport({ ratio: 1 });
+  const popover = await page.getByTestId('workbench-viewer-details-popover').boundingBox();
+  expect(popover!.x).toBeGreaterThanOrEqual(0);
+  expect(popover!.x + popover!.width).toBeLessThanOrEqual(viewport);
+  await page.screenshot({ path: resolve(RESULTS, `dossier-phone-details-${theme}-390.png`) });
+  await close.tap();
+  await page.screenshot({ path: resolve(RESULTS, `dossier-phone-header-${theme}-390.png`) });
+}
+
 // AGT-3829: decide DEMO-W2 with the keyboard only. Focus must never drop to the
 // body, and no Tab press may leave it on the control it started from.
 test('the keyboard reaches, opens, confirms, and leaves the Dossier decision', async ({ page, request }) => {
