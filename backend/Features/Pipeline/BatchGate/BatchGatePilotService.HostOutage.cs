@@ -24,6 +24,9 @@ public sealed partial class BatchGatePilotService
 {
     public const string HostOutageTopic = "gate-host-outage";
 
+    /// <summary>The verdict and lane label of a gate run that could not reach the gate host.</summary>
+    private const string GateHostUnavailableVerdict = "gate-host-unavailable";
+
     public GateHostOutageMonitor HostOutage => _hostOutage;
 
     private static bool GateHostUnavailable(BuildTestGateResult gate)
@@ -144,7 +147,7 @@ public sealed partial class BatchGatePilotService
                 ? ownership with { FallbackGateActive = true, FallbackGateStarts = 0 }
                 : new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject, FallbackGateActive: true),
             ct).ConfigureAwait(false);
-        Lane(pending, "gate-host-unavailable", outcome: "resume-per-task",
+        Lane(pending, GateHostUnavailableVerdict, outcome: "resume-per-task",
             reason: _hostOutage.Current?.WaitingReason ?? gate.Reason);
     }
 
@@ -155,13 +158,13 @@ public sealed partial class BatchGatePilotService
     private void HoldBatchForGateHost(BatchGateManifest manifest, BatchGateRunRecord run,
         BuildTestGateResult gate, IReadOnlyList<BatchGatePendingRecord> gated, long fence)
     {
-        RecordVerdict(run, gate, "gate-host-unavailable");
+        RecordVerdict(run, gate, GateHostUnavailableVerdict);
         RecordGateHostUnavailable(run.BatchRunId, gate,
             gated.FirstOrDefault()?.WatchPath ?? ProjectWatchPath(manifest.Scope.Project, gated) ?? string.Empty);
         var reason = _hostOutage.Current?.WaitingReason ?? "gate host transport failed; waiting";
         State(manifest, BatchPhase.Abandoned, null, fence, reason);
         ReturnToPending(manifest);
         foreach (var member in gated)
-            Lane(member, "gate-host-unavailable", outcome: "requeued", reason: reason);
+            Lane(member, GateHostUnavailableVerdict, outcome: "requeued", reason: reason);
     }
 }

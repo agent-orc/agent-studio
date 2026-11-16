@@ -58,6 +58,38 @@ public sealed class BatchGatePilotIsolationRetryTests : BatchGatePilotServiceTes
     }
 
     [Fact]
+    public async Task Isolation_flight_that_cannot_reach_the_gate_host_never_parks_the_member()
+    {
+        // AGT-3792: the host went down between a red batch and its isolation.
+        // A solo flight that never reached the host judged nothing; it spends no
+        // isolation retry and parks nobody as gate-infrastructure.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-HOST-DOWN", "docs/host-down.md");
+        SeedMember(factory, "DOC-HOST-DOWN-OTHER", "docs/host-down-other.md");
+        _gate.Batch = request => TreeHas(request.ExpectedSha!, "docs/host-down-other.md")
+            && TreeHas(request.ExpectedSha!, "docs/host-down.md")
+                ? Red(request.ExpectedSha) : Refused();
+        _gate.Base = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        for (var attempt = 0; attempt <= BatchGatePilotService.IsolationFlightRetryLimit; attempt++)
+            await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Null(factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!.ParkedBlocker);
+        Assert.Contains(store.ListPending(), item => item.Subject.TaskKey == member.Key);
+        Assert.Contains(store.ListManifests(), manifest => manifest.ParentBatchId is null
+            && store.LatestState(manifest.BatchId).Reason?.Contains(
+                "isolation flight could not reach the gate host", StringComparison.Ordinal) == true);
+        Assert.DoesNotContain(store.ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == member.Key && finding.Status == "proven-red");
+    }
+
+    [Fact]
     public async Task Cancelled_solo_retries_after_a_green_sibling_was_published()
     {
         using var factory = BuildFactory();
@@ -273,6 +305,16 @@ public sealed class BatchGatePilotIsolationRetryTests : BatchGatePilotServiceTes
                 },
             ],
         };
+
+    private static BuildTestGateResult Refused()
+    {
+        const string refused = "Remote gate transport failure after bounded retries: ssh exited 255: "
+            + "ssh: connect to host 172.30.83.1 port 12222: Connection refused";
+        return new(BuildTestGateVerdict.Fail, null, 1, refused, refused, false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Environment,
+        };
+    }
 
     private static BuildTestGateResult Cancelled()
         => new(BuildTestGateVerdict.Fail, null, 1, "", "Remote verification was cancelled.", false, false)

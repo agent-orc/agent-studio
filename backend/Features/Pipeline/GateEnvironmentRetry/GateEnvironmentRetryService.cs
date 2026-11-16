@@ -285,6 +285,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
                 Code: GateEnvironmentRetryReasons.AlreadyRunning);
         }
 
+        GateEnvironmentRetryResult replay;
         try
         {
             var status = _integrationStatus.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
@@ -295,6 +296,13 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             if (MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(evaluation.Facts) is { } refusal)
             {
                 var lookupFailure = evaluation.ReviewLookup.FailureReason;
+                // The ladder reads review archives only once every other fact
+                // holds. The refusal still names the latest review of the
+                // delivery, so a refused card is diagnosable from the answer
+                // instead of reading "latestAttempt": null (AGT-3792).
+                var latest = refusal == GateEnvironmentRetryReasons.NoPassedReview
+                    ? evaluation.ReviewLookup.LatestAttempt
+                    : HasPassedReview(job.Key ?? job.TaskKey, evaluation.DeliverySha).LatestAttempt;
                 return new GateEnvironmentRetryResult(
                     refusal == GateEnvironmentRetryReasons.NoPassedReview
                         ? GateEnvironmentRetryStatus.NoPassedReview
@@ -304,10 +312,10 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
                     evaluation.IntegrationBranch,
                     Code: refusal,
                     ComparedDeliverySha: evaluation.DeliverySha,
-                    LatestAttempt: evaluation.ReviewLookup.LatestAttempt);
+                    LatestAttempt: latest);
             }
 
-            return await ReplayAsync(
+            replay = await ReplayAsync(
                 job,
                 evaluation,
                 GateEnvironmentRetrySources.Operator,
@@ -317,6 +325,11 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         {
             _inFlight.TryRemove(job.TaskKey, out _);
         }
+        // "Repair the gate transport, then retry the gate": the retry the
+        // escalation asked for returns the card as the recovery replay does.
+        if (job.State == TaskStates.Escalated && EscalatedByTransport(job))
+            await ReturnToLaneAsync(job, replay, GateEnvironmentRetrySources.Operator, ct).ConfigureAwait(false);
+        return replay;
     }
 
     /// <summary>
@@ -356,10 +369,18 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         return returned;
     }
 
-    /// <summary>The escalation parked the card on a transport failure of its merge gate.</summary>
+    /// <summary>
+    /// The escalation parked the card on a transport failure of its merge gate.
+    /// The triage receipt names the class; the park reason the card carries
+    /// names it too, so a receipt a later routing replaced does not hide it.
+    /// </summary>
     internal static bool EscalatedByTransport(TaskInfo job)
         => job.ParkedBlocker?.BlockerType == GateFailureParkCategories.EnvironmentExhausted
-           && GateFailureRouter.ReadReceipt(job.FolderPath) is { Triage.Kind: GateEnvironmentKinds.Transport };
+           && (GateFailureRouter.ReadReceipt(job.FolderPath) is { Triage.Kind: GateEnvironmentKinds.Transport }
+               || job.ParkedBlocker.Reason?.Contains(TransportParkClass, StringComparison.Ordinal) == true);
+
+    private static readonly string TransportParkClass =
+        $"Merge gate class {GateFailureClasses.Environment}/{GateEnvironmentKinds.Transport} ";
 
     private async Task<bool> ReturnTransportEscalationAsync(TaskInfo job, CancellationToken ct)
     {
@@ -371,8 +392,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             // Judged as the Auto Review card it returns as: the integrating phase
             // an escalated card keeps is no running acceptance. A merge that is
             // really running still holds the replay back through its gate journal.
-            var evaluation = Evaluate(job with { State = TaskStates.AutoReview }, status, Options,
-                transportRecovered: true);
+            var evaluation = Evaluate(job with { State = TaskStates.AutoReview }, status, Options);
             if (MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(evaluation.Facts) is { } refusal)
             {
                 _logger.LogInformation(
@@ -387,22 +407,39 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         {
             _inFlight.TryRemove(job.TaskKey, out _);
         }
+        return await ReturnToLaneAsync(job, replay, GateEnvironmentRetrySources.TransportRecovered, ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Returns a card the gate transport escalated to the lane it was escalated
+    /// from, after its integration was replayed with the passed review. The
+    /// delivery chain takes the replayed merge verdict there as usual, so a red
+    /// gate on the replay is routed like any other.
+    /// </summary>
+    private async Task<bool> ReturnToLaneAsync(
+        TaskInfo job, GateEnvironmentRetryResult replay, string source, CancellationToken ct)
+    {
+        if (_transitions is null) return false;
         // The replay met the outage again: the card waits for the next recovery.
-        if (_hostHealth!.Current is not null) return false;
+        if (_hostHealth?.Current is not null) return false;
 
         var current = _scanner.FindJob(job.Id, job.WatchPath);
         if (current is null || current.State != TaskStates.Escalated) return false;
         var target = LaneBeforeEscalation(current) ?? TaskStates.AutoReview;
-        var reason = $"The gate transport answers again. The integration was replayed with the passed review "
+        var opening = source == GateEnvironmentRetrySources.Operator
+            ? "The operator retried the integration after the gate transport failure."
+            : "The gate transport answers again.";
+        var reason = $"{opening} The integration was replayed with the passed review "
             + $"({replay.Outcome?.ToString() ?? "no verdict"}) and the card returned to "
             + $"{TaskStates.DisplayName(target)}, where its merge verdict is taken as usual.";
-        var moved = await _transitions!.MoveAsync(current.Id, target, current.WatchPath, ct,
+        var moved = await _transitions.MoveAsync(current.Id, target, current.WatchPath, ct,
             cause: TimelineActors.System,
             reason: reason,
             expectedSourceState: TaskStates.Escalated,
             suppressProductExecution: true,
             transitionCause: LaneChangeCauses.IntegrationRecovery,
-            transitionDetail: GateEnvironmentRetrySources.TransportRecovered).ConfigureAwait(false);
+            transitionDetail: source).ConfigureAwait(false);
         if (moved.Status != MoveJobStatus.Success)
         {
             _logger.LogWarning(
@@ -414,8 +451,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         _timeline.Append(returnedCard.FolderPath, TimelineEventKinds.IntegrationRecoveryQueued, TimelineActors.System,
             reason, details: new Dictionary<string, string>
             {
-                ["automatic"] = "true",
-                ["source"] = GateEnvironmentRetrySources.TransportRecovered,
+                ["automatic"] = source == GateEnvironmentRetrySources.Operator ? "false" : "true",
+                ["source"] = source,
                 ["returnedTo"] = target,
                 ["outcome"] = replay.Outcome?.ToString() ?? string.Empty,
                 [GateEnvironmentRetryReceipts.DeliveryShaKey] = replay.DeliverySha ?? string.Empty,
@@ -429,8 +466,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             _scanner.PublishCoreFromKnownFolder(returned.FolderPath);
         }
         _logger.LogInformation(
-            "gate-transport-recovery returned project={Project} job={JobId} target={Target} outcome={Outcome}",
-            current.ProjectName, current.Id, target, replay.Outcome);
+            "gate-transport-recovery returned project={Project} job={JobId} target={Target} source={Source} outcome={Outcome}",
+            current.ProjectName, current.Id, target, source, replay.Outcome);
         return true;
     }
 
@@ -502,16 +539,10 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     /// The facts the ladder needs plus the facts the writes need, read once so
     /// the sweep and the operator action cannot disagree about the same card.
     /// </summary>
-    /// <param name="transportRecovered">
-    /// AGT-3792: the gate host answers again after a transport failure. The
-    /// ladder leaves transport failures alone while the host may still be down;
-    /// once it answers, the typed gate-environment failure is replayable.
-    /// </param>
     internal GateEnvironmentRetryEvaluation Evaluate(
         TaskInfo job,
         TaskIntegrationStatus? status,
-        GateEnvironmentRetryOptions options,
-        bool transportRecovered = false)
+        GateEnvironmentRetryOptions options)
     {
         var subject = ReviewSubjectStore.Read(job.FolderPath);
         var deliverySha = ReviewSubjectStore.IsValidResultSha(subject?.ResultSha)
@@ -536,12 +567,6 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             options,
             now,
             inFlight);
-        if (transportRecovered)
-            withoutReview = withoutReview with
-            {
-                IsGateEnvironmentFailure = withoutReview.IsGateEnvironmentFailure
-                    || status?.Failure?.Code == AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
-            };
         // Load review archives only when every other eligibility fact holds.
         // Most cards in these lanes have no gate failure to retry.
         var reviewLookup = MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(withoutReview)

@@ -2206,6 +2206,9 @@ public sealed partial class BatchGatePilotService
         // subsets are assembled on the published SHA. Only an own publication
         // moves this base, so an external tip move still ends as StaleBase.
         var isolationBase = failedManifest.BaseSha;
+        // AGT-3792: an isolation flight that could not reach the gate host
+        // judged nothing, like a batch run that could not (HoldBatchForGateHost).
+        var hostUnavailable = false;
         var isolated = await BatchGateIsolation.RunAsync(ordered,
             async (subset, token) =>
             {
@@ -2265,12 +2268,22 @@ public sealed partial class BatchGatePilotService
                         candidate.CandidateSha, probeRun.EvidencePath);
                 }
                 var classification = BatchGateProbeClassifier.Classify(gate, candidate.CandidateSha);
+                var heldByHost = classification == BatchGateFailureClass.InfrastructureRed
+                    && GateHostUnavailable(gate);
+                if (heldByHost)
+                {
+                    hostUnavailable = true;
+                    RecordGateHostUnavailable(probeRun.BatchRunId, gate,
+                        pending[subset[0].TaskKey].WatchPath ?? string.Empty);
+                }
                 var verdict = RecordVerdict(probeRun, gate,
-                    classification == BatchGateFailureClass.Pass
-                        ? "pass" : classification.ToString());
+                    classification == BatchGateFailureClass.Pass ? "pass"
+                    : heldByHost ? GateHostUnavailableVerdict : classification.ToString());
+                // A host-held flight is no InfrastructureRed attempt: it spends no isolation retry.
                 State(diagnostic, classification == BatchGateFailureClass.Pass
                         ? BatchPhase.Green : BatchPhase.Red,
-                    candidate.CandidateSha, lease.Fence, classification.ToString());
+                    candidate.CandidateSha, lease.Fence,
+                    heldByHost ? GateHostUnavailableVerdict : classification.ToString());
                 DeriveIsolationFindings(failedManifest);
                 if (classification == BatchGateFailureClass.Pass)
                     green[candidate.CandidateSha] = (diagnostic, candidate, probeRun, verdict);
@@ -2324,6 +2337,18 @@ public sealed partial class BatchGatePilotService
         await HandOffProvenRedsAsync(failedManifest.Scope.Project, ct).ConfigureAwait(false);
         var interrupted = isolated.Diagnostics.LastOrDefault(diagnostic =>
             diagnostic.Result.Classification == BatchGateFailureClass.InfrastructureRed);
+        if (interrupted is not null && hostUnavailable)
+        {
+            // The members wait in their pool for the gate host; the outage
+            // probe lets them form again once it answers. Nobody is escalated.
+            var waiting = _hostOutage.Current?.WaitingReason ?? "gate host transport failed; waiting";
+            State(failedManifest, BatchPhase.Paused, failedAssembly.CandidateSha,
+                lease.Fence, $"isolation flight could not reach the gate host; {waiting}");
+            ReturnToPending(failedManifest);
+            foreach (var key in ordered.Select(member => member.TaskKey))
+                Lane(pending[key], GateHostUnavailableVerdict, outcome: "requeued", reason: waiting);
+            return;
+        }
         if (interrupted is not null)
         {
             var cause = interrupted.Result.Cause ?? "without a test verdict";

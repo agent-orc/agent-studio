@@ -101,7 +101,12 @@ public sealed class RemoteBuildTestGateRunner(
                         request.GateId, request.ExpectedSha, attempt);
                     continue;
                 }
-                return result with { Repository = request.RepositoryPath };
+                // AGT-3792: a gate whose host never answered judged nothing. Every
+                // gate path (batch, per-card, pre-main full suite) reads the kind,
+                // so the transport is a gate environment failure on all of them.
+                return transportFailure
+                    ? result with { Repository = request.RepositoryPath, FailureKind = BuildTestGateFailureKind.Environment }
+                    : result with { Repository = request.RepositoryPath };
             }
             catch (OperationCanceledException)
             {

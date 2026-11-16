@@ -42,7 +42,12 @@ public sealed class GateTransportRecoveryTests : IDisposable
         Directory.CreateDirectory(_root);
         foreach (var state in TaskStates.All)
             Directory.CreateDirectory(Path.Combine(_watchPath, state));
-        Git(_root, "init", "-q", "-b", "develop", _repo);
+    }
+
+    /// <summary>The project repository with one integration branch: develop, or main without a develop line.</summary>
+    private void SeedRepository(string integrationBranch)
+    {
+        Git(_root, "init", "-q", "-b", integrationBranch, _repo);
         Git(_repo, "config", "user.email", "test@example.com");
         Git(_repo, "config", "user.name", "Gate Transport Recovery Test");
         File.WriteAllText(Path.Combine(_repo, "base.txt"), "base\n");
@@ -53,7 +58,7 @@ public sealed class GateTransportRecoveryTests : IDisposable
     [Fact]
     public async Task Card_escalated_by_the_transport_returns_to_its_lane_once_the_host_answers()
     {
-        var stack = Build();
+        var stack = Build(Shape.Develop);
         var transport = SeedFailedMergeGate(stack, "transport", "environment-transport.derived.log",
             AcceptedIntegrationFailureCodes.GateEnvironmentFailure);
         var red = SeedFailedMergeGate(stack, "red", "product.AGT-2722.log",
@@ -74,10 +79,11 @@ public sealed class GateTransportRecoveryTests : IDisposable
 
         // While the host is unreachable the sweep neither replays nor moves anything.
         await stack.Retries.RunOnceAsync();
-        Assert.Equal(0, stack.Gate.Invocations);
+        Assert.Equal(0, stack.Gate.GreenRuns);
         Assert.Equal(TaskStates.Escalated, Card(stack, transport).State);
 
         // The transport answers again.
+        stack.Gate.Refusing = false;
         stack.HostHealth.Reachable();
         await stack.Retries.RunOnceAsync();
 
@@ -86,8 +92,8 @@ public sealed class GateTransportRecoveryTests : IDisposable
             $"lane {returned.State}; log: {string.Join(" | ", stack.Log.Lines)}");
         Assert.Equal(LifecyclePhases.Integrating, returned.Phase);
         var events = stack.Timeline.ReadAll(returned.FolderPath);
-        Assert.True(stack.Gate.Invocations == 1,
-            $"gate runs {stack.Gate.Invocations}; timeline: {string.Join(" | ", events.Select(entry => entry.Kind + ": " + entry.Summary))}");
+        Assert.True(stack.Gate.GreenRuns == 1,
+            $"gate runs {stack.Gate.GreenRuns}; timeline: {string.Join(" | ", events.Select(entry => entry.Kind + ": " + entry.Summary))}");
         var note = events.Last(entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
         Assert.Equal(GateEnvironmentRetrySources.TransportRecovered, note.Details?.GetValueOrDefault("source"));
         Assert.Equal(TaskStates.AutoReview, note.Details?.GetValueOrDefault("returnedTo"));
@@ -105,7 +111,153 @@ public sealed class GateTransportRecoveryTests : IDisposable
         Assert.Equal(TaskStates.HumanReview, Card(stack, transport).State);
     }
 
-    private string SeedFailedMergeGate(Stack stack, string label, string fixture, string failureCode)
+    /// <summary>
+    /// The two live cards of 15 November 2026, each through its own gate path:
+    /// AGT-3403 (batch gate enabled, the per-card merge gate into develop) and
+    /// QS-136 (batch gate disabled, integration branch main, the pre-main full
+    /// suite). The real merge runner meets the refusing gate host, the delivery
+    /// chain escalates the card, and once the host answers the sweep replays
+    /// the integration with the passed review and returns the card.
+    /// </summary>
+    [Theory]
+    [InlineData(Shape.Develop)]
+    [InlineData(Shape.Main)]
+    public async Task Live_transport_escalation_returns_automatically_once_the_host_answers(Shape shape)
+    {
+        var stack = Build(shape);
+        var id = SeedDelivery(stack, "live");
+
+        await MeetTheRefusingHostAsync(stack, id, shape);
+        Assert.NotNull(stack.HostHealth.Current);
+        await stack.Reconciler.RunOnceAsync();
+        var escalated = Card(stack, id);
+        Assert.Equal(TaskStates.Escalated, escalated.State);
+        Assert.Equal(GateFailureParkCategories.EnvironmentExhausted, escalated.ParkedBlocker?.BlockerType);
+        Assert.Contains("repair the gate transport", escalated.ParkedBlocker!.Reason, StringComparison.Ordinal);
+
+        // While the host refuses, nothing replays and nothing moves.
+        await stack.Retries.RunOnceAsync();
+        Assert.Equal(0, stack.Gate.GreenRuns);
+        Assert.Equal(TaskStates.Escalated, Card(stack, id).State);
+
+        stack.Gate.Refusing = false;
+        stack.HostHealth.Reachable();
+        await stack.Retries.RunOnceAsync();
+
+        var returned = Card(stack, id);
+        var events = stack.Timeline.ReadAll(returned.FolderPath);
+        Assert.True(returned.State == TaskStates.AutoReview,
+            $"lane {returned.State}; log: {string.Join(" | ", stack.Log.Lines)}; timeline: "
+            + string.Join(" | ", events.Select(entry => entry.Kind + ": " + entry.Summary)));
+        Assert.Equal(1, stack.Gate.GreenRuns);
+        var note = events.Last(entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+        Assert.Equal(GateEnvironmentRetrySources.TransportRecovered, note.Details?.GetValueOrDefault("source"));
+        Assert.Contains(events, entry => entry.Kind == TimelineEventKinds.IntegrationSucceeded);
+
+        await stack.Reconciler.RunOnceAsync();
+        Assert.Equal(TaskStates.HumanReview, Card(stack, id).State);
+    }
+
+    /// <summary>
+    /// AGT-3403: Retry integration answered 409 not-a-gate-environment-failure
+    /// with latestAttempt null. The ladder left transport failures out of
+    /// "gate environment failure" altogether, so the operator's retry was
+    /// refused before the passed review was even read. The transport is a gate
+    /// environment failure; only the timed ladder leaves it to the host probe.
+    /// </summary>
+    [Fact]
+    public async Task Operator_retry_replays_a_transport_escalation_with_its_passed_review()
+    {
+        var stack = Build(Shape.Develop);
+        var id = SeedDelivery(stack, "operator");
+        await MeetTheRefusingHostAsync(stack, id, Shape.Develop);
+        await stack.Reconciler.RunOnceAsync();
+        var escalated = Card(stack, id);
+        Assert.Equal(TaskStates.Escalated, escalated.State);
+
+        var status = stack.Integration.BuildLookup([escalated]).GetValueOrDefault(escalated.TaskKey);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, status?.Failure?.Code);
+        Assert.True(GateEnvironmentRetryFactsReader.IsTransportFailure(status));
+        // The timed ladder still leaves the transport to the host probe.
+        var ladder = stack.Retries.Evaluate(escalated, status, stack.Retries.Options).Facts;
+        Assert.Equal(GateEnvironmentRetryReasons.TransportAwaitsGateHost,
+            GateEnvironmentRetryPolicy.Decide(ladder).Reason);
+
+        stack.Gate.Refusing = false;
+        stack.HostHealth.Reachable();
+        var retried = await stack.Retries.RetryNowAsync(escalated);
+
+        Assert.True(retried.Status == GateEnvironmentRetryStatus.Replayed,
+            $"{retried.Status} {retried.Code}: {retried.Reason} latest={retried.LatestAttempt}");
+        Assert.True(retried.Outcome?.IsSuccessfulIntegration());
+        var returned = Card(stack, id);
+        Assert.Equal(TaskStates.AutoReview, returned.State);
+        var note = stack.Timeline.ReadAll(returned.FolderPath)
+            .Last(entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+        Assert.Equal(GateEnvironmentRetrySources.Operator, note.Details?.GetValueOrDefault("source"));
+        Assert.Contains("operator retried the integration", note.Summary, StringComparison.OrdinalIgnoreCase);
+
+        await stack.Reconciler.RunOnceAsync();
+        Assert.Equal(TaskStates.HumanReview, Card(stack, id).State);
+    }
+
+    [Fact]
+    public async Task Refused_operator_retry_names_the_latest_review_of_the_delivery()
+    {
+        var stack = Build(Shape.Develop);
+        var id = SeedDelivery(stack, "refused");
+        var card = Card(stack, id);
+
+        // No integration failure at all: the retry is refused, but the answer
+        // still names the passed review of the compared delivery.
+        var refused = await stack.Retries.RetryNowAsync(card);
+
+        Assert.Equal(GateEnvironmentRetryReasons.NotAGateEnvironmentFailure, refused.Code);
+        Assert.NotNull(refused.ComparedDeliverySha);
+        Assert.Equal(ReviewTerminalOutcome.Pass, refused.LatestAttempt?.Outcome);
+    }
+
+    /// <summary>The merge into the integration branch, through the real runner, while the gate host refuses.</summary>
+    private async Task MeetTheRefusingHostAsync(Stack stack, string id, Shape shape)
+    {
+        var card = stack.Scanner.FindJob(id, stack.WatchPath)!;
+        var result = await stack.Runner.RunAsync(Project, id, card.FolderPath, card.WatchPath,
+            shape == Shape.Main ? "main" : "develop", CancellationToken.None);
+
+        // Item 6: every gate path records the transport as a gate environment failure.
+        Assert.Equal(MergeIntoIntegrationOutcome.GateEnvironmentFailure, result.Outcome);
+        Assert.Contains("Remote gate transport failure", result.Error, StringComparison.Ordinal);
+        var step = stack.Integration.ReadLatestMergeStep(Card(stack, id))!;
+        Assert.Equal("gate-environment-failure", step.Verdict);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, step.FailureCode);
+        Assert.Contains(shape == Shape.Main ? "Pre-main full suite blocked the merge" : "The build gate blocked the merge",
+            step.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>A reviewed delivery in the integration phase of Auto Review, before its merge ran.</summary>
+    private string SeedDelivery(Stack stack, string label)
+    {
+        var (id, folder, key, deliverySha) = SeedCard(stack, label);
+        ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
+        {
+            TaskKey = key,
+            RunAttemptId = "run-" + key,
+            Project = Project,
+            Repository = _repo,
+            ResultSha = deliverySha,
+            ResultRef = "task/" + id,
+            AttemptChainId = "chain-" + key,
+            IntegrationBranch = stack.IntegrationBranch,
+            CompletedAtUtc = Now.AddMinutes(-30),
+        });
+        stack.Pipeline.Begin(folder, PipelineCatalogue.Standard, Project, id);
+        SeedPassedReview(stack, stack.Scanner.FindJob(id, _watchPath)!.Key ?? key, deliverySha, id);
+        stack.Scanner.InvalidateCache();
+        return id;
+    }
+
+    /// <summary>A coding card in Auto Review whose delivery commit sits on its task branch.</summary>
+    private (string Id, string Folder, string Key, string DeliverySha) SeedCard(Stack stack, string label)
     {
         var id = stack.Mutations.CreateJob(new CreateTaskRequest
         {
@@ -120,12 +272,13 @@ public sealed class GateTransportRecoveryTests : IDisposable
         var folder = created.FolderPath;
 
         // The merge runner finds the delivery on the card's task branch.
-        Git(_repo, "checkout", "-q", "-b", "task/" + id, "develop");
-        File.WriteAllText(Path.Combine(_repo, key + ".txt"), key + "\n");
+        Git(_repo, "checkout", "-q", "-b", "task/" + id, stack.IntegrationBranch);
+        Directory.CreateDirectory(Path.Combine(_repo, "src"));
+        File.WriteAllText(Path.Combine(_repo, "src", key + ".cs"), $"// {key}\n");
         Git(_repo, "add", "-A");
         Git(_repo, "commit", "-q", "-m", "feat: " + key);
         var deliverySha = Git(_repo, "rev-parse", "HEAD");
-        Git(_repo, "checkout", "-q", "develop");
+        Git(_repo, "checkout", "-q", stack.IntegrationBranch);
 
         var taskJson = Path.Combine(folder, "task.json");
         var fields = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(taskJson))!;
@@ -139,7 +292,12 @@ public sealed class GateTransportRecoveryTests : IDisposable
         Set("commits", new[] { Commit(deliverySha) });
         File.WriteAllText(taskJson, JsonSerializer.Serialize(fields,
             new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        return (id, folder, key, deliverySha);
+    }
 
+    private string SeedFailedMergeGate(Stack stack, string label, string fixture, string failureCode)
+    {
+        var (id, folder, key, deliverySha) = SeedCard(stack, label);
         Directory.CreateDirectory(Path.Combine(folder, "post-steps"));
         File.WriteAllText(Path.Combine(folder, "post-steps", "pre-develop-build-gate-1.log"),
             GateFailureTriagePolicyTests.Fixture(fixture));
@@ -204,8 +362,20 @@ public sealed class GateTransportRecoveryTests : IDisposable
         return stack.Scanner.FindJob(id, _watchPath)!;
     }
 
-    private Stack Build()
+    /// <summary>The two gate paths of the live cards.</summary>
+    public enum Shape
     {
+        /// <summary>AGT-3403: batch gate enabled, the per-card merge gate into develop.</summary>
+        Develop,
+
+        /// <summary>QS-136: batch gate disabled, integration branch main, the pre-main full suite.</summary>
+        Main,
+    }
+
+    private Stack Build(Shape shape)
+    {
+        var integrationBranch = shape == Shape.Main ? "main" : "develop";
+        SeedRepository(integrationBranch);
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["WatchPaths:0:Name"] = Project,
@@ -219,7 +389,8 @@ public sealed class GateTransportRecoveryTests : IDisposable
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, configuration));
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration);
-        settings.SetIntegrationBranch(Project, "develop");
+        settings.SetIntegrationBranch(Project, integrationBranch);
+        settings.SetBatchGate(Project, new BatchGateFormationOptions(Enabled: shape == Shape.Develop));
         settings.SetAutoPushStrategy(Project, AutoPushStrategies.Never);
         settings.SetBuildProfile(Project, new BuildProfile { BuildCmds = ["cd ."] });
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);
@@ -242,18 +413,21 @@ public sealed class GateTransportRecoveryTests : IDisposable
             NullLogger<GateFailureRouter>.Instance);
         var reconciler = new DeliveryChainReconciler(scanner, integration, transitions, configuration,
             NullLogger<DeliveryChainReconciler>.Instance, router);
-        var gate = new GreenGate();
-        var runner = new MergeIntoDevelopRunner(git, pipeline, NullLogger<MergeIntoDevelopRunner>.Instance,
-            projectSettings: settings, preDevelopBuildGate: new PreDevelopBuildGate(gate));
-        var authority = new AttemptAuthorityService(configuration, NullLogger<AttemptAuthorityService>.Instance);
         var hostHealth = new GateHostOutageMonitor(
             new Microsoft.Extensions.Time.Testing.FakeTimeProvider(HostAnswersAt));
+        var gate = new SwitchGate(new RemoteBuildTestGateRunner(new RefusingTransport(),
+            NullLogger<RemoteBuildTestGateRunner>.Instance, hostHealth: hostHealth));
+        var runner = new MergeIntoDevelopRunner(git, pipeline, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings, preDevelopBuildGate: new PreDevelopBuildGate(gate),
+            preMainTestGate: new PreMainTestGate(gate));
+        var authority = new AttemptAuthorityService(configuration, NullLogger<AttemptAuthorityService>.Instance);
         var log = new LineLogger<GateEnvironmentRetryService>();
         var retries = new GateEnvironmentRetryService(scanner, settings, integration, pipeline, runner, timeline,
             authority, new TaskProvenanceService(git, settings, mutations, NullLogger<TaskProvenanceService>.Instance),
             configuration, log,
             transitions: transitions, hostHealth: hostHealth);
-        return new Stack(scanner, mutations, timeline, pipeline, authority, gate, reconciler, retries, hostHealth, log);
+        return new Stack(scanner, mutations, timeline, pipeline, authority, gate, reconciler, retries, hostHealth, log,
+            integration, runner, integrationBranch, _watchPath);
     }
 
     private static object Commit(string sha) => new
@@ -298,11 +472,15 @@ public sealed class GateTransportRecoveryTests : IDisposable
         TimelineLog Timeline,
         PipelineExecutionLog Pipeline,
         AttemptAuthorityService Authority,
-        GreenGate Gate,
+        SwitchGate Gate,
         DeliveryChainReconciler Reconciler,
         GateEnvironmentRetryService Retries,
         GateHostOutageMonitor HostHealth,
-        LineLogger<GateEnvironmentRetryService> Log);
+        LineLogger<GateEnvironmentRetryService> Log,
+        TaskIntegrationStatusService Integration,
+        MergeIntoDevelopRunner Runner,
+        string IntegrationBranch,
+        string WatchPath);
 
     /// <summary>The retry service's log lines, named in a failed assertion.</summary>
     private sealed class LineLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
@@ -317,18 +495,43 @@ public sealed class GateTransportRecoveryTests : IDisposable
             => Lines.Enqueue(formatter(state, exception) + (exception is null ? "" : " " + exception.Message));
     }
 
-    /// <summary>The replayed merge gate once the transport answers.</summary>
-    private sealed class GreenGate : IBuildTestGateRunner
+    /// <summary>
+    /// The merge gate: the remote runner against a refusing gate host while
+    /// <see cref="Refusing"/>, then the replayed gate that passes the full suite.
+    /// </summary>
+    private sealed class SwitchGate(IBuildTestGateRunner refused) : IBuildTestGateRunner
     {
-        public int Invocations { get; private set; }
+        public bool Refusing { get; set; } = true;
+        public int GreenRuns { get; private set; }
 
         public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
             IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode, TimeSpan timeout,
             CancellationToken ct)
         {
-            Invocations++;
+            if (Refusing) return refused.RunAsync(request, changedFiles, profile, mode, timeout, ct);
+            GreenRuns++;
             return Task.FromResult(new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 5, string.Empty,
-                "replayed gate passed", true, false) { ExpectedSha = request.ExpectedSha });
+                "replayed gate passed", true, false)
+            {
+                ExpectedSha = request.ExpectedSha,
+                TestedSha = request.ExpectedSha,
+                TestSelection = new TestSelectionAudit
+                {
+                    Level = TestExecutionLevels.Full,
+                    FullSuiteRequired = true,
+                    FullSuiteRan = true,
+                },
+            });
         }
+    }
+
+    /// <summary>The gate host of 15 November 2026: every SSH connection is refused.</summary>
+    private sealed class RefusingTransport : IRemoteGateTransport
+    {
+        public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode, TimeSpan timeout,
+            CancellationToken ct)
+            => Task.FromException<BuildTestGateResult>(new IOException(
+                "ssh exited 255: ssh: connect to host 172.30.83.1 port 12222: Connection refused"));
     }
 }
