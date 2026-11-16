@@ -1442,14 +1442,11 @@ public sealed partial class MergeIntoDevelopRunner
         }
         if (!gateApplies && changedPaths is not null)
         {
-            const string skipReason =
-                "the merge touches neither frontend/, managed sources, nor the Compose stack, " +
-                "and the project declares no build-profile build commands";
             _logger.LogInformation(
                 "merge-into-develop build gate skipped for project={Project} job={JobId} integration={Integration}: {Reason}",
-                project, jobId, integrationBranch, skipReason);
+                project, jobId, integrationBranch, PreDevelopBuildGate.NotApplicableReason);
             IntegrationGateJournal.Clear(jobFolderPath);
-            return (result, null);
+            return (result with { GateSkipReason = PreDevelopBuildGate.NotApplicableReason }, null);
         }
         if (string.IsNullOrWhiteSpace(preMergeTip))
         {

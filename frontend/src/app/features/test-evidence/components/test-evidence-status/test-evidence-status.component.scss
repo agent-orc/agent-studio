@@ -10,4 +10,5 @@
 .test-evidence-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--studio-spacing-2); min-width: 0; padding: var(--studio-spacing-2) var(--studio-spacing-3); border-radius: 7px; background: var(--studio-card-muted-bg); color: var(--studio-fg-dim); }
 .test-evidence-source__copy { display: grid; justify-items: start; min-width: 0; gap: var(--studio-spacing-1); }
 .test-evidence-source__copy small { color: var(--studio-fg-muted); font-size: 10px; line-height: 1.4; }
+.test-evidence-source__links { display: flex; align-items: center; gap: var(--studio-spacing-2); }
 .test-evidence-source__report { color: inherit; font-size: 10px; font-weight: 600; text-underline-offset: 2px; }

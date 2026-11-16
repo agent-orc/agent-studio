@@ -41,6 +41,7 @@ internal static class GitReadSpawnExceptionManifest
     // store: R4 provenance, the R5 commit and default-diff reads, the R7 run
     // views, R12 the project integration view and R14 the delivery claim. The
     // S4 removed the remaining R11 file and historical-object entries.
+    // AGT-3793 removed /api/git/summary: it serves a background snapshot.
     internal static readonly IReadOnlyList<GitReadSpawnException> Entries =
     [
         new("GET", "/api/admin/prompts/", 1, "Prompt administration", "Prompt revisions from the Git fact store", "Other reads"),
@@ -49,7 +50,6 @@ internal static class GitReadSpawnExceptionManifest
         new("GET", "/api/git/hygiene", 5, "AGT-3017 route ownership", "AGT-3017 project views and maintenance", "Project views"),
         new("GET", "/api/git/project-commit/diff", 1, "AGT-3017 route ownership", "AGT-3017 project views and maintenance", "Project views"),
         new("GET", "/api/git/project-commit/files", 2, "AGT-3017 route ownership", "AGT-3017 project views and maintenance", "Project views"),
-        new("GET", "/api/git/summary", 3, "AGT-3017 route ownership", "AGT-3017 project views and maintenance", "Project views"),
         new("GET", "/api/orchestrator/context/global", 3, "Orchestrator chat", "Context from published Git facts", "Other reads"),
         new("GET", "/api/orchestrator/context/project:{projectId}", 2, "Orchestrator chat", "Context from published Git facts", "Other reads"),
         new("GET", "/api/orchestrator/context/task:{projectId}/{taskKey}", 2, "Orchestrator chat", "Context from published Git facts", "Other reads"),

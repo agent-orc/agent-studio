@@ -1720,8 +1720,14 @@ comparison before Quality Studio's verdict contract can decide a review.
   verdict. Every projected source carries a one-sentence `reason` and a
   `reportRef`; `not-proven` means that the report contains no build-tests verdict
   row, and its reason identifies the missing verify command when the command
-  table records one. The task-detail Evidence tab renders each source and links
-  back to that report.
+  table records one. `integration-red` (AGT-3812) means a build-tests verdict
+  classified `IntegrationBranchDefect`: the command is already red on the
+  integration branch without the change. Its reason is one sentence naming the
+  command, step, branch, baseline and failing tests, and `outputRef` links the
+  baseline output. Such a verdict, or a missing one, keeps the Acceptance
+  grounds from showing green, and the Human Review park names the red branch as
+  the owner's decision. The task-detail Evidence tab renders each source and
+  links back to that report.
 - `backend/Features/Review/ReviewProjection.cs`: the canonical, read-time merge
   of every review attempt across **both** review planes (AGT-2717) - local
   `code-review-grade-*.md` and remote `remote-review-grade-*.md` - into one

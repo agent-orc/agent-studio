@@ -342,7 +342,8 @@ public sealed class ExternalCompletionService
                 info.Key ?? info.Id,
                 verification.GitRef!,
                 range.Commits,
-                ReviewSubjectStore.Read(folderPath)?.Repository);
+                ReviewSubjectStore.Read(folderPath)?.Repository,
+                RemoteCommitAttributionGuard.CardReferencedKeys(info, folderPath));
             _mutations.SetRunIntegrationBranchOnFolder(folderPath, range.IntegrationBranch!);
             _mutations.SetRemoteCommitAttributionOnFolder(
                 folderPath,

@@ -499,7 +499,7 @@ public sealed partial class MergeIntoDevelopRunner
             });
         }
 
-        if (!PreDevelopBuildGate.AppliesTo(profile, changedPaths))
+        if (!PreDevelopBuildGate.AppliesTo(profile, changedPaths, repoRoot))
         {
             // Written as an explicit receipt: "no gate applies" is itself a
             // gate verdict, and the card must be able to name it.
@@ -508,8 +508,7 @@ public sealed partial class MergeIntoDevelopRunner
                 null,
                 0,
                 string.Empty,
-                "No gate applies: the contained delivery touches neither frontend/ nor managed sources "
-                + "and the project declares no build-profile build commands.",
+                "No gate applies to the contained delivery: " + PreDevelopBuildGate.NotApplicableReason + ".",
                 false,
                 false)
             {
@@ -658,10 +657,38 @@ public sealed partial class MergeIntoDevelopRunner
             IntegrationVerificationAction.CompleteVerified,
             IntegrationVerificationStates.Verified,
             gate is null ? IntegrationVerificationEvidence.GateNotApplicable : IntegrationVerificationEvidence.MergeGate,
-            gate is null
-                ? "The integration lane created this merge; no gate applies to its diff."
-                : $"The integration lane created this merge and its gate returned {gate.Verdict}.");
+            FreshMergeReason(result, gate));
         RecordVerification(jobFolderPath, repoRoot, branch, sha, decision, gate, result.EvidenceShas);
+    }
+
+    /// <summary>
+    /// AGT-3811: the owner-facing account of a fresh merge: which commands the
+    /// gate ran on which merged SHA, or why no gate ran at all.
+    /// </summary>
+    internal static string FreshMergeReason(MergeIntoIntegrationResult result, BuildTestGateResult? gate)
+    {
+        if (gate is null)
+            return "The integration lane created this merge; "
+                + (result.GateSkipReason ?? "no gate applies to its diff") + ".";
+        var tested = gate.TestedSha ?? gate.ExpectedSha ?? result.MergedSha;
+        var commands = GateCommands(gate);
+        return $"The integration lane created this merge and its gate returned {gate.Verdict}"
+            + (string.IsNullOrWhiteSpace(tested) ? string.Empty : $" on {tested}")
+            + (commands.Count == 0
+                ? (gate.Verdict == BuildTestGateVerdict.NotApplicable ? $": {gate.Reason}" : "; it ran no command")
+                : "; commands: " + string.Join("; ", commands))
+            + ".";
+    }
+
+    private static IReadOnlyList<string> GateCommands(BuildTestGateResult gate)
+    {
+        var executed = gate.Processes
+            .Where(process => string.Equals(process.Phase, "verification", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(process.Command))
+            .Select(process => process.Command)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        return executed.Count > 0 ? executed : gate.TestSelection?.SelectedCommands ?? [];
     }
 
     private void RecordVerification(

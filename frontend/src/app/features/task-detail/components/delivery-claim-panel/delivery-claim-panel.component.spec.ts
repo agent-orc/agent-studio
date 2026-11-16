@@ -108,6 +108,74 @@ describe('DeliveryClaimPanelComponent', () => {
     expect(host.querySelector('[data-testid="stale-brief-acceptance"]')?.textContent)
       .toContain('Acceptance is blocked');
   });
+  describe('AGT-3812 build-tests on the acceptance grounds', () => {
+    const passingContent: NonNullable<TaskDeliveryClaimAnswer['contentReview']> = {
+      mode: 'coding',
+      currentBriefVersion: 'aaaaaaaaaaaaaaaa',
+      deliveryBriefVersion: 'aaaaaaaaaaaaaaaa',
+      reviewBriefVersion: 'aaaaaaaaaaaaaaaa',
+      requiredAspect: 'requirement-fit',
+      contentStatus: 'pass',
+      contentSummary: 'Demo change verified.',
+      evidenceChecked: null,
+      missing: null,
+      ranAspects: ['build-tests', 'requirement-fit'],
+      skippedAspects: [],
+    };
+
+    function withBuildTests(result: string, reason: string, outputRef: string | null = null): Partial<TaskInfo> {
+      return {
+        state: TaskState.HumanReview,
+        testEvidence: {
+          runId: null, runCommit: null, runState: null, runResult: null,
+          matchQuality: 'perfect', direction: 'exact', distance: 0, diffContained: true,
+          evidenceState: 'not-proven', awaitingEvidence: false,
+          summary: 'Review build-tests',
+          sources: [{
+            kind: 'review-build-tests', id: 'review-1', commit: '5301026033f4', result,
+            observedAt: '2026-11-15T22:00:43Z', summary: 'Review build-tests', reason,
+            reportRef: 'remote-review-grade-review-1.md', outputRef,
+          }],
+        } as TaskInfo['testEvidence'],
+      };
+    }
+
+    it('is green when content and build-tests both pass', async () => {
+      const fixture = await mount(
+        job(withBuildTests('passed', 'verify-1 and verify-2 passed.')),
+        vi.fn(() => of(answer({ contentReview: passingContent }))));
+      const host = fixture.nativeElement as HTMLElement;
+
+      expect(host.querySelector('[data-testid="completion-content-review"]')?.getAttribute('data-state')).toBe('pass');
+      expect(host.querySelector('[data-testid="completion-build-tests-gap"]')).toBeNull();
+    });
+
+    it('is not green while the integration branch is red, and states the branch with a link to the output', async () => {
+      const sentence = 'npm test (verify-2) is red on develop at 08eb16b7 without this change; failing tests: test.';
+      const fixture = await mount(
+        job(withBuildTests('integration-red', sentence, 'remote-review-review-1-baseline_verify-2_stdout_log')),
+        vi.fn(() => of(answer({ contentReview: passingContent }))));
+      const host = fixture.nativeElement as HTMLElement;
+
+      expect(host.querySelector('[data-testid="completion-content-review"]')?.getAttribute('data-state')).toBe('gap');
+      expect(host.querySelector('[data-testid="completion-build-tests-gap"]')?.textContent).toContain(sentence);
+      expect(host.querySelector('[data-testid="completion-build-tests-output"]')?.getAttribute('href'))
+        .toBe('/api/tasks/task/files/remote-review-review-1-baseline_verify-2_stdout_log?watchPath=%2Fworkspace%2Ftasks&scope=workspace');
+    });
+
+    it('is not green while the build-tests verdict is missing', async () => {
+      const fixture = await mount(
+        job(withBuildTests('not-proven', 'Build-tests verdict is missing for verify-1.')),
+        vi.fn(() => of(answer({ contentReview: passingContent }))));
+      const host = fixture.nativeElement as HTMLElement;
+
+      expect(host.querySelector('[data-testid="completion-content-review"]')?.getAttribute('data-state')).toBe('gap');
+      expect(host.querySelector('[data-testid="completion-build-tests-gap"]')?.textContent)
+        .toContain('Build-tests verdict is missing for verify-1.');
+      expect(host.querySelector('[data-testid="completion-build-tests-report"]')).not.toBeNull();
+    });
+  });
+
   /**
    * AGT-2706: contained in develop and in main, integrated by an operator
    * card-scoped merge. The card now says so where the operator looks, and

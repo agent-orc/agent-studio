@@ -113,6 +113,7 @@ public static class EndpointMapping
         {
             app.MapLocalFirstRunRepositoryEndpoints();
             app.MapLocalFirstRunGitSetupEndpoints();
+            app.MapProjectServerCheckoutEndpoints();
         }
         app.MapWorkspaceEndpoints();
         app.MapWorkspaceSettingsEndpoints();

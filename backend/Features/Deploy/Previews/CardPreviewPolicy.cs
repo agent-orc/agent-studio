@@ -32,6 +32,21 @@ public static class CardPreviewPolicy
     public static bool ShouldRemove(bool integrated, bool rejected, DateTime updatedAtUtc, DateTime nowUtc)
         => integrated || rejected || nowUtc >= updatedAtUtc + Lifetime;
 
+    /// <summary>
+    /// Whether <see cref="Decide"/> can answer differently for an integrated
+    /// delivery, so the sweep asks for the integration verdict only then.
+    /// </summary>
+    public static bool NeedsIntegration(TaskPreview? current, string? greenDeliverySha, bool rejected)
+    {
+        if (rejected) return false;
+        if (current is null) return greenDeliverySha is not null;
+        if (current.Status is "expired" or "removed")
+            return greenDeliverySha is not null
+                && !string.Equals(current.DeliverySha, greenDeliverySha, StringComparison.OrdinalIgnoreCase);
+        // The removal reason of a live preview names an integrated delivery.
+        return true;
+    }
+
     public static PreviewLifecycleAction Decide(TaskPreview? current, string? greenDeliverySha,
         bool integrated, bool rejected, DateTime nowUtc)
     {

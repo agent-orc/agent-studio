@@ -629,6 +629,8 @@ function buildTestsSummaryLabel(projection: ReviewProjectionView): string | null
       return 'build and tests pass';
     case 'failed':
       return latest.buildTestsReason ? `build failed: ${latest.buildTestsReason}` : 'build failed';
+    case 'integration-red':
+      return latest.buildTestsReason ? `integration branch red: ${latest.buildTestsReason}` : 'integration branch red';
     default:
       return 'build and tests not proven';
   }

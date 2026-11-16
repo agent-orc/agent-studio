@@ -251,6 +251,30 @@ public sealed class AutoReviewStrandingPolicyTests
                 HasReview = true, ScheduledRetryOverdue = TimeSpan.FromMinutes(31),
             }));
 
+    // AGT-3848 (S6-F2): the scheduler ticks every 15 seconds, so a retry that
+    // stays overdue past the overdue limit has no owner, long before the threshold.
+    [Theory]
+    [InlineData(5 * 60, AutoReviewStrandingAction.Leave)]
+    [InlineData(5 * 60 + 1, AutoReviewStrandingAction.Escalate)]
+    public void Overdue_retry_owns_the_card_only_for_the_overdue_limit(int overdueSeconds,
+        AutoReviewStrandingAction expected)
+        => Assert.Equal(expected,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                WithoutOwner = TimeSpan.FromMinutes(6), HasReview = true,
+                ScheduledRetryOverdue = TimeSpan.FromSeconds(overdueSeconds),
+                ScheduledRetryOverdueLimit = TimeSpan.FromMinutes(5),
+            }));
+
+    [Fact]
+    public void Overdue_limit_above_the_threshold_is_capped_at_the_threshold()
+        => Assert.Equal(AutoReviewStrandingAction.Escalate,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                HasReview = true, ScheduledRetryOverdue = TimeSpan.FromMinutes(31),
+                ScheduledRetryOverdueLimit = TimeSpan.FromHours(2),
+            }));
+
     [Fact]
     public void Cause_breaker_wait_owns_the_parked_card()
         => Assert.Equal(AutoReviewStrandingAction.Leave,

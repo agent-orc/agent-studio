@@ -2155,7 +2155,8 @@ public static class LeaseEndpoints
                             req.TaskKey,
                             deliveryBranch,
                             deliveryRange.Commits,
-                            req.Repository);
+                            req.Repository,
+                            RemoteCommitAttributionGuard.CardReferencedKeys(task));
                         attributionWarning = string.Join(" ", new[]
                             { deliveryRange.Warning, remoteAttribution.Warning }
                             .Where(value => !string.IsNullOrWhiteSpace(value)));

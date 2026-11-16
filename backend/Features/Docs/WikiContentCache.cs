@@ -65,6 +65,19 @@ public sealed class WikiContentCache
     }
 
     /// <summary>
+    /// The published snapshot, or null while the project is not filled yet.
+    /// Never fills: a read surface that only adds Wiki facts to another answer
+    /// (the orchestrator feed's Dossier decisions) must not pay a cold fill and
+    /// its Git reads inside its own request (AGT-3793). The warmup service and
+    /// the eager invalidations keep the slots filled.
+    /// </summary>
+    internal WikiContentSnapshot? TryGetPublished(string projectName)
+    {
+        if (!_slots.TryGetValue(_normalizeProjectKey(projectName), out var slot)) return null;
+        lock (slot.Gate) return slot.Snapshot;
+    }
+
+    /// <summary>
     /// The docs/ staleness signature of the published snapshot (path + mtime +
     /// size over the whole tree). Consumers that keep a derived projection of
     /// their own - the BM25 search index, for example - gate on this instead of

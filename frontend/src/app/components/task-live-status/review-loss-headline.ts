@@ -1,5 +1,14 @@
 import type { TaskLiveQueue } from '../../models/task.model';
+import { TaskState } from '../../models/task.model';
+import { laneName } from '../../models/lane-presentation';
 import { withRouteSegment } from '../../services/url-hash.util';
+
+/**
+ * AGT-3848: the retry scheduler ticks every 15 seconds and the board polls, so
+ * a retry that starts normally can still read `retry-scheduled` shortly after
+ * its due time. Two scheduler ticks pass before the retry reads as overdue.
+ */
+export const RETRY_START_GRACE_MS = 30_000;
 
 /** The CURRENT headline split around the host name, so the host renders as a link. */
 export interface ReviewLossHeadline {
@@ -10,6 +19,8 @@ export interface ReviewLossHeadline {
   after: string;
   /** Route of the host detail; null when the loss names no host. */
   hostRoute: string | null;
+  /** AGT-3848: the scheduled retry came due and has not started; nothing owns the card. */
+  overdue: boolean;
 }
 
 /**
@@ -22,10 +33,17 @@ export interface ReviewLossHeadline {
  *
  * Returns null when the queue carries no loss, so older payloads keep their
  * previous wording.
+ *
+ * AGT-3848: the queue stays `retry-scheduled` after the due time when no
+ * scheduler tick starts the retry, and the card kept promising a past time.
+ * Past `dueAt` the retry reads as overdue and names when the stranding
+ * watchdog parks the card: "Automatic retry 1 of 2 overdue since 11:37 PM ·
+ * parks in Escalated by 11:43 PM."
  */
 export function reviewLossHeadline(
   queue: TaskLiveQueue | null | undefined,
   clock: (epochMs: number) => string,
+  nowMs: number,
 ): ReviewLossHeadline | null {
   const lost = queue?.lost;
   if (!queue || !lost) return null;
@@ -40,12 +58,14 @@ export function reviewLossHeadline(
   const when = lostAt === null ? null : clock(lostAt);
 
   let next: string;
+  let overdue = false;
   const retry = queue.retry;
   const dueAt = epoch(retry?.dueAt);
   if (queue.state === 'retry-scheduled' && retry && dueAt !== null) {
-    next = retry.number != null
-      ? ` Automatic retry ${retry.number} of ${retry.budget} at ${clock(dueAt)}.`
-      : ` Automatic retry at ${clock(dueAt)}.`;
+    const name = retry.number != null ? `Automatic retry ${retry.number} of ${retry.budget}` : 'Automatic retry';
+    overdue = nowMs > dueAt + RETRY_START_GRACE_MS;
+    next = overdue ? ` ${name} overdue since ${clock(dueAt)}${parkSentence(epoch(retry.parkAt), clock, nowMs)}`
+      : ` ${name} at ${clock(dueAt)}.`;
   } else {
     next = ' No automatic retry is scheduled · operator decision needed';
   }
@@ -63,7 +83,16 @@ export function reviewLossHeadline(
     hostRoute: host && routeId
       ? `/workspace/settings/environment?host=${encodeURIComponent(routeId)}`
       : null,
+    overdue,
   };
+}
+
+/** When the watchdog parks an overdue retry; once that time passed too, nothing is promised. */
+function parkSentence(parkAt: number | null, clock: (epochMs: number) => string, nowMs: number): string {
+  if (parkAt === null) return ' · operator decision needed';
+  return nowMs > parkAt
+    ? ` · not parked by ${clock(parkAt)} · operator decision needed`
+    : ` · parks in ${laneName(TaskState.Escalated)} by ${clock(parkAt)}.`;
 }
 
 function epoch(value: string | null | undefined): number | null {

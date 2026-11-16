@@ -19,13 +19,23 @@
                                   [testId]="'test-evidence-source-state-' + source.kind" />
             <small>{{ sourceReason(source) }}</small>
           </span>
-          @if (reportHref(source); as href) {
-            <a class="test-evidence-source__report"
-               [href]="href"
-               target="_blank"
-               rel="noopener noreferrer"
-               [attr.aria-label]="'Open report for ' + source.summary">Report</a>
-          }
+          <span class="test-evidence-source__links">
+            @if (outputHref(source); as href) {
+              <a class="test-evidence-source__report"
+                 [href]="href"
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 [attr.data-testid]="'test-evidence-source-output-' + source.kind"
+                 [attr.aria-label]="'Open output for ' + source.summary">Output</a>
+            }
+            @if (reportHref(source); as href) {
+              <a class="test-evidence-source__report"
+                 [href]="href"
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 [attr.aria-label]="'Open report for ' + source.summary">Report</a>
+            }
+          </span>
         </article>
       }
     </section>

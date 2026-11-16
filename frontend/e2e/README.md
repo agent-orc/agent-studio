@@ -70,6 +70,13 @@ executed by the pull worker.
 The profile does not contact an SSH host or use a real provider
 credential. Screenshots go to `JOB_RESULTS_DIR` when set.
 
+Run `npm --prefix frontend run e2e -- e2e/settings/second-project-server-checkout.spec.ts`
+for the AGT-3809 journey on the `first-run` profile. It verifies Git access
+for one URL project in the checklist, adds a second URL project next to it,
+captures the server checkout notice in Settings, above the board, and on its
+Ready card (1280 light and dark, 390 px), creates the checkout from the Ready
+card, and integrates the first card into `develop` on the disposable origin.
+
 ### Product session over HTTPS
 
 Run `npm --prefix frontend run e2e -- e2e/security/product-session-networked-https.spec.ts`
