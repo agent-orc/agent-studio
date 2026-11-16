@@ -24,6 +24,11 @@ export class CrashRecoveryPromptComponent implements OnInit {
   readonly pending = signal<CrashRecoveryPending[]>([]);
   readonly reviewPending = computed(() =>
     this.pending().filter(item => item.classification !== 'trivial'));
+  /** Starts with the entry's visible "Recovery pending <count>" (WCAG 2.5.3). */
+  readonly entryLabel = computed(() => {
+    const count = this.reviewPending().length;
+    return `Recovery pending ${count}, review ${count} pending crash recovery ${count === 1 ? 'item' : 'items'}`;
+  });
   readonly trivialPending = computed(() =>
     this.pending().filter(item => item.classification === 'trivial'));
   readonly loading = signal(false);

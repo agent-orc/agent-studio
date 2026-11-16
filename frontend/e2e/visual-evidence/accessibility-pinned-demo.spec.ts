@@ -46,9 +46,28 @@ async function openBoard(page: Page): Promise<void> {
     await expect(panel.getByText('Demo Platform', { exact: true })).toBeVisible();
     await panel.getByText('Demo App', { exact: true }).click();
   }
+  await showLane(page, 'Escalated');
   await expect(page.locator(CARD).filter({ hasText: 'DEMO-9' }).first()).toBeVisible();
   const keys = await page.locator(CARD).allTextContents();
   expect(keys.some((text) => /\b(?:AGT|PROJ)-\d+\b/.test(text))).toBe(false);
+}
+
+/** The phone layout has no inspector pane; the active task tab marks the open detail. */
+async function expectTaskOpen(page: Page, width: number): Promise<void> {
+  await expect(page.getByTestId('studio-tab-list').locator('[data-tab-kind="task"] [role="tab"][aria-selected="true"]'))
+    .toBeVisible();
+  await expect(width < 720 ? page.locator('app-mobile-pane-switcher') : page.getByTestId('pane-protocol')).toBeVisible();
+}
+
+/** The 390 px board shows one lane at a time behind the Board lane select. */
+async function showLane(page: Page, lane: string): Promise<void> {
+  const select = page.getByRole('combobox', { name: 'Board lane' });
+  if (await select.isVisible()) await select.selectOption({ label: lane });
+}
+
+/** Review screenshot of an audited state, kept when JOB_RESULTS_DIR is set. */
+async function captureState(page: Page, name: string): Promise<void> {
+  if (RESULTS) await page.screenshot({ path: path.join(RESULTS, `a11y-${name}.png`), animations: 'disabled' });
 }
 
 async function focusRail(page: Page): Promise<void> {
@@ -80,17 +99,61 @@ for (const theme of ['light', 'dark'] as const satisfies readonly Theme[]) {
       await openBoard(page);
       await setTheme(page, theme);
       await checkAccessibility(page, testInfo, `board-${theme}-${width}`);
+      await captureState(page, `board-${theme}-${width}`);
 
+      await showLane(page, 'Human review');
       const card = page.locator(CARD).filter({ hasText: 'DEMO-5' }).first();
       await card.scrollIntoViewIfNeeded();
       await card.click();
-      await expect(page.getByTestId('pane-protocol')).toBeVisible();
+      await expectTaskOpen(page, width);
+      if (width < 720) {
+        await checkAccessibility(page, testInfo, `detail-${theme}-${width}`);
+        await captureState(page, `detail-${theme}-${width}`);
+        return;
+      }
       const tabs = ['task', 'activity', 'protocol'] as const;
       for (const tab of tabs) {
         await selectInspectorTab(page, tab);
         await expect(page.getByTestId('pane-protocol-body')).toHaveAttribute('data-active-tab', tab);
         await checkAccessibility(page, testInfo, `detail-${tab}-${theme}-${width}`);
       }
+      await captureState(page, `detail-${theme}-${width}`);
+    });
+
+    test(`pinned attention, escalation, Dossier and usage accessibility ${theme} ${width}`, async ({ page }, testInfo) => {
+      test.skip(CAPTURE === 'before', 'Baseline run only captures the rail.');
+      await page.setViewportSize({ width, height: 900 });
+      await openBoard(page);
+      await setTheme(page, theme);
+
+      await page.getByTestId('studio-attention-trigger').click();
+      await expect(page.getByTestId('studio-attention-list')).toBeVisible();
+      await checkAccessibility(page, testInfo, `needs-you-${theme}-${width}`);
+      await captureState(page, `needs-you-${theme}-${width}`);
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('studio-attention-list')).toBeHidden();
+
+      const escalated = page.locator(CARD).filter({ hasText: 'DEMO-9' }).first();
+      await escalated.scrollIntoViewIfNeeded();
+      await escalated.click();
+      await expectTaskOpen(page, width);
+      await checkAccessibility(page, testInfo, `escalated-${theme}-${width}`);
+      await captureState(page, `escalated-${theme}-${width}`);
+
+      await page.getByTestId('studio-ab-workbenches').click();
+      const open = page.locator('[data-testid^="workbench-overview-open-"]').first();
+      await expect(open).toBeVisible();
+      await open.click();
+      await expect(page.getByTestId('workbench-viewer')).toBeVisible();
+      await checkAccessibility(page, testInfo, `dossier-${theme}-${width}`);
+      await captureState(page, `dossier-${theme}-${width}`);
+
+      const usage = page.getByTestId('studio-statusbar').locator('[data-usage-trigger]').first();
+      await expect(usage).toBeVisible();
+      await usage.click();
+      await expect(page.getByTestId('usage-detail-surface')).toBeVisible();
+      await checkAccessibility(page, testInfo, `usage-${theme}-${width}`);
+      await captureState(page, `usage-${theme}-${width}`);
     });
   }
 

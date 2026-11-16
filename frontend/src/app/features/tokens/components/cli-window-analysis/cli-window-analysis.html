@@ -44,11 +44,8 @@
   </section>
 
   <div class="cwa__lower">
-    <section class="cwa__panel" data-testid="cli-effort-split">
-      <div class="cwa__section-head"><div><h3>Effort split</h3><p>Reasoning effort is not present in the current aggregate contract.</p></div></div>
-      <div class="cwa__effort"><span></span></div>
-      <div class="cwa__legend"><strong>Unattributed 100%</strong><span>No inferred effort labels</span></div>
-      <h4>Recorded token streams</h4>
+    <section class="cwa__panel" data-testid="cli-token-streams">
+      <div class="cwa__section-head"><div><h3>Token streams</h3><p>Input, output and cache tokens of {{ label() }} models in this workspace.</p></div></div>
       @for (part of streamParts(); track part.label) { <div class="cwa__stream"><span>{{ part.label }}</span><div><i [style.width.%]="part.pct"></i></div><strong>{{ formatTokens(part.tokens) }}</strong></div> }
     </section>
     <section class="cwa__panel" data-testid="cli-plausibility">
@@ -58,7 +55,11 @@
         <li><strong>Tokens:</strong> locally captured workspace events mapped by model name.</li>
         <li><strong>Trend:</strong> workspace-wide until the timeline contract carries CLI attribution.</li>
       </ul>
-      <div class="cwa__future"><span>Future integration point</span><strong>Per-task cap forecast (TE-4)</strong><small>Placeholder only. No forecast is calculated yet.</small></div>
+      <p class="cwa__effort-note" data-testid="cli-effort-note">
+        Reasoning effort is recorded on each token receipt.
+        <button type="button" class="cwa__link" data-testid="cli-effort-open-analysis" (click)="openAnalysis.emit()">Open Card analysis</button>
+        for tokens by model and reasoning level.
+      </p>
     </section>
   </div>
 </section>

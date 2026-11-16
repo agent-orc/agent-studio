@@ -608,6 +608,38 @@ describe('StudioShellComponent tab closing', () => {
     expect(tabState.tabs().some(item => item.kind === 'board' && item.projectName === 'Project A')).toBe(false);
   });
 
+  it('keeps close buttons outside the tablist and names each tab by its visible text first (AGT-3835)', () => {
+    localStorage.removeItem('atp.studio.tabs.v1');
+    TestBed.configureTestingModule({
+      imports: [StudioShellComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([]),
+      ],
+    });
+    const fixture = TestBed.createComponent(StudioShellComponent);
+    const tabState = TestBed.inject(StudioTabStateService);
+    tabState.closeAll();
+    fixture.componentInstance.openBoard('__all__');
+    fixture.componentInstance.openBoard('Project A');
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const tablist = root.querySelector<HTMLElement>('[role="tablist"][data-testid="studio-tablist"]')!;
+    expect(tablist).not.toBeNull();
+    expect(tablist.querySelectorAll('button')).toHaveLength(0);
+    const owned = (tablist.getAttribute('aria-owns') ?? '').split(' ').map(id => root.querySelector<HTMLElement>(`#${id}`));
+    expect(owned.map(tab => tab?.getAttribute('role'))).toEqual(['tab', 'tab']);
+    expect(root.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    for (const tab of owned) {
+      const visible = (tab!.textContent ?? '').replace(/\s+/g, ' ').trim();
+      expect(tab!.getAttribute('aria-label')!.replace(/ · /g, ' ').startsWith(visible)).toBe(true);
+      const close = tab!.parentElement!.querySelector('.studio-tab__close')!;
+      expect(close.closest('[role="tablist"]')).toBeNull();
+    }
+    expect(owned[0]!.getAttribute('aria-label')).toBe('All Board, All projects · Board');
+  });
+
   it('maps Alt+Left to the active Wiki tab history', () => {
     localStorage.removeItem('atp.studio.tabs.v1');
     TestBed.configureTestingModule({

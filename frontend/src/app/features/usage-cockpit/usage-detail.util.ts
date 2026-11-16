@@ -1,3 +1,4 @@
+import { formatInZone, formatZonedTime, formatZonedWithUtc, usageTimeZone } from '../../services/usage-time.util';
 import type {
   UsageCalendar,
   UsageCli,
@@ -44,29 +45,14 @@ export const UNKNOWN = 'Unknown';
 export type UsageDetailFocus = { kind: 'cli'; cliId: string } | { kind: 'capacity' } | { kind: 'cost' };
 
 export interface UsageInstantView {
-  /** `Mon 29 Sept, 09:00`, in the workspace zone. */
+  /** `Mon 29 Sept, 09:00 Europe/Berlin`, in the workspace zone with its name. */
   local: string;
   /** `Mon 29 Sept, 07:00 UTC`. */
   utc: string;
+  /** One line with an explicit zone: `local (utc)`, or only `utc` when the zone is UTC. */
+  text: string;
   /** Machine-readable instant for `<time datetime>`. */
   iso: string;
-}
-
-function validZone(timeZone: string | null | undefined): string {
-  if (!timeZone) return 'UTC';
-  try {
-    new Intl.DateTimeFormat('en-GB', { timeZone });
-    return timeZone;
-  } catch {
-    return 'UTC';
-  }
-}
-
-function formatInZone(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone, weekday: 'short', day: 'numeric', month: 'short',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).format(date);
 }
 
 /** One instant as workspace-local and UTC text (HUC-05); `null` for missing or invalid input. */
@@ -74,9 +60,11 @@ export function instantView(iso: string | null | undefined, timeZone: string | n
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
+  const zone = usageTimeZone(timeZone);
   return {
-    local: formatInZone(date, validZone(timeZone)),
+    local: formatZonedTime(date, zone)!,
     utc: `${formatInZone(date, 'UTC')} UTC`,
+    text: formatZonedWithUtc(date, zone)!,
     iso: date.toISOString(),
   };
 }
@@ -120,17 +108,17 @@ export interface UsageLedgerScope {
 export const UNATTRIBUTED_KEY = 'unattributed';
 
 /** CLI pages that already exist in the token-usage settings section. */
-const LEDGER_CLI_PAGES = new Set(['claude', 'codex']);
+const CLI_ACCOUNT_PAGES = new Set(['claude', 'codex']);
 
 /**
- * Hash link into the existing token-usage section of workspace settings. The
- * route segment picks the page; key-value segments preserve the workspace
- * and the local-calendar range as UTC instants.
+ * Hash link into the workspace token ledger of workspace settings. Key-value
+ * segments preserve the workspace and the local-calendar range as UTC
+ * instants. The ledger is workspace-wide, so the link always lands on the
+ * workspace page and the settings rail highlights that page (AGT-3794-F14).
  */
-export function ledgerHref(scope: UsageLedgerScope, cliId: string | null = null): string {
-  const page = cliId && LEDGER_CLI_PAGES.has(cliId.toLowerCase()) ? `/${cliId.toLowerCase()}` : '';
+export function ledgerHref(scope: UsageLedgerScope): string {
   const segments = [
-    `/workspace/settings/tokens${page}`,
+    `/workspace/settings/tokens`,
     `${LEDGER_SCOPE_KEYS.workspace}=${encodeURIComponent(scope.workspaceId)}`,
     `${LEDGER_SCOPE_KEYS.range}=${scope.range}`,
     `${LEDGER_SCOPE_KEYS.from}=${encodeURIComponent(scope.fromUtc)}`,
@@ -162,6 +150,12 @@ export function ledgerScopeFromHash(hash: string): UsageLedgerScope | null {
   };
 }
 
+/** The CLI account page (quota windows and burn) of the token-usage settings; `null` when none exists. */
+export function cliAccountHref(cliId: string): string | null {
+  const page = cliId.toLowerCase();
+  return CLI_ACCOUNT_PAGES.has(page) ? `#/workspace/settings/tokens/${page}` : null;
+}
+
 /** Existing CLI management destination in workspace settings. */
 export const CLI_MANAGEMENT_HREF = '#/workspace/settings/caps';
 
@@ -174,14 +168,17 @@ function rangeScope(workspaceId: string, calendar: UsageCalendar, range: UsageLe
 
 /** One-line description of a ledger scope for the destination page. */
 export function describeLedgerScope(scope: UsageLedgerScope): string {
-  const zone = validZone(scope.timeZone);
-  const from = instantView(scope.fromUtc, zone)!;
-  const to = instantView(scope.toUtc, zone)!;
+  const zone = usageTimeZone(scope.timeZone);
+  const from = new Date(scope.fromUtc);
+  const to = new Date(scope.toUtc);
   const range = scope.range === 'today' ? 'Today' : 'This week';
   const project = scope.projectId === UNATTRIBUTED_KEY ? ', unattributed spend'
     : scope.projectId ? `, project ${scope.projectId}` : '';
-  return `${range}, workspace ${scope.workspaceId}${project}: ${from.local} to ${to.local} ${zone} `
-    + `(${from.utc} to ${to.utc})`;
+  const local = `${formatInZone(from, zone)} to ${formatInZone(to, zone)} ${zone}`;
+  return zone === 'UTC'
+    ? `${range}, workspace ${scope.workspaceId}${project}: ${local}`
+    : `${range}, workspace ${scope.workspaceId}${project}: ${local} `
+      + `(${formatInZone(from, 'UTC')} UTC to ${formatInZone(to, 'UTC')} UTC)`;
 }
 
 // ---------------------------------------------------------- CLI section
@@ -230,7 +227,8 @@ export interface UsageCliDetailView {
   updated: UsageInstantView | null;
   windows: UsageDetailWindowView[];
   modelGroups: UsageModelGroupView[];
-  ledgerHref: string | null;
+  /** The CLI's account page in token-usage settings, when one exists. */
+  accountHref: string | null;
 }
 
 /**
@@ -319,10 +317,9 @@ export function buildCliDetailView(
   snapshot: UsageCockpitResponse,
   now: number,
 ): UsageCliDetailView {
-  const zone = validZone(snapshot.timeZone);
+  const zone = usageTimeZone(snapshot.timeZone);
   const chip = buildCliChipView(cli.cliId, cli, zone, now);
   const projectNames = projectNameMap(snapshot.cost);
-  const calendar = snapshot.cost?.calendar ?? snapshot.calendar;
   return {
     cliId: cli.cliId,
     name: chip.name,
@@ -337,7 +334,7 @@ export function buildCliDetailView(
         resetAtUtc: null, resetLabel: 'Not reported by provider', suspiciousReason: null }]
       : [])].map(w => windowDetail(w, zone, now)),
     modelGroups: groupRunsByModel(runsForCli(snapshot.runs, cli.cliId), projectNames),
-    ledgerHref: calendar ? ledgerHref(rangeScope(snapshot.workspaceId, calendar, 'week'), cli.cliId) : null,
+    accountHref: cliAccountHref(cli.cliId),
   };
 }
 
@@ -451,7 +448,7 @@ function remaining(budget: number | null | undefined, spent: number | null): str
 
 export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number): UsageCostDetailView {
   const cost = snapshot.cost;
-  const zone = validZone(cost.calendar?.timeZone ?? snapshot.timeZone);
+  const zone = usageTimeZone(cost.calendar?.timeZone ?? snapshot.timeZone);
   const calendar = cost.calendar ?? snapshot.calendar;
   const chip = buildCostChipView(cost, now);
   const projectNames = projectNameMap(cost);
@@ -540,7 +537,7 @@ export interface UsageDetailView {
 }
 
 export function buildUsageDetailView(snapshot: UsageCockpitResponse, now: number): UsageDetailView {
-  const zone = validZone(snapshot.timeZone);
+  const zone = usageTimeZone(snapshot.timeZone);
   const cliIds = new Set(snapshot.clis.map(c => c.cliId.toLowerCase()));
   const orphanRuns = snapshot.runs.filter(r => !known(r.effectiveCli) || !cliIds.has(r.effectiveCli.trim().toLowerCase()));
   // Primary CLI first, then the provider order of the projection.

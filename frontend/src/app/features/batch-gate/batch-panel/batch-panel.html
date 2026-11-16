@@ -48,6 +48,7 @@
                 @if (test.flakySuspect) { <span class="batch-panel__suspect">Flaky suspect</span> }
                 <p class="batch-panel__metrics">{{ test.batches }} batches · {{ test.runs }} runs · {{ test.distinctMemberSets }} member sets
                   @if (test.flakyRerunPassed) { · rerun passed }
+                  @if (test.flakySuspectRuns) { · <span data-testid="batch-failure-flaky-suspect-runs">{{ test.flakySuspectRuns }} {{ test.flakySuspectRuns === 1 ? 'run' : 'runs' }} not reproduced on the same code</span> }
                 </p>
                 <p>First {{ date(test.firstFailureUtc) }} · Latest {{ date(test.lastFailureUtc) }}</p>
                 @if (test.latestErrorExcerpt) { <pre>{{ test.latestErrorExcerpt }}</pre> }
@@ -60,6 +61,7 @@
                   @for (failure of test.failures.slice(0, 5); track failure.batchId + '/' + failure.runId) {
                     <li>{{ failure.batchId }} · run {{ failure.runId }} · members {{ failure.members.join(', ') || 'unknown' }}
                       @if (provenBy(failure); as culprits) { · <strong>proved {{ culprits }} red</strong> }
+                      @if (failure.flakySuspectRun) { · not reproduced on the same code }
                     </li>
                   }
                 </ul>
@@ -213,6 +215,10 @@
       <p role="status">Recovery pending: {{ batch.recoveryStatus.reason }}. Next retry {{ retryTime(batch.recoveryStatus.nextRetryAtUtc) }}.</p>
     }
     @if (isolationState(batch); as state) { <p data-testid="batch-isolation-state">{{ state }}</p> }
+    @if (batch.flakySuspect; as suspect) {
+      <p data-testid="batch-flaky-suspect">@if (suspect.active) { <span class="batch-panel__suspect">Flaky suspect</span> } {{ flakySuspectLabel(suspect) }}</p>
+    }
+    @if (batch.sameCodeRerunOfRunId) { <p data-testid="batch-same-code-rerun">Same-code re-gate of red run {{ batch.sameCodeRerunOfRunId }}</p> }
     @if (batch.phaseHistory?.length) {
       <details class="batch-panel__history"><summary>Phase history</summary>
         <ol>@for (step of batch.phaseHistory; track step.atUtc + step.phase) { <li>{{ date(step.atUtc) }} · {{ step.phase }}@if (step.reason) { · {{ step.reason }} }</li> }</ol>
