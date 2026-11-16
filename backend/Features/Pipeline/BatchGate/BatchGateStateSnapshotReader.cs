@@ -27,6 +27,7 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
         Func<string, bool>? liveFlight = null,
         Func<string, BatchGatePilotService.RecoveryDelay>? recoveryStatus = null,
+        BatchLaneIdleSummary? laneIdle = null,
         IReadOnlySet<string>? activeIsolationFlights = null,
         string? leaseDeadlineDeferredBatchId = null,
         IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
@@ -484,6 +485,8 @@ public static class BatchGateStateSnapshotReader
                 formedAtUtc = BatchGateFlightQueue.QueuedSince(store, oldestFormed),
                 ageMinutes = Math.Max(0, (at - BatchGateFlightQueue.QueuedSince(store, oldestFormed)).TotalMinutes),
             },
+            // AGT-3857: time a formed batch waited with no batch gate running, by cause.
+            laneIdle,
             perTaskGates,
             flightQueue = flightQueue.Select(manifest => new
             {

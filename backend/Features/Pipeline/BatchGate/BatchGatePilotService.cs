@@ -476,7 +476,7 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), Service<GateRunLedger>(), reviewFixWaits,
             Service<GateCapacitySettings>()?.Current(), DetachedFlights(project),
-            HasLiveFlight, RecoveryStatus,
+            HasLiveFlight, RecoveryStatus, LaneIdle(project),
             ActiveIsolationFlights(project), LeaseDeadlineDeferred()(project),
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
             _diskPauseReason, ConfiguredGateSlots(),
@@ -556,7 +556,11 @@ public sealed partial class BatchGatePilotService
                     _logger.LogWarning(error, "host-storage-retention-failed");
                 }
             }
-            if (DiskPressure().Level == HostDiskPressureLevel.Critical) return;
+            if (DiskPressure().Level == HostDiskPressureLevel.Critical)
+            {
+                ObserveLaneIdle("critical disk pressure pauses the batch gate");
+                return;
+            }
             var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
             if (_reservations is not null)
                 foreach (var project in _reservations.ProjectsWithPending())
@@ -794,6 +798,7 @@ public sealed partial class BatchGatePilotService
             }
             await RepackFormedBatchesAsync(ct).ConfigureAwait(false);
             StartClosedBatches(ct);
+            ObserveLaneIdle();
             if (WaitForFlightsInTick)
                 await WaitForFlightsAsync(includeFallbacks: true, ct).ConfigureAwait(false);
             RecordInvariants();
