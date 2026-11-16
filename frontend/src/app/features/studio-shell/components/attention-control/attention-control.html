@@ -3,6 +3,7 @@
         [attr.aria-label]="triggerLabel()" [appTooltip]="triggerLabel()" (click)="toggle()">
   <app-studio-icon name="bell" [size]="14" />
   <span class="attention-control__label">Needs you</span>
+  @if (reviewHostDrift()) { <span class="attention-control__drift" data-testid="review-host-drift-cue">Review host</span> }
   <strong class="attention-control__count" data-testid="studio-attention-count">{{ count() }}</strong>
 </button>
 

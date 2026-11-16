@@ -51,11 +51,14 @@ export class AttentionControlComponent {
   readonly batchProject = signal<string | null>(null);
   readonly now = signal(Date.now());
   readonly count = this.attention.count;
+  readonly reviewHostDrift = computed(() => this.attention.items().some(item => item.type === 'review-host.drift'));
   readonly groups = this.attention.groups;
   readonly readinessPresentation = readinessPresentation;
   readonly triggerLabel = computed(() => {
     const count = this.count();
-    return count === 0 ? 'Nothing needs you' : `${count} ${count === 1 ? 'item needs' : 'items need'} you`;
+    if (count === 0) return 'Nothing needs you';
+    const label = `${count} ${count === 1 ? 'item needs' : 'items need'} you`;
+    return this.reviewHostDrift() ? `${label}; review host differs from Stable` : label;
   });
   readonly closeBatch = () => this.batchProject.set(null);
 
@@ -140,6 +143,10 @@ export class AttentionControlComponent {
         return;
       case 'hosts':
         this.openSettings('remote-hosts');
+        if (item.type === 'review-host.drift') {
+          const href = item.evidence?.find(link => link.label === 'Review host')?.href;
+          if (href?.startsWith('/workspace/settings/environment?host=')) window.location.hash = `#${href}`;
+        }
         return;
       case 'activity':
         this.openActivity();

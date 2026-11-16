@@ -3,6 +3,11 @@
 Version: 2026-11-14
 Status: System-of-record map for frontend changes.
 
+Needs you shows a review-host row when a differing release claims review work.
+The status-bar trigger shows a compact Review host cue while the row is open;
+the row opens the affected Execution Hosts detail and its Update review host
+panel.
+
 Concept cards and detail views show the dossier and review state without code
 delivery indicators. They omit build and test evidence, delivery integration,
 and checkout context. Concept acceptance remains available when a stale

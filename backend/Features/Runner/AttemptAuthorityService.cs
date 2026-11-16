@@ -2203,6 +2203,19 @@ public sealed partial class AttemptAuthorityService
         }
     }
 
+    /// <summary>Claimed review work retained for release-drift operator attention.</summary>
+    public IReadOnlyList<ReviewHostWork> ListReviewHostWork()
+    {
+        lock (_gate)
+            return _state.ReviewAttempts
+                .Where(review => review.Lease is not null)
+                .Select(review => new ReviewHostWork(review.Lease!.ExecutorId,
+                    review.Lease.HostId, review.TaskKey, review.Lease.AcquiredAt,
+                    review.Reports.Count > 0 && review.State == AttemptLifecycleState.Completed,
+                    review.Reports.LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted)?.ReceivedAt))
+                .ToArray();
+    }
+
     /// <summary>
     /// AGT-3647: the run and review attempts one executor still holds under an
     /// unexpired lease. A deploy drain is complete when this is empty.

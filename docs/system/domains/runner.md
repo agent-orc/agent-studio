@@ -3,6 +3,12 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+Review role release drift becomes operator attention as soon as that role has
+claimed a review. The attention fact names its claimed and graded cards and
+compares the role's commit and image with Stable. An idle role still uses the
+host release watchdog's grace period. A fresh heartbeat reporting the expected
+commit and image clears the attention fact.
+
 ## Persona occurrences, PT-4
 
 PT-D4, PT-D5 and PT-D8 use the Dossier's recommended option B. The Watcher
