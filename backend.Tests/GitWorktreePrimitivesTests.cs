@@ -761,6 +761,54 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         if (setup == "diverged") Assert.NotEqual(before, localBefore);
     }
 
+    [Theory]
+    [InlineData(false, "switched")]
+    [InlineData(true, "dirty")]
+    public void SwitchDeveloperCheckout_FromDefaultBranch_RequiresCleanCheckout(bool dirty, string expected)
+    {
+        var repo = SeedRepo("switch-develop-" + dirty);
+        RunGit(repo, "checkout -q -b develop");
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"), "schemaVersion: 1\n");
+        Commit(repo, "definition on develop");
+        RunGit(repo, "checkout -q main");
+        if (dirty) File.WriteAllText(Path.Combine(repo, "README.md"), "operator edit");
+        var git = BuildGitService(("Fixture", repo));
+
+        var result = git.SwitchDeveloperCheckout(repo, "develop");
+
+        Assert.Equal(expected, result.Status);
+        Assert.Equal(dirty ? "main" : "develop", RunGit(repo, "branch --show-current").Out.Trim());
+        Assert.Equal(!dirty, File.Exists(Path.Combine(repo, ".agent-studio", "project.yml")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExecutionDefinition_ReadsDevelopTipWhileCheckoutStaysOnMain(bool remoteOnly)
+    {
+        var repo = SeedRepo("definition-develop-tip");
+        RunGit(repo, "checkout -q -b develop");
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"), "schemaVersion: 1\n");
+        Commit(repo, "definition on develop");
+        RunGit(repo, "checkout -q main");
+        if (remoteOnly)
+        {
+            RunGit(repo, "update-ref refs/remotes/origin/develop develop");
+            RunGit(repo, "branch -D develop");
+        }
+        var git = BuildGitService(("Fixture", repo));
+
+        var (tip, definition, read) = AgentStudio.Projects.ProjectSettingsEndpoints
+            .ReadExecutionDefinitionAtBranchTip(git, repo, "develop");
+
+        Assert.NotNull(tip);
+        Assert.Equal("schemaVersion: 1\n", definition);
+        Assert.DoesNotContain(read.Issues, issue => issue.Code == "definition-missing");
+        Assert.False(File.Exists(Path.Combine(repo, ".agent-studio", "project.yml")));
+    }
+
     [Fact]
     public void Rollback_RestoresOnlyAHolderFastForwardedByThisGitService()
     {

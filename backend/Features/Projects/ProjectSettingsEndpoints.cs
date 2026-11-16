@@ -137,14 +137,15 @@ public static class ProjectSettingsEndpoints
         app.MapGet("/api/projects/{projectName}/execution", (
             string projectName,
             ProjectSettingsService settings,
-            TaskScannerService scanner) =>
+            TaskScannerService scanner,
+            ProjectRegistry registry,
+            GitService git) =>
         {
             var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
                 string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (project is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-            var repositoryPath = string.IsNullOrWhiteSpace(project.RepositoryPath)
-                ? project.RootPath
-                : project.RepositoryPath;
+            var target = ProjectCheckoutEndpoints.Resolve(projectName, scanner, registry, settings, git);
+            var repositoryPath = target?.Path;
             if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
                 return Results.Ok(new
                 {
@@ -155,10 +156,11 @@ public static class ProjectSettingsEndpoints
                     preparationWarnings = Array.Empty<object>(),
                     lastManifest = (ProjectPreparationManifest?)null,
                     @override = settings.Get(projectName).ExecutionDefinitionOverride,
-                    source = "subject-commit",
+                    source = "integration-branch",
+                    branch = target?.Branch,
                 });
-            var read = ProjectDefinitionReader.ReadWorkspace(repositoryPath);
-            var definitionPath = Path.Combine(repositoryPath, ProjectPreparationPaths.Definition.Replace('/', Path.DirectorySeparatorChar));
+            var branch = target!.Value.Branch;
+            var (tip, definition, read) = ReadExecutionDefinitionAtBranchTip(git, repositoryPath, branch);
             var manifestPath = BuildTestGateRunner.PreparationManifestPath(repositoryPath);
             ProjectPreparationManifest? manifest = null;
             try
@@ -196,14 +198,16 @@ public static class ProjectSettingsEndpoints
                 .ToArray();
             return Results.Ok(new
             {
-                repositoryDefinition = File.Exists(definitionPath) ? File.ReadAllText(definitionPath) : null,
+                repositoryDefinition = definition,
                 definitionSha256 = read.DefinitionSha256,
                 valid = read.IsValid,
                 issues = read.Issues,
                 preparationWarnings,
                 lastManifest = manifest,
                 @override = settings.Get(projectName).ExecutionDefinitionOverride,
-                source = "subject-commit",
+                source = "integration-branch",
+                branch,
+                commitSha = tip,
             });
         });
 
@@ -1763,6 +1767,21 @@ public static class ProjectSettingsEndpoints
                 return Results.BadRequest(new { error = ex.Message });
             }
         });
+    }
+
+    internal static (string? Tip, string? Definition, AgentStudio.TaskServer.Contracts.ProjectDefinitionReadResult Read)
+        ReadExecutionDefinitionAtBranchTip(GitService git, string repositoryPath, string branch)
+    {
+        var tip = git.GetBranchTip(repositoryPath, $"refs/heads/{branch}")
+            ?? git.GetBranchTip(repositoryPath, $"refs/remotes/origin/{branch}");
+        var definition = tip is null ? null : git.GetFileAtCommit(repositoryPath, tip, ProjectPreparationPaths.Definition);
+        var read = definition is null
+            ? new AgentStudio.TaskServer.Contracts.ProjectDefinitionReadResult(null,
+                [new ProjectDefinitionIssue(ProjectPreparationPaths.Definition, "definition-missing",
+                    $"Repository execution definition is missing on {branch}.")], null)
+            : ProjectDefinitionReader.Parse(definition,
+                path => git.FileExistsAtCommit(repositoryPath, tip!, path));
+        return (tip, definition, read);
     }
 
     /// <summary>
