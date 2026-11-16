@@ -382,7 +382,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, AgentStudio.Operator.OperatorCoordinationStore attention, AgentStudio.Review.ReviewProjectionService reviews, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, AgentStudio.Operator.OperatorCoordinationStore attention, AgentStudio.Review.ReviewProjectionService reviews, TaskIntegrationStatusService integrationStatus, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
@@ -447,7 +447,8 @@ public static class TaskCrudEndpoints
                 ReviewProjection = reviewProjection ?? withRuntime.Info.ReviewProjection,
                 ReviewEvidencePending = TaskDetailResources.ReviewEvidencePending(detail.Info, attemptAuthority),
             } };
-            withRuntime = withRuntime with { Info = WithContractIntegration(withRuntime.Info,
+            withRuntime = withRuntime with { Info = WithContractIntegration(
+                new[] { withRuntime.Info }.WithRecordedIntegrationFailure(integrationStatus).Single(),
                 projectSettings.Get(withRuntime.Info.ProjectName).IntegrationBranch) };
             if (AcceptanceAttemptLineagePolicy.ReadGap(withRuntime.Info, attemptAuthority) is { } attemptGap)
                 withRuntime = withRuntime with { Info = withRuntime.Info with { AcceptanceAttemptGap = attemptGap } };

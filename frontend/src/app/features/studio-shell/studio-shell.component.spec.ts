@@ -204,6 +204,46 @@ describe('StudioShellComponent global search', () => {
 
     expect(root.querySelector('[data-testid="global-search-input"]')).not.toBeNull();
   });
+
+  // AGT-3833: the palette is deferred until first use, so the shortcut has to
+  // work before anything has opened it.
+  for (const chord of [{ ctrlKey: true }, { metaKey: true }]) {
+    it(`opens search with ${chord.ctrlKey ? 'Ctrl' : 'Cmd'}+K before search was ever opened`, async () => {
+      TestBed.configureTestingModule({
+        imports: [StudioShellComponent],
+        providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+      });
+      const fixture = TestBed.createComponent(StudioShellComponent);
+      fixture.detectChanges();
+      const root: HTMLElement = fixture.nativeElement;
+      expect(root.querySelector('[data-testid="global-search-input"]')).toBeNull();
+
+      const event = new KeyboardEvent('keydown', { key: 'k', bubbles: true, cancelable: true, ...chord });
+      document.body.dispatchEvent(event);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(fixture.componentInstance.globalSearchOpen()).toBe(true);
+      expect(root.querySelector('[data-testid="global-search-input"]')).not.toBeNull();
+    });
+  }
+
+  it('starts with a skip link to the main content', () => {
+    TestBed.configureTestingModule({
+      imports: [StudioShellComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    const fixture = TestBed.createComponent(StudioShellComponent);
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    const first = root.querySelector<HTMLElement>('a[href], button, [tabindex="0"]');
+    expect(first?.dataset['testid']).toBe('studio-skip-to-main');
+
+    first!.click();
+    expect(document.activeElement).toBe(root.querySelector('[data-testid="studio-main"]'));
+  });
 });
 
 describe('StudioShellComponent project lane counts', () => {

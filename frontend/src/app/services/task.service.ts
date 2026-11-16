@@ -211,6 +211,8 @@ export interface IntegrationRetryResponse {
   deliverySha: string | null;
   integrationBranch: string | null;
   reviewReused: boolean;
+  /** Lane the card moved to after an integrated replay of an Escalated card (AGT-3810). */
+  movedTo?: string | null;
 }
 
 type LaneKey = keyof GroupedJobs;
