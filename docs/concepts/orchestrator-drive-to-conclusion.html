@@ -3276,6 +3276,13 @@
           <td>The gate-environment ladder's predicate excluded transport failures so that the timed ladder would not replay them, and the operator retry shared that predicate. The refusal came before the review lookup, hence the empty attempt. The pre-main suite recorded an environment failure as <code>Error</code> with the code only, and a batch isolation flight parked transport failures as <code>gate-infrastructure</code>.</td>
           <td>Observed terminal: <span class="lane">5e-escalated</span> for both cards. A transport failure is now a gate environment failure on every gate path; the policy's <code>TransportFailure</code> fact keeps it out of the timed ladder only (<code>gate-transport-awaits-gate-host</code>). Retry integration replays it with the passed review and returns a transport escalation to its lane, as the automatic return after the host answers does for both shapes.</td>
         </tr>
+        <tr id="case-gate-host-disk-pressure-environment-red">
+          <td>2026-11-16</td>
+          <td><code>AGT-3866</code><br><span class="small">gate-host-disk-pressure-environment-red</span></td>
+          <td>No CLI crashed. Batch 840a0f49 (AGT-3808, AGT-3852, AGT-3846) failed its full suite on kori-gate with 12 failures, among them batch gate pilot fault-injection, operator-move and quarantine tests. The baseline and the clean repeat were red with different fingerprints, the gate classified the run <code>environment</code> and parked the members as <code>gate-infrastructure</code>. The gate host's root file system was 95 % full (13 GB free of 246 GB, 51 GB of it a Node compile cache in /tmp).</td>
+          <td>The pilot's disk admission measured the real file system behind <code>TaskRepository</code>; the test factories pointed it at a temp folder on the gate host, so every pilot tick returned early once the suite's own writes crossed 5 % free. Neither the verdict nor the parked reason named the disk, and nothing on the gate host pruned the compile cache that Angular CLI, Vite and ESLint enable.</td>
+          <td>Observed terminal: <span class="lane">5e-escalated</span> (<code>gate-infrastructure</code>) for the three members. Disk consumers now measure through <code>IHostFilesystemProbe</code>; every test project pins it to a fixed healthy probe at module load and <code>DiskProbeIsolationGuardTests</code> keeps it so. A gate that fails under critical disk on the gate host or the API host is <code>DiskFull</code> with verdict <code>disk-pressure</code>, and its pause and parked reason name the path, free bytes and percent. The gate worker prunes the Node compile cache and gate workspaces older than <code>RemoteGate:CachePruneAgeHours</code>.</td>
+        </tr>
       </tbody>
     </table>
 

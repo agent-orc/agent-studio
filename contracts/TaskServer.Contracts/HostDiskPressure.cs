@@ -54,6 +54,74 @@ public static class HostDiskPressurePolicy
     }
 }
 
+/// <summary>
+/// Measures the file systems behind configured paths. Every disk-pressure
+/// consumer reads free space through this seam so a test host can pin it
+/// instead of measuring whatever machine runs the suite (AGT-3866).
+/// </summary>
+public interface IHostFilesystemProbe
+{
+    IReadOnlyList<HostFilesystemUsageDto> Measure(
+        IEnumerable<(string Purpose, string Path)> paths,
+        IEnumerable<(string Name, string Path)>? ownedDirectories = null);
+}
+
+/// <summary>The real file systems of this host.</summary>
+public sealed class SystemHostFilesystemProbe : IHostFilesystemProbe
+{
+    public static SystemHostFilesystemProbe Instance { get; } = new();
+
+    private SystemHostFilesystemProbe() { }
+
+    public IReadOnlyList<HostFilesystemUsageDto> Measure(
+        IEnumerable<(string Purpose, string Path)> paths,
+        IEnumerable<(string Name, string Path)>? ownedDirectories = null)
+        => HostFilesystemProbe.Measure(paths, ownedDirectories);
+}
+
+/// <summary>
+/// Reports every measured path as one file system with fixed free and total
+/// bytes. Test hosts use it so a full disk on the machine that runs the suite
+/// cannot pause the code under test.
+/// </summary>
+public sealed class FixedHostFilesystemProbe(long freeBytes, long totalBytes) : IHostFilesystemProbe
+{
+    /// <summary>1 TiB free of 2 TiB: healthy against every default threshold.</summary>
+    public static FixedHostFilesystemProbe Healthy { get; } = new(1L << 40, 2L << 40);
+
+    public long FreeBytes { get; } = freeBytes;
+    public long TotalBytes { get; } = totalBytes;
+
+    public IReadOnlyList<HostFilesystemUsageDto> Measure(
+        IEnumerable<(string Purpose, string Path)> paths,
+        IEnumerable<(string Name, string Path)>? ownedDirectories = null)
+    {
+        var result = new List<HostFilesystemUsageDto>();
+        foreach (var (purpose, path) in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path) || result.Any(item => item.Path == path)) continue;
+            result.Add(new HostFilesystemUsageDto(purpose, path, FreeBytes, TotalBytes));
+        }
+        return result;
+    }
+}
+
+/// <summary>
+/// The probe a consumer uses when its host injects none. It is the real file
+/// system in production; each test project's module initializer pins it to
+/// <see cref="FixedHostFilesystemProbe.Healthy"/> before any test runs.
+/// </summary>
+public static class HostFilesystemProbes
+{
+    private static IHostFilesystemProbe _default = SystemHostFilesystemProbe.Instance;
+
+    public static IHostFilesystemProbe Default
+    {
+        get => Volatile.Read(ref _default);
+        set => Volatile.Write(ref _default, value ?? throw new ArgumentNullException(nameof(value)));
+    }
+}
+
 /// <summary>Reads only configured installation paths and never follows directory links.</summary>
 public static class HostFilesystemProbe
 {

@@ -4,8 +4,11 @@ namespace AgentRunner;
 
 /// <summary>Local admission for claims that do not carry a telemetry poll.</summary>
 internal sealed class RunnerDiskAdmission(RunnerOptions options,
-    HostDiskPressureThresholds? thresholds = null)
+    HostDiskPressureThresholds? thresholds = null, IHostFilesystemProbe? probe = null)
 {
+    // AGT-3866: a test process pins the default; production measures the host.
+    private readonly IHostFilesystemProbe _probe = probe ?? HostFilesystemProbes.Default;
+
     private bool _critical;
     public HostDiskPressureDecision Observe()
     {
@@ -18,7 +21,7 @@ internal sealed class RunnerDiskAdmission(RunnerOptions options,
         foreach (var path in new[] { "/var/lib/docker", "/var/lib/containers" }.Where(Directory.Exists))
             paths.Add(("container storage", path));
         var limit = thresholds ?? new HostDiskPressureThresholds();
-        var disks = HostFilesystemProbe.Measure(paths);
+        var disks = _probe.Measure(paths);
         var decision = HostDiskPressurePolicy.Decide(disks, limit, _critical);
         _critical = decision.Level == HostDiskPressureLevel.Critical;
         return decision;
