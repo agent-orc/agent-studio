@@ -213,9 +213,21 @@ test('lane indicator and batch panel name the proven-red member, its failing tes
   }
 
   await page.setViewportSize({ width: 1280, height: 900 });
+  // AGT-3872: the fix card is created in the backlog, not in the legacy editor.
+  const created = new Promise<Record<string, unknown>>(resolve => {
+    void page.route(url => url.pathname === '/api/tasks', async route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      resolve(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'fix-card-1' }) });
+    });
+  });
   await panel.getByRole('button', { name: 'Create fix card for Checkout.Tests.TotalsIncludeShipping' }).click();
-  await expect(page.getByTestId('create-title')).toHaveValue('Fix failing test: Checkout.Tests.TotalsIncludeShipping');
-  await expect(page.getByTestId('create-prompt')).toHaveValue(/Batch isolation proved AGT-2 red in batch batch-17, run run-17\./);
+  const body = await created;
+  expect(body).toMatchObject({ title: 'Fix failing test: Checkout.Tests.TotalsIncludeShipping',
+    targetState: '0-backlog', taskType: 'bug' });
+  expect(String(body['promptMarkdown'])).toMatch(/Batch isolation proved AGT-2 red in batch batch-17, run run-17\./);
+  await expect(panel).toBeHidden();
+  await expect(page.getByTestId('create-dialog-legacy-notice')).toHaveCount(0);
 });
 
 test('the culprit card says it was proven red in batch-14 and lists the failing tests', async ({ page }) => {

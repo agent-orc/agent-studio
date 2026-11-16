@@ -474,6 +474,24 @@ public sealed class BatchGateFailureRankingTests
     }
 
     [Fact]
+    public void Indented_dotnet_test_output_yields_the_assertion_excerpt()
+    {
+        // AGT-3872: the owner-day seed writes this shape so the batch panel and
+        // its fix card show a real excerpt.
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            File.WriteAllText(path, """{"gateRunId":"run","testedSha":"sha","gateCompletedAtUtc":"2026-11-05T12:00:00Z","recordedFailedTests":["Report.Tests.Empty"],"output":"Starting test execution, please wait...\n  Failed Report.Tests.Empty [38 ms]\n  Error Message:\n   Assert.False() Failure\n   Expected: False\n   Actual:   True\n  Stack Trace:\n     at Report.Tests.Empty()\n\nFailed!  - Failed:     1, Passed:    11, Skipped:     0, Total:    12"}""" + "\n");
+            var fact = new BatchGateExecutionFact("Project", "batch", "run", "sha", "fail", "host",
+                Now, Now, 0, 0, path, MemberKeys: ["AGT-1"], EvidenceGateRunId: "run");
+            var failure = Assert.Single(BatchGateFailureRanking.ReadEvidence(fact));
+            Assert.Equal("Report.Tests.Empty", failure.TestName);
+            Assert.Equal("Error Message:\n   Assert.False() Failure\n   Expected: False\n   Actual:   True", failure.ErrorExcerpt);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void Error_excerpt_is_only_taken_from_the_named_test()
     {
         var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));

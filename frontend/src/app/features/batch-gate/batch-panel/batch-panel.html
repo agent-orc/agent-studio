@@ -57,7 +57,7 @@
                 </ul>
                 <button type="button" [attr.aria-label]="'Create fix card for ' + test.testName"
                   [disabled]="openingFix() !== null" [appPendingButton]="openingFix() === test.testName"
-                  pendingLabel="Opening fix card…"
+                  pendingLabel="Creating fix card…"
                   (click)="createFixCard(test)">Create fix card</button>
               </li>
             }</ol>

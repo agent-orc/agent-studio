@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, OnDestroy, afterNextRender, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { map, switchMap } from 'rxjs';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
 import { batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine, batchDateTime, BATCH_TIME_ZONE_NOTE } from '../../../models/batch-gate.model';
@@ -13,6 +14,8 @@ import { TaskReferenceNavigationService } from '../../../services/task-reference
 import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
 import { BatchQuarantineComponent } from '../batch-quarantine/batch-quarantine';
 import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
+
+class FixCardError extends Error {}
 
 @Component({
   selector: 'app-batch-panel',
@@ -233,19 +236,23 @@ export class BatchPanelComponent implements OnDestroy {
       '',
       'Investigate the shared test or fixture, fix the root cause, and add a regression check.',
     ].join('\n');
-    this.taskService.getWatchPaths().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({ next: paths => {
+    const title = `${test.flakySuspect ? 'Fix flaky test' : 'Fix failing test'}: ${test.testName}`;
+    // AGT-3872: create the bug card in the backlog and open it in the card
+    // detail, instead of the legacy full-field editor.
+    this.taskService.getWatchPaths().pipe(
+      map(paths => paths.find(path => path.name === project)?.path ?? null),
+      switchMap(watchPath => {
+        if (!watchPath) throw new FixCardError('This project is no longer available for a fix card.');
+        return this.createForm.createBacklogCard({ watchPath, title, prompt, taskType: 'bug' });
+      }),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe({ next: created => {
       this.openingFix.set(null);
-      if (!paths.some(path => path.name === project)) {
-        this.actionError.set('This project is no longer available for a fix card.');
-        return;
-      }
-      this.createForm.openUxuiFollowUp({ projectName: project, prefill: prompt,
-        title: `${test.flakySuspect ? 'Fix flaky test' : 'Fix failing test'}: ${test.testName}` }, paths);
-      this.createForm.onTaskTypeChange('bug');
       this.close();
-    }, error: () => {
+      this.references.openCreatedTask(created.watchPath, created.jobId);
+    }, error: (error: unknown) => {
       this.openingFix.set(null);
-      this.actionError.set('Could not load the project for the fix card.');
+      this.actionError.set(error instanceof FixCardError ? error.message : 'Could not create the fix card. Try again.');
     } });
   }
   showConfirm(target: string): void {

@@ -62,6 +62,16 @@ export class TaskReferenceNavigationService {
     return true;
   }
 
+  /**
+   * AGT-3872: open a task the board may not have loaded yet, such as a card
+   * that was just created, by its storage reference and id.
+   */
+  openCreatedTask(watchPath: string, jobId: string): void {
+    const taskKey = `${watchPath}::${jobId}`;
+    this.tabs.open({ kind: 'task', taskKey });
+    this.selection.openDetailByTaskKey(taskKey);
+  }
+
   /** Open a task by a display reference such as `AGT-1234` (key, id, or folder slug). */
   openReference(label: string | null | undefined): boolean {
     const wanted = (label ?? '').trim().toUpperCase();

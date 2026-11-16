@@ -556,7 +556,10 @@ batch verification is re-enabled, and its gate is retried.
   The lane indicator shows `Batch <id> isolating` while a child of a red batch
   is active, then `Batch <id> red` with the proven-red members until a newer
   batch publishes. "Create fix card" is offered for every ranked failed test;
-  a non-suspect test opens "Fix failing test" instead of "Fix flaky test".
+  a non-suspect test is titled "Fix failing test" instead of "Fix flaky test".
+  The action creates a `bug` card in `0-backlog` with the prefilled evidence
+  prompt and opens it in the card detail; it does not use the legacy
+  New Task editor (AGT-3872).
 - While a red batch isolates (latest phase `Red`), continue, steer and requeue
   of a member that the isolation still holds are refused with
   `409 batch-isolation-active` naming the flight (AGT-3483). Eject stays the

@@ -458,10 +458,20 @@ test('failed-test ranking stays readable at wide and mobile widths in both theme
   }
   await page.getByRole('link', { name: 'batch-1' }).click();
   await expect(page.locator('#batch-batch-1')).toBeVisible();
+  // AGT-3872: the fix card is created in the backlog, not in the legacy editor.
+  const created = new Promise<Record<string, unknown>>(resolve => {
+    void page.route(url => url.pathname === '/api/tasks', async route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      resolve(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'fix-card-1' }) });
+    });
+  });
   await page.getByRole('button', { name: 'Create fix card for Product.Tests.Unstable' }).click();
-  await expect(page.getByTestId('create-title')).toHaveValue('Fix flaky test: Product.Tests.Unstable');
-  await expect(page.getByTestId('create-prompt')).toHaveValue(/Batches: batch-7, batch-5, batch-3, batch-1/);
-  await expect(page.getByTestId('create-task-type-bug')).toHaveAttribute('aria-pressed', 'true');
+  const body = await created;
+  expect(body).toMatchObject({ title: 'Fix flaky test: Product.Tests.Unstable', targetState: '0-backlog', taskType: 'bug' });
+  expect(String(body['promptMarkdown'])).toMatch(/Batches: batch-7, batch-5, batch-3, batch-1/);
+  await expect(page.getByTestId('batch-panel')).toBeHidden();
+  await expect(page.getByTestId('create-dialog-legacy-notice')).toHaveCount(0);
 });
 
 test('ejected batch member badge names why it went to the per-task gate', async ({ page }) => {
