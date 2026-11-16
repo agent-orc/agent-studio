@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Pipeline;
+using AgentStudio.Prompts;
 using AgentStudio.Tasks;
 using Contract = AgentStudio.TaskServer.Contracts;
 
@@ -28,7 +30,13 @@ public sealed class ReportContentReviewService
     public const string AspectId = "requirement-fit";
 
     private const int TaskBodyCharacters = 8_000;
-    private const int ReportTextCharacters = 24_000;
+    // AGT-3853: 24,000 characters cut long reports before their later
+    // sections; the review now reads 64,000 and names the headings it cut.
+    internal const int ReportTextCharacters = 64_000;
+    // The agent's delivery summary gets the bound of the remote review plan.
+    internal const int DeliverySummaryCharacters = 16_000;
+    private const int RunRecordCharacters = 1_500;
+    private const string DeliverySummaryFile = "status.md";
 
     private static readonly Regex HiddenBlocks = new(
         @"<(script|style|head)\b[^>]*>.*?</\1\s*>",
@@ -36,6 +44,9 @@ public sealed class ReportContentReviewService
     private static readonly Regex Tags = new(@"<[^>]+>", RegexOptions.CultureInvariant);
     private static readonly Regex Blank = new(@"[ \t\r\f\v]+", RegexOptions.CultureInvariant);
     private static readonly Regex BlankLines = new(@"\n\s*\n+", RegexOptions.CultureInvariant);
+    private static readonly Regex Headings = new(
+        @"<h([1-3])\b[^>]*>(.*?)</h\1\s*>",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
 
     private readonly AspectRunnerService _aspects;
     private readonly IConfiguration _configuration;
@@ -150,7 +161,7 @@ public sealed class ReportContentReviewService
             RecentLog: recentLog,
             DiffSummary: "Report card: the run leaves no repository diff by contract. "
                 + "The deliverable is the report under results/.",
-            StatusSummary: ReviewDecisionOrchestrator.LoadStatusSummary(task.FolderPath))
+            StatusSummary: DeliverySummary(task.FolderPath))
         {
             ResultsInventory = RenderEvidence(task.FolderPath),
             CardMode = ReviewCardMode.Describe(task.Mode),
@@ -199,29 +210,102 @@ public sealed class ReportContentReviewService
     }
 
     /// <summary>
+    /// The status the review reads (AGT-3853). The agent's own summary is
+    /// <c>results/status.md</c>; the task-root <c>status.md</c> is the runner's
+    /// run record (result, case, duration) written after the agent finished,
+    /// so it follows under a label that says it is not the deliverable.
+    /// </summary>
+    internal static string DeliverySummary(string folder)
+    {
+        var delivery = ReadBounded(Path.Combine(folder, "results", DeliverySummaryFile), DeliverySummaryCharacters);
+        var record = ReadBounded(Path.Combine(folder, "status.md"), RunRecordCharacters);
+        if (record.Contains(TaskTransitionService.ResultScaffoldMarker, StringComparison.Ordinal)) record = string.Empty;
+        var text = new StringBuilder();
+        text.AppendLf(delivery.Length > 0
+            ? "Delivery summary written by the agent (results/status.md):"
+            : "The agent wrote no results/status.md delivery summary; judge the report and results/ inventory.");
+        if (delivery.Length > 0) text.AppendLf(delivery.Trim());
+        if (record.Length > 0)
+        {
+            text.AppendLf();
+            text.AppendLf("Runner run record (task-root status.md, written by the runner after the run). "
+                + "It is not the deliverable and does not summarize the report; do not judge the report by it:");
+            text.AppendLf(record.Trim());
+        }
+        return text.ToString().TrimEnd();
+    }
+
+    private static string ReadBounded(string path, int characters)
+    {
+        try
+        {
+            if (!File.Exists(path)) return string.Empty;
+            var text = BoundedFileRead.ReadHeadText(path, (characters + 1) * 4);
+            return text.Length <= characters ? text : text[..characters] + "\n... (truncated)";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "ReportContentReviewService: status text is best-effort review evidence");
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
     /// The bounded results/ inventory plus the visible text of the primary
     /// report, so the review judges the report and not only its first lines.
+    /// The inventory lists newest files first with every subfolder, and leaves
+    /// out the excerpt of results/status.md, which the status summary carries.
     /// </summary>
     internal static string RenderEvidence(string folder)
     {
-        var inventory = ResultsInventory.RenderForReview(folder);
+        var inventory = ResultsInventory.RenderForReview(folder, newestFirst: true,
+            excerptExclusions: new HashSet<string>(StringComparer.Ordinal) { DeliverySummaryFile });
         var reportPath = ReportDeliverable.ResearchReportFile(folder);
         if (!File.Exists(reportPath)) return inventory;
-        string text;
+        string html;
+        bool partialRead;
         try
         {
-            text = ReportText(BoundedFileRead.ReadHeadText(reportPath, ReportTextCharacters * 16));
+            html = BoundedFileRead.ReadHeadText(reportPath, ReportTextCharacters * 16);
+            partialRead = new FileInfo(reportPath).Length > ReportTextCharacters * 16;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             SilentCatch.Note(ex, "ReportContentReviewService: report text is best-effort review evidence");
             return inventory;
         }
+        var text = ReportText(html);
         if (string.IsNullOrWhiteSpace(text)) return inventory;
-        var clipped = text.Length <= ReportTextCharacters
-            ? text
-            : text[..ReportTextCharacters] + "\n... (truncated)";
-        return inventory + "\n\nText of results/report.html (markup removed):\n" + clipped;
+        return inventory + "\n\nText of results/report.html (markup removed):\n" + ClipReport(html, text, partialRead);
+    }
+
+    /// <summary>
+    /// The report text up to <see cref="ReportTextCharacters"/>. A cut report
+    /// names its headings past the clip, so the review knows which sections it
+    /// did not see instead of reading them as missing.
+    /// </summary>
+    internal static string ClipReport(string html, string text, bool partialRead = false)
+    {
+        if (text.Length <= ReportTextCharacters && !partialRead) return text;
+        var clipped = text.Length <= ReportTextCharacters ? text : text[..ReportTextCharacters];
+        var cut = new List<string>();
+        var from = 0;
+        foreach (Match heading in Headings.Matches(html))
+        {
+            var title = ReportText(heading.Groups[2].Value);
+            if (title.Length == 0) continue;
+            var at = text.IndexOf(title, from, StringComparison.Ordinal);
+            if (at < 0) continue;
+            from = at + title.Length;
+            if (at + title.Length > ReportTextCharacters) cut.Add(title);
+        }
+        var note = new StringBuilder(clipped).AppendLf().Append(
+            $"... (truncated: the review read the first {ReportTextCharacters} characters of the report text");
+        note.Append(partialRead ? " from the head of an oversized file)." : ").");
+        if (cut.Count > 0)
+            note.AppendLf().Append("Sections not shown above, read them in results/report.html before judging them missing: "
+                + string.Join("; ", cut.Take(40)) + (cut.Count > 40 ? $"; and {cut.Count - 40} more." : "."));
+        return note.ToString();
     }
 
     internal static string ReportText(string html)
