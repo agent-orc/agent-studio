@@ -146,6 +146,7 @@ public class TitleGenerationService
             {
                 Timeout = TimeSpan.FromSeconds(HaikuTimeoutSeconds),
                 Source = AdHocUsageSources.TitleGeneration,
+                RecordUsage = false, // This service records the parsed result below.
                 SelectionConsumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.OneShot("title"),
             }, ct).ConfigureAwait(false);
             if (!r.Ok) return (false, null, r.Error);
