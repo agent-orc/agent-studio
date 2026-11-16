@@ -64,19 +64,27 @@ export class TreeRowComponent {
   /** Reserve an independent trailing action beside the row button. */
   readonly hasActions = input(false);
 
+  /**
+   * Visible text the accessible name must start with (WCAG 2.5.3). Defaults
+   * to the rendered row text; set it when projected content is row metadata
+   * (dates, status chips) that the `ariaLabel` deliberately leaves out.
+   */
+  readonly visibleName = input<string | null>(null);
+
   private readonly row = viewChild.required<ElementRef<HTMLButtonElement>>('row');
   /** Rendered text of the row button, projected content included. */
   private readonly renderedText = signal('');
   /** `ariaLabel` as detail after the row's visible text (WCAG 2.5.3). */
   readonly accessibleName = computed(() => {
     const detail = this.ariaLabel();
-    return detail ? nameWithVisibleText(this.renderedText() || this.label(), detail) : null;
+    if (!detail) return null;
+    return nameWithVisibleText(this.visibleName() ?? (this.renderedText() || this.label()), detail);
   });
 
   constructor() {
     afterEveryRender({
       read: () => {
-        if (this.ariaLabel()) this.renderedText.set(this.row().nativeElement.textContent ?? '');
+        if (this.ariaLabel() && this.visibleName() === null) this.renderedText.set(this.row().nativeElement.textContent ?? '');
       },
     });
   }
