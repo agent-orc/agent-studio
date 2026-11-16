@@ -5,6 +5,12 @@ import { setTheme } from '../helpers/theme';
 import { createFirstRunProofCard, prepareFirstRunProject, verifyFirstRunGit } from '../helpers/first-run-setup';
 import { ensureReviewHost, killReviewHost, reviewHostGone, startReviewHost, stopReviewHost } from '../helpers/review-host-process';
 
+test('first-run review role has no client drain identity until registered', async ({ page }) => {
+  const response = await page.request.get('/api/clients/first-run-review/drain-status');
+  expect(response.status()).toBe(404);
+  expect((await response.json()).error).toBe('client-not-found');
+});
+
 /**
  * AGT-3690 (operator crisis playthrough AGT-3648, finding S5-F14): killing the
  * review host mid-review produced ExecutorRestarted and a scheduled retry, but
