@@ -1496,6 +1496,11 @@ only what ran; the log owns the arithmetic.
     totals survive both review rounds and epochs.
   - The core run carries its accumulated tokens on its live row. Its earlier
     runs are counted but not priced a second time.
+- **Legacy OpenAI usage.** Current rows and `earlierRuns` retain
+  `inputIncludesCached` and `usageNormalization` provenance. Cost reads apply
+  the ledger's OpenAI cached-input rule to older rows with no provenance when
+  input is at least the positive cache-read count. This keeps card and project
+  pipeline costs aligned with ledger receipts without rewriting stored rows.
 - **Decision model.** `StepModelUsage` is built from the same one-shot or CLI
   receipt the token ledger records. `DecisionModelContext` carries it to the
   decision row and to `decidedByModel` on the bus decision message.

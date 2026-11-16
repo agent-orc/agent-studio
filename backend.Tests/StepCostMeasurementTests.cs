@@ -30,6 +30,69 @@ public sealed class StepCostMeasurementTests : IDisposable
 
     private static PipelineExecutionLog NewLog() => new(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
 
+    [Fact]
+    public void Legacy_codex_step_reconciles_card_and_project_cost_with_ledger()
+    {
+        var pricing = TokenTestServices.Pricing();
+        var legacy = Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core,
+            "gpt-5.3-codex", 2_000_000, 100_000) with { CacheReadTokens = 1_500_000 };
+        var record = Record("J1", TestAt, legacy);
+        var expected = pricing.Estimate(legacy.Model, 500_000, 100_000, 1_500_000, 0, TestAt).Total;
+
+        var card = new PipelineCostCalculator(pricing).Summarize(record);
+        var ledgerCall = new TaskTokenCall
+        {
+            Ts = TestAt,
+            Model = legacy.Model!,
+            InputTokens = 500_000,
+            OutputTokens = 100_000,
+            CacheReadTokens = 1_500_000,
+        };
+        var allRuns = new PipelineCostCalculator(pricing).SummarizeWithLedger(record,
+            new Dictionary<string, IReadOnlyList<TaskTokenCall>>
+            {
+                [legacy.StepId] = [ledgerCall],
+            });
+        var project = ProjectPipelineCostService.BuildFromRecords(pricing, "P", [record], 7, TestAt);
+
+        Assert.Equal(500_000, Assert.Single(card.Steps).InputTokens);
+        Assert.Equal(2_100_000, card.TotalTokens);
+        Assert.Equal(expected, card.TotalCostUsd);
+        Assert.Equal(allRuns.TotalCostUsd, card.TotalCostUsd);
+        Assert.Equal(expected, Assert.Single(project.Kinds, kind => kind.Kind == "core").TotalCostUsd);
+        Assert.Equal(expected, project.TotalCostUsd);
+        Assert.Equal(2_100_000, project.TotalTokens);
+    }
+
+    [Fact]
+    public void Explicit_exclusive_input_and_legacy_earlier_run_keep_their_distinct_semantics()
+    {
+        var pricing = TokenTestServices.Pricing();
+        var earlier = new PipelineStepRunSummary
+        {
+            Status = PipelineStepStatus.Passed,
+            Model = "gpt-5.3-codex",
+            InputTokens = 2_000_000,
+            CacheReadTokens = 1_500_000,
+            StartedAt = TestAt,
+        };
+        var current = Step("aspect-code-quality", StepKind.Aspect,
+            "gpt-5.3-codex", 100_000, 10_000) with
+        {
+            CacheReadTokens = 50_000,
+            InputIncludesCached = false,
+            EarlierRuns = [earlier],
+        };
+        var card = new PipelineCostCalculator(pricing).Summarize(Record("J1", TestAt, current));
+
+        Assert.Equal(600_000, Assert.Single(card.Steps).InputTokens);
+        Assert.Equal(2_160_000, card.TotalTokens);
+        Assert.Equal(
+            pricing.Estimate("gpt-5.3-codex", 500_000, 0, 1_500_000, 0, TestAt).Total
+            + pricing.Estimate("gpt-5.3-codex", 100_000, 10_000, 50_000, 0, TestAt).Total,
+            card.TotalCostUsd);
+    }
+
     // ---- model-backed policy matrix -------------------------------------
 
     [Theory]

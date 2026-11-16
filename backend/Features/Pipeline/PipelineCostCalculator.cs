@@ -158,21 +158,22 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
 
         foreach (var s in record.Steps)
         {
+            var normalized = PipelineStoredUsageNormalization.Normalize(s);
             // A step repeated inside this attempt (a second review round, a
             // repeated decision) keeps each earlier execution; the row's cost
             // is the sum of every execution, each priced at its own model.
             var executions = s.EarlierRuns is { Count: > 0 }
-                ? StepCostMeasurement.Executions(pricing, s)
+                ? StepCostMeasurement.Executions(pricing, normalized)
                 : null;
             var est = executions is null
                 ? pricing.Estimate(
-                    s.Model, s.InputTokens, s.OutputTokens, s.CacheReadTokens, s.CacheCreationTokens,
+                    normalized.Model, normalized.InputTokens, normalized.OutputTokens, normalized.CacheReadTokens, normalized.CacheCreationTokens,
                     record.StartedAt)
                 : SumEstimates(executions, record.StartedAt);
-            var input = executions?.Sum(run => run.InputTokens) ?? s.InputTokens;
-            var output = executions?.Sum(run => run.OutputTokens) ?? s.OutputTokens;
-            var cacheRead = executions?.Sum(run => run.CacheReadTokens) ?? s.CacheReadTokens;
-            var cacheCreation = executions?.Sum(run => run.CacheCreationTokens) ?? s.CacheCreationTokens;
+            var input = executions?.Sum(run => run.InputTokens) ?? normalized.InputTokens;
+            var output = executions?.Sum(run => run.OutputTokens) ?? normalized.OutputTokens;
+            var cacheRead = executions?.Sum(run => run.CacheReadTokens) ?? normalized.CacheReadTokens;
+            var cacheCreation = executions?.Sum(run => run.CacheCreationTokens) ?? normalized.CacheCreationTokens;
             var stepTokens = input + output + cacheRead + cacheCreation;
             // Only a step that actually consumed tokens but has no resolved
             // historical price should flag a gap; a 0-token tool step is not a
@@ -773,6 +774,7 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
         // Steps already record their own reasoning level, so the (model, level)
         // identity comes straight out of the execution record (AGT-2811).
         var groups = steps
+            .Select(PipelineStoredUsageNormalization.Normalize)
             .Where(s => s.InputTokens + s.OutputTokens + s.CacheReadTokens + s.CacheCreationTokens > 0)
             .Select(s => (
                 Step: s,

@@ -88,6 +88,8 @@ public static class StepCostMeasurement
     {
         if (!IsTerminal(row.Status)) return row;
 
+        row = PipelineStoredUsageNormalization.Normalize(row);
+
         var tokens = Tokens(row);
         var hasModel = !string.IsNullOrWhiteSpace(row.Model);
         var modelBacked = IsModelBacked(row.StepId, row.Kind);
@@ -207,8 +209,8 @@ public static class StepCostMeasurement
     /// </summary>
     public static IReadOnlyList<PipelineStepRunSummary> Executions(ITokenPricing pricing, PipelineStepExecution row)
     {
-        var list = new List<PipelineStepRunSummary>(row.EarlierRuns ?? []);
-        if (Executed(row)) list.Add(Summarize(pricing, row, keepTokens: true));
+        var list = new List<PipelineStepRunSummary>((row.EarlierRuns ?? []).Select(PipelineStoredUsageNormalization.Normalize));
+        if (Executed(row)) list.Add(Summarize(pricing, PipelineStoredUsageNormalization.Normalize(row), keepTokens: true));
         return list;
     }
 
@@ -218,6 +220,7 @@ public static class StepCostMeasurement
 
     private static PipelineStepRunSummary Summarize(ITokenPricing pricing, PipelineStepExecution row, bool keepTokens = false)
     {
+        row = PipelineStoredUsageNormalization.Normalize(row);
         var stamped = Stamp(pricing, row);
         var dropTokens = !keepTokens && AccumulatesInPlace(row.Kind);
         return new PipelineStepRunSummary
@@ -236,6 +239,8 @@ public static class StepCostMeasurement
             OutputTokens = dropTokens ? 0 : row.OutputTokens,
             CacheReadTokens = dropTokens ? 0 : row.CacheReadTokens,
             CacheCreationTokens = dropTokens ? 0 : row.CacheCreationTokens,
+            InputIncludesCached = row.InputIncludesCached,
+            UsageNormalization = row.UsageNormalization,
             CostBasis = stamped.CostBasis,
             EstimatedCostUsd = dropTokens ? null : stamped.EstimatedCostUsd,
             ModelPriced = stamped.ModelPriced,
