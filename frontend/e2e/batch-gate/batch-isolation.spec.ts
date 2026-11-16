@@ -185,7 +185,14 @@ test('lane indicator and batch panel name the proven-red member, its failing tes
   const red = isolation.locator('[data-testid="batch-isolation-member"][data-task-key="AGT-2"]');
   await expect(red.getByTestId('batch-proven-red-test')).toHaveText(failingTests.map(test => test.testName));
   await expect(red.getByTestId('batch-proven-red-excerpt')).toContainText('Expected: 12.50');
+  // AGT-3836: the row names the evidence file; the absolute host path shows on demand.
+  await expect(red.getByTestId('batch-proven-red-evidence-name')).toHaveText('batch-17/gate-evidence.jsonl');
+  await expect(red.getByTestId('batch-proven-red-evidence-path')).toHaveCount(0);
+  const pathToggle = red.getByTestId('batch-proven-red-path-toggle');
+  await pathToggle.click();
   await expect(red.getByTestId('batch-proven-red-evidence-path')).toHaveText(evidence('batch-17'));
+  await pathToggle.click();
+  await expect(red.getByTestId('batch-proven-red-evidence-path')).toHaveCount(0);
   await expect(red).toContainText('Proved by batch batch-17, run run-17');
   const link = red.getByTestId('batch-proven-red-evidence');
   await expect(link).toHaveAttribute('href',
@@ -208,6 +215,9 @@ test('lane indicator and batch panel name the proven-red member, its failing tes
       await page.waitForTimeout(200);
       await page.screenshot({ path: path.join(RESULTS_DIR, `batch-isolation-panel-${width}-${theme}.png`) });
       await red.screenshot({ path: path.join(RESULTS_DIR, `batch-isolation-culprit-row-${width}-${theme}.png`) });
+      // The evidence line stays one short row instead of a path wrapped over five lines.
+      const evidenceLine = await red.locator('.batch-proven-red__evidence').boundingBox();
+      expect(evidenceLine!.height, `evidence line at ${width} px`).toBeLessThanOrEqual(40);
     }
   }
 

@@ -26,7 +26,6 @@ test.describe('Settings — Appearance/Layout segmented toggles', () => {
       await page.emulateMedia({ colorScheme: 'dark' });
       await page.goto('/#/workspace/settings/appearance');
       if (width === 390) {
-        await page.getByTestId('studio-ab-explorer').click();
         await expect(page.getByTestId('studio-sidebar')).toBeHidden();
       }
       const appearance = page.getByTestId('appearance-settings');
