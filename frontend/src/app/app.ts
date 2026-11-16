@@ -58,6 +58,7 @@ import {
   acceptanceHoldReason,
   triageDecisionRefusal,
   triageDecisionRowState,
+  taskDetailPrimaryShortcutTooltip,
   type MergeAcceptView,
   type TriageButton,
 } from './features/task-detail/runtime';
@@ -1368,7 +1369,7 @@ export class App implements OnInit, OnDestroy {
       primaryTooltip: this.studioPrimaryDecisionRefusal()
         ?? (this.studioPrimaryBlockedByIntegration()
           ? acceptanceHoldReason(this.selectedJob()!.info)
-          : `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`),
+          : taskDetailPrimaryShortcutTooltip(this.studioMergeAcceptView()?.statusTooltip || label)),
       awaitingGit: this.studioPrimaryAwaitingGit(),
       blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
       blockedByDecision: !!this.studioPrimaryDecisionRefusal(),
