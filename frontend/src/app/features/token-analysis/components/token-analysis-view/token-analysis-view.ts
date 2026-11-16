@@ -3,19 +3,21 @@ import {
 } from '@angular/core';
 import type { Subscription } from 'rxjs';
 import { kvValueOf, withKvSegment } from '../../../../services/url-hash.util';
+import { SegmentedControlComponent, type SegmentedOption } from '../../../../components/segmented-control/segmented-control.component';
 import { formatCompactTokens, formatCompactUsd } from '../../../tokens/token-number-format.util';
 import type { TokenAnalysisCardDetail, TokenAnalysisResponse } from '../../models/token-analysis.model';
 import { TokenAnalysisApiService } from '../../services/token-analysis-api.service';
 import {
   ANALYSIS_HASH_KEY, DEFAULT_TOP_N, activeKinds, allSlices, decodeAnalysisFilters, distribution,
-  encodeAnalysisFilters, filterCards, filterOptions, filterRemainders, parseCardId, quotaLines, scatterPoints,
-  stableIdentities, timeChart, tokenMix, topCardStacks, type TokenAnalysisFilters,
+  encodeAnalysisFilters, filterCards, filterOptions, filterRemainders, kindCostBreakdown, parseCardId, quotaLines,
+  scatterPoints, stableIdentities, timeChart, tokenMix, topCardStacks, type AnalysisMeasure, type TokenAnalysisFilters,
 } from '../../token-analysis.util';
 import { CardTokenDrilldownComponent } from '../card-token-drilldown/card-token-drilldown';
 import { TokenAnalysisCardTableComponent } from '../token-analysis-card-table/token-analysis-card-table';
 import { TokenAnalysisDistributionComponent } from '../token-analysis-distribution/token-analysis-distribution';
 import { TokenAnalysisFiltersComponent } from '../token-analysis-filters/token-analysis-filters';
 import { TokenAnalysisKindBarsComponent } from '../token-analysis-kind-bars/token-analysis-kind-bars';
+import { TokenAnalysisKindCostComponent } from '../token-analysis-kind-cost/token-analysis-kind-cost';
 import { TokenAnalysisQuotaComponent } from '../token-analysis-quota/token-analysis-quota';
 import { TokenAnalysisScatterComponent } from '../token-analysis-scatter/token-analysis-scatter';
 import { TokenAnalysisTimeChartComponent } from '../token-analysis-time-chart/token-analysis-time-chart';
@@ -33,7 +35,8 @@ import { TokenAnalysisTimeChartComponent } from '../token-analysis-time-chart/to
   imports: [
     TokenAnalysisFiltersComponent, TokenAnalysisKindBarsComponent, TokenAnalysisTimeChartComponent,
     TokenAnalysisQuotaComponent, TokenAnalysisScatterComponent, TokenAnalysisDistributionComponent,
-    TokenAnalysisCardTableComponent, CardTokenDrilldownComponent,
+    TokenAnalysisCardTableComponent, CardTokenDrilldownComponent, TokenAnalysisKindCostComponent,
+    SegmentedControlComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './token-analysis-view.html',
@@ -54,6 +57,10 @@ export class TokenAnalysisViewComponent {
 
   readonly fmt = formatCompactTokens;
   readonly usd = formatCompactUsd;
+  readonly measureOptions: readonly SegmentedOption<AnalysisMeasure>[] = [
+    { value: 'cost', label: 'Cost', testid: 'token-analysis-measure-cost' },
+    { value: 'tokens', label: 'Tokens', testid: 'token-analysis-measure-tokens' },
+  ];
 
   /** Filters with the project scope applied. */
   readonly effective = computed<TokenAnalysisFilters>(() => {
@@ -70,7 +77,8 @@ export class TokenAnalysisViewComponent {
   readonly visible = computed(() => filterCards(this.cards(), this.effective()));
   readonly remainders = computed(() => filterRemainders(this.data()?.remainders ?? [], this.effective()));
   readonly kinds = computed(() => activeKinds([...this.visible(), ...this.remainders()]));
-  readonly stacks = computed(() => topCardStacks(this.visible(), DEFAULT_TOP_N));
+  readonly stacks = computed(() => topCardStacks(this.visible(), DEFAULT_TOP_N, this.effective().sort));
+  readonly kindCost = computed(() => kindCostBreakdown(this.visible(), this.remainders()));
   readonly identities = computed(() => stableIdentities(this.cards()));
   readonly chart = computed(() => {
     const data = this.data();
@@ -125,6 +133,10 @@ export class TokenAnalysisViewComponent {
     if (target !== window.location.hash) {
       history.replaceState(history.state, '', window.location.pathname + window.location.search + target);
     }
+  }
+
+  setMeasure(sort: AnalysisMeasure): void {
+    this.setFilters({ ...this.filters(), sort });
   }
 
   selectCard(id: string): void {

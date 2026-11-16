@@ -12,6 +12,15 @@ export const ANALYSIS_DAY_OPTIONS = [1, 7, 14, 30, 90] as const;
 export const ANALYSIS_ROUND_OPTIONS = [2, 3, 5] as const;
 export const DEFAULT_ANALYSIS_DAYS = 30;
 
+/**
+ * What ranks the cards and sizes the bars. Cost is the default because the
+ * owner asks which cards cost most; cache reads dominate tokens but are cheap
+ * (AGT-3805).
+ */
+export const ANALYSIS_MEASURES = ['cost', 'tokens'] as const;
+export type AnalysisMeasure = (typeof ANALYSIS_MEASURES)[number];
+export const DEFAULT_ANALYSIS_MEASURE: AnalysisMeasure = 'cost';
+
 export interface TokenAnalysisFilters {
   days: number;
   project: string | null;
@@ -25,6 +34,8 @@ export interface TokenAnalysisFilters {
   kind: string | null;
   outcome: string | null;
   minRounds: number | null;
+  /** Ranking measure of the card table and the top-card bars. */
+  sort: AnalysisMeasure;
   /** Drill-down card as `project/jobId`. */
   card: string | null;
 }
@@ -33,7 +44,7 @@ export const EMPTY_FILTERS: TokenAnalysisFilters = {
   days: DEFAULT_ANALYSIS_DAYS,
   project: null, lane: null, type: null, tag: null,
   model: null, level: null, cli: null, host: null, kind: null, outcome: null,
-  minRounds: null, card: null,
+  minRounds: null, sort: DEFAULT_ANALYSIS_MEASURE, card: null,
 };
 
 const STRING_KEYS = ['project', 'lane', 'type', 'tag', 'model', 'level', 'cli', 'host', 'kind', 'outcome', 'card'] as const;
@@ -49,6 +60,7 @@ export function encodeAnalysisFilters(filters: TokenAnalysisFilters): string | n
     if (value) params.set(key, value);
   }
   if (filters.minRounds) params.set('rounds', String(filters.minRounds));
+  if (filters.sort !== DEFAULT_ANALYSIS_MEASURE) params.set('sort', filters.sort);
   const text = params.toString();
   return text ? encodeURIComponent(text) : null;
 }
@@ -71,6 +83,8 @@ export function decodeAnalysisFilters(encoded: string | null | undefined): Token
   }
   const rounds = Number(params.get('rounds'));
   if (Number.isInteger(rounds) && rounds > 1) result.minRounds = rounds;
+  const sort = params.get('sort');
+  if ((ANALYSIS_MEASURES as readonly string[]).includes(sort ?? '')) result.sort = sort as AnalysisMeasure;
   return result;
 }
 

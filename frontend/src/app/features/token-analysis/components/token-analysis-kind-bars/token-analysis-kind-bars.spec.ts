@@ -25,4 +25,27 @@ describe('TokenAnalysisKindBarsComponent', () => {
     (root.querySelector('[data-testid="token-analysis-kind-row-AGT-1"]') as HTMLButtonElement).click();
     expect(picked).toBe('Studio/job-1');
   });
+
+  it('states the measure that ranks and sizes the bars (AGT-3805)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TokenAnalysisKindBarsComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TokenAnalysisKindBarsComponent);
+    const cards = util.filterCards(fixtureResponse().cards, util.EMPTY_FILTERS);
+    fixture.componentRef.setInput('rows', util.topCardStacks(cards, 5));
+    fixture.componentRef.setInput('kinds', util.activeKinds(cards));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('[data-testid="token-analysis-kind-bars-measure"]')?.textContent).toContain('Top 2 cards by theoretical cost');
+    expect(root.querySelector('.kb__track')?.getAttribute('aria-label')).toBe('AGT-1: $0.750');
+
+    fixture.componentRef.setInput('rows', util.topCardStacks(cards, 5, 'tokens'));
+    fixture.componentRef.setInput('measure', 'tokens');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(root.querySelector('[data-testid="token-analysis-kind-bars-measure"]')?.textContent).toContain('Top 2 cards by tokens');
+    expect(root.querySelector('.kb__track')?.getAttribute('aria-label')).toBe('AGT-1: 2.0K tokens');
+  });
 });

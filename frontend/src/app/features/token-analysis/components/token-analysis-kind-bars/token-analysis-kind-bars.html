@@ -1,7 +1,7 @@
 <section class="kb" data-testid="token-analysis-kind-bars" aria-labelledby="kb-title">
   <header class="kb__head">
     <h3 id="kb-title">Usage kinds per card</h3>
-    <p>Top {{ rows().length }} cards by tokens</p>
+    <p data-testid="token-analysis-kind-bars-measure">Top {{ rows().length }} cards by {{ measureLabel() }}</p>
   </header>
   <ul class="kb__legend" aria-label="Usage kinds">
     @for (item of legend(); track item.kind) {
@@ -17,7 +17,7 @@
           {{ row.label }}
         </button>
         <span class="kb__track" role="img"
-              [attr.aria-label]="row.label + ': ' + fmt(row.total) + ' tokens'">
+              [attr.aria-label]="row.label + ': ' + value(row.total)">
           <span class="kb__stack" [style.width]="width(row.total)">
             @for (segment of row.segments; track segment.key) {
               <span class="kb__segment" [style.flex-grow]="segment.value" [style.background]="segment.color"
@@ -25,7 +25,7 @@
             }
           </span>
         </span>
-        <span class="kb__total">{{ fmt(row.total) }}</span>
+        <span class="kb__total">{{ short(row.total) }}</span>
       </li>
     }
   </ol>
