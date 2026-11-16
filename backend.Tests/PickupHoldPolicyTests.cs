@@ -354,6 +354,29 @@ public class PickupHoldPolicyTests
             hold.Resolutions.Select(resolution => resolution.Kind).ToArray());
     }
 
+    // AGT-3840: "Open Execution Hosts" led to a list that showed the refusing
+    // host Online without the capability it lacked. The way out names both.
+    [Fact]
+    public void CapabilityRefusal_WayOut_OpensTheRefusingHostAndItsCapability()
+    {
+        var hold = Evaluate(Card(), rejection: new RemoteDispatchRejection
+        {
+            Code = "capability-mismatch",
+            RunnerId = "kori-review-01-runner",
+            RunnerName = "kori-review-01",
+            Reason = "Required capability 'provider-auth:codex' is held for indeterminate.",
+            RejectedAtUtc = Now.AddMinutes(-20),
+            Capability = "provider-auth:codex",
+        });
+
+        var restore = Assert.Single(hold!.Resolutions,
+            resolution => resolution.Kind == PickupHoldResolutionKinds.RestoreRunnerCapability);
+        Assert.Equal(RemedyActionKinds.Route, restore.Action!.Kind);
+        Assert.Equal(RemedyRoutes.ExecutionHosts, restore.Action.Target);
+        Assert.Equal("kori-review-01-runner", restore.Action.HostId);
+        Assert.Equal("provider-auth:codex", restore.Action.Capability);
+    }
+
     [Fact]
     public void Limited_dispatch_hold_preserves_reset_and_run_evidence()
     {
@@ -524,7 +547,7 @@ public class PickupHoldPolicyTests
             [PickupHoldResolutionKinds.AwaitTarget] = RemedyAction.Route(RemedyRoutes.Task, "app", "LIB-1"),
             // The cycle edge's own source; the per-edge key is checked below.
             [PickupHoldResolutionKinds.DropCycleEdge] = RemedyAction.Api(RemedyApiActions.EditWaitsOn, "app"),
-            [PickupHoldResolutionKinds.RestoreRunnerCapability] = RemedyAction.Route(RemedyRoutes.ExecutionHosts, "app"),
+            [PickupHoldResolutionKinds.RestoreRunnerCapability] = RemedyAction.ExecutionHost("runner-1", null, "app"),
             [PickupHoldResolutionKinds.RetryDispatch] = RemedyAction.Api(RemedyApiActions.ClearDispatchRejection, "app"),
             [PickupHoldResolutionKinds.RouteToRemoteRunner] = RemedyAction.Setting(ProjectSettingKeys.ExecutionRunner, "app"),
         };

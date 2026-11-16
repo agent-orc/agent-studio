@@ -433,7 +433,59 @@ public sealed record RunnerCapabilitySnapshotDto(
     int ActiveGateCount = 0,
     IReadOnlyList<ConfiguredModelRouteDto>? ConfiguredModelRoutes = null,
     IReadOnlyList<HostContainerSummaryDto>? Containers = null,
-    IReadOnlyList<ReviewDaemonRestartDto>? ReviewRestarts = null);
+    IReadOnlyList<ReviewDaemonRestartDto>? ReviewRestarts = null,
+    IReadOnlyList<HeldCapabilityDto>? HeldCapabilities = null);
+
+/// <summary>
+/// AGT-3840: a capability key this role cannot claim with right now, and why.
+/// A role can read Online while a capability is held: an indeterminate
+/// provider probe or an unregistered key keeps work off the role without
+/// turning its status degraded. Execution Hosts lists these per role so the
+/// operator sees the held key, the probe detail, and a re-probe action.
+/// </summary>
+/// <param name="State">One of <see cref="HeldCapabilityStates"/>.</param>
+/// <param name="Cause">One of <see cref="HeldCapabilityCauses"/>.</param>
+/// <param name="Detail">The probe's own detail, or the reason the key is held.</param>
+/// <param name="ObservedAt">When the advertisement or the refused claim was observed.</param>
+/// <param name="WaitingTaskKeys">Pending work that needs this key, when known.</param>
+public sealed record HeldCapabilityDto(
+    string Key,
+    string State,
+    string Cause,
+    string? Detail,
+    DateTime? ObservedAt,
+    IReadOnlyList<string>? WaitingTaskKeys = null);
+
+public static class HeldCapabilityStates
+{
+    /// <summary>The key is known to be unusable on this role.</summary>
+    public const string Held = "held";
+    /// <summary>The role cannot tell whether the key works; claims treat it as unusable.</summary>
+    public const string Indeterminate = "indeterminate";
+}
+
+public static class HeldCapabilityCauses
+{
+    /// <summary>Pending work needs the key and this role never registered it.</summary>
+    public const string NotRegistered = "not-registered";
+    /// <summary>The advertisement expired.</summary>
+    public const string Stale = "stale";
+    /// <summary>The role advertised the key with a status that does not admit claims.</summary>
+    public const string NotReady = "not-ready";
+    /// <summary>The provider probe could not decide whether the credential works.</summary>
+    public const string ProbeIndeterminate = "probe-indeterminate";
+    /// <summary>The provider probe found the credential invalid.</summary>
+    public const string CredentialInvalid = "credential-invalid";
+    /// <summary>The provider reported an incident.</summary>
+    public const string ProviderIncident = "provider-incident";
+    /// <summary>The AI Operator routed the provider away from this host.</summary>
+    public const string RouteExcluded = "route-excluded";
+    /// <summary>A registered repository-read key has no fresh read proof.</summary>
+    public const string NoReadProof = "no-read-proof";
+}
+
+/// <summary>AGT-3840: operator request to re-probe one capability on one runner identity.</summary>
+public sealed record CapabilityReprobeRequest(string Capability);
 
 /// <summary>
 /// AGT-3690: one review daemon restart of a runner identity, with the review
