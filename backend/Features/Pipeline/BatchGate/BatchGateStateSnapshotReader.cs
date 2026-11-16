@@ -27,14 +27,14 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
         Func<string, bool>? liveFlight = null,
         Func<string, BatchGatePilotService.RecoveryDelay>? recoveryStatus = null,
+        BatchLaneIdleSummary? laneIdle = null,
         IReadOnlySet<string>? activeIsolationFlights = null,
         string? leaseDeadlineDeferredBatchId = null,
         IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
         IReadOnlySet<string>? activePerTaskFlights = null,
         BatchGateInvariantReport? invariants = null,
         string? diskPauseReason = null,
-        int? configuredGateSlots = null,
-        BatchLaneIdleSummary? laneIdle = null)
+        int? configuredGateSlots = null)
     {
         // AGT-3569: the durable claim on the project's flight slot, live or last ended.
         var flightClaim = store.ReadFlightClaim(project);

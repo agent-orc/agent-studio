@@ -463,10 +463,10 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), Service<GateRunLedger>(), reviewFixWaits,
             Service<GateCapacitySettings>()?.Current(), DetachedFlights(project),
-            HasLiveFlight, RecoveryStatus,
+            HasLiveFlight, RecoveryStatus, LaneIdle(project),
             ActiveIsolationFlights(project), LeaseDeadlineDeferred()(project),
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
-            _diskPauseReason, ConfiguredGateSlots(), LaneIdle(project));
+            _diskPauseReason, ConfiguredGateSlots());
     }
 
     private IReadOnlySet<string> ActiveIsolationFlights(string project)
