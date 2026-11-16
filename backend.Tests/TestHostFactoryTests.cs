@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text.Json;
+using AgentStudio.Diagnostics;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -120,7 +122,8 @@ public sealed class TestHostFactoryTests : IDisposable
     [Fact]
     public void The_host_is_stopped_by_its_test_not_by_a_process_signal()
     {
-        using var factory = Configure(new TestHostFactory());
+        SeedLegacyTask();
+        using var factory = Configure(new TestHostFactory(), productionStartup: true);
         using var http = factory.CreateClient();
 
         // ConsoleLifetime turns SIGINT/SIGTERM/SIGQUIT into StopApplication for
@@ -129,6 +132,37 @@ public sealed class TestHostFactoryTests : IDisposable
         Assert.NotEqual("ConsoleLifetime", lifetime.GetType().Name);
         var pilot = Assert.Single(factory.Services.GetServices<IHostedService>()
             .OfType<BatchGatePilotHostedService>());
+        Assert.True(pilot.ExecuteTask?.IsCompletedSuccessfully);
+        Assert.False(string.IsNullOrWhiteSpace(factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob("legacy-keyless", _watchPath)?.Key));
+    }
+
+    [Fact]
+    public void A_default_test_host_starts_no_product_hosted_services()
+    {
+        SeedLegacyTask();
+        using var factory = Configure(new TestHostFactory());
+        using var http = factory.CreateClient();
+
+        Assert.DoesNotContain(factory.Services.GetServices<IHostedService>()
+            .Select(HostTimelineHostedService.Unwrap), service =>
+                service.GetType().Assembly == typeof(Program).Assembly);
+        Assert.True(string.IsNullOrWhiteSpace(factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob("legacy-keyless", _watchPath)?.Key));
+    }
+
+    [Fact]
+    public void A_test_can_opt_into_one_product_hosted_service()
+    {
+        using var factory = Configure(new TestHostFactory()).WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.AddHostedService<BatchGatePilotHostedService>()));
+        using var http = factory.CreateClient();
+
+        var productServices = factory.Services.GetServices<IHostedService>()
+            .Select(HostTimelineHostedService.Unwrap)
+            .Where(service => service.GetType().Assembly == typeof(Program).Assembly)
+            .ToArray();
+        var pilot = Assert.IsType<BatchGatePilotHostedService>(Assert.Single(productServices));
         Assert.True(pilot.ExecuteTask?.IsCompletedSuccessfully);
     }
 
@@ -202,10 +236,16 @@ public sealed class TestHostFactoryTests : IDisposable
     private WebApplicationFactory<Program> Configure(
         WebApplicationFactory<Program> factory,
         MatcherBuildProbe? probe = null,
-        RequestHold? hold = null) =>
+        RequestHold? hold = null,
+        bool productionStartup = false) =>
         factory.WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
+            if (productionStartup)
+            {
+                builder.UseSetting("Startup:HostedServices", "true");
+                builder.UseSetting("Startup:RepairSweeps", "true");
+            }
             builder.UseSetting("TaskRepository", _workspace);
             builder.UseSetting("WatchPaths:0:Name", "test-host");
             builder.UseSetting("WatchPaths:0:Path", _watchPath);
@@ -218,6 +258,17 @@ public sealed class TestHostFactoryTests : IDisposable
                 if (hold is not null) services.AddSingleton<IStartupFilter>(hold);
             });
         });
+
+    private void SeedLegacyTask()
+    {
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, "legacy-keyless");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "legacy-keyless", title = "Legacy task", state = TaskStates.Ready,
+            order = 1, agent = "codex", kind = "task",
+        }));
+    }
 
     /// <summary>
     /// Routing asks every matcher policy about the endpoints while it builds the

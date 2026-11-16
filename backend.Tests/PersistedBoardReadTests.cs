@@ -286,6 +286,7 @@ public sealed class PersistedBoardReadTests : IDisposable
         return new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
+            if (hostedServices) builder.UseSetting("Startup:HostedServices", "true");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TaskRepository"] = _workspace,
