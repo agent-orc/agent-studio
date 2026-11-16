@@ -96,6 +96,7 @@ public sealed class TaskIntegrationStatusService
     private readonly GenerationSingleFlightCache<IReadOnlyList<string>> _pathCache;
     private readonly ConcurrentDictionary<string, (long Version, IntegrationVerificationRecord? Record)> _verificationRecords
         = new(FileSystemPathComparer.Instance);
+    private readonly ConcurrentDictionary<string, string> _netChangeSources = new(StringComparer.OrdinalIgnoreCase);
     private int _computationCount;
     private int _lookupCount;
 
@@ -915,6 +916,18 @@ public sealed class TaskIntegrationStatusService
                                     AncestorSetContains(subjectReach.ReleaseAncestors, sha)),
                             };
                 }
+                // AGT-3883: develop carries a net-change publication of the
+                // result, not the result itself, and stays integrated when
+                // develop moves on. Integrating it again would publish a
+                // second, empty net change.
+                if (NetChangePublication(job, subject.ResultSha, subjectKey.Root, subjectReach) is { } netChange)
+                    return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
+                        DeliveryRefFor(job), $"current-result-net-change via {Short(netChange)}")
+                        with
+                        {
+                            Repositories = CurrentResultRepositories(job, card, reaches, subject),
+                            CurrentResultReleased = AncestorSetContains(subjectReach.ReleaseAncestors, netChange),
+                        };
                 if (AncestorSetContains(subjectReach.DevelopAncestors, subject.ResultSha))
                     return MergedLocally(subjectReach.IntegrationBranch, DeliveryRefFor(job),
                         "current result is present locally", [Short(subject.ResultSha)]);
@@ -1116,6 +1129,42 @@ public sealed class TaskIntegrationStatusService
                 () => ReadOnlyGitConcurrencyLimiter.Run(() => _git.GetCommitPathsAtRoot(group.Key.Root, commit.Sha)));
             return commit with { Files = paths.ToList() };
         }).ToList();
+    }
+
+    /// <summary>
+    /// AGT-3883: the published commit whose <c>Agent-Studio-Net-Change-Of</c>
+    /// trailer names <paramref name="resultSha"/>. Only commits the card itself
+    /// recorded are candidates: its verified tree and the commit its mechanical
+    /// attribution replaced the result with. Ancestry is answered from the
+    /// cached published set; a trailer read is one immutable <c>git show</c>.
+    /// </summary>
+    private string? NetChangePublication(TaskInfo job, string resultSha, string root, RepoIntegration reach)
+    {
+        if (!reach.IntegrationReachSucceeded) return null;
+        var record = ReadVerificationRecord(job.FolderPath);
+        var candidates = new[] { record?.Sha }
+            .Concat(record?.DeliveryShas ?? [])
+            .Concat((job.Commits ?? [])
+                .Where(commit => string.Equals(commit.Sha, resultSha, StringComparison.OrdinalIgnoreCase))
+                .Select(commit => commit.SupersededBySha))
+            .Where(sha => ReviewSubjectStore.IsValidResultSha(sha)
+                && !string.Equals(sha, resultSha, StringComparison.OrdinalIgnoreCase)
+                && AncestorSetContains(reach.PublishedAncestors, sha!))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        return candidates.FirstOrDefault(sha => string.Equals(NetChangeSource(root, sha!), resultSha,
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string? NetChangeSource(string root, string sha)
+    {
+        var key = root + "\0" + sha;
+        if (_netChangeSources.TryGetValue(key, out var known)) return known;
+        var source = ReadOnlyGitConcurrencyLimiter.Run(() => _git.GetNetChangeSource(root, sha));
+        // A trailer never changes; a failed read is asked again next time.
+        if (source is null) return null;
+        if (_netChangeSources.Count > 4096) _netChangeSources.Clear();
+        _netChangeSources[key] = source;
+        return source;
     }
 
     private bool IsIntegratedByContent(string root, RepoIntegration reach, string sha)

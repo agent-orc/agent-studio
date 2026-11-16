@@ -1280,7 +1280,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         new("requirement-fit", "pass", "Product", "The fixture delivery answers its brief."),
     ];
 
-    private StrandingStack StrandingFixture(Deps deps)
+    private StrandingStack StrandingFixture(Deps deps, IEngineDeliveryIntegration? engine = null)
     {
         deps.Settings.SetBatchGate(Project, new BatchGateFormationOptions(
             Enabled: true, DocumentationOnly: false, Scope: "code"));
@@ -1310,7 +1310,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             reviewLifecycle, batches, null!, deps.Settings, deps.Pipeline,
             new AutoReviewPostProcessingQueue(), deps.Transitions, resume, escalation,
             records, receipts, deps.Configuration, NullLogger<AutoReviewStrandingWatchdog>.Instance,
-            coordinator);
+            coordinator, engine: engine);
         return new StrandingStack(watchdog, records, batches);
     }
 
