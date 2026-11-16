@@ -4942,6 +4942,16 @@ public partial class GitService
         return code == 0 && subject.Length > 0 ? subject : null;
     }
 
+    /// <summary>The author name of one commit, for an uncovered publication refusal.</summary>
+    public string? GetCommitAuthor(string repoRoot, string sha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !ReviewSubjectStore.IsValidResultSha(sha)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "show", "-s", "--format=%an", sha);
+        var author = output.Trim();
+        return code == 0 && author.Length > 0 ? author : null;
+    }
+
     /// <summary>
     /// Recognizes a server document-key mutation only after checking
     /// every changed blob against its first parent. Formatting may change when

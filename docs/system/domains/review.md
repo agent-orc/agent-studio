@@ -1,7 +1,14 @@
 # Review Domain Map
 
 Acceptance checks the first-parent line after a delivery's verified tree. A
-server-authored document-key discovery commit is gate-neutral only when its
+later card's exact published merge with a verified `gate-not-applicable`
+integration record counts as a covered publication: the integration lane
+already applied the project's gate policy to that merge. The record must name
+the same project, branch, and first-parent SHA. Other uncovered commits still
+refuse acceptance. Their refusal names the source card when known, or the
+commit author, and omits batch diagnostics when the project has no batch gate.
+
+A server-authored document-key discovery commit is gate-neutral only when its
 first-parent diff changes existing `docs/**/workbench.json` descriptors solely
 by adding `key`. A server-authored Dossier decision-receipt commit
 (`chore(workbench): request revision for|record decision for|archive <id>`)

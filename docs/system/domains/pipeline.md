@@ -3368,7 +3368,8 @@ whose `task.integration` said `integrated`. Two defects met.
   the published branch's first-parent line. One bounded first-parent range from
   that tree to the current tip identifies the later publication commits. Each
   must be covered by its own passed per-task gate, by a passed batch gate
-  spanning those commits, or by a later exact full-suite gate on a containing
+  spanning those commits, by the publishing card's exact verified
+  `gate-not-applicable` merge record, or by a later exact full-suite gate on a containing
   first-parent publication. The latter names its covering publication in the
   acceptance reason. Batch evidence cannot substitute for the original
   tree's first-parent ancestry. A branch rewrite or an uncovered later
