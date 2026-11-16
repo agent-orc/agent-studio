@@ -36,7 +36,7 @@ for (const theme of ['light', 'dark'] as const) {
     const surface = page.getByTestId('usage-detail-surface');
     await expect(surface).toBeVisible();
     // The panel lists every CLI, so its title is not "Claude usage".
-    await expect(surface.locator('.usage-surface__title')).toHaveText('Cost and usage');
+    await expect(surface.locator('.usage-surface__title')).toHaveText('Cost and usage across all projects');
     await expect(surface).not.toContainText('Claude usage');
     // Every instant names its zone.
     await expect(surface.getByTestId('usage-detail-cli-claude')).toContainText(/Updated .*\d{2}:\d{2} \S+/);

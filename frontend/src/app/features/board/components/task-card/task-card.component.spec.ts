@@ -2059,6 +2059,7 @@ describe('TaskCardComponent external-done badge render', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('[data-testid="task-card-external-done"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-card-project"]')?.textContent).toContain('Test');
   });
 });
 
