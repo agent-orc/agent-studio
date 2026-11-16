@@ -15,7 +15,6 @@ import {
 
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
-import { cliDisplayName } from '../../usage-chip.util';
 import type { UsageDetailFocus } from '../../usage-detail.util';
 import { UsageDetailPanelComponent } from '../usage-detail-panel/usage-detail-panel';
 
@@ -61,6 +60,7 @@ function visible(el: HTMLElement): boolean {
   host: {
     '(keydown)': 'onKeydown($event)',
     '(focusout)': 'onFocusOut($event)',
+    '(click)': 'onClick($event)',
     '(document:pointerdown)': 'onDocumentPointerDown($event)',
     '(window:resize)': 'reposition()',
   },
@@ -83,10 +83,11 @@ export class UsageDetailSurfaceComponent {
 
   readonly phone = signal(false);
   readonly mode = computed(() => (this.phone() ? 'sheet' : 'popover'));
-  readonly title = computed(() => {
-    const focus = this.focus();
-    return focus?.kind === 'cli' ? `${cliDisplayName(focus.cliId)} usage` : 'Cost and usage';
-  });
+  /**
+   * The panel always holds every CLI, capacity and cost section; the focus only
+   * picks the section it opens at. One title names that content (AGT-3794-F14).
+   */
+  readonly title = signal('Cost and usage').asReadonly();
 
   /** Last focus that was open, for restoring focus after the dialog closes. */
   private lastFocus: UsageDetailFocus | null = null;
@@ -220,6 +221,18 @@ export class UsageDetailSurfaceComponent {
     if (this.openedIn !== 'popover') return;
     const next = event.relatedTarget as Node | null;
     if (!next || this.dialogRef().nativeElement.contains(next)) return;
+    this.closeDialog(false);
+  }
+
+  /**
+   * A followed link leaves the panel's context: close it so it does not stay
+   * open over the destination (AGT-3794-F14). In-panel jump links cancel their
+   * own default and keep the panel open.
+   */
+  onClick(event: MouseEvent): void {
+    if (event.defaultPrevented) return;
+    const link = (event.target as Element | null)?.closest('a[href]');
+    if (!link || !this.dialogRef().nativeElement.contains(link)) return;
     this.closeDialog(false);
   }
 

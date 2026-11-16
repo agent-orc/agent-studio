@@ -39,8 +39,7 @@
               @if (card.reset; as r) {
                 <li>
                   <span class="usage-detail__muted">{{ card.resetLabel }}</span>
-                  <time [attr.datetime]="r.iso">{{ r.local }}</time>
-                  <span class="usage-detail__utc">({{ r.utc }})</span>
+                  <time [attr.datetime]="r.iso">{{ r.text }}</time>
                   @if (card.countdown) { <span class="usage-detail__muted">{{ card.countdown }}</span> }
                 </li>
               }
