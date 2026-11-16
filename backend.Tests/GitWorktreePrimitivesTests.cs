@@ -333,7 +333,8 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         var taskTip = RunGit(repo, "rev-parse task/10").Out.Trim();
         RunGit(repo, "checkout -q develop");
 
-        var result = git.MergeBranchIntoIntegration(repo, "task/10", "develop");
+        var result = git.MergeBranchIntoIntegration(repo, "task/10", "develop",
+            mergeSubject: "Integrate EXA-10: Add library shape checks");
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, result.Outcome);
         // develop now contains the task tip and the new HEAD is a --no-ff merge
@@ -341,6 +342,8 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor {taskTip} develop").Code);
         Assert.Equal(0, RunGit(repo, "rev-parse --verify develop^2").Code);
         Assert.Equal(result.MergedSha, RunGit(repo, "rev-parse develop").Out.Trim());
+        Assert.Equal("Integrate EXA-10: Add library shape checks",
+            RunGit(repo, "log -1 --format=%s develop").Out.Trim());
         // Working tree is clean after the merge.
         Assert.False(git.RepoHasUncommittedChanges(repo));
     }

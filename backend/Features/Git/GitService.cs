@@ -5546,7 +5546,8 @@ public partial class GitService
         string repoRoot,
         string taskBranch,
         string integrationBranch,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? mergeSubject = null)
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: "Repo root does not exist.");
@@ -5562,7 +5563,7 @@ public partial class GitService
             return MergeIntoIntegrationResult.Failed(
                 AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                 synchronized.Error);
-        return MergeRefIntoIntegration(repoRoot, taskBranch, integrationBranch);
+        return MergeRefIntoIntegration(repoRoot, taskBranch, integrationBranch, mergeSubject);
     }
 
     /// <summary>
@@ -5826,7 +5827,8 @@ public partial class GitService
         string deliveryBranch,
         string expectedResultSha,
         string integrationBranch,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? mergeSubject = null)
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: "Repo root does not exist.");
@@ -5851,7 +5853,8 @@ public partial class GitService
         return MergeRefIntoIntegration(
             repoRoot,
             expectedResultSha,
-            integrationBranch);
+            integrationBranch,
+            mergeSubject);
     }
 
     /// <summary>
@@ -6488,10 +6491,11 @@ public partial class GitService
     private MergeIntoIntegrationResult MergeRefIntoIntegration(
         string repoRoot,
         string sourceRef,
-        string integrationBranch)
+        string integrationBranch,
+        string? mergeSubject = null)
     {
         var tipBeforeMerge = GetBranchTip(repoRoot, IntegrationLineAt(repoRoot, integrationBranch));
-        var merged = MergeRefIntoIntegrationCore(repoRoot, sourceRef, integrationBranch);
+        var merged = MergeRefIntoIntegrationCore(repoRoot, sourceRef, integrationBranch, mergeSubject);
         if (merged.Outcome is not (MergeIntoIntegrationOutcome.Merged or MergeIntoIntegrationOutcome.MergedAfterRebase))
             return merged;
 
@@ -6508,7 +6512,8 @@ public partial class GitService
     private MergeIntoIntegrationResult MergeRefIntoIntegrationCore(
         string repoRoot,
         string sourceRef,
-        string integrationBranch)
+        string integrationBranch,
+        string? mergeSubject)
     {
         var integrationLine = IntegrationLineAt(repoRoot, integrationBranch);
         if (GetBranchTip(repoRoot, integrationLine) is null)
@@ -6584,14 +6589,10 @@ public partial class GitService
             }
         }
 
-        var (_, directMergeError, directMergeCode) = RunGitArgs(
-            repoRoot,
-            "-c",
-            "rerere.enabled=false",
-            "merge",
-            "--no-ff",
-            "--no-edit",
-            sourceRef);
+        var directMergeArgs = new[] { "-c", "rerere.enabled=false", "merge", "--no-ff" }
+            .Concat(mergeSubject is null ? ["--no-edit"] : new[] { "-m", mergeSubject })
+            .Append(sourceRef).ToArray();
+        var (_, directMergeError, directMergeCode) = RunGitArgs(repoRoot, directMergeArgs);
         IReadOnlyList<string> directConflicts = directMergeCode == 0 ? [] : ListUnmergedFiles(repoRoot);
         var reportOnlyConflict = directMergeCode != 0
             && DeliveryReportPathPolicy.IsEnabled(repoRoot)
@@ -6609,7 +6610,9 @@ public partial class GitService
                     return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
                         error: $"Could not retain integration report paths: {restoreError.Trim()}");
                 }
-                var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit", "--no-verify");
+                var (_, commitError, commitCode) = mergeSubject is null
+                    ? RunGitArgs(repoRoot, "commit", "--no-edit", "--no-verify")
+                    : RunGitArgs(repoRoot, "commit", "-m", mergeSubject, "--no-verify");
                 if (commitCode != 0)
                 {
                     RunGitArgs(repoRoot, "merge", "--abort");
@@ -6638,7 +6641,7 @@ public partial class GitService
                 error: $"Direct merge failed before conflict recovery: {directMergeError.Trim()}");
         }
 
-        var mechanicalMerge = TryMechanicalMerge(repoRoot, sourceRef);
+        var mechanicalMerge = TryMechanicalMerge(repoRoot, sourceRef, mergeSubject);
         if (mechanicalMerge.Success)
         {
             _logger.LogInformation(
@@ -6693,7 +6696,9 @@ public partial class GitService
         var netChange = recovery.Outcome == "net-change";
         var (_, mergeErr, mergeCode) = netChange
             ? RunGitArgs(repoRoot, "merge", "--ff-only", recovery.RebasedTip!)
-            : RunGitArgs(repoRoot, "-c", "rerere.enabled=false", "merge", "--no-ff", "--no-edit", recovery.RebasedTip!);
+            : mergeSubject is null
+                ? RunGitArgs(repoRoot, "-c", "rerere.enabled=false", "merge", "--no-ff", "--no-edit", recovery.RebasedTip!)
+                : RunGitArgs(repoRoot, "-c", "rerere.enabled=false", "merge", "--no-ff", "-m", mergeSubject, recovery.RebasedTip!);
         if (mergeCode != 0)
         {
             var conflicted = ListUnmergedFiles(repoRoot);
@@ -6748,19 +6753,14 @@ public partial class GitService
     /// </summary>
     private MechanicalMergeAttempt TryMechanicalMerge(
         string repoRoot,
-        string sourceRef)
+        string sourceRef,
+        string? mergeSubject)
     {
-        var (_, mergeError, mergeCode) = RunGitArgs(
-            repoRoot,
-            "-c",
-            "rerere.enabled=true",
-            "-c",
-            "rerere.autoupdate=true",
-            "merge",
-            "--strategy=ort",
-            "--no-ff",
-            "--no-edit",
-            sourceRef);
+        var mergeArgs = new[] { "-c", "rerere.enabled=true", "-c", "rerere.autoupdate=true",
+                "merge", "--strategy=ort", "--no-ff" }
+            .Concat(mergeSubject is null ? ["--no-edit"] : new[] { "-m", mergeSubject })
+            .Append(sourceRef).ToArray();
+        var (_, mergeError, mergeCode) = RunGitArgs(repoRoot, mergeArgs);
         if (mergeCode == 0)
             return MechanicalMergeAttempt.Applied(ReadHeadShaAt(repoRoot)!);
 
@@ -6773,7 +6773,9 @@ public partial class GitService
                 $"Mechanical three-way merge remained conflicted: {mergeError.Trim()}");
         }
 
-        var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
+        var (_, commitError, commitCode) = mergeSubject is null
+            ? RunGitArgs(repoRoot, "commit", "--no-edit")
+            : RunGitArgs(repoRoot, "commit", "-m", mergeSubject);
         if (commitCode == 0)
             return MechanicalMergeAttempt.Applied(ReadHeadShaAt(repoRoot)!);
 

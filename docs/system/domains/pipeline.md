@@ -621,6 +621,10 @@ is behind their current integration tip. They replay the final delivery tree's
 net change against the merge base as one commit on the tip. The gate and push
 use that exact commit, and the card maps each delivery commit absent from the
 tip to it. A tree conflict names its files and starts an agent round.
+When the per-task integration route creates a merge commit, its subject names
+the delivered card key and title. `MergeIntoDevelopRunner` supplies that identity
+to `GitService` for direct and mechanically recovered merges, so first-parent
+history and downstream changelogs identify the card.
 
 The merge route is the documented strategy for non-linear deliveries. It is
 the same `--no-ff` merge the per-task integration uses, so every delivery SHA,
