@@ -69,6 +69,11 @@
           {{ decision.cliType || 'CLI default' }} · {{ decision.model || 'model default' }}@if (decision.thinkingLevel) { · {{ decision.thinkingLevel }}}
         </span>
       }
+      @if (decision.outcome === 'rework' && decision.routeChangedFrom; as from) {
+        <span class="decision-panel__receipt-note" data-testid="workbench-decision-route-change-receipt">
+          Agent changed from {{ agentRouteText(from) }} to {{ agentRouteText(decision) }}
+        </span>
+      }
       <span class="decision-panel__receipt-note" data-testid="workbench-decision-response-receipt">
         {{ selectedSummary() }}
       </span>

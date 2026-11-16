@@ -137,6 +137,9 @@ public static class ProjectDocsEndpoints
                 ? Results.NotFound(new { error = "Dossier is not available in the selected Wiki source." })
                 : Results.Ok(document with
                 {
+                    // The refreshed catalogue item carries the documentation
+                    // projection of the same membership as the card list.
+                    Workbench = item ?? document.Workbench,
                     Cards = cards.List(projectName, document.Workbench),
                     RevisionCard = revisions.Target(projectName, document.Workbench.SourceTaskKeys),
                     Promotion = promotions.Resolve(projectName, document.Workbench),
@@ -199,7 +202,7 @@ public static class ProjectDocsEndpoints
                             Outcome = body.Outcome,
                         }, card));
                 }
-                var result = decisions.Confirm(projectName, id, body, card?.Key);
+                var result = decisions.Confirm(projectName, id, body, card?.Key, card?.Route);
                 // The descriptor is a docs/ file, so the warm wiki cache must
                 // not keep serving the pre-decision bytes.
                 if (result.Success) docs.InvalidateWikiContent(projectName);

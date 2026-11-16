@@ -106,6 +106,17 @@ public class AdHocUsageTests
     }
 
     [Fact]
+    public void Aggregate_DisclaimerIsProviderNeutral()
+    {
+        // AGT-3794-F14: ad-hoc calls include Codex, so the caveat must not cite one provider.
+        var agg = AdHocUsageFold.Aggregate([], "/log");
+
+        Assert.Equal(TokenCostDisclaimer.Text, agg.Disclaimer);
+        Assert.DoesNotContain("Anthropic", agg.Disclaimer, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Claude", agg.Disclaimer, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ParseOrFallback_PlainText_ReturnsAsIs()
     {
         var (text, usage) = AdHocClaudeInvoker.ParseOrFallback("Add login form\n", "claude-haiku-4-5");

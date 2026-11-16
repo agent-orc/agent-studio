@@ -47,6 +47,25 @@ public sealed class WorkbenchDocumentationPolicyTests
         Assert.False(result.Eligible);
     }
 
+    [Fact]
+    public void Evaluate_NamesOpenAndMissingCardsWhileADecidedItemIsBlocked()
+    {
+        var result = WorkbenchDocumentationPolicy.Evaluate("decided",
+        [
+            Reference("AGT-1", exists: true, terminal: true),
+            Reference("AGT-2", exists: true, terminal: false),
+            Reference("AGT-3", exists: false, terminal: false),
+        ]);
+
+        Assert.Contains($"Still open: AGT-2 ({TaskStates.Ready}).", result.BlockedReason);
+        Assert.Contains("Not found: AGT-3.", result.BlockedReason);
+        Assert.DoesNotContain("AGT-1", result.BlockedReason);
+        Assert.Null(WorkbenchDocumentationPolicy.Evaluate("decided",
+            [Reference("AGT-1", exists: true, terminal: true)]).BlockedReason);
+        Assert.Null(WorkbenchDocumentationPolicy.Evaluate("active",
+            [Reference("AGT-2", exists: true, terminal: false)]).BlockedReason);
+    }
+
     private static WorkbenchDocumentationReference Reference(
         string key,
         bool exists,

@@ -48,6 +48,11 @@
           </button>
         </div>
       }
+      @if (documentationBlockedReason(); as reason) {
+        <p class="workbench-viewer__documentation-blocked" data-testid="workbench-documentation-blocked">
+          {{ reason }}
+        </p>
+      }
       @if (documentationError(); as message) {
         <p class="workbench-viewer__documentation-error" role="alert">{{ message }}</p>
       }

@@ -136,6 +136,38 @@ public sealed class DossierCardsTests
     }
 
     [Fact]
+    public void CardList_IncludesLedgerSlicesButKeepsAnotherPrimaryDossier()
+    {
+        var dossier = Dossier("docs/operations/one/index.html") with
+        {
+            SourceTaskKeys = ["AGT-1"],
+            ImplementationTasks = [new(), new()],
+        };
+        var source = Task("AGT-1", "Concept") with
+        {
+            State = TaskStates.Completed,
+            Dossier = new TaskDossier { Path = dossier.EntryPath },
+        };
+        var ledgerOnly = Task("AGT-2", "Promoted slice");
+        var elsewhere = Task("AGT-3", "Moved slice") with
+        {
+            Dossier = new TaskDossier { Path = "docs/operations/two/index.html" },
+        };
+        var list = DossierCardsService.Project("Agent Studio", dossier, [source, ledgerOnly, elsewhere],
+            task => task.Key == source.Key
+                ?
+                [
+                    new SpawnedTaskRecord { Reason = $"concept-promotion:{dossier.EntryPath}:0", TargetKey = "AGT-2" },
+                    new SpawnedTaskRecord { Reason = $"concept-promotion:{dossier.EntryPath}:1", TargetKey = "AGT-3" },
+                ]
+                : []);
+
+        Assert.Equal(["AGT-1", "AGT-2"], list.Cards.Select(card => card.Key));
+        Assert.Equal(0, list.Cards.Single(card => card.Key == "AGT-2").ImplementationIndex);
+        Assert.Equal((2, 0), (list.ImplementationSlices, list.CompletedSlices));
+    }
+
+    [Fact]
     public void CardList_ReportsLaneStateEnvironmentsAndVisibleSliceProgress()
     {
         var dossier = Dossier("docs/operations/one/index.html") with

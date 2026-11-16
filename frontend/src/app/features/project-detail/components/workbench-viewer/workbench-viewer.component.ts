@@ -1,17 +1,6 @@
 import {
-  ChangeDetectionStrategy,
-  Component,
-  ElementRef,
-  HostListener,
-  OnDestroy,
-  computed,
-  effect,
-  inject,
-  input,
-  output,
-  signal,
-  untracked,
-  viewChild,
+  ChangeDetectionStrategy, Component, ElementRef, HostListener, OnDestroy,
+  computed, effect, inject, input, output, signal, untracked, viewChild,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
@@ -304,6 +293,13 @@ export class WorkbenchViewerComponent implements OnDestroy {
   documentationReady(): boolean {
     const workbench = this.document()?.workbench;
     return workbench?.status === 'decided' && workbench.documentation?.eligible === true;
+  }
+
+  /** Why a decided item cannot be marked documented yet, for example open implementation slices. */
+  documentationBlockedReason(): string | null {
+    const workbench = this.document()?.workbench;
+    if (workbench?.status !== 'decided' || workbench.documentation?.eligible !== false) return null;
+    return workbench.documentation.blockedReason || null;
   }
 
   documentCurrent(): void {
