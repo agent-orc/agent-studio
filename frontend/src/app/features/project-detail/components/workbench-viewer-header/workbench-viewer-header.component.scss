@@ -351,9 +351,22 @@
 }
 
 @media (max-width: 700px) {
-  .viewer-head {
-    padding-inline: var(--studio-spacing-3);
+  // A phone row cannot hold the key, title, badges, and actions on one line:
+  // the key and title share the first row, the rest wraps below, and both
+  // popovers span the header instead of growing left from their trigger.
+  .viewer-head { position: relative; flex-wrap: wrap; row-gap: var(--studio-spacing-1); padding-inline: var(--studio-spacing-3); }
+  .viewer-head > app-copyable-task-key { flex: 0 0 auto; }
+  .viewer-head h1 {
+    display: -webkit-box;
+    flex: 1 1 12rem;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
+  .viewer-head__review-action, .viewer-head__details { position: static; }
+  .review-form, .viewer-details { top: calc(100% + var(--studio-spacing-1)); right: var(--studio-spacing-3); left: var(--studio-spacing-3); width: auto; }
   .viewer-details__meta {
     grid-template-columns: 1fr;
   }
