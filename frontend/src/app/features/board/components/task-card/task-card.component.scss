@@ -338,7 +338,7 @@
       border-radius: 7px;
       font-size: var(--studio-card-meta-size);
       font-weight: 600;
-      color: var(--studio-accent);
+      color: var(--studio-accent-strong);
       background: color-mix(in srgb, var(--studio-accent) 13%, transparent);
       cursor: help;
     }
@@ -1404,10 +1404,10 @@
       color: color-mix(in srgb, var(--studio-accent-3-strong) 82%, var(--studio-fg-dim));
     }
     .task-card__token-bubble--mauve {
-      color: color-mix(in srgb, #c084fc 78%, var(--studio-fg-dim));
+      color: color-mix(in srgb, var(--studio-accent-4-strong) 78%, var(--studio-fg-dim));
     }
     .task-card__token-bubble--peach {
-      color: color-mix(in srgb, #fb923c 76%, var(--studio-fg-dim));
+      color: color-mix(in srgb, var(--studio-accent-strong) 76%, var(--studio-fg-dim));
     }
 
     /* Compact cards show identity and recency in one dense row. */
