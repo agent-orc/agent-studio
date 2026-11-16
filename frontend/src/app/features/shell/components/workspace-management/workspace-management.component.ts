@@ -23,6 +23,7 @@ import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceSettingsService } from '../../state/workspace-settings.service';
 import { WorkspaceQuotaDisclosureComponent } from '../../../quota/lazy';
+import { OperatorAttentionService } from '../../../operator-attention';
 
 interface WorkspaceProjectDragData {
   projectId: string;
@@ -58,6 +59,7 @@ export class WorkspaceManagementComponent implements OnInit {
   private readonly jobService = inject(TaskService);
   private readonly workspaceManager = inject(WorkspaceManagerService);
   private readonly projectLookup = inject(ProjectLookupService);
+  private readonly operatorAttention = inject(OperatorAttentionService);
   readonly wsSettings = inject(WorkspaceSettingsService);
 
   readonly registryWorkspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
@@ -324,7 +326,11 @@ export class WorkspaceManagementComponent implements OnInit {
   }): void {
     this.registryProjectBusyId.set(projId);
     this.jobService.updateRegistryProject(projId, patch).subscribe({
-      next: () => { this.registryProjectBusyId.set(null); this.reloadRegistryWorkspaces(); },
+      next: () => {
+        this.registryProjectBusyId.set(null);
+        this.workspaceManager.notifyRegistryChanged();
+        if (patch.archived !== undefined) this.operatorAttention.refresh();
+      },
       error: (err: unknown) => {
         this.registryProjectBusyId.set(null);
         this.registryWorkspacesError.set(this.errMsg(err));

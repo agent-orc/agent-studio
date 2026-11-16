@@ -22,6 +22,7 @@
       <div class="app-shell" data-testid="app-shell">
       <app-studio-shell #studioShell data-testid="studio-shell-root"
                         [knownProjectNames]="projectNames()"
+                        [openTaskProjectName]="selectedJob()?.info?.projectName ?? detailPreview()?.projectName ?? null"
                         [projectWatchPaths]="watchPaths()"
                         [filterBadgeCount]="filterBadgeCount()"
                         (projectDeleted)="loadWatchPaths()"

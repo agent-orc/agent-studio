@@ -19,6 +19,36 @@ namespace AgentStudio.Tests;
 public class TaskScannerWatchPathTests
 {
     [Fact]
+    public void Archived_registry_project_removes_its_legacy_watch_path()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archived-watch-" + Guid.NewGuid().ToString("N"));
+        var store = Path.Combine(root, "tasks");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = root,
+            ["WatchPaths:0:Name"] = "Old Name",
+            ["WatchPaths:0:Path"] = store,
+        }).Build();
+        try
+        {
+            var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+            var project = registry.EnsureProjectForStorage(store, "Renamed Project", "ws-default");
+            var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+                new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config), projectRegistry: registry);
+
+            Assert.Equal("Renamed Project", Assert.Single(scanner.GetWatchPaths()).Name);
+            registry.SetArchived(project.Id, true);
+            Assert.Empty(scanner.GetWatchPaths());
+            registry.SetArchived(project.Id, false);
+            Assert.Equal("Renamed Project", Assert.Single(scanner.GetWatchPaths()).Name);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void GetWatchPaths_RelativeStore_JoinsRootBeforeCanonicalising()
     {
         var projectRoot = Path.Combine(Path.GetTempPath(), "atp-watch-root-" + Guid.NewGuid().ToString("N"));

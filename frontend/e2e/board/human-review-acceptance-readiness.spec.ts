@@ -143,6 +143,7 @@ async function installRoutes(page: Page, fixtures: Fixture[], refuseOnAccept: st
   const calls: Calls = { readiness: [], batch: [], continued: [] };
   const lane = fixtures.map(card);
   let live = lane;
+  let archived = false;
   let lastBatch: { jobId: string }[] = [];
   await page.route('**/api/**', route => {
     const url = route.request().url();
@@ -153,10 +154,61 @@ async function installRoutes(page: Page, fixtures: Fixture[], refuseOnAccept: st
     if (pathname === '/api/v1/management/credential-inventory') {
       return json(route, { generatedAt: '2026-11-09T10:00:00Z', items: [] });
     }
-    if (pathname === '/api/v1/projects') return json(route, [{ id: 'PROJ-041', displayName: PROJECT, archived: false }]);
+    if (pathname === '/api/projects/PROJ-041' && route.request().method() === 'PUT') {
+      archived = true;
+      live = [];
+      return json(route, { id: 'PROJ-041', displayName: PROJECT, archived });
+    }
+    const registryProject = { id: 'PROJ-041', displayName: PROJECT, workspaceId: 'ws-default',
+      storageLocation: WATCH_PATH, archived, shortCode: 'RDY', urls: [] };
+    const otherProject = { id: 'PROJ-042', displayName: 'Other fixture', workspaceId: 'ws-default',
+      storageLocation: '/fixtures/other', archived: false, shortCode: 'OTH', urls: [] };
+    if (pathname === '/api/v1/projects') return json(route,
+      archived && !url.includes('includeArchived=true') ? [otherProject] : [registryProject, otherProject]);
+    if (pathname === '/api/v1/workspaces') return json(route, [{ id: 'ws-default', displayName: 'Default',
+      sortOrder: 0, isDefault: true, color: null, projects: archived && !url.includes('includeArchived=true')
+        ? [otherProject] : [registryProject, otherProject] }]);
+    if (pathname === '/api/workspaces/ws-default/quota/admission') return json(route, {
+      workspaceId: 'ws-default',
+      workspace: { projectId: null, project: null, status: 'ok', message: null, overrideActive: false,
+        codingAllowed: true, hostingAllowed: true, limited: false },
+      projects: [],
+    });
+    if (pathname === '/api/operator/attention') return json(route, { items: archived ? [] : [{
+      id: 'human-review.ready|readiness|AGT-4101', type: 'human-review.ready', project: PROJECT,
+      cardKey: 'AGT-4101', cards: ['AGT-4101'], reason: 'Review ready', observedAt: '2026-11-09T06:00:00Z',
+      suggestedOperations: [], evidence: [],
+    }], count: archived ? 0 : 1 });
     if (url.includes('/api/v1/studio/board') || url.includes('/api/tasks/grouped')) return json(route, grouped(live));
     if (url.includes('/api/v1/studio/runner/status') || url.includes('/api/runner/status')) return json(route, { projects: {} });
     if (url.includes('/api/tasks/archive')) return json(route, { items: [], total: 0, offset: 0, limit: 50 });
+    if (/^\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+$/.test(pathname)) return json(route, {
+      info: card(FIXTURES[0]), promptMarkdown: '# Lane filter keeps its count',
+      promptHistory: [], titleHistory: [], statusMarkdown: null, contextUsage: null,
+      log: [], summaryState: null, reviewEvidence: [],
+    });
+    if (/^\/api\/tasks\/[^/]+\/core$/.test(pathname)) return json(route, {
+      state: 'ready', projectId: 'PROJ-041', projectName: PROJECT,
+      id: 'lane-filter-count', taskKey: `${WATCH_PATH}::lane-filter-count`, key: 'AGT-4101',
+      watchPath: WATCH_PATH, folderPath: `${WATCH_PATH}/5-human-review/lane-filter-count`,
+      title: 'Lane filter keeps its count', kind: 'task', taskType: 'chore',
+      lane: '5-human-review', archiveState: null, enteredLaneAt: '2026-11-09T06:00:00Z',
+      order: 1, mode: 'coding', released: false, pendingIntent: false,
+      coreVersion: '1', runtimeVersion: '1',
+      pins: { model: null, modelExplicit: false, thinkingLevel: null, thinkingLevelExplicit: false,
+        cliType: null, contextMode: null, useOwnSession: null, allowWebAccess: false, noBranchExpected: false },
+      actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+      blocking: { blockerType: null, blockerCondition: null, blockerStatus: null,
+        blockerDescription: null, needsInput: null, dependencyBlocked: false,
+        dependencyState: 'ready', dependencies: [] },
+      runtime: { attemptId: null, runnerId: null, runnerName: null, hostname: null,
+        executionStatus: null, location: 'none', heartbeatAt: null,
+        leaseState: 'none', leaseId: null },
+      statusSummary: { state: 'ready', text: '', originalBytes: 0, hash: null, cursor: null },
+      prompt: { state: 'ready', text: '# Lane filter keeps its count',
+        originalBytes: 29, hash: null, cursor: null },
+      timeline: { state: 'ready', events: [], cursor: null },
+    });
     if (url.includes('/api/cli/quota')) return json(route, { at: '2026-11-09T06:00:00Z', ttlSeconds: 600, snapshots: [] });
     if (url.includes('/api/cli/usage')) return json(route, { at: '2026-11-09T06:00:00Z', sections: [] });
     if (pathname === '/api/usage/cockpit') return json(route, {
@@ -193,7 +245,9 @@ async function installRoutes(page: Page, fixtures: Fixture[], refuseOnAccept: st
       calls.continued.push({ url: pathname, body: route.request().postDataJSON() });
       return json(route, { status: 'queued' }, 202);
     }
-    if (url.includes('/api/watch-paths')) return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
+    if (url.includes('/api/watch-paths')) return json(route,
+      [...(archived ? [] : [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]),
+        { name: 'Other fixture', path: '/fixtures/other', rootPath: '/fixtures/other' }]);
     if (url.includes('/api/environment')) return json(route, { isDev: false, devTools: {} });
     return json(route, []);
   });
@@ -228,6 +282,53 @@ async function openBoard(page: Page): Promise<void> {
 
 test.describe('Human Review acceptance readiness', () => {
   test.setTimeout(180_000);
+
+  test('archives a project with an open Human Review card without showing it as unregistered', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await installRoutes(page, [FIXTURES[0]]);
+    await page.goto('/?includeFixtures=true');
+    await dismissDevErrorDialog(page);
+    const card = page.getByTestId('lane-5-human-review').getByTestId('task-card').first();
+    await expect(card).toBeVisible();
+    await card.click();
+    await expect(page.getByTestId('studio-tab-list')).toContainText('AGT-4101');
+    await expect(page.getByTestId('studio-task')).toBeVisible();
+
+    await page.getByTestId('studio-titlebar-settings').click();
+    await page.getByTestId('workspace-settings-rail-workspaces').click();
+    const projectRow = page.getByTestId('settings-project-row').filter({ hasText: PROJECT });
+    await expect(projectRow).toBeVisible();
+    page.once('dialog', dialog => dialog.accept());
+    await projectRow.getByTestId('settings-project-archive').click();
+    await expect(projectRow).toHaveCount(0);
+    await page.getByTestId('studio-tab-list').getByRole('tab', { name: 'lane-filter-count' }).click();
+    await expect(page.getByTestId('studio-archived-project-notice')).toContainText('Readiness fixture is archived');
+    await page.reload();
+    await dismissDevErrorDialog(page);
+
+    await expect(page.getByTestId('studio-archived-project-notice')).toContainText('Readiness fixture is archived');
+    await expect(page.getByTestId('studio-explorer-project-row-Readiness fixture')).toHaveCount(0);
+    await expect(page.getByTestId('studio-explorer-project-register-hint-Readiness fixture')).toHaveCount(0);
+    await expect(page.getByTestId('studio-attention-count')).toHaveText('0');
+    await page.getByTestId('studio-project-picker-trigger').click();
+    await expect(page.getByRole('menuitem', { name: /Readiness fixture/ })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await setTheme(page, 'light');
+    await dismissDevErrorDialog(page);
+    await page.screenshot({ path: path.join(RESULTS_DIR, 'archived-project-open-human-review--light--1280.png') });
+    await setTheme(page, 'dark');
+    await dismissDevErrorDialog(page);
+    await page.screenshot({ path: path.join(RESULTS_DIR, 'archived-project-open-human-review--dark--1280.png') });
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(page.getByTestId('studio-tabbar')).toBeVisible();
+    await page.screenshot({ path: path.join(RESULTS_DIR, 'archived-project-open-human-review--dark--1024.png') });
+    await setTheme(page, 'light');
+    await dismissDevErrorDialog(page);
+    await page.screenshot({ path: path.join(RESULTS_DIR, 'archived-project-open-human-review--light--1024.png') });
+
+    await page.goto('/#/projects/readiness-fixture/board');
+    await expect(page.getByText('This project is unavailable or archived.', { exact: false })).toBeVisible();
+  });
 
   test('groups the lane by readiness, names each reason, and links the review report', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });

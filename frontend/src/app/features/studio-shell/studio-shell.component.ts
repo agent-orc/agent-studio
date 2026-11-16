@@ -64,7 +64,8 @@ import { ProjectHubUrlService } from './services/project-hub-url.service';
 import { StudioPanelStateService } from './services/studio-panel-state.service';
 import { ExplorerSectionsService } from './services/explorer-sections.service';
 import { ExplorerWorkbenchStateService } from './services/explorer-workbench-state.service';
-import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.project-rows';
+import type { ProjectSidebarRow } from './studio-shell.project-rows';
+import { activeRegistryWorkspaces, archivedTabProject, visibleProjectRows } from './studio-shell.archive-state';
 import { StudioTab, studioTabKey } from './studio-shell.types';
 import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
 import { requestErrorMessage } from './studio-shell.request-error';
@@ -72,6 +73,7 @@ import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-ta
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { OrchestratorFeedStore } from '../orchestrator';
 import { ChatSessionsPanelComponent } from '../orchestrator/lazy';
+import { OperatorAttentionService } from '../operator-attention';
 import { UsageDetailSurfaceComponent } from '../usage-cockpit/lazy';
 import { WorkspaceQuotaBannerComponent } from '../quota';
 import { AccountControlComponent } from '../shell/components/account-control/account-control';
@@ -80,6 +82,7 @@ import { WorkspaceDeploymentDashboardComponent } from '../deployments';
 import { TaskDefaultsControlComponent } from './components/task-defaults-control/task-defaults-control';
 import { DevelopStateIndicatorComponent } from './components/develop-state-indicator/develop-state-indicator.component';
 import { AttentionControlComponent } from './components/attention-control/attention-control';
+import { StatusIndicatorComponent } from '../../components/status-indicator/status-indicator.component';
 import type { MagazineChild } from '../magazine/magazine-view/magazine-view';
 import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 
@@ -98,7 +101,7 @@ import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
+  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -118,6 +121,7 @@ export class StudioShellComponent {
    * that don't pass it keep their job-derived behaviour.
    */
   readonly knownProjectNames = input<readonly string[]>([]);
+  readonly openTaskProjectName = input<string | null>(null);
 
   /** Backend WatchPaths feeding the rename-stable `projectStorageByName` join
    *  (a row's storage == registry `storageLocation`, stable across rename). */
@@ -147,6 +151,7 @@ export class StudioShellComponent {
   private readonly workspaceManager = inject(WorkspaceManagerService);
   private readonly workspaceOverlays = inject(WorkspaceOverlaysService);
   private readonly projectLookup = inject(ProjectLookupService);
+  private readonly operatorAttention = inject(OperatorAttentionService);
   private readonly themeService = inject(ThemeService);
   readonly orchestratorFeed = inject(OrchestratorFeedStore);
   private readonly authSession = inject(AuthSessionState);
@@ -393,6 +398,10 @@ export class StudioShellComponent {
    */
   readonly registryWorkspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
   readonly registryProjects = signal<readonly RegistryProjectSummary[]>([]);
+  readonly archivedRegistryProjects = signal<readonly RegistryProjectSummary[]>([]);
+  readonly archivedProjectNames = computed(() => new Set(this.archivedRegistryProjects().map(project => project.displayName)));
+  readonly activeArchivedProjectName = computed(() => archivedTabProject(this.activeTab(),
+    this.openTaskProjectName(), this.currentProjectName(), this.archivedRegistryProjects()));
   readonly registryWorkspacesLoading = signal(false);
   readonly registryWorkspacesError = signal<string | null>(null);
   /** True once a registry load answered, with data or an error. */
@@ -443,13 +452,15 @@ export class StudioShellComponent {
     this.registryWorkspacesLoading.set(true);
     this.registryWorkspacesError.set(null);
     forkJoin({
-      workspaces: this.jobService.getRegistryWorkspaces({ includeArchived: false }),
-      projects: this.jobService.getRegistryProjects({ includeArchived: false }),
+      workspaces: this.jobService.getRegistryWorkspaces({ includeArchived: true }),
+      projects: this.jobService.getRegistryProjects({ includeArchived: true }),
     }).subscribe({
       next: ({ workspaces: ws, projects }) => {
-        this.registryWorkspaces.set(ws ?? []);
-        this.registryProjects.set(projects ?? []);
-        this.projectLookup.setWorkspaces(ws ?? []);
+        this.registryWorkspaces.set(activeRegistryWorkspaces(ws ?? []));
+        this.registryProjects.set((projects ?? []).filter(project => !project.archived));
+        this.archivedRegistryProjects.set((projects ?? []).filter(project => project.archived));
+        this.operatorAttention.setArchivedProjects(this.archivedRegistryProjects().map(project => project.displayName));
+        this.projectLookup.setWorkspaces(this.registryWorkspaces());
         this.registryWorkspacesLoading.set(false);
         this.registryLoaded.set(true);
       },
@@ -542,23 +553,11 @@ export class StudioShellComponent {
     return null;
   });
 
-  /** Project rows displayed in the titlebar pills + sidebar Explorer.
-   *  A2 (2026-05-21): the visible "open jobs" counter excludes the
-   *  archive lane. Archive grows monotonically with E2E fixtures /
-   *  completed runs and was inflating the count (e.g. "Agent Software
-   *  Studio: 447" → working set ~67 + ~380 archived). Operator now
-   *  sees the working-set count by default; the picker dropdown can
-   *  surface the full total separately when needed.
-   *
-   *  D5 follow-up: also include projects that the backend knows about
-   *  but have zero working-set jobs (a fresh sandbox like
-   *  `Playwright Test` lives entirely in 7-archive or has nothing yet —
-   *  it must still render as a picker target for the probe to land
-   *  tasks). The set of "known projects" comes from
-   *  `TaskService.getWatchPaths()` via the shell's `projectNames` input
-   *  the host passes in app.html. */
+  /** Picker and Explorer rows include known projects with no open tasks,
+   * exclude task archive lane counts, and omit archived registry projects. */
   readonly projectRows = computed<ProjectSidebarRow[]>(() => {
-    return buildProjectSidebarRows(this.grouped(), this.knownProjectNames(), this.currentProjectName());
+    return visibleProjectRows(this.grouped(), this.knownProjectNames(),
+      this.currentProjectName(), this.archivedProjectNames());
   });
 
   /** Row name → resolved storage path for the tree's rename-stable join. */

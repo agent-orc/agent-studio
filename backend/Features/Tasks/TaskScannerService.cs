@@ -371,7 +371,19 @@ public class TaskScannerService : ITaskScanner
         // registry records and must be readable without a settings edit or restart.
         if (_projectRegistry != null)
         {
-            var registryProjects = _projectRegistry.List().Where(p => !p.Archived).ToList();
+            var allRegistryProjects = _projectRegistry.List();
+            var registryProjects = allRegistryProjects.Where(p => !p.Archived).ToList();
+            var activeStorage = registryProjects.Select(ResolveRegistryStorageLocation)
+                .Where(path => path != null).Select(NormalizeWatchPath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var archivedStorage = allRegistryProjects.Where(p => p.Archived)
+                .Select(ResolveRegistryStorageLocation).Where(path => path != null)
+                .Select(NormalizeWatchPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var archivedNames = allRegistryProjects.Where(p => p.Archived)
+                .Select(p => p.DisplayName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // A legacy configured path must not resurrect an archived registry project.
+            resolved.RemoveAll(entry => !activeStorage.Contains(NormalizeWatchPath(entry.Path))
+                && (archivedStorage.Contains(NormalizeWatchPath(entry.Path)) || archivedNames.Contains(entry.Name)));
             for (var i = 0; i < resolved.Count; i++)
             {
                 var project = registryProjects.FirstOrDefault(p => string.Equals(

@@ -45,6 +45,23 @@ public sealed class OperatorAttentionTests : IDisposable
     }
 
     [Fact]
+    public void Archived_project_facts_do_not_need_attention()
+    {
+        var facts = new[]
+        {
+            Fact(OperatorDecisionTypes.HumanReviewReady, "archived", "TLY-1", At),
+            Fact(OperatorDecisionTypes.HumanReviewReady, "active", "ACT-1", At),
+            Fact(OperatorDecisionTypes.QuotaExhausted, null, null, At),
+        };
+
+        var result = OperatorAttention.Project(facts, OperatorDecisionReader.Everything,
+            project => project != "archived");
+
+        Assert.Equal(2, result.Count);
+        Assert.DoesNotContain(result.Items, item => item.CardKey == "TLY-1");
+    }
+
+    [Fact]
     public async Task Reading_the_current_facts_publishes_nothing_and_reuses_a_fresh_read()
     {
         var source = new CountingSource([Fact(OperatorDecisionTypes.EscalationOpened, "alpha", "A-1", At)]);

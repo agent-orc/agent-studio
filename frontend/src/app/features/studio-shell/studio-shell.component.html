@@ -42,6 +42,9 @@
                   [style.background]="activeProjectColor()"
                   aria-hidden="true">{{ activeProjectInitial() }}</span>
             <span class="studio-pill__label">{{ name }}</span>
+            @if (archivedProjectNames().has(name)) {
+              <app-status-indicator tone="neutral" label="Archived" [compact]="true" />
+            }
             <span class="studio-pill__count" aria-label="open tasks">{{ activeProjectTotalJobs() }}</span>
           } @else {
             <span class="studio-pill__glyph studio-pill__glyph--all" aria-hidden="true">
@@ -475,6 +478,12 @@
 
       <div class="studio-editor__body">
         <div class="studio-editor__main">
+        @if (activeArchivedProjectName(); as archivedName) {
+          <div class="studio-archived-project-notice" data-testid="studio-archived-project-notice" role="status">
+            <strong>Archived project</strong>
+            <span>{{ archivedName }} is archived. Restore it in Workspace Settings to resume work.</span>
+          </div>
+        }
         <!--
           Tab content is projected from the parent (app.html). The parent
           owns the dashboard/detail bindings and just picks the right markup

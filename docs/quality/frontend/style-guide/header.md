@@ -20,6 +20,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 2 | Task toolbar | Run activity, execution host, pane toggles, lane pager, paging lane, acceptance refusal, primary action, menu | Task tab active; individual controls follow their capability | One action row; `ccc0039eb` (AGT-2819 extraction). Host belongs here and nowhere in the Overview title. |
 | Task 3 | Global alert banner | Cross-task integration alert | Alert threshold reached | Single alert banner in `app-workspace-banner`; `5d496e73e`. |
 | Task 3a | Phone primary lane action | Current lane decision | Primary action available below 600 px | Full-width shared primary button above task notices. |
+| Task 3b | Archived project notice | The open tab belongs to an archived project and can be restored in Workspace Settings | Archived project tab active | Muted Deck-Panel notice in the editor; AGT-3820. |
 | Task 4 | `app-task-resource-status` | Resource limitation affecting this task | Resource finding exists | Notice; `2b1436acc`. |
 | Task 5 | `app-detail-header` | Legacy task identity and actions | Legacy focused view; hidden in Studio | Header row; original detail extraction `839f3c9801`. |
 | Task 6 | `app-archived-task-notice` | Archive state and restore | Archived task | Notice; `1bc7b5703`. |

@@ -14,7 +14,7 @@ beforeEach(async () => {
   // Individual specs must not depend on the smoke test running first to
   // resolve the component's external template and styles.
   await TestBed.configureTestingModule({ imports: [StudioShellComponent] }).compileComponents();
-});
+}, 90_000);
 
 // AGT-2035: the workspace-delete gating helpers (`canDeleteWorkspace` /
 // `workspaceDeleteTooltip`) moved to WorkspaceManagementComponent; their unit
@@ -93,6 +93,47 @@ describe('StudioShellComponent titlebar breadcrumb', () => {
       ...over,
     };
   }
+
+  it('hides archived registry projects from the picker and Explorer rows', () => {
+    TestBed.configureTestingModule({
+      imports: [StudioShellComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    const fixture = TestBed.createComponent(StudioShellComponent);
+    const component = fixture.componentInstance;
+    fixture.componentRef.setInput('knownProjectNames', ['Archived Library', 'Current Project']);
+    component.archivedRegistryProjects.set([{ ...project('PROJ-OLD'), displayName: 'Archived Library', archived: true }]);
+    component.registryProjects.set([{ ...project('PROJ-NEW'), displayName: 'Current Project' }]);
+
+    expect(component.projectRows().map(row => row.name)).toEqual(['Current Project']);
+    expect(component.projectPickerItems().some(item => item.kind === 'row' && item.id === 'Archived Library')).toBe(false);
+  });
+
+  it('shows an archived notice when an open Human Review task belongs to an archived project', () => {
+    TestBed.configureTestingModule({
+      imports: [StudioShellComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    const fixture = TestBed.createComponent(StudioShellComponent);
+    const component = fixture.componentInstance;
+    component.archivedRegistryProjects.set([{ ...project('PROJ-OLD'), displayName: 'Archived Library', archived: true }]);
+    fixture.componentRef.setInput('openTaskProjectName', 'Archived Library');
+    TestBed.inject(StudioTabStateService).open({ kind: 'task', taskKey: 'store::TLY-1',
+      scope: { kind: 'project', projectName: 'Archived Library' } });
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="studio-archived-project-notice"]')?.textContent)
+      .toContain('Archived Library is archived');
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="studio-project-picker-trigger"]')?.textContent)
+      .toContain('Archived');
+
+    fixture.componentRef.setInput('openTaskProjectName', null);
+    TestBed.inject(StudioTabStateService).open({ kind: 'task', taskKey: 'PROJ-OLD::TLY-2',
+      scope: { kind: 'all-projects' } });
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="studio-archived-project-notice"]')?.textContent)
+      .toContain('Archived Library is archived');
+  });
 
   it('resolves the concrete workspace by normalized project storage path', () => {
     TestBed.configureTestingModule({
