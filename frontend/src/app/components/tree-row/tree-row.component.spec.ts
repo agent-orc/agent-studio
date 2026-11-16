@@ -75,6 +75,28 @@ describe('TreeRowComponent (smoke)', () => {
     expect(btn.getAttribute('aria-current')).toBeNull();
   });
 
+  it('starts the aria-label with the visible label and count, glyph letter excluded (AGT-3835)', async () => {
+    TestBed.configureTestingModule({
+      imports: [TreeRowComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    const fixture = TestBed.createComponent(TreeRowComponent);
+    fixture.componentRef.setInput('label', 'Dossiers');
+    fixture.componentRef.setInput('glyphChar', 'D');
+    fixture.componentRef.setInput('count', 6);
+    fixture.componentRef.setInput('ariaLabel', 'Dossiers, 6 dossiers');
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const row = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('button.tree-row')!;
+    expect(row.textContent!.replace(/\s+/g, ' ').trim()).toBe('Dossiers 6');
+    expect(row.getAttribute('aria-label')).toBe('Dossiers, 6 dossiers');
+    fixture.componentRef.setInput('ariaLabel', 'Open Dossiers');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(row.getAttribute('aria-label')).toBe('Dossiers 6, Open Dossiers');
+  });
+
   it('can reserve chevron and glyph columns for iconless rows', () => {
     TestBed.configureTestingModule({
       imports: [TreeRowComponent],

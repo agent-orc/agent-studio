@@ -9,6 +9,7 @@ import {
   WORKBENCH_DECISION_CHANGE_MESSAGE,
   WORKBENCH_DECISION_HYDRATE_MESSAGE,
   buildIsolatedHtmlSrcdoc,
+  focusScrollRegions,
   openIsolatedHtmlExternalLink,
   resolveIsolatedHtmlNavigation,
 } from './sandboxed-html.util';
@@ -192,5 +193,34 @@ describe('external links from isolated HTML frames', () => {
 
     expect(asked).toEqual([]);
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('scroll regions in isolated HTML (AGT-3835)', () => {
+  function scrolling(el: HTMLElement, scrolls: boolean): void {
+    Object.defineProperty(el, 'clientWidth', { configurable: true, value: 300 });
+    Object.defineProperty(el, 'scrollWidth', { configurable: true, value: scrolls ? 600 : 300 });
+  }
+
+  it('makes a scrolling table focusable and releases it once it fits', () => {
+    document.body.innerHTML = '<table style="display: block; overflow-x: auto"><tr><td>wide</td></tr></table>'
+      + '<pre style="overflow-x: auto"><a href="#x">link</a></pre><p>text</p>';
+    const table = document.querySelector('table')!;
+    const pre = document.querySelector('pre')!;
+    scrolling(table, true);
+    scrolling(pre, true);
+
+    focusScrollRegions(document);
+    expect(table.getAttribute('tabindex')).toBe('0');
+    expect(pre.hasAttribute('tabindex')).toBe(false);
+    expect(document.querySelector('p')!.hasAttribute('tabindex')).toBe(false);
+
+    scrolling(table, false);
+    focusScrollRegions(document);
+    expect(table.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('runs inside every isolated frame', () => {
+    expect(buildIsolatedHtmlSrcdoc('<p>x</p>')).toContain('data-studio-scroll-focus');
   });
 });

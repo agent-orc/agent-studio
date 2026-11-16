@@ -18,6 +18,7 @@ import { CLI_TYPES } from '../../models/task.model';
 import { CliCatalogStore, orderModelCatalog, type CliModelInfo } from '../../features/cli';
 import { cliTypeIcon as fmtCliTypeIcon, cliTypeLabel as fmtCliTypeLabel } from '../../services/format.util';
 import { shortModelLabel } from 'coding-agent-chat/core';
+import { nameWithVisibleText } from '../../utils/accessible-name';
 import { ModalStackService } from '../../services/modal-stack.service';
 import { ConnectedOverlayDirective } from '../../directives/connected-overlay.directive';
 import { OverlayPortalDirective } from '../../directives/overlay-portal.directive';
@@ -151,9 +152,8 @@ export class CliModelSelectorComponent {
       ? `${this.currentBadgeText()}\n${reason}`
       : `${this.currentBadgeText()} - click to change`;
   });
-  readonly ariaLabel = computed(
-    () => this.ariaLabelOverride() ?? `Model: ${this.currentBadgeText()}`,
-  );
+  readonly ariaLabel = computed(() => nameWithVisibleText(`${this.displayName()} ${this.thinkingLevel() ?? ''}`, // visible text first (WCAG 2.5.3)
+    this.ariaLabelOverride() ?? `Model: ${this.currentBadgeText()}`));
   readonly hasChanges = computed(() => {
     if (!this.pickerOpen()) return false;
     const cliChanged = this.draftCliType() !== this.cliType();

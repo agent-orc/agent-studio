@@ -88,6 +88,14 @@ describe('CliModelSelectorComponent', () => {
     expect(chip.textContent).toContain('opus 4.7');
   });
 
+  it('starts the trigger name with the visible model and level (AGT-3835)', async () => {
+    const { fixture } = await create({ cliType: 'claude', model: 'claude-opus-4-7', thinkingLevel: 'high', availableModels: claudeModels });
+    const chip = fixture.nativeElement.querySelector('[data-testid="cli-model-selector-trigger"]') as HTMLButtonElement;
+    const visible = chip.querySelector('.model-selector__name')!.textContent!.trim() + ' '
+      + chip.querySelector('.model-selector__level')!.textContent!.trim();
+    expect(chip.getAttribute('aria-label')).toBe(`${visible}, Model: Claude Code · claude-opus-4-7 · high`);
+  });
+
   it('surfaces a codex gpt-5.6 catalog with its display label and ultra ladder (AGT-2025)', async () => {
     const codexModels: CliModelInfo[] = [
       { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol', multiplier: null, vendor: 'openai', isDefault: true, thinkingLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'ultra'], defaultThinkingLevel: 'ultra' },
