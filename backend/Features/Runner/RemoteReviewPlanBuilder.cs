@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Pipeline;
+using AgentStudio.Prompts;
 using AgentStudio.Git;
 using AgentStudio.Cli;
 using AgentStudio.OrchestrationDecisions;
@@ -1061,12 +1062,20 @@ public sealed class RemoteReviewPlanBuilder
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
+    // The status text carries results/status.md in full, so the results
+    // inventory leaves out its head excerpt (AGT-3880).
+    private static readonly IReadOnlySet<string> AgentReportExcerptExclusion =
+        new HashSet<string>(StringComparer.Ordinal) { "status.md" };
+
     private static AspectRunInputs Inputs(TaskInfo task, string? integrationRef)
     {
         var briefPath = Path.Combine(task.FolderPath, "prompt.md");
         var taskBody = Read(briefPath, 64_000, task.Id);
         var recentLog = Read(Path.Combine(task.FolderPath, "cli-output.log"), 16_000, string.Empty);
-        var status = ReadStatus(task.FolderPath);
+        var concept = TaskModes.IsConcept(task.Mode);
+        var status = concept
+            ? new ReviewStatus(ReadStatus(task.FolderPath), false, string.Empty)
+            : ReviewStatus.Read(task.FolderPath);
         var baseline = string.IsNullOrWhiteSpace(integrationRef) ? "the configured integration ref" : integrationRef;
         var diff =
             $"This aspect runs on a remote Review Executor at the immutable Result-SHA. " +
@@ -1081,14 +1090,16 @@ public sealed class RemoteReviewPlanBuilder
             taskBody,
             recentLog,
             diff,
-            status)
+            status.Text)
         {
             // Concept review uses the generated status summary as its authority.
             // Its compact inventory must not reintroduce the agent report after
             // ReadStatus has selected that summary.
-            ResultsInventory = TaskModes.IsConcept(task.Mode)
+            ResultsInventory = concept
                 ? ResultsInventory.Render(task.FolderPath)
-                : ResultsInventory.RenderForReview(task.FolderPath),
+                : ResultsInventory.RenderForReview(task.FolderPath,
+                    excerptExclusions: status.CarriesAgentReport ? AgentReportExcerptExclusion : null),
+            StatusReportNote = status.RequirementNote,
             CardMode = ReviewCardMode.Describe(task.Mode),
             AcceptanceScope = RequirementAcceptanceScope.Describe(
                 task.AcceptanceScope,
@@ -1100,14 +1111,82 @@ public sealed class RemoteReviewPlanBuilder
     /// A remote agent writes its report to <c>results/status.md</c>. The card's
     /// <c>status.md</c> is the generated summary, or a scaffold that says nothing
     /// about the work until a summary exists, so a scaffold never hides the report.
+    /// Concept review reads this selection; the summary is its authority.
     /// </summary>
     private static string ReadStatus(string folderPath)
     {
-        var summary = Read(Path.Combine(folderPath, "status.md"), 16_000, string.Empty);
-        if (summary.Length > 0
-            && !summary.Contains(AgentStudio.Tasks.TaskTransitionService.ResultScaffoldMarker, StringComparison.Ordinal))
+        var summary = Read(Path.Combine(folderPath, "status.md"), ReviewStatus.Characters, string.Empty);
+        if (ReviewStatus.IsSummary(summary))
             return summary;
-        return Read(Path.Combine(folderPath, "results", "status.md"), 16_000, summary);
+        return Read(Path.Combine(folderPath, "results", "status.md"), ReviewStatus.Characters, summary);
+    }
+
+    /// <summary>
+    /// The status every coding aspect reads (AGT-3880). The generated summary
+    /// condenses the agent's report, so details a follow-up round asked for in
+    /// <c>results/status.md</c> can be gone from it. A plan therefore carries
+    /// both under their own headings, within the bound one status file had.
+    /// The agent report keeps its tail first; the summary gets what is left.
+    /// Without a summary, or with only the scaffold, the text is chosen as
+    /// <see cref="ReadStatus"/> chooses it.
+    /// </summary>
+    internal sealed record ReviewStatus(string Text, bool CarriesAgentReport, string RequirementNote)
+    {
+        internal const int Characters = 16_000;
+
+        internal const string AgentReportHeading =
+            "=== Agent report (results/status.md, written by the agent) ===";
+
+        internal const string SummaryHeading =
+            "=== Generated summary (task-root status.md, condensed from the agent report) ===";
+
+        internal const string SummaryTrimmed =
+            "... (summary trimmed: the agent report above has priority within the status bound)";
+
+        internal const string SummaryOmitted =
+            "(Generated summary omitted: the agent report fills the status bound.)";
+
+        internal const string AgentReportNote =
+            "The generated summary points to results/status.md. The agent report is the place "
+            + "to check what the task and each follow-up round asked for: judge a round requirement "
+            + "against the agent report, not against the condensed summary alone.";
+
+        // Below this many characters a trimmed summary says nothing useful.
+        private const int MinimumSummaryCharacters = 200;
+
+        internal static bool IsSummary(string summary)
+            => summary.Length > 0
+               && !summary.Contains(AgentStudio.Tasks.TaskTransitionService.ResultScaffoldMarker, StringComparison.Ordinal);
+
+        internal static ReviewStatus Read(string folderPath)
+        {
+            var summary = RemoteReviewPlanBuilder.Read(Path.Combine(folderPath, "status.md"), Characters, string.Empty);
+            var report = RemoteReviewPlanBuilder.Read(
+                Path.Combine(folderPath, "results", "status.md"), Characters, string.Empty).Trim();
+            if (report.Length == 0) return new(summary, false, string.Empty);
+            if (!IsSummary(summary)) return new(report, true, string.Empty);
+            return Compose(summary.Trim(), report);
+        }
+
+        internal static ReviewStatus Compose(string summary, string report)
+        {
+            var note = summary.Contains("results/status.md", StringComparison.OrdinalIgnoreCase)
+                ? AgentReportNote : string.Empty;
+            var reportRoom = Characters - AgentReportHeading.Length - 1;
+            if (report.Length > reportRoom) report = report[^reportRoom..];
+            var text = new StringBuilder();
+            text.AppendLf(AgentReportHeading).Append(report);
+            var summaryRoom = Characters - text.Length - SummaryHeading.Length - 3;
+            if (summary.Length <= summaryRoom)
+                text.AppendLf().AppendLf().AppendLf(SummaryHeading).Append(summary);
+            else if (summaryRoom - SummaryTrimmed.Length - 1 >= MinimumSummaryCharacters)
+                text.AppendLf().AppendLf().AppendLf(SummaryHeading)
+                    .AppendLf(SummaryTrimmed)
+                    .Append(summary[^(summaryRoom - SummaryTrimmed.Length - 1)..]);
+            else if (text.Length + SummaryOmitted.Length + 2 <= Characters)
+                text.AppendLf().AppendLf().Append(SummaryOmitted);
+            return new(text.ToString(), true, note);
+        }
     }
 
     private static string Read(string path, int maximumCharacters, string fallback)

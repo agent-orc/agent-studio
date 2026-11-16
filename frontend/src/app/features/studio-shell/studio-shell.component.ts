@@ -40,7 +40,7 @@ import {
   type ProjectRailItem,
 } from '../project-detail/components/project-shell/project-shell.config';
 import { BoardFiltersService, flattenGrouped } from '../board';
-import { ConfirmDialogService } from '../../services/confirm-dialog.service';
+import { ProjectLifecycleDialogService } from '../../services/project-lifecycle-dialog.service';
 import { NotificationService } from '../../services/notification.service';
 import { copyTextToClipboard } from '../../services/clipboard.util';
 import { WorkspaceManagerService, ProjectDragDropService, WorkspaceOverlaysService, UiPreferencesService } from '../shell';
@@ -51,7 +51,8 @@ import { resolveActiveActivityKey } from './components/studio-activity-bar/studi
 import { ExplorerWorkspaceTreeComponent, type ExplorerProjectSurface } from './components/explorer-workspace-tree/explorer-workspace-tree.component';
 import {
   deriveProjectAutoPickupByName,
-  type ProjectAutoPickupIndicator,
+  projectRunnerMode,
+  type ProjectAutoPickupIndicator, type ProjectPickupMode,
 } from './studio-shell.auto-pickup';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from '../../components/menu';
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -118,6 +119,7 @@ export class StudioShellComponent {
    * that don't pass it keep their job-derived behaviour.
    */
   readonly knownProjectNames = input<readonly string[]>([]);
+  readonly pickupModes = input<Readonly<Record<string, ProjectPickupMode>>>({});
 
   /** Backend WatchPaths feeding the rename-stable `projectStorageByName` join
    *  (a row's storage == registry `storageLocation`, stable across rename). */
@@ -142,7 +144,7 @@ export class StudioShellComponent {
   readonly boardFilters = inject(BoardFiltersService);
   readonly explorerSections = inject(ExplorerSectionsService);
   private readonly explorerWorkbenchState = inject(ExplorerWorkbenchStateService);
-  private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly projectLifecycleDialogs = inject(ProjectLifecycleDialogService);
   private readonly notifications = inject(NotificationService);
   private readonly workspaceManager = inject(WorkspaceManagerService);
   private readonly workspaceOverlays = inject(WorkspaceOverlaysService);
@@ -276,7 +278,6 @@ export class StudioShellComponent {
   readonly openWorkspaceScreenshots = output<void>();
   readonly openOrchFeed = output<void>();
   readonly openOrchSettings = output<void>();
-  /** Emits when the user toggles the auto-pickup mode for a project. */
   readonly toggleAuto = output<string>();
   readonly headerCockpit = new StudioHeaderCockpit(this);
 
@@ -351,17 +352,16 @@ export class StudioShellComponent {
     this.projectRows().reduce((sum, r) => sum + r.totalJobs, 0)
   );
 
-  /** Reactive map of project name → current runner mode. */
   autoModeFor(name: string): string {
-    return this.jobService.runnerStatus().projects[name]?.mode ?? 'manual';
+    return projectRunnerMode(name, this.pickupModes(), this.jobService.runnerStatus().projects);
   }
 
-  /** Project name to effective auto-pickup mode plus admission-gate reason. */
   readonly projectAutoPickupByName = computed<ReadonlyMap<string, ProjectAutoPickupIndicator>>(() =>
     deriveProjectAutoPickupByName(
       this.jobService.runnerStatus().projects,
       this.jobService.projectPickupGates(),
       this.projectRows(),
+      this.pickupModes(),
     ),
   );
 
@@ -878,30 +878,7 @@ export class StudioShellComponent {
    */
   async onTreeDeleteProject(e: { projectId: string; displayName: string; shortCode: string | null }): Promise<void> {
     const label = e.displayName || e.projectId;
-    const stageOne = await this.confirmDialog.confirm({
-      title: 'Delete this project?',
-      message: 'This permanently deletes the project and all of its tasks from disk. This cannot be undone.',
-      detail: `${label} (${e.projectId})`,
-      confirmLabel: 'Continue',
-      cancelLabel: 'Cancel',
-      kind: 'danger',
-    });
-    if (!stageOne) return;
-
-    const typedValues = e.shortCode ? [e.displayName, e.shortCode] : [e.displayName];
-    const hint = e.shortCode
-      ? `Type the project name "${e.displayName}" or its code "${e.shortCode}" to confirm.`
-      : `Type the project name "${e.displayName}" to confirm.`;
-    const stageTwo = await this.confirmDialog.confirm({
-      title: 'Confirm permanent deletion',
-      message: 'Last step. Re-type the project to delete it and its entire storage folder.',
-      requireTypedValues: typedValues,
-      requireTypedPrompt: hint,
-      confirmLabel: 'Delete project',
-      cancelLabel: 'Cancel',
-      kind: 'danger',
-    });
-    if (!stageTwo) return;
+    if (!await this.projectLifecycleDialogs.confirmDelete(e)) return;
 
     this.registryProjectBusyId.set(e.projectId);
     this.jobService.deleteRegistryProject(e.projectId).subscribe({

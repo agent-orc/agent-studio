@@ -128,7 +128,7 @@ public record PublishTarget
 
     /// <summary>
     /// Count of merged mainline (first-parent) commits since the reference point
-    /// that touch this target's path scope - the "N tasks pending" number. Zero
+    /// that touch this target's path scope - the "N commits pending" number. Zero
     /// means quiet (no badge). Null means "no baseline available" (see
     /// <see cref="ReferenceKind"/> = <c>none</c>): the UI stays quiet rather than
     /// inventing a number.
@@ -148,8 +148,8 @@ public record PublishTarget
 
 /// <summary>
 /// A derived target plus the internal artefacts the wire shape hides: the set of
-/// pending mainline commit SHAs (used to answer "is task X publishable to this
-/// target?" by set-membership against the task's merge-commit anchor - no
+/// commits introduced by pending scoped mainline changes (used to answer
+/// "is task X publishable to this target?" by set-membership - no
 /// per-task git spawn) and the resolved path scope. The service returns these;
 /// the endpoint projects out just <see cref="Target"/>.
 /// </summary>

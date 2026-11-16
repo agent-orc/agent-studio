@@ -13,7 +13,7 @@
   <div class="cwa__levels" data-testid="cli-usage-levels">
     <article><span>Account</span><strong>{{ row()?.plan ?? 'Plan not reported' }}</strong><small>Identity exposed by the local CLI probe</small></article>
     <article><span>Quota windows</span><strong>{{ row()?.windows?.length ?? 0 }} reported</strong><small>Provider units, not raw token totals</small></article>
-    <article><span>Recorded attribution</span><strong>{{ formatTokens(capturedTokens()) }}</strong><small>Workspace events mapped to {{ label() }} models</small></article>
+    <article><span>Attribution scope</span><strong>Per window</strong><small>Stored CLI receipts in each quota interval</small></article>
   </div>
 
   <section class="cwa__panel" data-testid="cli-window-cards">
@@ -23,11 +23,11 @@
         <article class="cwa__window">
           <header><strong>{{ window.label }}</strong><span>{{ window.usedPct === null ? 'Unknown' : window.usedPct + '% used' }}</span></header>
           <div class="cwa__meter"><span [style.width.%]="window.usedPct ?? 0"></span>
-            @if (projected(window, windowHours(window.label)); as projection) {
+            @if (projected(window, window.windowHours); as projection) {
               <i [style.left.%]="projection > 100 ? 100 : projection" [appTooltip]="projection.toFixed(0) + '% projected at reset'"></i>
             }
           </div>
-          <dl><div><dt>Reset</dt><dd>{{ window.resetLabel ?? 'Unknown' }}</dd></div><div><dt>Burn rate</dt><dd>{{ formatPct(windowBurn(window, windowHours(window.label))) }}</dd></div><div><dt>Projected</dt><dd>{{ projected(window, windowHours(window.label)) === null ? 'Unavailable' : projected(window, windowHours(window.label))!.toFixed(0) + '%' }}</dd></div></dl>
+          <dl><div><dt>Reset</dt><dd>{{ resetTime(window) }}@if (window.resetLabel) { <small class="cwa__raw-reset">{{ window.resetLabel }}</small> }</dd></div><div><dt>Burn rate</dt><dd>{{ formatPct(windowBurn(window, window.windowHours)) }}</dd></div><div><dt>Projected</dt><dd>{{ projected(window, window.windowHours) === null ? 'Unavailable' : projected(window, window.windowHours)!.toFixed(0) + '%' }}</dd></div><div><dt>Recorded attribution</dt><dd data-testid="cli-window-attribution">{{ attribution(window) ? formatTokens(attribution(window)!.totalTokens) : 'Unavailable' }}</dd></div></dl>
         </article>
       } @empty { <p class="cwa__empty">No quota windows were reported by the {{ label() }} probe.</p> }
     </div>
@@ -45,14 +45,14 @@
 
   <div class="cwa__lower">
     <section class="cwa__panel" data-testid="cli-token-streams">
-      <div class="cwa__section-head"><div><h3>Token streams</h3><p>Input, output and cache tokens of {{ label() }} models in this workspace.</p></div></div>
+      <div class="cwa__section-head"><div><h3>Token streams</h3><p>Stored {{ label() }} receipts in the primary quota window.</p></div></div>
       @for (part of streamParts(); track part.label) { <div class="cwa__stream"><span>{{ part.label }}</span><div><i [style.width.%]="part.pct"></i></div><strong>{{ formatTokens(part.tokens) }}</strong></div> }
     </section>
     <section class="cwa__panel" data-testid="cli-plausibility">
       <div class="cwa__section-head"><div><h3>Plausibility</h3><p>Keep unlike measurement levels visibly separate.</p></div></div>
       <ul>
         <li><strong>Quota:</strong> provider-reported account window units.</li>
-        <li><strong>Tokens:</strong> locally captured workspace events mapped by model name.</li>
+        <li><strong>Tokens:</strong> locally captured receipts attributed by stored CLI inside each quota interval.</li>
         <li><strong>Trend:</strong> workspace-wide until the timeline contract carries CLI attribution.</li>
       </ul>
       <p class="cwa__effort-note" data-testid="cli-effort-note">

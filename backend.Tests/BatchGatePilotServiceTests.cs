@@ -4391,6 +4391,9 @@ public abstract partial class BatchGatePilotServiceTests
                 services.AddSingleton<IBuildTestGateRunner>(_gate);
                 services.RemoveAll<IGateHostProbe>();
                 services.AddSingleton<IGateHostProbe>(_probe);
+                // AGT-3866: disk admission never reads the host running the suite.
+                services.RemoveAll<Contract.IHostFilesystemProbe>();
+                services.AddSingleton<Contract.IHostFilesystemProbe>(Contract.FixedHostFilesystemProbe.Healthy);
                 services.RemoveAll<AttemptAuthorityService>();
                 services.AddSingleton(sp => new AttemptAuthorityService(
                     sp.GetRequiredService<IConfiguration>(),

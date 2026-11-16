@@ -79,6 +79,8 @@ contradicted, or impossible to assess from all available evidence.
 {{status_summary}}
 ```
 
+{{status_report_note}}
+
 ## Recent log (last lines)
 
 ```

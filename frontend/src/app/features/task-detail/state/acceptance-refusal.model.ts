@@ -23,7 +23,7 @@ export interface AcceptanceRefusal {
   /** The single action offered next to the reason. */
   action: AcceptanceRefusalAction;
   actionLabel: string;
-  /** `hold`: the client keeps Accept disabled. `server`: the server refused a click. */
+  /** `hold`: read from the card's facts before any click. `server`: the server refused a click. */
   source: 'hold' | 'server';
   /**
    * F12: set when the acceptance-readiness answer ranks the reason. `reason`
@@ -81,7 +81,9 @@ export function acceptanceRefusalFor(
   const hold = integrationHold(info);
   const refused = readinessHold(readiness);
   const primary = refused ? acceptancePrimaryReason(readiness) : null;
-  if (!refused || !primary) return hold;
+  // AGT-3874: until the dry run answers (after a reload), a content verdict
+  // that is not `pass` already says why Accept will be refused.
+  if (!refused || !primary) return hold ?? (readiness ? null : contentVerdictHold(info));
   // A round is the only step when policy forbids the override; otherwise the
   // integration hold keeps its own action (a retry after a conflict).
   const action = refused.action === 'send-round' || !hold ? refused : hold;
@@ -149,6 +151,22 @@ function integrationHold(info: TaskInfo): AcceptanceRefusal | null {
           : status === 'no-branch'
             ? 'No delivery branch or commit was found for this card.'
             : `The delivery is not in ${branch} yet.`;
+  return { reason, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' };
+}
+
+/**
+ * AGT-3874: the hold of the latest content verdict (requirement-fit, or
+ * concept-fit for a concept card) when it is not `pass`, in its summary, else
+ * null. The completion content check refuses Accept on any such verdict; a
+ * card with no content verdict yet adds no hold here.
+ */
+export function contentVerdictHold(info: TaskInfo): AcceptanceRefusal | null {
+  const aspect = info.mode === 'concept' ? 'concept-fit' : 'requirement-fit';
+  const verdict = info.reviewProjection?.attempts?.[0]?.aspects
+    ?.find(row => row.aspect?.toLowerCase() === aspect);
+  const status = verdict?.status?.trim().toLowerCase();
+  if (!verdict || !status || status === 'pass') return null;
+  const reason = verdict.summary?.trim() || `The ${aspect} review returned ${status}.`;
   return { reason, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' };
 }
 

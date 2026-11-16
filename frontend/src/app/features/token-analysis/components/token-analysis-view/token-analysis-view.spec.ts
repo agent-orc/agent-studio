@@ -71,6 +71,7 @@ describe('TokenAnalysisViewComponent', () => {
     expect(el(fixture, 'token-analysis-cost')?.textContent).toContain('*');
     expect(el(fixture, 'token-analysis-unpriced')?.textContent).toContain('demo-unpriced-model');
     expect(el(fixture, 'token-analysis-unpriced')?.textContent).toContain('Priced subtotal');
+    expect(el(fixture, 'token-analysis-distribution-model')?.textContent).toContain('no price data');
   });
 
   it('writes filters into the ta= hash segment and keeps the route', async () => {

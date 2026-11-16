@@ -1,7 +1,14 @@
 # Review Domain Map
 
 Acceptance checks the first-parent line after a delivery's verified tree. A
-server-authored document-key discovery commit is gate-neutral only when its
+later card's exact published merge with a verified `gate-not-applicable`
+integration record counts as a covered publication: the integration lane
+already applied the project's gate policy to that merge. The record must name
+the same project, branch, and first-parent SHA. Other uncovered commits still
+refuse acceptance. Their refusal names the source card when known, or the
+commit author, and omits batch diagnostics when the project has no batch gate.
+
+A server-authored document-key discovery commit is gate-neutral only when its
 first-parent diff changes existing `docs/**/workbench.json` descriptors solely
 by adding `key`. A server-authored Dossier decision-receipt commit
 (`chore(workbench): request revision for|record decision for|archive <id>`)
@@ -65,10 +72,16 @@ Concept-fit receives a bounded snapshot of the published Dossier index,
 `workbench.json`, and local files linked from them. Its round diff shows what
 changed, while the snapshot supplies unchanged Dossier content. A missing,
 unreadable, or over-budget file is named in the prompt so the aspect cannot
-infer completeness from a truncated excerpt. For older settled concept reviews,
-completion accepts a whole-prompt review hash as current only while the current
-authored version equals the delivery version and the reviewed whole-prompt hash
-still matches `prompt.md`.
+infer completeness from a truncated excerpt. The plan builder wraps the
+snapshot in `ConceptDossierSnapshotSpan` markers. The review runner keeps that
+span whole: its 120,000-character authored-context cap applies only to the
+brief and instructions around it. The span counts against the diff budget, so
+on a large Dossier the diff is cut (and named) instead of the snapshot
+(AGT-3881, after the AGT-3876 Dossier lost its middle).
+
+For older settled concept reviews, completion accepts a whole-prompt review
+hash as current only while the current authored version equals the delivery
+version and the reviewed whole-prompt hash still matches `prompt.md`.
 
 ## Aspect prompt cache
 

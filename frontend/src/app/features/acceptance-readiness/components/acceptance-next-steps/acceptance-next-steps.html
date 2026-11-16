@@ -1,6 +1,6 @@
 @if (show()) {
   <section class="next-steps" data-testid="acceptance-next-steps" role="status"
-           [attr.data-readiness]="item()?.readiness ?? (briefGap() === 'changed' ? 'verdict-stale' : 'brief-unrecorded')"
+           [attr.data-readiness]="item()?.readiness ?? (briefGap() === 'changed' ? 'verdict-stale' : briefGap() ? 'brief-unrecorded' : 'review-concerns')"
            aria-label="Acceptance next steps">
     <strong class="next-steps__title">Acceptance next steps</strong>
     @if (item(); as item) {
@@ -15,6 +15,8 @@
           @for (gap of secondaryGaps(); track gap) { <li>{{ gap }}</li> }
         </ul>
       }
+    } @else if (contentGap(); as review) {
+      <p data-testid="content-verdict-acceptance">Accept will be refused. The {{ review.requiredAspect }} review of the current brief {{ briefLabel(review.currentBriefVersion) }} returned {{ review.contentStatus }}. {{ review.contentSummary }}</p>
     }
     @if (briefLeads() && contentReview(); as review) {
       @if (briefGap() === 'unrecorded') {
