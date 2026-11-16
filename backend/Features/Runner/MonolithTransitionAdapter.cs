@@ -274,6 +274,14 @@ public static class MonolithTransitionAdapter
         => BatchGateStartPolicy.EndInterruptedIsolation(red, flightActive,
             hasPendingMember, allMembersHaveFindings);
 
+    // AGT-3858: a red cohort that no isolation child reproduced.
+    public static bool BatchRedIsFlakySuspect(int childRuns, bool everyChildPassed, bool everyChildOnCohortCode)
+        => BatchFlakySuspectPolicy.IsFlakySuspect(childRuns, everyChildPassed, everyChildOnCohortCode);
+
+    public static bool BatchRegatesFlakySuspectCohort(bool flakySuspect, bool alreadyRegated,
+        bool isolationRetry, int remainingMembers)
+        => BatchFlakySuspectPolicy.RegatesCohort(flakySuspect, alreadyRegated, isolationRetry, remainingMembers);
+
     public static string BatchFlightLeaseDeadlineReason(int deadlineMinutes)
         => BatchGateStartPolicy.LeaseDeadlineReason(deadlineMinutes);
 
