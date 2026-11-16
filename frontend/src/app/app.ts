@@ -62,6 +62,7 @@ import {
   type MergeAcceptView,
   type TriageButton,
 } from './features/task-detail/runtime';
+import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 import {
   buildComposerLocationContext,
   OrchestratorFeedStore,
@@ -360,6 +361,7 @@ export class App implements OnInit, OnDestroy {
   /** Cycle 10c: triage panel + j/k navigation + auto-advance live here. */
   readonly triage = inject(TriageController);
   private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
+  private readonly acceptanceReadiness = inject(AcceptanceReadinessStore);
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
   /**
@@ -822,6 +824,11 @@ export class App implements OnInit, OnDestroy {
         if ('requestIdleCallback' in window) window.requestIdleCallback(preload, { timeout: 1000 });
         else setTimeout(preload, 0);
       }));
+    });
+    // F12: the open Human Review card ranks its gaps by its readiness answer.
+    effect(() => {
+      const info = this.selectedJob()?.info;
+      if (info?.state === TaskState.HumanReview) untracked(() => void this.acceptanceReadiness.ensure(info));
     });
     effect(() => {
       if (this.shellAccess.operator() || !this.projectLookup.loaded()) return;
@@ -1333,7 +1340,7 @@ export class App implements OnInit, OnDestroy {
     const info = this.selectedJob()?.info;
     if (!info || this.studioTriagePrimary()?.id !== 'mark-done' || this.studioPrimaryDecisionRefusal()) return null;
     return acceptanceRefusalFor(info, this.acceptanceRefusals.forTask(info.taskKey),
-      this.studioPrimaryAwaitingGit());
+      this.studioPrimaryAwaitingGit(), this.acceptanceReadiness.itemFor(info));
   });
   /** AGT-2795: the decision lane guard's refusal for the studio primary move. */
   readonly studioPrimaryDecisionRefusal = computed(() => {

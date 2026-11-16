@@ -10,6 +10,8 @@ import {
   type TaskDeliveryClaimAnswer,
   type TaskInfo,
 } from '../../../../models/task.model';
+import { AcceptanceReadinessStore, type AcceptanceReadinessItem } from '../../../acceptance-readiness';
+import { readinessItem } from '../../../acceptance-readiness/testing/acceptance-readiness.fixtures';
 
 function answer(overrides: Partial<TaskDeliveryClaimAnswer> = {}): TaskDeliveryClaimAnswer {
   return {
@@ -75,7 +77,8 @@ function job(overrides: Partial<TaskInfo> = {}): TaskInfo {
   } as TaskInfo;
 }
 
-async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer()))) {
+async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())),
+  readiness: AcceptanceReadinessItem | null = null) {
   TestBed.resetTestingModule();
   await TestBed.configureTestingModule({
     imports: [DeliveryClaimPanelComponent],
@@ -83,6 +86,7 @@ async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())
       provideZonelessChangeDetection(),
       { provide: TaskService, useValue: { getDeliveryClaim } },
       { provide: NotificationService, useValue: { success: vi.fn() } },
+      { provide: AcceptanceReadinessStore, useValue: { itemFor: () => readiness } },
     ],
   }).compileComponents();
   const fixture = TestBed.createComponent(DeliveryClaimPanelComponent);
@@ -108,6 +112,80 @@ describe('DeliveryClaimPanelComponent', () => {
     expect(host.querySelector('[data-testid="stale-brief-acceptance"]')?.textContent)
       .toContain('Acceptance is blocked');
   });
+  describe('F12 brief versions and the ranked reason', () => {
+    const current = 'cccccccccccccccc';
+    const review = (overrides: Partial<NonNullable<TaskDeliveryClaimAnswer['contentReview']>>) => ({
+      ...conceptReview, mode: 'coding', requiredAspect: 'requirement-fit', contentStatus: null,
+      currentBriefVersion: current, deliveryBriefVersion: current, reviewBriefVersion: current,
+      ...overrides,
+    }) as NonNullable<TaskDeliveryClaimAnswer['contentReview']>;
+    const humanReview = (integration: TaskInfo['integration'] = null) => job({ state: TaskState.HumanReview, integration });
+
+    it('says no brief version was recorded when the delivery brief is missing, not that it changed', async () => {
+      const fixture = await mount(humanReview(),
+        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: null }) }))));
+      const gap = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="stale-brief-acceptance"]');
+
+      expect(gap?.getAttribute('data-brief-gap')).toBe('unrecorded');
+      expect(gap?.textContent).toContain('No brief version was recorded');
+      expect(gap?.textContent).toContain('No brief version was recorded for this delivery');
+      expect(gap?.textContent).not.toContain('changed brief');
+      expect(gap?.querySelector('[data-testid="brief-difference-link"]')).toBeNull();
+      expect(gap?.querySelector('[data-testid="review-current-brief"]')).not.toBeNull();
+    });
+
+    it('says the brief changed when a recorded version differs from the current one', async () => {
+      const fixture = await mount(humanReview(),
+        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: 'aaaaaaaaaaaaaaaa' }) }))));
+      const gap = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="stale-brief-acceptance"]');
+
+      expect(gap?.getAttribute('data-brief-gap')).toBe('changed');
+      expect(gap?.textContent).toContain('Acceptance is blocked by a changed brief');
+      expect(gap?.querySelector('[data-testid="brief-difference-link"]')).not.toBeNull();
+    });
+
+    it('shows no brief gap when both versions are the current brief', async () => {
+      const fixture = await mount(humanReview(), vi.fn(() => of(answer({ contentReview: review({}) }))));
+
+      expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="stale-brief-acceptance"]')).toBeNull();
+    });
+
+    it('leads with the readiness reason and its next step and lists the other gaps under it', async () => {
+      const fixture = await mount(
+        humanReview({ status: 'no-branch', integrationBranch: 'develop', deliveryRef: null, sha: null, detail: null }),
+        vi.fn(() => of(answer({ integrated: false, containmentStatus: 'pending',
+          contentReview: review({ deliveryBriefVersion: null }) }))),
+        readinessItem('task', 'no-content-verdict', {
+          taskKey: 'agt::task', headline: 'No content verdict',
+          reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+        }));
+      const host = fixture.nativeElement as HTMLElement;
+      const primary = host.querySelector('[data-testid="acceptance-primary-reason"]');
+
+      expect(primary?.getAttribute('data-readiness')).toBe('no-content-verdict');
+      expect(primary?.textContent).toContain('No content verdict');
+      expect(primary?.textContent).toContain('The current run has no requirement-fit verdict');
+      expect(host.querySelector('[data-testid="acceptance-primary-next-step"]')?.textContent)
+        .toContain('Next step: Run the requirement-fit review for the current run.');
+      const secondary = [...host.querySelectorAll('[data-testid="acceptance-secondary-gaps"] li')]
+        .map(item => item.textContent?.trim());
+      expect(secondary).toEqual([
+        'No delivery branch or commit was found for this card.',
+        'No brief version was recorded for this delivery.',
+      ]);
+    });
+
+    it('does not claim a changed brief blocks acceptance when readiness ranks another reason first', async () => {
+      const fixture = await mount(humanReview(),
+        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: 'aaaaaaaaaaaaaaaa' }) }))),
+        readinessItem('task', 'no-content-verdict', { taskKey: 'agt::task', headline: 'No content verdict' }));
+      const gap = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="stale-brief-acceptance"]');
+
+      expect(gap?.textContent).toContain('The brief also changed after this delivery');
+      expect(gap?.textContent).not.toContain('Acceptance is blocked');
+    });
+  });
+
   describe('AGT-3812 build-tests on the acceptance grounds', () => {
     const passingContent: NonNullable<TaskDeliveryClaimAnswer['contentReview']> = {
       mode: 'coding',

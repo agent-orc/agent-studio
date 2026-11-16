@@ -21,6 +21,9 @@ import { IntegrationDeadEndComponent } from '../integration-dead-end/integration
 import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-notice/acceptance-attempt-gap-notice.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { reviewBuildTestsGap, taskFileHref } from '../../../test-evidence/components/test-evidence-status/test-evidence-status.component';
+import { AcceptanceReadinessStore, acceptancePrimaryReason, secondaryAcceptanceGaps } from '../../../acceptance-readiness';
+import { acceptanceRefusalFor } from '../../state/acceptance-refusal.model';
+import { briefGapOf, briefGapSentence, unrecordedBriefSubject } from '../../state/delivery-brief-gap.model';
 
 /** Tri-state containment answer. `unknown` is a question, never a negative. */
 export type DeliveryIntegrationState =
@@ -103,6 +106,7 @@ const DELIVERED_LANES: readonly string[] = [
 export class DeliveryClaimPanelComponent {
   private readonly tasks = inject(TaskService);
   private readonly notifications = inject(NotificationService);
+  private readonly readiness = inject(AcceptanceReadinessStore);
 
   readonly job = input.required<TaskInfo>();
   readonly escalated = computed(() => this.job().state === TaskState.Escalated);
@@ -279,12 +283,26 @@ export class DeliveryClaimPanelComponent {
   );
 
   readonly contentReview = computed(() => this.answer()?.contentReview ?? null);
-  readonly staleBrief = computed(() => {
-    const review = this.contentReview();
-    return this.job().state === TaskState.HumanReview && !!review
-      && (review.deliveryBriefVersion !== review.currentBriefVersion
-        || review.reviewBriefVersion !== review.currentBriefVersion);
+  /** F12: a missing brief version is unrecorded, never a changed brief. */
+  readonly briefGap = computed(() =>
+    this.job().state === TaskState.HumanReview ? briefGapOf(this.contentReview()) : null);
+  readonly unrecordedBriefSubject = unrecordedBriefSubject;
+
+  /**
+   * F12: the readiness answer's reason leads; the card's other gaps are listed
+   * under it. The build-tests gap keeps its own line with the output link.
+   */
+  readonly primaryReason = computed(() => this.job().state === TaskState.HumanReview
+    ? acceptancePrimaryReason(this.readiness.itemFor(this.job())) : null);
+  readonly secondaryGaps = computed(() => {
+    const primary = this.primaryReason();
+    if (!primary) return [];
+    return secondaryAcceptanceGaps(primary, [
+      acceptanceRefusalFor(this.job(), null, false)?.reason,
+      primary.readiness === 'verdict-stale' ? null : briefGapSentence(this.briefGap(), this.contentReview()),
+    ]);
   });
+  readonly briefLeads = computed(() => !this.primaryReason() || this.primaryReason()!.readiness === 'verdict-stale');
   readonly overrideOpen = signal(false);
   readonly writtenReason = signal('');
   readonly acceptanceBusy = signal(false);

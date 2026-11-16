@@ -1,6 +1,11 @@
 import { Injectable, signal } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../models/task.model';
 import { serverErrorMessage } from '../../../utils/server-error-message';
+import {
+  acceptancePrimaryReason,
+  secondaryAcceptanceGaps,
+  type AcceptanceReadinessItem,
+} from '../../acceptance-readiness';
 
 /**
  * AGT-3704: why the Human Review Accept cannot act now, shown next to the
@@ -18,6 +23,13 @@ export interface AcceptanceRefusal {
   actionLabel: string;
   /** `hold`: the client keeps Accept disabled. `server`: the server refused a click. */
   source: 'hold' | 'server';
+  /**
+   * F12: set when the acceptance-readiness answer ranks the reason. `reason`
+   * is then its primary sentence, and other gaps of the card are secondary.
+   */
+  headline?: string;
+  nextStep?: string;
+  secondary?: readonly string[];
 }
 
 /** A server refusal of the move to Accepted, kept for the card it refused. */
@@ -32,12 +44,15 @@ const OVERRIDE_LABEL = 'Accept with override…';
 /**
  * The refusal for `info`, or null when Accept may act. `awaitingGit` is the
  * bounded provenance wait: that state renders its own progress skeleton, so
- * a speculative hold reason is not added beside it.
+ * a speculative hold reason is not added beside it. `readiness` is the card's
+ * acceptance-readiness answer: when it refuses, its reason leads and the
+ * integration hold is listed under it (F12).
  */
 export function acceptanceRefusalFor(
   info: TaskInfo,
   server: ServerAcceptanceRefusal | null,
   awaitingGit: boolean,
+  readiness: AcceptanceReadinessItem | null = null,
 ): AcceptanceRefusal | null {
   if (info.state !== TaskState.HumanReview) return null;
   // The attempt-gap notice owns the run-attempt refusal and its override.
@@ -45,6 +60,22 @@ export function acceptanceRefusalFor(
   if (server && server.taskKey === info.taskKey && server.code !== 'run-attempt-missing')
     return { reason: server.message, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'server' };
   if (awaitingGit) return null;
+  const hold = integrationHold(info);
+  const primary = acceptancePrimaryReason(readiness);
+  if (!primary) return hold;
+  return {
+    reason: primary.reason,
+    headline: primary.headline,
+    nextStep: primary.nextStep,
+    secondary: secondaryAcceptanceGaps(primary, [hold?.reason]),
+    action: hold?.action ?? 'override',
+    actionLabel: hold?.actionLabel ?? OVERRIDE_LABEL,
+    source: 'hold',
+  };
+}
+
+/** The client-side integration hold: why the board projection keeps Accept disabled. */
+function integrationHold(info: TaskInfo): AcceptanceRefusal | null {
   const integration = info.integration;
   const status = integration?.status;
   if (status === 'integrated' || status === 'not-applicable') return null;

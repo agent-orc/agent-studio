@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TaskInfo } from '../../../models/task.model';
 import type { TaskIntegrationStatus } from '../../git';
 import { acceptanceRefusalFor, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { readinessItem } from '../../acceptance-readiness/testing/acceptance-readiness.fixtures';
 
 const card = (integration: Partial<TaskIntegrationStatus> | null, extra: Partial<TaskInfo> = {}): TaskInfo => ({
   id: 'AGT-1', taskKey: 'wp::AGT-1', state: '5-human-review', title: 'Concept',
@@ -46,6 +47,43 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
     expect(acceptanceRefusalFor(card({ status: 'pending' }, { acceptanceAttemptGap: {
       authorityEpoch: 2, subjectRunAttemptId: 'run-1', resultSha: 'a'.repeat(40), reason: 'gap' } }), null, false))
       .toBeNull();
+  });
+
+  describe('ranked by the acceptance-readiness answer (F12)', () => {
+    const noVerdict = readinessItem('AGT-1', 'no-content-verdict', {
+      taskKey: 'wp::AGT-1',
+      headline: 'No content verdict',
+      reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+    });
+
+    it('leads with the readiness reason and lists the integration hold under it', () => {
+      expect(acceptanceRefusalFor(card({ status: 'no-branch' }), null, false, noVerdict)).toEqual({
+        reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+        headline: 'No content verdict',
+        nextStep: 'Run the requirement-fit review for the current run.',
+        secondary: ['No delivery branch or commit was found for this card.'],
+        action: 'override', actionLabel: 'Accept with override…', source: 'hold',
+      });
+    });
+
+    it('keeps the integration action when integration is the gap to resolve', () => {
+      const refusal = acceptanceRefusalFor(card({ status: 'conflict-skipped' }), null, false,
+        readinessItem('AGT-1', 'not-integrated', { reason: 'Integration into develop failed.' }));
+      expect(refusal).toMatchObject({ action: 'retry-integration', reason: 'Integration into develop failed.', secondary: [] });
+    });
+
+    it('shows a readiness refusal although the integration hold has none', () => {
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, noVerdict))
+        .toMatchObject({ headline: 'No content verdict', secondary: [] });
+    });
+
+    it('falls back to the integration hold for a ready card, and a server refusal still leads', () => {
+      expect(acceptanceRefusalFor(card({ status: 'pending' }), null, false, readinessItem('AGT-1', 'ready'))?.reason)
+        .toBe('The delivery is not in develop yet.');
+      const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap', message: 'Completion refused.' };
+      expect(acceptanceRefusalFor(card({ status: 'pending' }), server, false, noVerdict))
+        .toEqual({ reason: 'Completion refused.', action: 'override', actionLabel: 'Accept with override…', source: 'server' });
+    });
   });
 
   it('reads the hint of a code-only server refusal', () => {

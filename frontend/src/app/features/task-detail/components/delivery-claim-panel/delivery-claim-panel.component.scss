@@ -134,6 +134,14 @@
   background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-bg-elevated));
 }
 
+// F12: the readiness answer's reason, with the card's other gaps under it.
+.claim__primary { display: grid; gap: var(--studio-spacing-1); }
+.claim__secondary {
+  margin: 0;
+  padding-inline-start: var(--studio-spacing-4);
+  color: var(--studio-fg-muted);
+}
+
 .claim__comparison {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));

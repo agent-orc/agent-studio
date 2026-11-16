@@ -74,6 +74,18 @@
         <app-status-indicator [tone]="groundsPassed() ? 'success' : 'warning'"
                               label="Acceptance grounds"
                               testId="completion-content-review-state" />
+        @if (primaryReason(); as primary) {
+          <div class="claim__primary" data-testid="acceptance-primary-reason" [attr.data-readiness]="primary.readiness">
+            <strong>{{ primary.headline }}</strong>
+            <span>{{ primary.reason }}</span>
+            <span data-testid="acceptance-primary-next-step">Next step: {{ primary.nextStep }}</span>
+            @if (secondaryGaps().length) {
+              <ul class="claim__secondary" data-testid="acceptance-secondary-gaps" aria-label="Other gaps">
+                @for (gap of secondaryGaps(); track gap) { <li>{{ gap }}</li> }
+              </ul>
+            }
+          </div>
+        }
         @if (buildTestsGap(); as gap) {
           <span data-testid="completion-build-tests-gap" [attr.data-result]="gap.result">
             build-tests: {{ gap.reason }}
@@ -104,12 +116,19 @@
         <span>Ran: {{ review.ranAspects.join(', ') || 'none' }} · Skipped: {{ review.skippedAspects.join(', ') || 'none' }}</span>
       </div>
     }
-    @if (staleBrief() && contentReview(); as review) {
-      <section class="claim__brief-gap" data-testid="stale-brief-acceptance" role="status">
-        <strong>Acceptance is blocked by a changed brief</strong>
-        <p>This delivery used brief {{ briefLabel(review.deliveryBriefVersion) }} and its content verdict checked brief {{ briefLabel(review.reviewBriefVersion) }}. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the change before deciding whether to accept this delivery.</p>
+    @if (briefGap() && contentReview(); as review) {
+      <section class="claim__brief-gap" data-testid="stale-brief-acceptance" [attr.data-brief-gap]="briefGap()" role="status">
+        @if (briefGap() === 'unrecorded') {
+          <strong>No brief version was recorded</strong>
+          <p>No brief version was recorded for {{ unrecordedBriefSubject(review) }}, so it cannot show which brief it was built or reviewed against. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the delivery against the current brief before deciding whether to accept it.</p>
+        } @else {
+          <strong>{{ briefLeads() ? 'Acceptance is blocked by a changed brief' : 'The brief also changed after this delivery' }}</strong>
+          <p>This delivery used brief {{ briefLabel(review.deliveryBriefVersion) }} and its content verdict checked brief {{ briefLabel(review.reviewBriefVersion) }}. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the change before deciding whether to accept this delivery.</p>
+        }
         <div class="claim__brief-actions">
-          <button type="button" data-testid="brief-difference-link" (click)="showDifference()">See the brief difference</button>
+          @if (briefGap() === 'changed') {
+            <button type="button" data-testid="brief-difference-link" (click)="showDifference()">See the brief difference</button>
+          }
           <button type="button" data-testid="review-current-brief" [disabled]="acceptanceBusy()" (click)="reviewAgain()">Review again against the current brief</button>
           <button type="button" data-testid="accept-with-reason-open" [disabled]="acceptanceBusy()" (click)="overrideOpen.set(true)">Accept with a reason</button>
         </div>
