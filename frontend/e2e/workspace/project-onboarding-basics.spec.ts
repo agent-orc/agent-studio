@@ -674,4 +674,44 @@ test.describe('project onboarding and editable project basics', () => {
     await expect.poll(() => syncRequests).toBe(1);
     await expect(card.getByTestId('project-checkout-lag')).toHaveCount(0);
   });
+
+  test('Project Settings switches a clean default-branch checkout to develop', async ({ page }) => {
+    test.setTimeout(90_000);
+    let switchRequests = 0;
+    await page.route('**/hubs/v1/studio/negotiate**', (route) => fulfillJson(route, {
+      negotiateVersion: 1,
+      connectionId: 'project-checkout-switch',
+      connectionToken: 'project-checkout-switch',
+      availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+    }));
+    await page.routeWebSocket('**/hubs/v1/studio**', (socket) => {
+      socket.onMessage((message) => {
+        if (typeof message === 'string' && message.includes('"protocol"')) socket.send('{}\u001e');
+      });
+    });
+    await page.route('**/api/projects/*/checkout/status', route => fulfillJson(route, {
+      status: 'not-checked-out', branch: 'develop', behind: 0,
+      dirtyFiles: [], lockFile: null, reason: 'No checkout holds this branch.',
+    }));
+    await page.route('**/api/projects/*/checkout/switch', route => {
+      switchRequests++;
+      return fulfillJson(route, {
+        status: 'switched', branch: 'develop', behind: 0,
+        dirtyFiles: [], lockFile: null, reason: null,
+      });
+    });
+    await page.goto('/#/projects/existing-project/settings');
+    await dismissDevErrorDialog(page);
+    const card = page.getByTestId('project-basics-card');
+    await expect(card.getByTestId('project-checkout-switch')).toHaveText('Switch checkout to develop');
+    for (const theme of ['dark', 'light'] satisfies Theme[]) {
+      await setTheme(page, theme);
+      await card.getByTestId('project-checkout-status').screenshot({
+        path: join(results, `project-checkout-switch-${theme}--mocked.png`),
+      });
+    }
+    await card.getByTestId('project-checkout-switch').click();
+    await expect.poll(() => switchRequests).toBe(1);
+    await expect(card.getByTestId('project-checkout-status')).toHaveCount(0);
+  });
 });
