@@ -131,6 +131,7 @@ test('one footer entry per subscription, honest age, host problem, account and r
     if (width >= 1280) expect(layout.rightEdgeGap).toBeLessThanOrEqual(16);
     const titlebar = await page.getByTestId('studio-titlebar').boundingBox();
     const body = await page.getByTestId('studio-body').boundingBox();
+    // The mobile shell stacks its rows, so this compact gap applies to desktop widths.
     if (width >= 1280) {
       expect(titlebar && body && body.y - titlebar.y - titlebar.height).toBeLessThanOrEqual(56);
     }
