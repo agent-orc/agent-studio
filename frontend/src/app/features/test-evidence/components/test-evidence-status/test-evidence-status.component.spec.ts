@@ -268,6 +268,43 @@ describe('TestEvidenceStatusComponent', () => {
     );
   });
 
+  it('states a red integration branch with a link to its output (AGT-3812)', async () => {
+    await TestBed.configureTestingModule({ imports: [TestEvidenceStatusComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(TestEvidenceStatusComponent);
+    const sentence = 'npm test (verify-2) is red on develop at 08eb16b7 without this change; failing tests: test.';
+    const evidence = {
+      ...missingEvidence,
+      matchQuality: 'perfect',
+      direction: 'exact',
+      distance: 0,
+      diffContained: true,
+      evidenceState: 'not-proven',
+      summary: 'Review build-tests Integration branch red at 53010260 (verify-1, verify-2)',
+      sources: [{
+        kind: 'review-build-tests',
+        id: 'review_453a',
+        commit: '53010260',
+        result: 'integration-red',
+        observedAt: '2026-11-15T22:00:43Z',
+        summary: 'Review build-tests Integration branch red at 53010260 (verify-1, verify-2)',
+        reason: sentence,
+        reportRef: 'remote-review-grade-review_453a.md',
+        outputRef: 'remote-review-review_453a-baseline-b1885ad01a59_verify-2_stdout_log',
+      }],
+    } satisfies TaskTestRunEvidence;
+    fixture.componentRef.setInput('variant', 'panel');
+    fixture.componentRef.setInput('task', task(TaskState.HumanReview, { id: 'TLY-1', watchPath: '/work/tally', testEvidence: evidence }));
+    fixture.detectChanges();
+
+    const build = fixture.nativeElement.querySelector('[data-testid="test-evidence-source-review-build-tests"]') as HTMLElement;
+    expect(build.textContent).toContain(sentence);
+    expect((build.querySelector('[data-testid="test-evidence-source-state-review-build-tests"]') as HTMLElement)
+      .dataset['tone']).toBe('warning');
+    expect(build.querySelector('[data-testid="test-evidence-source-output-review-build-tests"]')?.getAttribute('href')).toBe(
+      '/api/tasks/TLY-1/files/remote-review-review_453a-baseline-b1885ad01a59_verify-2_stdout_log?watchPath=%2Fwork%2Ftally&scope=workspace',
+    );
+  });
+
   it('maps evidence states and source results onto shared status tones (AGT-3403)', () => {
     expect(testEvidenceStateTone('proven')).toBe('success');
     expect(testEvidenceStateTone('pending')).toBe('warning');
@@ -278,6 +315,7 @@ describe('TestEvidenceStatusComponent', () => {
     expect(testEvidenceStateTone('later-state')).toBe('neutral');
     expect(testEvidenceSourceTone('passed')).toBe('success');
     expect(testEvidenceSourceTone('blocked')).toBe('warning');
+    expect(testEvidenceSourceTone('integration-red')).toBe('warning');
     expect(testEvidenceSourceTone('failed')).toBe('danger');
     expect(testEvidenceSourceTone('not-proven')).toBe('neutral');
     expect(testEvidenceSourceTone('not-applicable')).toBe('neutral');

@@ -70,10 +70,22 @@
 
     @if (contentReview(); as review) {
       <div class="claim__review" data-testid="completion-content-review"
-           [attr.data-state]="contentPassed() ? 'pass' : 'gap'">
-        <app-status-indicator [tone]="contentPassed() ? 'success' : 'warning'"
+           [attr.data-state]="groundsPassed() ? 'pass' : 'gap'">
+        <app-status-indicator [tone]="groundsPassed() ? 'success' : 'warning'"
                               label="Acceptance grounds"
                               testId="completion-content-review-state" />
+        @if (buildTestsGap(); as gap) {
+          <span data-testid="completion-build-tests-gap" [attr.data-result]="gap.result">
+            build-tests: {{ gap.reason }}
+            @if (gap.outputHref; as href) {
+              <a [href]="href" target="_blank" rel="noopener noreferrer"
+                 data-testid="completion-build-tests-output">Output</a>
+            } @else if (gap.reportHref; as href) {
+              <a [href]="href" target="_blank" rel="noopener noreferrer"
+                 data-testid="completion-build-tests-report">Report</a>
+            }
+          </span>
+        }
         <span>Delivery brief {{ briefLabel(review.deliveryBriefVersion) }} · Current brief {{ briefLabel(review.currentBriefVersion) }}</span>
         <span>{{ review.requiredAspect }}: {{ review.contentStatus ?? 'no verdict' }} · Reviewed brief {{ briefLabel(review.reviewBriefVersion) }}</span>
         @if (review.contentSummary) { <span>{{ review.contentSummary }}</span> }

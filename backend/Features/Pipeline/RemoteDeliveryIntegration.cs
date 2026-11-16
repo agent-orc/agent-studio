@@ -46,6 +46,17 @@ public static class RemoteDeliveryParkReason
     public const string ReviewDecisionPark =
         "Remote Review finished with a finding. Human Review is waiting for a decision; inspect the review evidence and accept or requeue the task.";
 
+    /// <summary>
+    /// The park reason for a review verdict that reached Human Review without an
+    /// integration failure. A review that found the integration branch red
+    /// names the branch and the decision instead of the generic finding text
+    /// (AGT-3812).
+    /// </summary>
+    public static string ForReview(bool passed, Contract.ReviewReportRequest? report)
+        => (report is null ? null : AgentStudio.Review.IntegrationBranchRedFinding.ParkReason(
+               AgentStudio.Review.IntegrationBranchRedFinding.FromReport(report)))
+           ?? (passed ? CompletedReviewPark : ReviewDecisionPark);
+
     public static string? NormalizeStoredDetail(string? detail)
         => detail?.StartsWith("automatic recovery budget used:", StringComparison.OrdinalIgnoreCase) == true
             ? $"Delivery integration stopped after {detail.Trim().TrimEnd('.')}. Review the integration evidence and retry or send the task for correction."

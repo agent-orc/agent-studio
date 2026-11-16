@@ -301,9 +301,113 @@ public sealed class TestRunServiceTests : IDisposable
 
         var source = Assert.Single(stack.Service.BuildLookup([job])[job.TaskKey].Sources);
 
-        Assert.Equal("passed", source.Result);
-        Assert.Contains("pre-existing failures: Product.Tests.OldFailure", source.Reason, StringComparison.Ordinal);
+        // AGT-3812: a step that is red on the integration branch is not a pass.
+        Assert.Equal("integration-red", source.Result);
+        Assert.Contains("failing tests: Product.Tests.OldFailure", source.Reason, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// AGT-3812 regression: the grade the review host writes today links each
+    /// aspect (<c>[build-tests](aspect-build-tests.md)</c>) and carries six
+    /// columns, and its command table repeats a step for the baseline and the
+    /// clean repeat. The reader matched none of the build-tests rows, so the
+    /// card said "Build-tests verdict is missing for verify-1, verify-2,
+    /// verify-2, and verify-2" while review knew develop was red.
+    /// </summary>
+    [Fact]
+    public void CardEvidence_StatesRedIntegrationBranchFromCurrentGradeFormat()
+    {
+        var stack = BuildStack();
+        var commit = RevParse(stack.Repo, "HEAD");
+        var folder = Path.Combine(stack.Storage, TaskStates.HumanReview, "red-develop");
+        Directory.CreateDirectory(folder);
+        const string attempt = "review_453acc10c06b4f83bc13ecfc32d6819f";
+        const string baseline = "08eb16b77409d04ab92e5da76ec88c0a5a4e586a";
+        File.WriteAllText(Path.Combine(folder, $"remote-review-grade-{attempt}.md"), RedDevelopGrade(attempt, commit, baseline));
+        var job = Task("red-develop", stack.Storage, commit) with
+        {
+            State = TaskStates.HumanReview,
+            FolderPath = folder,
+        };
+
+        var evidence = stack.Service.BuildLookup([job])[job.TaskKey];
+
+        var buildTests = Assert.Single(evidence.Sources, source => source.Kind == "review-build-tests");
+        Assert.Equal("integration-red", buildTests.Result);
+        Assert.Equal($"Review build-tests Integration branch red at {commit[..8]} (verify-1, verify-2)", buildTests.Summary);
+        Assert.Equal(
+            "npm test (verify-2) is red on develop at 08eb16b7 without this change; failing tests: test.",
+            buildTests.Reason);
+        Assert.Equal($"remote-review-{attempt}-baseline-b1885ad01a59_verify-2_stdout_log", buildTests.OutputRef);
+        Assert.DoesNotContain(evidence.Sources, source => source.Kind == "review-aspects");
+        Assert.NotEqual("proven", evidence.EvidenceState);
+    }
+
+    [Fact]
+    public void CardEvidence_NamesEachMissingCandidateStepOnce()
+    {
+        var stack = BuildStack();
+        var commit = RevParse(stack.Repo, "HEAD");
+        var folder = Path.Combine(stack.Storage, TaskStates.HumanReview, "missing-current-format");
+        Directory.CreateDirectory(folder);
+        const string attempt = "review-missing-current";
+        var grade = RedDevelopGrade(attempt, commit, "08eb16b77409d04ab92e5da76ec88c0a5a4e586a")
+            .Split('\n')
+            .Where(line => !line.StartsWith("| [build-tests]", StringComparison.Ordinal));
+        File.WriteAllText(Path.Combine(folder, $"remote-review-grade-{attempt}.md"), string.Join('\n', grade));
+        var job = Task("missing-current-format", stack.Storage, commit) with
+        {
+            State = TaskStates.HumanReview,
+            FolderPath = folder,
+        };
+
+        var buildTests = Assert.Single(
+            stack.Service.BuildLookup([job])[job.TaskKey].Sources,
+            source => source.Kind == "review-build-tests");
+
+        Assert.Equal("not-proven", buildTests.Result);
+        Assert.Equal("Build-tests verdict is missing for verify-1 and verify-2.", buildTests.Reason);
+    }
+
+    internal static string RedDevelopGrade(string attempt, string commit, string baseline) => $"""
+        ---
+        type: remote-review-grade
+        attemptId: "{attempt}"
+        receivedAt: 2026-11-15T22:00:43.9192727Z
+        outcome: "IntegrationBranchDefect"
+        failureClassification: "IntegrationBranchDefect"
+        expectedResultSha: "{commit}"
+        mergeBaseSha: "{baseline}"
+        actualHead: "{commit}"
+        ---
+
+        # Remote Review Grade
+
+        **Outcome:** IntegrationBranchDefect / IntegrationBranchDefect
+
+        ## Aspect verdicts
+
+        | Aspect | Status | Classification | Evidence checked | Missing | Summary |
+        | --- | --- | --- | --- | --- | --- |
+        | [build-tests](aspect-build-tests.md) | pass | CommandPassed | command:verify-1 | none | Review command 'verify-1' passed. |
+        | [build-tests](aspect-build-tests.md) | pass | IntegrationBranchDefect | command:verify-2; baseline:{baseline} | none | pre-existing failures: test; clean repeat found no new failures; failed-tests=test; confidence=1.00; baseline={baseline} (baseline executed in this attempt) |
+        | [requirement-fit](aspect-requirement-fit.md) | pass | RemoteAspectVerdict | not reported | not reported | Demo change verified. |
+
+        ## Command evidence
+
+        | Phase | Workspace | Step | Location | Host / executor | Command | Exit | Budget | Output | Errors | Baseline | Result |
+        | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |
+        | preparation | candidate | prepare-1 | remote | host / review | `bash -lc npm ci` | 0 | review-command: 746/7200000 ms | stdout `621603f19da7` | stderr `aa` | n/a | executed in this attempt |
+        | verification | candidate | verify-1 | remote | host / review | `sh -lc npm run build` | 0 | review-command: 323/7200000 ms | stdout `50a0f03de398` | stderr `aa` | n/a | executed in this attempt |
+        | verification | baseline-b1885ad01a59 | verify-2 | remote | host / review | `sh -lc npm test` | 1 | review-command: 323/7200000 ms | [stdout](remote-review-{attempt}-baseline-b1885ad01a59_verify-2_stdout_log) | stderr `aa` | baseline executed in this attempt | executed in this attempt |
+        | clean-repeat | clean-repeat | verify-2 | remote | host / review | `sh -lc npm test` | 1 | review-command: 353/7200000 ms | [stdout](remote-review-{attempt}-clean-repeat_verify-2_stdout_log) | stderr `aa` | baseline executed in this attempt | executed in this attempt |
+        | verification | candidate | verify-2 | remote | host / review | `sh -lc npm test` | 1 | review-command: 421/7200000 ms | [stdout](remote-review-{attempt}-candidate_verify-2_stdout_log) | stderr `aa` | baseline executed in this attempt | executed in this attempt |
+
+        ## Immutable subject proof
+
+        - Integration ref: `refs/heads/develop`
+        - Reviewed integration tip: `{baseline}`
+        """;
 
     [Fact]
     public void CardEvidence_KeepsPassingReviewBuildTestsIndependentFromBlockedAspect()
