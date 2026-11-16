@@ -552,13 +552,26 @@ public sealed class GitStateIndexService : BackgroundService
         else
         {
             SidecarFileGeneration.MarkFolderChanged(path);
-            if (!IsGitRelevantSidecar(path) || !_projectionCache.MarkTaskInputChanged(path)) return;
+            // AGT-3845: a grade report is a review projection input of its
+            // task folder. Its version keeps the card's published review facts
+            // pending until the next run carries the report.
+            var changed = IsReviewGradeReport(path)
+                ? _projectionCache.MarkTaskInputChanged(path, Path.GetDirectoryName(path))
+                : IsGitRelevantSidecar(path) && _projectionCache.MarkTaskInputChanged(path);
+            if (!changed) return;
         }
         OnTaskChanged(path);
     }
 
     internal static bool IsGitRelevantSidecar(string path)
         => FileSystemPathComparer.Instance.Equals(Path.GetFileName(path), ReviewSubjectStore.FileName);
+
+    internal static bool IsReviewGradeReport(string path)
+    {
+        var name = Path.GetFileName(path);
+        return name.StartsWith("remote-review-grade-", StringComparison.OrdinalIgnoreCase)
+            && name.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsUnderWatchPath(string watchPath, string path)
     {

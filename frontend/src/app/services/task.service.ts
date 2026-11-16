@@ -972,6 +972,17 @@ export class TaskService {
     );
   }
 
+  /**
+   * AGT-3845: review every aspect of the same delivery again, on the build
+   * the review hosts run now. For a card a non-Stable review host graded.
+   */
+  reviewAgainOnCurrentBuild(jobId: string, watchPath?: string) {
+    const params = (this.withWatchPath(watchPath).params ?? new HttpParams()).set('scope', 'full');
+    return this.http.post<{ reviewAttemptId: string; briefVersion: string }>(
+      `${this.taskV1Url(jobId)}/content-review`, {}, { params },
+    );
+  }
+
   getBriefDifference(jobId: string, watchPath?: string) {
     return this.http.get<{ fromVersion: string; toVersion: string; before: string; after: string }>(
       `${this.taskV1Url(jobId)}/brief-difference`, this.withWatchPath(watchPath),

@@ -476,6 +476,14 @@ public record TaskInfo
     public ReviewProjectionView? ReviewProjection { get; init; }
 
     /// <summary>
+    /// AGT-3845: the current Remote Review attempt is settled but its grade
+    /// report is not written yet (the evidence projection runs after the lane
+    /// move), so <see cref="ReviewProjection"/> does not carry it yet. Clients
+    /// read the card again shortly. Read-time only; never persisted.
+    /// </summary>
+    public bool ReviewEvidencePending { get; init; }
+
+    /// <summary>
     /// Read-time visibility projection (ASS-1751) for <c>3-progress</c> tasks
     /// that disambiguates a live run, a failed run waiting out the rapid-crash
     /// backoff, and an orphaned run killed by a backend restart. Folded on by

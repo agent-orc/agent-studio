@@ -30,6 +30,7 @@
         }
       }
     </div>
+    <app-off-stable-grades />
     @if (error(); as err) { <p class="rh__error" data-testid="remote-hosts-error">{{ err }}</p> }
     @if (!machineCount() && !loading()) { <p class="rh__empty" data-testid="remote-hosts-empty">No execution hosts registered yet.</p> }
     @if (machineCount()) {

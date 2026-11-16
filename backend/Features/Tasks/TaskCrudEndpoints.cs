@@ -382,7 +382,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, AgentStudio.Operator.OperatorCoordinationStore attention, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, AgentStudio.Operator.OperatorCoordinationStore attention, AgentStudio.Review.ReviewProjectionService reviews, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
@@ -403,7 +403,11 @@ public static class TaskCrudEndpoints
             var detail = scanner.GetJobDetailFromInfo(facts.Info);
             // Detail and the Git resource consume the same completed repository
             // snapshot. A stale result for an older task attempt is withheld.
-            var gitFacts = TaskSwitchTrace.Run("index.lookup", () => gitProjection.ReadTask(detail.Info).Data);
+            var gitRead = TaskSwitchTrace.Run("index.lookup", () => gitProjection.ReadTask(detail.Info));
+            var gitFacts = gitRead.Data;
+            // AGT-3845: a lane move withholds the card's Git facts until the
+            // next index run; its review facts come from files and stay.
+            var reviewProjection = TaskDetailResources.ReviewProjectionOf(gitRead, detail.Info, reviews);
             if (gitFacts?.ReconstructedCommits is { } commits)
                 detail = detail with { Info = detail.Info with { Commits = commits.ToList() } };
             // The ledger fold runs only in the usage resource or a background
@@ -437,8 +441,12 @@ public static class TaskCrudEndpoints
                     Integration = gitFacts.Integration,
                     PublishSignal = gitFacts.Publish,
                     TestEvidence = gitFacts.TestEvidence,
-                    ReviewProjection = gitFacts.ReviewProjection,
                 } };
+            withRuntime = withRuntime with { Info = withRuntime.Info with
+            {
+                ReviewProjection = reviewProjection ?? withRuntime.Info.ReviewProjection,
+                ReviewEvidencePending = TaskDetailResources.ReviewEvidencePending(detail.Info, attemptAuthority),
+            } };
             withRuntime = withRuntime with { Info = WithContractIntegration(withRuntime.Info,
                 projectSettings.Get(withRuntime.Info.ProjectName).IntegrationBranch) };
             if (AcceptanceAttemptLineagePolicy.ReadGap(withRuntime.Info, attemptAuthority) is { } attemptGap)
@@ -753,8 +761,11 @@ public static class TaskCrudEndpoints
                 transitions, scanner, leases, authority, timeline, isolation, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
+        // scope=full (AGT-3845): a fresh review of every aspect on the
+        // current build, for a card a non-Stable review host graded. The
+        // default reviews only the brief fit against the current brief.
         group.MapPost("/{jobId}/content-review", async (string jobId, string? project,
-            string? watchPath, HttpContext context, TaskScannerService scanner,
+            string? watchPath, string? scope, HttpContext context, TaskScannerService scanner,
             TaskTransitionService transitions, AttemptAuthorityService authority,
             AgentStudio.Runner.RemoteReviewPlanBuilder plans,
             AgentStudio.Projects.ProjectSettingsService projectSettings,
@@ -779,11 +790,22 @@ public static class TaskCrudEndpoints
             var oldPlan = authority.GetTaskProjection(taskKey).CurrentReviewAttempt?.Subject.Plan;
             var plan = plans.Build(card, repository, settings, oldPlan?.IntegrationRef,
                 run.ResultSha, immutableResultRef: run.ResultEnvelope.ImmutableRemoteRef);
-            var commands = plan.Commands.Where(command => command.Aspect == required).ToArray();
+            var full = string.Equals(scope, "full", StringComparison.OrdinalIgnoreCase);
+            var commands = full ? plan.Commands.ToArray()
+                : plan.Commands.Where(command => command.Aspect == required).ToArray();
             if (commands.Length == 0)
                 return Results.Conflict(new { code = "content-review-unavailable",
-                    error = $"No {required} review command is configured for this card." });
-            plan = plan with
+                    error = full ? "No review command is configured for this card."
+                        : $"No {required} review command is configured for this card." });
+            // A fresh review reuses no verdict or verify result of the build
+            // that graded the card before.
+            plan = full ? plan with
+            {
+                BriefSha256 = currentBrief,
+                CarriedVerdicts = null,
+                ScopedReview = null,
+                VerifyReuseFromAttemptIds = null,
+            } : plan with
             {
                 Commands = commands,
                 RequiredAspects = [required],
@@ -799,7 +821,8 @@ public static class TaskCrudEndpoints
             var promptPath = Path.Combine(card.FolderPath, "prompt.md");
             var requirements = File.Exists(promptPath) ? File.ReadAllText(promptPath) : card.Id;
             var moved = await transitions.MoveAsync(jobId, TaskStates.AutoReview, watchPath, ct,
-                cause: OperatorActor(context), reason: "Review content against the current brief");
+                cause: OperatorActor(context), reason: full
+                    ? "Review again on the current build" : "Review content against the current brief");
             if (moved.Status != MoveJobStatus.Success)
                 return MoveResult(moved);
             var review = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
@@ -817,12 +840,15 @@ public static class TaskCrudEndpoints
                 return Results.Conflict(new { code = "content-review-create-failed", error = review.Message });
             }
             timeline.Append(moved.NewFolderPath ?? card.FolderPath, TimelineEventKinds.ContentReviewRequested,
-                OperatorActor(context), $"Reviewing {required} again against brief {currentBrief}.",
+                OperatorActor(context), full
+                    ? $"Reviewing every aspect again on the current build against brief {currentBrief}."
+                    : $"Reviewing {required} again against brief {currentBrief}.",
                 details: new Dictionary<string, string>
                 {
                     ["briefVersion"] = currentBrief,
                     ["reviewAttemptId"] = review.AttemptId,
-                    ["aspect"] = required,
+                    ["aspect"] = full ? "all" : required,
+                    ["scope"] = full ? "full" : "content",
                 });
             return Results.Ok(new { reviewAttemptId = review.AttemptId, briefVersion = currentBrief });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);

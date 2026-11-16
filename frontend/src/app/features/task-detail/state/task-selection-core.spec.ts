@@ -180,6 +180,85 @@ describe('TaskSelectionService · board record reuse', () => {
     expect(selection.selected()?.info.integration?.status).toBe('not-applicable');
   });
 
+  const gradedNotice = 'graded by release 20261105T1059Z-review-b9a3a90d6895 (commit b9a3a90), '
+    + 'which differs from Stable 0.9.5 (38b28d1)';
+  const gradedProjection = {
+    attempts: [{ plane: 'Remote', attemptId: 'review_bh3', outcome: 'Pass', buildTestsResult: 'passed',
+      aspects: [], reportRef: 'remote-review-grade-review_bh3.md', workerReleaseStable: gradedNotice }],
+  };
+  const reviewReply = (state: string, reviewProjection: unknown) => ({
+    id: 'a', taskKey: lane[0].taskKey, projectId: 'PROJ-A', attemptId: null,
+    coreVersion: '1', resource: 'review', version: state, computedAt: null,
+    state, reason: state === 'ready' ? null : 'review-projection-pending',
+    data: { reviewProjection, evidence: null },
+  });
+  const latestNotice = () =>
+    selection.selected()?.info.reviewProjection?.attempts?.[0]?.workerReleaseStable ?? null;
+
+  /** `match` consumes what it finds, so keep the first live request it sees. */
+  async function nextRequest(predicate: (r: HttpRequest<unknown>) => boolean, timeout = 1_000) {
+    let found: ReturnType<HttpTestingController['expectOne']> | undefined;
+    await vi.waitFor(() => {
+      found ??= http.match(predicate).find(r => !r.cancelled);
+      expect(found).toBeDefined();
+    }, { timeout });
+    return found!;
+  }
+
+  async function paintDocuments(): Promise<void> {
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'));
+    for (const request of http.match(r => r.url.endsWith('/details/documents'))) request.flush({
+      id: 'a', taskKey: lane[0].taskKey, projectId: 'PROJ-A', attemptId: null,
+      coreVersion: '1', resource: 'documents', version: '1', computedAt: null,
+      state: 'ready', reason: null,
+      data: { name: request.request.params.get('name'), markdown: '', summaryState: null },
+    });
+  }
+
+  it('AGT-3845: the Human Review acceptance read paints the grading-release notice', async () => {
+    open(lane[0]);
+    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    http.expectOne(freshDetail).flush({ info: { ...lane[0], reviewProjection: gradedProjection } });
+    await paintDocuments();
+    expect(latestNotice()).toBe(gradedNotice);
+  });
+
+  it('AGT-3845: a pending review projection is re-read until it carries the grade', async () => {
+    open(lane[0]);
+    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    http.expectOne(freshDetail).flush({ info: { ...lane[0] } });
+    await paintDocuments();
+    const reviewRead = (r: HttpRequest<unknown>) => r.url.endsWith('/a/details/review');
+    (await nextRequest(reviewRead)).flush(reviewReply('stale', null));
+    expect(selection.resourceStates().review).toEqual({ phase: 'stale', reason: 'review-projection-pending' });
+    expect(latestNotice()).toBeNull();
+
+    (await nextRequest(reviewRead, 4_000)).flush(reviewReply('ready', gradedProjection));
+    expect(selection.resourceStates().review.phase).toBe('ready');
+    expect(latestNotice()).toBe(gradedNotice);
+    answerLookahead();
+  });
+
+
+  it('AGT-3845: a lane-move detail with review evidence pending is read again until it carries the grade', async () => {
+    // The shell paints the moved card's full detail at once; the settled
+    // review's grade report is written right after the move.
+    const token = selection.bumpOpenDetailToken();
+    selection.setSelectedFromAdvance({
+      info: { ...lane[0], reviewEvidencePending: true, reviewProjection: { attempts: [] } },
+      promptMarkdown: null, promptHistory: [], titleHistory: [], statusMarkdown: null,
+      contextUsage: null, log: [], summaryState: null, reviewEvidence: [],
+    } as unknown as Parameters<TaskSelectionService['setSelectedFromAdvance']>[0], token);
+    expect(latestNotice()).toBeNull();
+    const reread = (r: HttpRequest<unknown>) => r.url === `/api/v1/projects/-/tasks/${lane[0].id}`;
+    (await nextRequest(reread, 4_000)).flush({ info: { ...lane[0], reviewEvidencePending: false,
+      reviewProjection: gradedProjection } });
+    expect(latestNotice()).toBe(gradedNotice);
+    await new Promise(resolve => setTimeout(resolve, 3_500));
+    expect(http.match(reread)).toHaveLength(0);
+    answerLookahead();
+  });
+
   /** Answer every live lookahead core; aborted lookahead is dropped. */
   function answerLookahead(): string[] {
     const requests = http.match(anyCore).filter(r => !r.cancelled);
