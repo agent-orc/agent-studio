@@ -104,6 +104,10 @@ export class TaskLiveStatusComponent {
   readonly view = computed<LiveStatusView | null>(() => {
     const task = this.task();
     const status = task.liveStatus;
+    if (task.state === TaskState.Escalated) return {
+      tone: 'stalled', headline: 'Operator decision needed', detail: null,
+      next: ['Operator decision'], attempt: status?.attempt ?? null,
+    };
     const causeHeld = causeHold(task);
     const perTask = perTaskGateFor(this.batchGate.state(task.projectName)(), task);
     if (perTask && task.state === TaskState.AutoReview) return { ...perTaskGateView(perTask), attempt: status?.attempt ?? null };

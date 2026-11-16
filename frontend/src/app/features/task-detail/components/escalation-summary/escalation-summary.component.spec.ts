@@ -86,6 +86,7 @@ function mount(opts: {
   continueJob?: ReturnType<typeof vi.fn>;
   batchGate?: { retryInfrastructureGate: ReturnType<typeof vi.fn>; getSettings: ReturnType<typeof vi.fn>; putSettings: ReturnType<typeof vi.fn> };
   retryReview?: ReturnType<typeof vi.fn>;
+  retryIntegration?: ReturnType<typeof vi.fn>;
 }) {
   const taskStub = {
     listCodeReviews: () => opts.reviewsStream ?? of({ entries: opts.reviews ?? [] }),
@@ -95,6 +96,8 @@ function mount(opts: {
     readTaskResult: () => opts.batchDiagnostic == null
       ? throwError(() => ({ status: 404 })) : of(opts.batchDiagnostic),
     continueJob: opts.continueJob ?? vi.fn(() => of({ status: 'queued' })),
+    retryIntegration: opts.retryIntegration ?? vi.fn(() => of({ status: 'integrated' })),
+    refresh: vi.fn(),
   };
   const timelineStub = { events: signal<TaskTimelineEvent[]>(opts.events ?? []), syncTo: vi.fn() };
 
@@ -220,7 +223,33 @@ describe('EscalationSummaryComponent', () => {
     const links = el.querySelectorAll('[data-testid="server-checkout-remedy"] a');
     expect(links[0]?.getAttribute('href')).toBe('/#/projects/agent-studio/settings');
     expect(links[1]?.getAttribute('href')).toContain('networked-task-server.md#project-checkouts');
+    expect(el.querySelector('[data-testid="server-checkout-retry"]')).toBeNull();
     expect(el.querySelector('[data-testid="escalation-action-reissue-escalated"]')).toBeNull();
+  });
+
+  it('offers Retry integration for the same delivery once the server checkout exists', () => {
+    const ready = detail();
+    ready.info.integration = {
+      status: 'conflict-skipped', integrationBranch: 'develop', deliveryRef: null, sha: null,
+      detail: 'Delivery could not integrate.', failure: {
+        code: 'server-checkout-missing', replayAvailable: true,
+        reason: 'This project needs a server checkout before delivery can integrate.',
+      },
+    } as TaskDetail['info']['integration'];
+    const retryIntegration = vi.fn(() => of({
+      status: 'integrated', reason: 'The delivery integrated without a new review round.', outcome: 'Merged',
+      rung: 0, deliverySha: 'abc', integrationBranch: 'develop', reviewReused: true, movedTo: '5-human-review',
+    }));
+    const fixture = mount({ detail: ready, retryIntegration });
+    const el = fixture.nativeElement as HTMLElement;
+    const retry = el.querySelector<HTMLButtonElement>('[data-testid="server-checkout-retry"]');
+    expect(retry?.textContent).toContain('Retry integration');
+    expect(el.querySelector('[data-testid="escalation-action-reissue-escalated"]')).toBeNull();
+    retry!.click();
+    fixture.detectChanges();
+    expect(retryIntegration).toHaveBeenCalledWith(ready.info.id, ready.info.watchPath);
+    expect(el.querySelector('[data-testid="server-checkout-retry-outcome"]')?.textContent)
+      .toContain('for acceptance');
   });
 
   it('keeps reissue when a failure only mentions a checkout in its message', () => {

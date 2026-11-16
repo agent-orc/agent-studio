@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentStudio.Persistence;
+using AgentStudio.Pipeline;
 
 namespace AgentStudio.Docs;
 
@@ -160,8 +161,6 @@ public sealed class WorkbenchCatalogueService
                 legacy.SourceTaskKeys));
         }
 
-        ApplyDocumentationProjection(items);
-
         if (source.Info.Writable && _taskMutations != null)
             DossierCardsService.Backfill(projectName, items, _scanner, _taskMutations);
 
@@ -170,24 +169,38 @@ public sealed class WorkbenchCatalogueService
             includeHistory));
     }
 
-    /// <summary>Refresh task membership when a cached Wiki catalogue is read.</summary>
+    /// <summary>
+    /// Refresh task membership and the documentation projection when a cached
+    /// Wiki catalogue is read. Both come from one Dossier membership set, so
+    /// the Mark documented gate and the Dossier card list never disagree.
+    /// </summary>
     public WorkbenchCatalogue WithLinkedTaskKeys(WorkbenchCatalogue catalogue, string? projectName = null)
     {
         // The Wiki descriptor can be cached across task mutations. Membership
         // must come from the current primary task.dossier snapshot on each read.
-        var cardsByPath = _scanner.ScanAllJobsWithArchiveForBackgroundIndex()
-            .Where(task => string.Equals(task.ProjectName, projectName ?? catalogue.ProjectName, StringComparison.OrdinalIgnoreCase)
-                && task.Dossier is { Path.Length: > 0 })
-            .GroupBy(task => task.Dossier!.Path, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key,
-                group => group.Select(task => task.Key).Where(key => !string.IsNullOrWhiteSpace(key))
-                    .Select(key => key!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-                StringComparer.OrdinalIgnoreCase);
+        var project = projectName ?? catalogue.ProjectName;
+        var ledgers = new Dictionary<TaskInfo, IReadOnlyList<SpawnedTaskRecord>>(ReferenceEqualityComparer.Instance);
+        var membership = new DossierMembership(_scanner.ScanAllJobsWithArchiveForBackgroundIndex(), task =>
+            ledgers.TryGetValue(task, out var records)
+                ? records
+                : ledgers[task] = SpawnedTaskLedger.Read(task.FolderPath));
+        var referenceIndex = _scanner.GetReferenceIndex();
         return catalogue with
         {
-            Items = catalogue.Items.Select(item => item with
+            Items = catalogue.Items.Select(item =>
             {
-                LinkedTaskKeys = cardsByPath.GetValueOrDefault(item.EntryPath) ?? [],
+                var members = membership.Members(project, item);
+                var linked = item with
+                {
+                    LinkedTaskKeys = members
+                        .Where(member => member.Task.Dossier is { Path.Length: > 0 })
+                        .Select(member => member.Task.Key)
+                        .Where(key => !string.IsNullOrWhiteSpace(key))
+                        .Select(key => key!)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray(),
+                };
+                return linked.Valid ? WithDocumentation(linked, members, referenceIndex) : linked;
             }).ToList(),
         };
     }
@@ -1124,6 +1137,16 @@ public sealed class WorkbenchCatalogueService
             throw new InvalidDataException("decision request is too long.");
         if (revisionTaskKey is { Length: > 100 })
             throw new InvalidDataException("decision revisionTaskKey is too long.");
+        WorkbenchAgentRoute? routeChangedFrom = null;
+        if (value.TryGetProperty("routeChangedFrom", out var routeValue))
+        {
+            if (routeValue.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("decision routeChangedFrom must be an object.");
+            routeChangedFrom = new WorkbenchAgentRoute(
+                OptionalString(routeValue, "cliType"),
+                OptionalString(routeValue, "model"),
+                OptionalString(routeValue, "thinkingLevel"));
+        }
         var spawned = StringArray(value, "spawnedTaskKeys");
         List<WorkbenchDecisionResponse> responses = [];
         if (value.TryGetProperty("responses", out var responsesValue))
@@ -1230,6 +1253,7 @@ public sealed class WorkbenchCatalogueService
         {
             Request = request,
             RevisionTaskKey = revisionTaskKey,
+            RouteChangedFrom = routeChangedFrom,
         };
     }
 
@@ -1339,50 +1363,59 @@ public sealed class WorkbenchCatalogueService
         return result;
     }
 
-    private void ApplyDocumentationProjection(List<WorkbenchListItem> items)
+    private WorkbenchListItem WithDocumentation(
+        WorkbenchListItem item,
+        IReadOnlyList<DossierMember> members,
+        TaskReferenceIndex referenceIndex)
     {
-        var referenceIndex = _scanner.GetReferenceIndex();
-        for (var index = 0; index < items.Count; index++)
+        var references = new Dictionary<string, WorkbenchDocumentationReference>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var key in item.SourceTaskKeys
+                     .Concat(item.RelatedTaskKeys)
+                     .Concat(item.Decision?.SpawnedTaskKeys ?? []))
         {
-            var item = items[index];
-            if (!item.Valid) continue;
-
-            var references = new Dictionary<string, WorkbenchDocumentationReference>(
-                StringComparer.OrdinalIgnoreCase);
-            foreach (var key in item.SourceTaskKeys
-                         .Concat(item.RelatedTaskKeys)
-                         .Concat(item.Decision?.SpawnedTaskKeys ?? []))
-            {
-                if (string.IsNullOrWhiteSpace(key)) continue;
-                var normalized = key.Trim();
-                var task = referenceIndex.Resolve(normalized);
-                references[normalized] = new WorkbenchDocumentationReference(
-                    normalized,
-                    Exists: task != null,
-                    Terminal: task != null && WaitsOnEvaluator.IsFulfilledState(task.State),
-                    Lane: task?.State);
-            }
-
-            if (!string.IsNullOrWhiteSpace(item.Key))
-            {
-                foreach (var link in referenceIndex.Dependents(item.Key, TaskReferenceKinds.Workbenches))
-                {
-                    var key = (link.SourceKey ?? link.SourceJobId).Trim();
-                    if (key.Length == 0) continue;
-                    references[key] = new WorkbenchDocumentationReference(
-                        key,
-                        Exists: true,
-                        Terminal: WaitsOnEvaluator.IsFulfilledState(link.SourceState),
-                        Lane: link.SourceState);
-                }
-            }
-
-            items[index] = item with
-            {
-                Documentation = WorkbenchDocumentationPolicy.Evaluate(item.Status, references.Values),
-                ReviewDue = ReviewDue(item.Review, references, referenceIndex),
-            };
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            var normalized = key.Trim();
+            var task = referenceIndex.Resolve(normalized);
+            references[normalized] = new WorkbenchDocumentationReference(
+                normalized,
+                Exists: task != null,
+                Terminal: task != null && WaitsOnEvaluator.IsFulfilledState(task.State),
+                Lane: task?.State);
         }
+
+        // Promoted slices are assigned through task.json dossier or the
+        // concept promotion ledger only (AGT-3837).
+        foreach (var member in members)
+        {
+            var key = (member.Task.Key ?? member.Task.Id).Trim();
+            if (key.Length == 0) continue;
+            references[key] = new WorkbenchDocumentationReference(
+                key,
+                Exists: true,
+                Terminal: WaitsOnEvaluator.IsFulfilledState(member.Task.State),
+                Lane: member.Task.State);
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.Key))
+        {
+            foreach (var link in referenceIndex.Dependents(item.Key, TaskReferenceKinds.Workbenches))
+            {
+                var key = (link.SourceKey ?? link.SourceJobId).Trim();
+                if (key.Length == 0) continue;
+                references[key] = new WorkbenchDocumentationReference(
+                    key,
+                    Exists: true,
+                    Terminal: WaitsOnEvaluator.IsFulfilledState(link.SourceState),
+                    Lane: link.SourceState);
+            }
+        }
+
+        return item with
+        {
+            Documentation = WorkbenchDocumentationPolicy.Evaluate(item.Status, references.Values),
+            ReviewDue = ReviewDue(item.Review, references, referenceIndex),
+        };
     }
 
     private bool ReviewDue(
@@ -1506,6 +1539,11 @@ public sealed record WorkbenchDecisionProjection(
     public string? Request { get; init; }
     /// <summary>The card a rework request asked to run the revision.</summary>
     public string? RevisionTaskKey { get; init; }
+    /// <summary>
+    /// The revision card's route before a rework round that changed it; the
+    /// receipt's own route is the one the owner confirmed (AGT-3838).
+    /// </summary>
+    public WorkbenchAgentRoute? RouteChangedFrom { get; init; }
 }
 
 internal sealed record WorkbenchMutationSnapshot(

@@ -290,6 +290,18 @@ export interface WorkbenchDecisionProjection {
   request?: string | null;
   /** The card a rework request asked to run the revision. */
   revisionTaskKey?: string | null;
+  /**
+   * The revision card's route before a rework round that changed it; the
+   * receipt's own cliType/model/thinkingLevel is the confirmed route (AGT-3838).
+   */
+  routeChangedFrom?: WorkbenchAgentRoute | null;
+}
+
+/** A card's CLI, model and thinking level; a missing part means the CLI default. */
+export interface WorkbenchAgentRoute {
+  cliType?: string | null;
+  model?: string | null;
+  thinkingLevel?: string | null;
 }
 
 /**
@@ -305,6 +317,10 @@ export interface WorkbenchRevisionCard {
   lane: string | null;
   mode: string | null;
   reason: string | null;
+  /** The card's current route; the rework form preselects it (AGT-3838). */
+  cliType?: string | null;
+  model?: string | null;
+  thinkingLevel?: string | null;
 }
 
 /** What happened to the follow-up round a confirmed rework request asked for. */
@@ -453,6 +469,8 @@ export interface WorkbenchDocumentationProjection {
   openCount: number;
   missingCount: number;
   references: WorkbenchDocumentationReference[];
+  /** Server-written reason naming the open or missing cards; null once the item can be documented. */
+  blockedReason?: string | null;
 }
 
 export interface DocumentWorkbenchRequest {

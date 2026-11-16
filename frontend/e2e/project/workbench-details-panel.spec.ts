@@ -59,7 +59,23 @@ const REVISED_HTML = `<main>
 const REVISION_CARD = {
   available: true, key: 'AGT-2600', jobId: 'naming-concept', title: 'Concept: naming contract',
   lane: '6-completed', mode: 'concept', reason: null,
+  // AGT-3838: a Codex concept card while the browser default is Claude.
+  cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'medium',
 };
+
+/** The card's route before a rework round that changed it, as the server records it. */
+function routeChangedFrom(body: Record<string, unknown>) {
+  const after = {
+    cliType: (body['cliType'] as string | null) || REVISION_CARD.cliType,
+    model: (body['model'] as string | null) || REVISION_CARD.model,
+    thinkingLevel: (body['thinkingLevel'] as string | null) || REVISION_CARD.thinkingLevel,
+  };
+  const same = after.cliType === REVISION_CARD.cliType && after.model === REVISION_CARD.model
+    && after.thinkingLevel === REVISION_CARD.thinkingLevel;
+  return same ? null : {
+    cliType: REVISION_CARD.cliType, model: REVISION_CARD.model, thinkingLevel: REVISION_CARD.thinkingLevel,
+  };
+}
 
 interface CapturedCalls {
   taskBodies: Record<string, unknown>[];
@@ -446,6 +462,7 @@ async function installMocks(
         model: body['model'], thinkingLevel: body['thinkingLevel'],
         request: outcome === 'rework' ? body['request'] ?? null : null,
         revisionTaskKey: outcome === 'rework' ? REVISION_CARD.key : null,
+        routeChangedFrom: outcome === 'rework' ? routeChangedFrom(body) : null,
       };
       return json(route, {
         success: true, errorCode: null, error: null, workbenchId: WORKBENCH_ID,
@@ -907,11 +924,11 @@ test('inline Dossier decision requests rework through its orchestrator session',
   const inline = page.getByTestId('workbench-inline-decision-action');
   await expect(inline.getByTestId('workbench-decision-start')).toBeDisabled();
   await inline.getByTestId('workbench-decision-rework').click();
+  // The form starts on the card's Codex route (AGT-3838); within one CLI the pick commits at once.
   await inline.getByTestId('workbench-decision-agent').click();
-  await page.getByTestId('workbench-decision-agent-picker-cli-codex').click();
-  await page.getByTestId('workbench-decision-agent-picker-model-gpt-5.6-sol').click();
   await page.getByTestId('workbench-decision-agent-picker-thinking-high').click();
-  await page.getByTestId('workbench-decision-agent-picker-done').click();
+  await expect(inline.getByTestId('workbench-decision-route-change'))
+    .toContainText('from codex · gpt-5.6-sol · medium');
   await inline.getByTestId('workbench-decision-confirm-rework').click();
 
   await expect(inline.getByTestId('workbench-decision-receipt'))
@@ -958,6 +975,40 @@ test('unchanged revision round restores Dossier decisions and links its card', a
   await page.screenshot({ path: resolve(RESULTS, 'agt-3843-unchanged-rework-round.png'), fullPage: true });
   await inline.getByTestId('workbench-decision-open-revision-card').click();
   await expect(page.getByRole('tab', { name: 'Naming concept' })).toContainText('AGT-2600');
+});
+
+test('rework on a Codex concept card shows and records a switch to Claude (AGT-3838)', async ({ page, devBackend }) => {
+  expect(devBackend.port).toBeGreaterThan(0);
+  mkdirSync(RESULTS, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  const captured = await installMocks(page);
+  await seedWorkbench(page);
+  await page.goto('/');
+  await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
+
+  const inline = page.getByTestId('workbench-inline-decision-action');
+  await inline.getByTestId('workbench-decision-rework').click();
+  const form = inline.getByTestId('workbench-decision-rework-confirmation');
+  await expect(form.getByTestId('workbench-decision-agent'))
+    .toHaveAttribute('aria-label', /gpt-5\.6-sol/);
+  await form.getByTestId('workbench-decision-rework-request').fill('Add a privacy section.');
+
+  await form.getByTestId('workbench-decision-agent').click();
+  await page.getByTestId('workbench-decision-agent-picker-cli-claude').click();
+  await page.getByTestId('workbench-decision-agent-picker-model-claude-opus-4-6').click();
+  await page.getByTestId('workbench-decision-agent-picker-done').click();
+  const change = form.getByTestId('workbench-decision-route-change');
+  await expect(change).toContainText('from codex · gpt-5.6-sol · medium');
+  await expect(change).toContainText('to claude · claude-opus-4-6');
+  await page.screenshot({ path: resolve(RESULTS, 'agt-3838-rework-route-change--light-1280.png') });
+
+  await form.getByTestId('workbench-decision-confirm-rework').click();
+  await expect(inline.getByTestId('workbench-decision-route-change-receipt'))
+    .toContainText('Agent changed from codex · gpt-5.6-sol · medium to claude · claude-opus-4-6');
+  expect(captured.decisionBodies[1]).toEqual(expect.objectContaining({
+    outcome: 'rework', cliType: 'claude', model: 'claude-opus-4-6',
+  }));
+  await page.screenshot({ path: resolve(RESULTS, 'agt-3838-rework-route-receipt--light-1280.png') });
 });
 
 // AGT-3697: a concept delivery publishes status decision-pending and leaves
@@ -1039,8 +1090,11 @@ for (const variant of [
     await expect(form.getByTestId('workbench-decision-revision-card'))
       .toContainText('AGT-2600 · Concept: naming contract');
     await expect(form.getByTestId('workbench-decision-revision-card')).toContainText('Accepted');
+    // AGT-3838: the form starts on the card's own route, not the Claude browser default.
     await expect(form.getByTestId('workbench-decision-agent'))
-      .toHaveAttribute('aria-label', /claude-opus-4-6/);
+      .toHaveAttribute('aria-label', /gpt-5\.6-sol/);
+    await expect(form.getByTestId('workbench-decision-route-change')).toHaveCount(0);
+    await expect(form.getByTestId('workbench-decision-route-kept')).toContainText('AGT-2600');
     const confirm = form.getByTestId('workbench-decision-confirm-rework');
     await expect(confirm).toBeDisabled();
     await form.getByTestId('workbench-decision-rework-request')
@@ -1067,7 +1121,7 @@ for (const variant of [
       .toContainText('Add a privacy section');
     expect(captured.steerBodies).toHaveLength(0);
     expect(captured.decisionBodies[1]).toEqual(expect.objectContaining({
-      outcome: 'rework', confirmed: true, cliType: 'claude', model: 'claude-opus-4-6',
+      outcome: 'rework', confirmed: true, cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'medium',
       request: 'Add a privacy section that says what the public name may contain.',
       responses: [expect.objectContaining({ selectedOptionIds: ['option-b'] })],
     }));

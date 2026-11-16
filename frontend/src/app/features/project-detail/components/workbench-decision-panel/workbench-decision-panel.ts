@@ -35,6 +35,7 @@ import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draf
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
 import { WorkbenchDecisionActionsComponent } from '../workbench-decision-actions/workbench-decision-actions.component';
 import {
+  agentRouteText,
   createOperationId,
   decisionOutcomeTone,
   decisionStageTone,
@@ -114,6 +115,7 @@ export class WorkbenchDecisionPanelComponent {
         ? result.revisionRound ?? null : null);
   });
   readonly revisionRoundText = revisionRoundText;
+  readonly agentRouteText = agentRouteText;
   readonly pending = computed(() => this.requestState().pending !== null);
   readonly settled = computed(() => {
     const decision = this.persistedDecision();

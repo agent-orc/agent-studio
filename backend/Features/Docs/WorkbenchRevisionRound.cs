@@ -4,6 +4,10 @@ namespace AgentStudio.Docs;
 /// The card that runs a Dossier revision. <paramref name="Available"/> is false
 /// when no source concept card can take a follow-up round; <paramref name="Reason"/>
 /// then says why, and nothing may be written for the rework request.
+/// <paramref name="CliType"/>, <paramref name="Model"/> and
+/// <paramref name="ThinkingLevel"/> are the card's current agent route, which
+/// the rework form preselects so a round never reroutes the card unasked
+/// (AGT-3838).
 /// </summary>
 public sealed record WorkbenchRevisionCard(
     bool Available,
@@ -12,10 +16,48 @@ public sealed record WorkbenchRevisionCard(
     string? Title,
     string? Lane,
     string? Mode,
-    string? Reason)
+    string? Reason,
+    string? CliType = null,
+    string? Model = null,
+    string? ThinkingLevel = null)
 {
     public static WorkbenchRevisionCard Unavailable(string reason) =>
         new(false, null, null, null, null, null, reason);
+
+    /// <summary>The card's route before the round, or null when no card runs it.</summary>
+    public WorkbenchAgentRoute? Route => Available
+        ? new WorkbenchAgentRoute(CliType, Model, ThinkingLevel)
+        : null;
+}
+
+/// <summary>A card's CLI, model and thinking level; blank parts mean the CLI default.</summary>
+public sealed record WorkbenchAgentRoute(string? CliType, string? Model, string? ThinkingLevel)
+{
+    /// <summary>
+    /// The route the card runs on after a round that asked for
+    /// <paramref name="requested"/>: the continue admission keeps a blank CLI
+    /// or model, and keeps a blank thinking level only while CLI and model
+    /// stay, because a new model resolves its own default level.
+    /// </summary>
+    public WorkbenchAgentRoute After(WorkbenchAgentRoute requested)
+    {
+        var cli = Blank(requested.CliType) ? Norm(CliType) : requested.CliType!.Trim();
+        var model = Blank(requested.Model) ? Norm(Model) : requested.Model!.Trim();
+        var sameModel = string.Equals(cli, Norm(CliType), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(model, Norm(Model), StringComparison.Ordinal);
+        var thinking = Blank(requested.ThinkingLevel)
+            ? sameModel ? Norm(ThinkingLevel) : null
+            : requested.ThinkingLevel!.Trim();
+        return new(cli, model, thinking);
+    }
+
+    public bool SameAs(WorkbenchAgentRoute other) =>
+        string.Equals(Norm(CliType), Norm(other.CliType), StringComparison.OrdinalIgnoreCase)
+        && string.Equals(Norm(Model), Norm(other.Model), StringComparison.Ordinal)
+        && string.Equals(Norm(ThinkingLevel), Norm(other.ThinkingLevel), StringComparison.OrdinalIgnoreCase);
+
+    private static bool Blank(string? value) => string.IsNullOrWhiteSpace(value);
+    private static string? Norm(string? value) => Blank(value) ? null : value!.Trim();
 }
 
 /// <summary>
@@ -77,7 +119,10 @@ public static class WorkbenchRevisionCardPolicy
             {
                 var card = live[0];
                 return new WorkbenchRevisionCard(true, card.Key ?? card.Id, card.Id, card.Title,
-                    card.State, card.Mode, null);
+                    card.State, card.Mode, null,
+                    string.IsNullOrWhiteSpace(card.CliType) ? CliTypes.Claude : card.CliType.Trim(),
+                    string.IsNullOrWhiteSpace(card.Model) ? null : card.Model.Trim(),
+                    string.IsNullOrWhiteSpace(card.ThinkingLevel) ? null : card.ThinkingLevel.Trim());
             }
             if (live.Length > 1)
                 return WorkbenchRevisionCard.Unavailable(

@@ -51,7 +51,8 @@ public static class TaskDetailResources
         group.MapGet("/{jobId}/details/git", (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
             ITaskCoreRuntime runtime, TaskListGitProjectionCache snapshots,
-            TaskScannerService scanner, ProjectSettingsService projectSettings, ILoggerFactory loggerFactory) =>
+            TaskScannerService scanner, ProjectSettingsService projectSettings,
+            TaskIntegrationStatusService integrationStatus, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = AgentStudio.Git.GitProcessTelemetry.BeginRequest("tasks/detail/git",
                 loggerFactory.CreateLogger("TaskGitResource"), includeNested: true);
@@ -71,7 +72,9 @@ public static class TaskDetailResources
             // Same contract fallback as the full detail read (AGT-3621): a
             // code-free card is not-applicable before its first Git fact.
             if (ReferenceEquals(task, resident))
-                integration = TaskEndpointHelpers.WithContractIntegration(task with { Integration = integration },
+                integration = TaskEndpointHelpers.WithContractIntegration(
+                    new[] { task with { Integration = integration } }
+                        .WithRecordedIntegrationFailure(integrationStatus).Single(),
                     projectSettings.Get(task.ProjectName).IntegrationBranch).Integration;
             var data = new TaskGitResource(
                 snapshot.Merge.GetValueOrDefault(key), integration,

@@ -161,8 +161,22 @@
   max-height: none;
   min-height: 0;
 }
+.escalation-details__section--maximizable {
+  > summary { padding-inline-end: calc(var(--studio-spacing-3) * 2 + 24px); }
+
+  // The maximized state is position: fixed, which also anchors the button.
+  &:not(.escalation-details__section--maximized) { position: relative; }
+}
+// Sits over the summary row's end; 24 px is the WCAG 2.2 minimum target.
 .escalation-details__maximize {
-  margin-inline-start: auto;
+  position: absolute;
+  top: var(--studio-spacing-1);
+  inset-inline-end: var(--studio-spacing-3);
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
   border: 1px solid var(--studio-border);
   border-radius: var(--studio-spacing-1);
   background: var(--studio-bg-elevated);

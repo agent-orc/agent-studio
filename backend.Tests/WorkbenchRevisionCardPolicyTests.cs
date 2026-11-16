@@ -29,6 +29,60 @@ public sealed class WorkbenchRevisionCardPolicyTests
     }
 
     [Fact]
+    public void Resolve_CarriesTheCardsCurrentRouteForTheReworkForm()
+    {
+        // AGT-3838: the rework form preselects this route, so a round does not
+        // move a Codex concept card onto the browser's default Claude route.
+        var card = WorkbenchRevisionCardPolicy.Resolve("Project", ["PRJ-7"],
+        [
+            Task("concept", "PRJ-7", TaskStates.Completed) with
+            {
+                CliType = "codex", Model = "gpt-5-codex", ThinkingLevel = "medium",
+            },
+        ]);
+
+        Assert.Equal("codex", card.CliType);
+        Assert.Equal("gpt-5-codex", card.Model);
+        Assert.Equal("medium", card.ThinkingLevel);
+        Assert.Equal(new WorkbenchAgentRoute("codex", "gpt-5-codex", "medium"), card.Route);
+    }
+
+    [Fact]
+    public void Resolve_NamesClaudeForACardWithoutAStoredCli()
+    {
+        var card = WorkbenchRevisionCardPolicy.Resolve("Project", ["PRJ-7"],
+            [Task("concept", "PRJ-7", TaskStates.Completed)]);
+
+        Assert.Equal(CliTypes.Claude, card.CliType);
+        Assert.Null(card.Model);
+        Assert.Null(card.ThinkingLevel);
+    }
+
+    [Theory]
+    [InlineData("codex", "gpt-5-codex", "medium", true)]
+    [InlineData(null, null, null, true)]
+    [InlineData(" Codex ", "gpt-5-codex", "MEDIUM", true)]
+    [InlineData("claude", "claude-opus-5", "high", false)]
+    [InlineData(null, "gpt-5.1-codex", null, false)]
+    [InlineData(null, null, "high", false)]
+    [InlineData("claude", "claude-opus-5", null, false)]
+    public void Route_AfterKeepsBlankPartsOfTheRequest(
+        string? cliType, string? model, string? thinkingLevel, bool unchanged)
+    {
+        var before = new WorkbenchAgentRoute("codex", "gpt-5-codex", "medium");
+
+        var after = before.After(new WorkbenchAgentRoute(cliType, model, thinkingLevel));
+
+        Assert.Equal(unchanged, before.SameAs(after));
+    }
+
+    [Fact]
+    public void Route_IsNullWhenNoCardRunsTheRevision()
+    {
+        Assert.Null(WorkbenchRevisionCard.Unavailable("none").Route);
+    }
+
+    [Fact]
     public void Resolve_SkipsAnArchivedSourceForALaterLiveOne()
     {
         var card = WorkbenchRevisionCardPolicy.Resolve("Project", ["PRJ-1", "PRJ-2"],

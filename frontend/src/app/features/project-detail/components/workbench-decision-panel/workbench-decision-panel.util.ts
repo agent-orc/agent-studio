@@ -1,11 +1,13 @@
 import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { laneName } from '../../../../models/lane-presentation';
 import { HttpErrorResponse } from '@angular/common/http';
-import { CLI_TYPES, CliType } from '../../../../models/task.model';
+import { CLI_TYPES, CliType, CreateTaskRequest } from '../../../../models/task.model';
 import {
+  WorkbenchAgentRoute,
   WorkbenchDecisionPoint,
   WorkbenchDecisionResponse,
   WorkbenchDocument,
+  WorkbenchRevisionCard,
   WorkbenchRevisionRound,
   WorkbenchTaskDraft,
 } from '../../../../models/project-docs.model';
@@ -129,6 +131,76 @@ export function revisionRoundText(round: WorkbenchRevisionRound): string {
     case 'saved': return `Revision request saved on ${card}. ${round.detail ?? ''}`.trim();
     default: return `The rework request is recorded, but the revision round on ${card} could not start: ${round.detail ?? 'unknown reason'}`;
   }
+}
+
+/** One readable line for a card route, for example `codex · gpt-5-codex · high`. */
+export function agentRouteText(route: WorkbenchAgentRoute): string {
+  const parts = [route.cliType?.trim() || 'CLI default', route.model?.trim() || 'model default'];
+  if (route.thinkingLevel?.trim()) parts.push(route.thinkingLevel.trim());
+  return parts.join(' · ');
+}
+
+/**
+ * The route a card runs on after a round that asked for `requested`. The
+ * continue admission keeps a blank CLI or model, and keeps a blank thinking
+ * level only while CLI and model stay; the server records the same (AGT-3838).
+ */
+export function agentRouteAfter(
+  current: WorkbenchAgentRoute, requested: WorkbenchAgentRoute,
+): WorkbenchAgentRoute {
+  const cliType = requested.cliType?.trim() || current.cliType?.trim() || null;
+  const model = requested.model?.trim() || current.model?.trim() || null;
+  const sameModel = cliType?.toLowerCase() === (current.cliType?.trim() || null)?.toLowerCase()
+    && model === (current.model?.trim() || null);
+  const thinkingLevel = requested.thinkingLevel?.trim()
+    || (sameModel ? current.thinkingLevel?.trim() || null : null);
+  return { cliType, model, thinkingLevel };
+}
+
+export function sameAgentRoute(a: WorkbenchAgentRoute, b: WorkbenchAgentRoute): boolean {
+  const norm = (value: string | null | undefined) => value?.trim() || null;
+  return norm(a.cliType)?.toLowerCase() === norm(b.cliType)?.toLowerCase()
+    && norm(a.model) === norm(b.model)
+    && norm(a.thinkingLevel)?.toLowerCase() === norm(b.thinkingLevel)?.toLowerCase();
+}
+
+export interface AgentChoice { cliType: CliType; model: string; thinkingLevel: string | null }
+
+export function defaultAgent(): AgentChoice {
+  const cli = readDefaultCli();
+  return { cliType: cli, model: readDefaultModel(cli), thinkingLevel: readDefaultThinkingLevel(cli) };
+}
+
+/** The revision card's current route, or null when the server did not name a known CLI. */
+export function revisionCardRoute(card: WorkbenchRevisionCard | null): AgentChoice | null {
+  const cli = card?.available ? card.cliType?.trim() : null;
+  if (!card || !cli || !(CLI_TYPES as readonly string[]).includes(cli)) return null;
+  return { cliType: cli as CliType, model: card.model?.trim() ?? '', thinkingLevel: card.thinkingLevel ?? null };
+}
+
+/** The board card a feature-spawn decision creates, pinned to the confirmed agent route. */
+export function featureJobRequest(
+  document: WorkbenchDocument, draft: WorkbenchTaskDraft, points: readonly WorkbenchDecisionPoint[],
+  responses: readonly WorkbenchDecisionResponse[], agent: AgentChoice, watchPath: string,
+): CreateTaskRequest {
+  return {
+    title: draft.title, agent: agent.cliType, watchPath,
+    promptMarkdown: cardPrompt(document, draft, points, responses),
+    targetState: draft.initialLane, cliType: agent.cliType,
+    model: agent.model || undefined, thinkingLevel: agent.thinkingLevel || undefined,
+    modelExplicit: true, thinkingLevelExplicit: true,
+    taskType: draft.taskType, mode: draft.mode,
+    dossier: { path: document.workbench.entryPath },
+  };
+}
+
+/** The from and to lines of the route change a rework confirmation would make, or null. */
+export function reworkRouteChange(
+  from: AgentChoice | null, requested: AgentChoice,
+): { from: string; to: string } | null {
+  if (!from) return null;
+  const to = agentRouteAfter(from, requested);
+  return sameAgentRoute(from, to) ? null : { from: agentRouteText(from), to: agentRouteText(to) };
 }
 
 export function taskKeyTail(taskKey: string): string {
