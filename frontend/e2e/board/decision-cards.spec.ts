@@ -257,17 +257,9 @@ async function installRoutes(page: Page): Promise<Fixture> {
   return fx;
 }
 
-/**
- * Phone framing: the shell reserves a fixed Explorer track while the rail is
- * open, which squeezes the content to a sliver at 390 px. Close the rail for
- * the evidence shot (screenshot framing only, as in done-decide-escalated-card).
- */
+/** At 390 px the shell hides the Explorer and the activity rail (AGT-3836), so the content gets the full width. */
 async function toPhone(page: Page): Promise<void> {
   await page.setViewportSize(PHONE);
-  const explorer = page.getByTestId('studio-ab-explorer');
-  if (await explorer.evaluate(el => el.classList.contains('studio-ab__btn--active')).catch(() => false)) {
-    await explorer.click();
-  }
   await page.waitForTimeout(300);
 }
 

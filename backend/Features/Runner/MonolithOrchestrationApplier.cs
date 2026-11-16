@@ -255,10 +255,21 @@ public sealed class MonolithOrchestrationApplier(
                         RecordedAtUtc = DateTimeOffset.UtcNow,
                     });
             }
-            if (RemoteDeliverySettlementStore.Read(task.FolderPath)?.Stage
-                < RemoteDeliverySettlementStage.IntegrationSettled)
+            var settlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
+            // AGT-3883: develop already carries this delivery, for example as a
+            // net-change publication after develop moved on. Integrating it
+            // again would publish a second, empty net change.
+            if (settlement?.Stage < RemoteDeliverySettlementStage.IntegrationSettled
+                && services.GetService<TaskIntegrationStatusService>()?.BuildLookup([task])
+                    .Values.FirstOrDefault()?.Status == IntegrationStatuses.Integrated)
+                RemoteDeliverySettlementStore.RecordIntegration(task.FolderPath,
+                    nameof(MergeIntoIntegrationOutcome.AlreadyMerged), null);
+            else if (settlement?.Stage < RemoteDeliverySettlementStage.IntegrationSettled)
             {
-                var result = await integration.EnqueueAsync(request);
+                // A retry the stranding watchdog reopened must not get the
+                // failed result of the same delivery back from the replay cache.
+                var result = await integration.EnqueueAsync(request,
+                    discardCompletedReplay: settlement.DiscardCompletedReplay);
                 // The integration can move the card, an agent round to Ready,
                 // and its folder with it; read the card it left.
                 scanner.InvalidateCache();
