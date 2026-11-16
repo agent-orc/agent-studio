@@ -1,3 +1,4 @@
+import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import type { CliType } from '../../../../models/task.model';
@@ -277,7 +278,7 @@ export class CliAdminPanelComponent implements OnInit, OnDestroy {
 
   formatReset(resetAt: string | null): string {
     if (!resetAt) return 'reset unknown';
-    return `resets ${new Date(resetAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+    return `resets ${formatZonedTime(resetAt, browserTimeZone()) ?? resetAt}`;
   }
 
   barWidth(pct: number | null): number {
