@@ -5,16 +5,20 @@
       <button type="button" class="batch-lane-indicator" data-testid="batch-lane-indicator" (click)="panelProject.set(project)"
         [attr.data-batch-alert]="alert?.state ?? null" [attr.data-batch-id]="alert?.batchId ?? null"
         [attr.title]="alert ? alertTitle(alert) : null">
-        @if (projects().length > 1) { {{ project }} · }
         @if (alert) {
-          <app-status-indicator [tone]="alert.state === 'red' ? 'danger' : 'running'" [label]="alertLabel(alert)"
-            [compact]="true" testId="batch-lane-alert" />
-          @if (alert.culprits.length) { {{ alert.culprits.join(', ') }} proven red · }
+          <span class="batch-lane-indicator__alert" data-testid="batch-lane-alert-line">
+            <app-status-indicator [tone]="alert.state === 'red' ? 'danger' : 'running'" [label]="alertLabel(alert)"
+              [compact]="true" [wrap]="true" testId="batch-lane-alert" />
+            @if (alert.culprits.length) { <span data-testid="batch-lane-culprits">{{ alert.culprits.join(', ') }} proven red</span> }
+          </span>
         }
-        @if (batch.plan.decision !== 'disabled') {
-          Batch: {{ waitingFor(project) }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running
-        }
-        @if (batch.perTaskGates?.length) { @if (batch.plan.decision !== 'disabled') { · } Per-task gates: {{ perTaskFor(project).queued }} queued · {{ perTaskFor(project).running }} running }
+        <span class="batch-lane-indicator__summary" data-testid="batch-lane-summary">
+          @if (projects().length > 1) { {{ project }} · }
+          @if (batch.plan.decision !== 'disabled') {
+            Batch: {{ waitingFor(project) }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running
+          }
+          @if (batch.perTaskGates?.length) { @if (batch.plan.decision !== 'disabled') { · } Per-task gates: {{ perTaskFor(project).queued }} queued · {{ perTaskFor(project).running }} running }
+        </span>
       </button>
     }
   }

@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, OnDestroy, afterNextRender, computed, effect, inject, input, signal, viewChild } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
-import { batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine } from '../../../models/batch-gate.model';
+import { batchAlert, batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine } from '../../../models/batch-gate.model';
 import { formatDurationMinutes } from '../../../models/duration-format';
 import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
@@ -17,7 +18,7 @@ import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-m
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
-  imports: [PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent],
+  imports: [NgTemplateOutlet, PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',
@@ -34,6 +35,19 @@ export class BatchPanelComponent implements OnDestroy {
     const older = this.history()?.batches ?? [];
     const currentIds = new Set(current.map(batch => batch.batchId));
     return [...current, ...older.filter(batch => !currentIds.has(batch.batchId))];
+  });
+  /**
+   * F14: the batch the lane pill names as red or isolating, then every running
+   * batch, open the panel; statistics and history follow.
+   */
+  readonly activeBatches = computed(() => {
+    const alert = batchAlert(this.state())?.batchId;
+    return this.batches().filter(batch => batch.batchId === alert || batch.phase === 'running')
+      .sort((a, b) => Number(b.batchId === alert) - Number(a.batchId === alert));
+  });
+  readonly recentBatches = computed(() => {
+    const active = new Set(this.activeBatches().map(batch => batch.batchId));
+    return this.batches().filter(batch => !active.has(batch.batchId));
   });
   readonly failures = signal<BatchTestFailureReport | null>(null);
   readonly failureError = signal(false);

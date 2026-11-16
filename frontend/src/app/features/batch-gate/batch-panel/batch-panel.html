@@ -7,6 +7,14 @@
   <div #body class="batch-panel__body" data-testid="batch-panel-body" tabindex="0" (keydown)="onBodyKeydown($event)">
     @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
     @if (state(); as data) {
+      @if (activeBatches().length) {
+        <section aria-labelledby="batch-active-title" data-testid="batch-active">
+          <h3 id="batch-active-title">Red and running batches</h3>
+          @for (batch of activeBatches(); track batch.batchId) {
+            <ng-container *ngTemplateOutlet="batchCard; context: { $implicit: batch, data: data }" />
+          }
+        </section>
+      }
       @if (data.quarantined?.length) { <app-batch-quarantine [records]="data.quarantined!" /> }
       @if (data.gateSlots; as slots) {
         <p data-testid="batch-gate-slot-usage">Gate slots: {{ slots.busy }}/{{ slots.total }} busy</p>
@@ -168,60 +176,14 @@
           }</ul>
         </section>
       }
-      <section aria-labelledby="batch-history-title">
-        <h3 id="batch-history-title">Running and recent batches</h3>
-        @if (batches().length) {
-          @for (batch of batches(); track batch.batchId) {
-            <article class="batch-panel__batch" [id]="'batch-' + batch.batchId" [attr.data-phase]="batch.phase">
-              <h4>Batch {{ batch.batchId }} @if (batch.parentBatchId) { <small>from {{ batch.parentBatchId }}</small> }</h4>
-              <p data-testid="batch-phase">Phase: <app-status-indicator [tone]="phaseTone(batch.phase)" [label]="batch.phase" [compact]="true" />@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (phaseReasonLabel(batch.phaseReason); as reason) { · {{ reason }} }</p>
-              <p class="batch-panel__time" data-testid="batch-phase-time">{{ batch.phase }} {{ timeLine(batch.phaseAtUtc) }}</p>
-              @if (batch.lastProgressAtUtc) { <p class="batch-panel__time" data-testid="batch-last-progress">Last progress {{ date(batch.lastProgressAtUtc) }}</p> }
-              @if (batch.claimAgeMinutes !== null && batch.claimAgeMinutes !== undefined) { <p class="batch-panel__time" data-testid="batch-claim-age">Flight claim: {{ formatDurationMinutes(batch.claimAgeMinutes) }}@if (batch.reservationWaitMinutes !== null && batch.reservationWaitMinutes !== undefined) { · reservation wait: {{ formatDurationMinutes(batch.reservationWaitMinutes) }} }</p> }
-              @if (batch.nextAction; as next) { <p data-testid="batch-next-action">Next: {{ next.action }} · by {{ date(next.dueAtUtc) }}</p> }
-              @if (batch.phase === 'running' && batch.liveFlight === false && batch.recoveryStatus) {
-                <p role="status">Recovery pending: {{ batch.recoveryStatus.reason }}. Next retry {{ retryTime(batch.recoveryStatus.nextRetryAtUtc) }}.</p>
-              }
-              @if (isolationState(batch); as state) { <p data-testid="batch-isolation-state">{{ state }}</p> }
-              @if (batch.phaseHistory?.length) {
-                <details class="batch-panel__history"><summary>Phase history</summary>
-                  <ol>@for (step of batch.phaseHistory; track step.atUtc + step.phase) { <li>{{ date(step.atUtc) }} · {{ step.phase }}@if (step.reason) { · {{ step.reason }} }</li> }</ol>
-                </details>
-              }
-              @if (batch.phase === 'red') { <p data-testid="batch-red-next">Next: {{ redNext(batch) }}</p> }
-              @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
-              @if (batch.exclusions?.length) {
-                <ul aria-label="Cards placed in another batch">
-                  @for (exclusion of batch.exclusions; track exclusion.taskKey) {
-                    <li>{{ exclusion.taskKey }} · {{ exclusion.detail ?? exclusion.reason }}</li>
-                  }
-                </ul>
-              }
-              <p>Members: @for (member of batch.members; track member.taskKey) { <span><a [href]="memberHref(member.taskKey)" (click)="openMember($event, member.taskKey)">{{ member.taskKey }}@if (memberTitle(member.taskKey); as title) { · {{ title }} }</a> ({{ member.disposition ?? 'unknown disposition' }} · {{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }})
-                @if (batch.phase === 'red' && !batch.parentBatchId && !member.released && data.pending.some(item => item.taskKey === member.taskKey)) {
-                  <button type="button" [attr.aria-label]="'Eject ' + member.taskKey"
-                    [disabled]="batch.isolationActive !== false || ejectRequests().some(request => request.taskKey === member.taskKey && request.status === 'pending')"
-                    [title]="batch.isolationActive !== false ? 'Eject is available after isolation ends.' : 'Eject this member from the batch.'"
-                    (click)="showConfirm(member.taskKey)">Eject</button>
-                }
-              </span> }</p>
-              @if (isolationRows(batch); as rows) { <app-batch-isolation [project]="project()" [batchId]="batch.batchId" [rows]="rows" /> }
-              <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
-                @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }
-              </p>
-              @if (batch.runs.length) {
-                <ul>@for (run of batch.runs; track run.batchRunId) {
-                  <li>{{ run.host }} · <app-status-indicator [tone]="runTone(runStatus(batch, run))" [label]="runStatus(batch, run)" [compact]="true" /> @if (run.classification) { · {{ run.classification }} }
-                    · @if (!runIsRunning(batch, run)) { {{ runDuration(batch, run) }} · }{{ timeLine(run.startedAtUtc, run.finishedAtUtc) }}
-                    · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId)" target="_blank" rel="noopener">Evidence</a>
-                    · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId, 'log')" target="_blank" rel="noopener">Run log</a>
-                    @if (run.evidenceAvailable === false) { · Artifacts pending }
-                    @if (run.hang) { · <span data-testid="batch-shard-hang">{{ run.hang }}</span> }</li>
-                }</ul>
-              }
-            </article>
+      <section aria-labelledby="batch-history-title" data-testid="batch-recent">
+        <h3 id="batch-history-title">{{ activeBatches().length ? 'Recent batches' : 'Running and recent batches' }}</h3>
+        @if (recentBatches().length) {
+          @for (batch of recentBatches(); track batch.batchId) {
+            <ng-container *ngTemplateOutlet="batchCard; context: { $implicit: batch, data: data }" />
           }
-        } @else { <p>No batches have run yet.</p> }
+        } @else if (!activeBatches().length) { <p>No batches have run yet.</p> }
+        @else { <p>No other batches.</p> }
       </section>
     } @else if (!error()) { <p>Loading batch verification…</p> }
   </div>
@@ -239,3 +201,53 @@
     </div>
   }
 </section>
+<ng-template #batchCard let-batch let-data="data">
+  <article class="batch-panel__batch" [id]="'batch-' + batch.batchId" [attr.data-phase]="batch.phase">
+    <h4>Batch {{ batch.batchId }} @if (batch.parentBatchId) { <small>from {{ batch.parentBatchId }}</small> }</h4>
+    <p data-testid="batch-phase">Phase: <app-status-indicator [tone]="phaseTone(batch.phase)" [label]="batch.phase" [compact]="true" />@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (phaseReasonLabel(batch.phaseReason); as reason) { · {{ reason }} }</p>
+    <p class="batch-panel__time" data-testid="batch-phase-time">{{ batch.phase }} {{ timeLine(batch.phaseAtUtc) }}</p>
+    @if (batch.lastProgressAtUtc) { <p class="batch-panel__time" data-testid="batch-last-progress">Last progress {{ date(batch.lastProgressAtUtc) }}</p> }
+    @if (batch.claimAgeMinutes !== null && batch.claimAgeMinutes !== undefined) { <p class="batch-panel__time" data-testid="batch-claim-age">Flight claim: {{ formatDurationMinutes(batch.claimAgeMinutes) }}@if (batch.reservationWaitMinutes !== null && batch.reservationWaitMinutes !== undefined) { · reservation wait: {{ formatDurationMinutes(batch.reservationWaitMinutes) }} }</p> }
+    @if (batch.nextAction; as next) { <p data-testid="batch-next-action">Next: {{ next.action }} · by {{ date(next.dueAtUtc) }}</p> }
+    @if (batch.phase === 'running' && batch.liveFlight === false && batch.recoveryStatus) {
+      <p role="status">Recovery pending: {{ batch.recoveryStatus.reason }}. Next retry {{ retryTime(batch.recoveryStatus.nextRetryAtUtc) }}.</p>
+    }
+    @if (isolationState(batch); as state) { <p data-testid="batch-isolation-state">{{ state }}</p> }
+    @if (batch.phaseHistory?.length) {
+      <details class="batch-panel__history"><summary>Phase history</summary>
+        <ol>@for (step of batch.phaseHistory; track step.atUtc + step.phase) { <li>{{ date(step.atUtc) }} · {{ step.phase }}@if (step.reason) { · {{ step.reason }} }</li> }</ol>
+      </details>
+    }
+    @if (batch.phase === 'red') { <p data-testid="batch-red-next">Next: {{ redNext(batch) }}</p> }
+    @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
+    @if (batch.exclusions?.length) {
+      <ul aria-label="Cards placed in another batch">
+        @for (exclusion of batch.exclusions; track exclusion.taskKey) {
+          <li>{{ exclusion.taskKey }} · {{ exclusion.detail ?? exclusion.reason }}</li>
+        }
+      </ul>
+    }
+    <p>Members: @for (member of batch.members; track member.taskKey) { <span><a [href]="memberHref(member.taskKey)" (click)="openMember($event, member.taskKey)">{{ member.taskKey }}@if (memberTitle(member.taskKey); as title) { · {{ title }} }</a> ({{ member.disposition ?? 'unknown disposition' }} · {{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }})
+      @if (batch.phase === 'red' && !batch.parentBatchId && !member.released && data.pending.some(item => item.taskKey === member.taskKey)) {
+        <button type="button" [attr.aria-label]="'Eject ' + member.taskKey"
+          [disabled]="batch.isolationActive !== false || ejectRequests().some(request => request.taskKey === member.taskKey && request.status === 'pending')"
+          [title]="batch.isolationActive !== false ? 'Eject is available after isolation ends.' : 'Eject this member from the batch.'"
+          (click)="showConfirm(member.taskKey)">Eject</button>
+      }
+    </span> }</p>
+    @if (isolationRows(batch); as rows) { <app-batch-isolation [project]="project()" [batchId]="batch.batchId" [rows]="rows" /> }
+    <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
+      @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }
+    </p>
+    @if (batch.runs.length) {
+      <ul>@for (run of batch.runs; track run.batchRunId) {
+        <li>{{ run.host }} · <app-status-indicator [tone]="runTone(runStatus(batch, run))" [label]="runStatus(batch, run)" [compact]="true" /> @if (run.classification) { · {{ run.classification }} }
+          · @if (!runIsRunning(batch, run)) { {{ runDuration(batch, run) }} · }{{ timeLine(run.startedAtUtc, run.finishedAtUtc) }}
+          · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId)" target="_blank" rel="noopener">Evidence</a>
+          · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId, 'log')" target="_blank" rel="noopener">Run log</a>
+          @if (run.evidenceAvailable === false) { · Artifacts pending }
+          @if (run.hang) { · <span data-testid="batch-shard-hang">{{ run.hang }}</span> }</li>
+      }</ul>
+    }
+  </article>
+</ng-template>
