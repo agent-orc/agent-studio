@@ -9,6 +9,7 @@
       }</tbody>
     </table></div>
     <p>Diagnostic rerun: {{ share(summary()?.diagnosticRerunShare) }} of published batch cards.</p>
+    @if (sameCodeReruns(); as line) { <p class="phase-metrics__reruns" data-testid="batch-same-code-reruns">{{ line }}</p> }
     <p>Per-task fallback cards are excluded from these percentiles.</p>
   </section>
 }

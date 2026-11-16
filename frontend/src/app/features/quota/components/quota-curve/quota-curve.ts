@@ -1,3 +1,4 @@
+import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 import type { QuotaHistoryWindow } from '../../models/quota-history.model';
 import { nearestCurvePoint, quotaCurveGeometry } from '../../quota-forecast.util';
@@ -53,8 +54,6 @@ export class QuotaCurveComponent {
   }
 
   formatTime(iso: string): string {
-    return new Date(iso).toLocaleString('en-US', {
-      weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
-    });
+    return formatZonedTime(iso, browserTimeZone()) ?? iso;
   }
 }

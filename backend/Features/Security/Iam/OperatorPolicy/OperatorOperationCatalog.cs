@@ -208,6 +208,7 @@ public static class OperatorOperationCatalog
         // AGT-3647: the deploy drain of one runner identity on a host.
         new("POST", "/api/clients/{}/drain", OperatorOperationIds.HostDrain),
         new("POST", "/api/clients/{}/resume", OperatorOperationIds.HostResume),
+        new("POST", "/api/clients/{}/deploy-switch", OperatorOperationIds.HostDrain),
         new("POST", "/api/hosts/{}/logs", OperatorOperationIds.HostLogsCollect),
         new("POST", "/api/hosts/{}/configuration", OperatorOperationIds.HostConfigurationApply),
         new("POST", "/api/tasks/{}/integration/retry", OperatorOperationIds.GateRerun),

@@ -23,7 +23,8 @@ public sealed class TaskLiveStatusProjection(
     AttemptAuthorityService attemptAuthority,
     V1ReviewExecutorRegistry reviewExecutors,
     IConfiguration? configuration = null,
-    TimeProvider? time = null)
+    TimeProvider? time = null,
+    ReviewClaimUnclaimableLog? unclaimableLog = null)
 {
     private static readonly HashSet<string> VisibleStates = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -192,7 +193,8 @@ public sealed class TaskLiveStatusProjection(
                 reviewQueue.WaitStateOf(job.ProjectName, job.Id),
                 nowUtc,
                 reviewHost,
-                configuration is null ? null : AutoReviewStrandingWatchdog.RetryOverdueLimit(configuration));
+                configuration is null ? null : AutoReviewStrandingWatchdog.RetryOverdueLimit(configuration),
+                UnclaimableOf(current));
         }
 
         return null;
@@ -269,7 +271,8 @@ public sealed class TaskLiveStatusProjection(
         AutoReviewQueueWaitState? localWait,
         DateTime nowUtc,
         AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto? host = null,
-        TimeSpan? retryOverdueLimit = null)
+        TimeSpan? retryOverdueLimit = null,
+        TaskLiveReviewUnclaimable? unclaimable = null)
     {
         if (!canonical)
         {
@@ -302,6 +305,16 @@ public sealed class TaskLiveStatusProjection(
 
         if (review.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased)
         {
+            // AGT-3840: a key the executor cannot provide holds the review no
+            // matter the load; it was hidden behind "host saturated" while
+            // reviews under the same load passed.
+            if (unclaimable is { Capabilities.Count: > 0 })
+                return new TaskLiveQueue
+                {
+                    Kind = "review",
+                    Unclaimable = unclaimable,
+                    Reason = UnclaimableSentence(unclaimable),
+                };
             if (ReviewHostHold(host) is { } hostHold)
                 return new TaskLiveQueue { Kind = "review", Reason = hostHold };
             // Pending, or a lease that ran out and waits to be re-claimed: the
@@ -366,6 +379,65 @@ public sealed class TaskLiveStatusProjection(
             {
                 Lost = lost,
             };
+    }
+
+    private TaskLiveReviewUnclaimable? UnclaimableOf(BoardReviewActivity? review)
+    {
+        if (unclaimableLog?.Latest(review?.AttemptId) is not { NamesCapabilities: true } observation) return null;
+        return ReviewUnclaimable(
+            observation,
+            reviewExecutors.HostIdOf(observation.ExecutorId),
+            reviewExecutors.HeldCapabilities(observation.ExecutorId));
+    }
+
+    /// <summary>
+    /// AGT-3840: the refused claim of one attempt, joined with the hold the
+    /// executor's own advertisement records for the first missing key.
+    /// </summary>
+    internal static TaskLiveReviewUnclaimable? ReviewUnclaimable(
+        ReviewUnclaimableObservation? observation,
+        string? hostId,
+        IReadOnlyList<AgentStudio.TaskServer.Contracts.HeldCapabilityDto> holds)
+    {
+        if (observation is not { NamesCapabilities: true }) return null;
+        var keys = observation.MissingCapabilities
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (keys.Length == 0) return null;
+        var hold = holds.FirstOrDefault(item => string.Equals(item.Key, keys[0], StringComparison.Ordinal));
+        return new TaskLiveReviewUnclaimable
+        {
+            Capabilities = keys,
+            ExecutorId = observation.ExecutorId,
+            HostId = hostId,
+            Cause = hold?.Cause ?? AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.NotRegistered,
+            Detail = NonBlank(hold?.Detail),
+            ObservedAt = observation.ObservedAt,
+        };
+    }
+
+    private static string UnclaimableSentence(TaskLiveReviewUnclaimable unclaimable)
+    {
+        var where = unclaimable.HostId is { Length: > 0 } hostId
+                    && !string.Equals(hostId, unclaimable.ExecutorId, StringComparison.Ordinal)
+            ? $"{unclaimable.ExecutorId} on host {hostId}"
+            : unclaimable.ExecutorId ?? "the review executor";
+        var state = unclaimable.Cause switch
+        {
+            AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.NotRegistered => "not registered",
+            AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.ProbeIndeterminate => "probe indeterminate",
+            AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.Stale => "advertisement expired",
+            AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.CredentialInvalid => "credential invalid",
+            AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.ProviderIncident => "provider incident",
+            AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.RouteExcluded => "provider routed away",
+            AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.NoReadProof => "no read proof",
+            _ => "not ready",
+        };
+        var detail = unclaimable.Detail is null ? string.Empty : $": {unclaimable.Detail.TrimEnd('.')}";
+        return $"Review cannot be claimed: {where} lacks {string.Join(", ", unclaimable.Capabilities)} "
+               + $"({state}{detail}); seen {Utc(unclaimable.ObservedAt)}.";
     }
 
     internal static string? ReviewHostHold(AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto? host)

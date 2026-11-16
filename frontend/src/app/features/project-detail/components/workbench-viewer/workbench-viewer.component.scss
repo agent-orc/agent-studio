@@ -50,6 +50,14 @@
   outline-offset: 2px;
 }
 
+.workbench-viewer__documentation-blocked {
+  margin: 0;
+  padding: var(--studio-spacing-2) var(--studio-spacing-4);
+  border-bottom: 1px solid var(--studio-border);
+  color: var(--studio-fg-muted);
+  font-size: 0.72rem;
+}
+
 .workbench-viewer__documentation-error {
   margin: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-4);
@@ -127,6 +135,8 @@
 
 @media (max-width: 700px) {
   .workbench-viewer__documentation-ready { align-items: flex-start; flex-direction: column; }
+  // On a phone the document stays the larger part; the action scrolls inside its share.
+  .workbench-viewer__decision-action { max-height: 42%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

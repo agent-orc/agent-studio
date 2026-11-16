@@ -26,6 +26,8 @@ export class CliWindowAnalysisComponent {
   readonly timeline7d = input<TokenTimeline | null>(null);
   readonly refreshing = input(false);
   readonly refresh = output<void>();
+  /** Card analysis carries the split by model and reasoning level. */
+  readonly openAnalysis = output<void>();
 
   readonly period = signal<AnalysisPeriod>('24h');
   readonly periods: readonly AnalysisPeriod[] = ['1h', '24h', '7d'];

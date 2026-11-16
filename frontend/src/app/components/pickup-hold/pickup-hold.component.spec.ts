@@ -310,6 +310,20 @@ describe('PickupHoldComponent', () => {
     expect(navigation.open).toHaveBeenCalledWith(route('execution-hosts'));
   });
 
+  // AGT-3840: the way out opens the refusing host and the key it lacks.
+  it('names and opens the refusing host and capability', () => {
+    const action = { ...route('execution-hosts'), hostId: 'kori-review-01-runner', capability: 'provider-auth:codex' };
+    const root = render({
+      ...REFUSED_DISPATCH,
+      resolutions: [{ ...REFUSED_DISPATCH.resolutions[0], action }],
+    }, 'detail');
+
+    const link = root.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-link-restore-runner-capability"]')!;
+    expect(link.textContent).toContain('Open provider-auth:codex on kori-review-01-runner');
+    link.click();
+    expect(navigation.open).toHaveBeenCalledWith(action);
+  });
+
   it('keeps a decision label as a heading when the click does something else', () => {
     const root = render({
       ...REFUSED_DISPATCH,

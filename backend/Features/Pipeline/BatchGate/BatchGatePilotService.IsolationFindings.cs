@@ -123,7 +123,9 @@ public sealed partial class BatchGatePilotService
                 green.Add(finding.TaskKey);
         // A red child without a readable verdict is derived again on the next tick.
         var settled = true;
-        foreach (var child in red)
+        // AGT-3858: a red same-code re-gate takes the per-card path, so it
+        // proves no member red here.
+        foreach (var child in red.Where(item => item.Manifest.SameCodeRerunOfRunId is null))
         {
             // A red phase also records transport and cancellation failures. Only
             // an executed deterministic verdict can identify an offender.
@@ -206,6 +208,26 @@ public sealed partial class BatchGatePilotService
             var reason = FailureSummary(finding.EvidencePath);
             await EscalateFallbackAsync(task, item, reason, false, true, ct)
                 .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>AGT-3858: the failed tests of a red run, read from its last evidence record for the tested SHA.</summary>
+    private static IReadOnlyList<string> RedRunFailedTests(string? evidencePath, string candidateSha)
+    {
+        if (evidencePath is null || !File.Exists(evidencePath)) return [];
+        try
+        {
+            var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+            var gate = File.ReadLines(evidencePath).Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => JsonSerializer.Deserialize<BuildTestGateResult>(value, options))
+                .LastOrDefault(item => item is not null
+                    && (item.TestedSha is null || string.Equals(item.TestedSha, candidateSha,
+                        StringComparison.OrdinalIgnoreCase)));
+            return gate is null ? [] : BatchGateProbeClassifier.FailedTests(gate);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return [];
         }
     }
 
