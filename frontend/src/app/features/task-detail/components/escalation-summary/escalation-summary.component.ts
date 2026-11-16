@@ -7,7 +7,8 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 
 import { TaskState } from '../../../../models/task.model';
 import { ServerCheckoutRemedyComponent } from '../server-checkout-remedy/server-checkout-remedy.component';
-import { CdkTrapFocus } from '@angular/cdk/a11y';
+import { ModalFocusDirective } from '../../../../directives/modal-focus.directive';
+import { bindOpenToModalStack } from '../../../../services/modal-stack.service';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
 import { BatchGateService } from '../../../../services/batch-gate.service';
@@ -56,7 +57,7 @@ import {
     DisclosureMarkerComponent,
     GateQueueReleaseComponent,
     ServerCheckoutRemedyComponent,
-    CdkTrapFocus,
+    ModalFocusDirective,
   ],
   templateUrl: './escalation-summary.component.html',
   styleUrl: './escalation-summary.component.scss',
@@ -159,6 +160,8 @@ export class EscalationSummaryComponent {
   private collapseJobId: string | null = null;
 
   constructor() {
+    bindOpenToModalStack('escalation-confirm', this.decisionDialog, () => this.decisionDialog.set(null));
+
     // The summary needs the ledger for reissue history and the parked reason
     // even when the operator has not opened the Timeline tab.
     effect(() => this.timelinePoll.syncTo(this.detail().info));

@@ -6,6 +6,7 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskCardComponent } from './task-card.component';
 import type { TaskInfo } from '../../../../models/task.model';
+import { returnFocusToOpener } from '../../../../directives/modal-focus.directive';
 
 /**
  * AGT-3834: after Create the dialog closes and focus fell to the body. The
@@ -37,6 +38,37 @@ describe('TaskCardComponent just-created focus (AGT-3834)', () => {
     (document.activeElement as HTMLElement | null)?.blur();
     const card = await mount('task-other');
     expect(document.activeElement).not.toBe(card);
+  });
+
+  it('takes the focus the closing create dialog handed back to its opener', async () => {
+    const opener = document.createElement('button');
+    const dialog = document.createElement('div');
+    document.body.append(opener, dialog);
+    try {
+      returnFocusToOpener(opener, dialog);
+      expect(document.activeElement).toBe(opener);
+      const card = await mount('task-new');
+      expect(document.activeElement).toBe(card);
+    } finally {
+      opener.remove();
+      dialog.remove();
+    }
+  });
+
+  it('keeps an opener the user refocused after the dialog closed', async () => {
+    const opener = document.createElement('button');
+    const dialog = document.createElement('div');
+    document.body.append(opener, dialog);
+    try {
+      returnFocusToOpener(opener, dialog);
+      opener.blur();
+      opener.focus();
+      await mount('task-new');
+      expect(document.activeElement).toBe(opener);
+    } finally {
+      opener.remove();
+      dialog.remove();
+    }
   });
 
   it('does not steal focus the user already moved', async () => {

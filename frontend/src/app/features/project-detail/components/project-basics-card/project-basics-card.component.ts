@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { catchError, forkJoin, of } from 'rxjs';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
@@ -21,6 +21,7 @@ import { TaskService } from '../../../../services/task.service';
 import { WorkspaceManagerService } from '../../../shell/state/workspace-manager.service';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 import { ProjectRepositoryCardComponent } from '../project-repository-card/project-repository-card';
+import { ServerCheckoutNoticeComponent, ServerCheckoutStore } from '../../../server-checkout';
 
 interface CheckoutStatus {
   status: string;
@@ -48,7 +49,7 @@ export function checkoutStatusTone(status: string): StatusTone {
 @Component({
   selector: 'app-project-basics-card',
   standalone: true,
-  imports: [ProjectBasicsFormComponent, PendingButtonDirective, ProjectRepositoryCardComponent, StatusIndicatorComponent],
+  imports: [ProjectBasicsFormComponent, PendingButtonDirective, ProjectRepositoryCardComponent, StatusIndicatorComponent, ServerCheckoutNoticeComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-basics-card.component.html',
   styleUrl: './project-basics-card.component.scss',
@@ -63,6 +64,7 @@ export class ProjectBasicsCardComponent {
   private readonly lookup = inject(ProjectLookupService);
   private readonly manager = inject(WorkspaceManagerService);
   private readonly overlays = inject(ProjectOverlaysService);
+  private readonly serverCheckout = inject(ServerCheckoutStore);
   private checkoutRequestVersion = 0;
 
   readonly workspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
@@ -133,6 +135,14 @@ export class ProjectBasicsCardComponent {
 
   constructor() {
     effect(() => this.load(this.projectName()));
+    // AGT-3809: a created server checkout fills the repository and working paths.
+    effect(() => {
+      const project = this.project();
+      const status = project ? this.serverCheckout.statusFor(project.id) : null;
+      if (project && status?.state === 'ready' && status.repositoryPath
+          && status.repositoryPath !== project.repositoryPath && !this.dirty())
+        untracked(() => this.load(project.displayName));
+    });
     effect(() => {
       const cli = this.cliDefault();
       this.catalog.ensure(cli).subscribe({ error: () => void 0 });

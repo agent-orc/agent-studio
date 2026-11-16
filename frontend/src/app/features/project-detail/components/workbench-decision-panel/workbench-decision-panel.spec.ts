@@ -9,6 +9,7 @@ import {
   WorkbenchDecisionResponse,
   WorkbenchDocument,
 } from '../../../../models/project-docs.model';
+import { ModalStackService } from '../../../../services/modal-stack.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { TaskService } from '../../../../services/task.service';
 import { CliCatalogStore } from '../../../cli';
@@ -516,6 +517,61 @@ describe('WorkbenchDecisionPanelComponent', () => {
       cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'medium',
     }));
     confirm.flush({ success: true, outcome: 'rework', decisionStage: 'pending' });
+  });
+
+  it('moves focus into the confirmation form, back to its opener, and onto the receipt (AGT-3829)', async () => {
+    document.body.appendChild(fixture.nativeElement);
+    // An entry registered earlier, such as a background overlay, must not swallow the form's Escape.
+    const background = vi.fn();
+    const releaseBackground = TestBed.inject(ModalStackService).push('background-overlay', background);
+    try {
+      const focused = () => document.activeElement?.getAttribute('data-testid');
+      click('workbench-decision-start');
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-title');
+
+      const feature = fixture.nativeElement.querySelector(
+        '[data-testid="workbench-decision-feature-confirmation"]') as HTMLFormElement;
+      feature.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-start');
+      expect(fixture.nativeElement.querySelector(
+        '[data-testid="workbench-decision-feature-confirmation"]')).toBeNull();
+      expect(background).not.toHaveBeenCalled();
+
+      click('workbench-decision-rework');
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-rework-request');
+      (fixture.nativeElement.querySelector('[data-testid="workbench-decision-rework-confirmation"] .decision-actions__buttons button[type="button"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-rework');
+
+      click('workbench-decision-start');
+      await fixture.whenStable();
+      fixture.componentRef.setInput('document', {
+        ...DOCUMENT,
+        workbench: {
+          ...DOCUMENT.workbench,
+          status: 'decided',
+          decisionStage: 'succeeded',
+          decision: {
+            outcome: 'feature-spawn', state: 'succeeded', operationId: 'workbench-ui-confirmed',
+            sourceRevision: 'a'.repeat(40), sourceFingerprint: 'b'.repeat(64),
+            preparedAt: '2026-11-16T10:00:00Z', preparedBy: 'Operator',
+            confirmedAt: '2026-11-16T10:01:00Z', confirmedBy: 'Operator', decidedAt: '2026-11-16T10:01:00Z',
+            reason: null, failure: null, spawnedTaskKeys: [], responses: RESPONSES, taskDraft: null,
+          },
+        },
+      });
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-receipt');
+    } finally {
+      releaseBackground();
+      fixture.nativeElement.remove();
+    }
   });
 
   function click(testId: string): void {

@@ -269,6 +269,70 @@ public sealed class ReportContentReviewTests : IDisposable
         Assert.Equal("Result\nFirst & second.\nOne\nTwo", text.Replace(" \n", "\n").Replace("\n\n", "\n"));
     }
 
+    [Fact]
+    public async Task Review_reads_the_agent_delivery_summary_not_the_runner_run_record()
+    {
+        // AGT-3853: AGT-3347 was blocked because the review read the runner's
+        // root status.md ("Duration: 5.8 min") instead of results/status.md.
+        var (task, _) = RemoteResearchCard();
+        File.WriteAllText(Path.Combine(task.FolderPath, "status.md"),
+            "# Status\n\nResult: Success\nCase: forensics\nDuration: 5.8 min\n");
+        File.WriteAllText(Path.Combine(task.FolderPath, "results", "status.md"),
+            "# Delivery\n\nQ1: the lease renews every 30 seconds.\n" + new string('x', 5_000)
+            + "\nRanked levers: 1. shorter renewal.\nProposed follow-up cards: AGT-FOLLOW-1.\n");
+
+        await Service("pass").RunAsync(task, "PROJ-FIXTURE", CancellationToken.None);
+
+        var prompt = Assert.Single(_calls).Prompt;
+        Assert.Contains("Delivery summary written by the agent (results/status.md):", prompt);
+        Assert.Contains("Proposed follow-up cards: AGT-FOLLOW-1.", prompt);
+        var delivery = prompt.IndexOf("Delivery summary written by the agent", StringComparison.Ordinal);
+        var record = prompt.IndexOf("Runner run record (task-root status.md", StringComparison.Ordinal);
+        Assert.True(delivery >= 0 && record > delivery);
+        Assert.Contains("It is not the deliverable", prompt);
+        Assert.DoesNotContain("Head of results/status.md", prompt);
+    }
+
+    [Fact]
+    public async Task Review_inventory_names_captures_in_results_subfolders_newest_first()
+    {
+        // AGT-3648: live captures in results/watchdog-live/ were not seen.
+        var (task, _) = RemoteResearchCard();
+        var results = Path.Combine(task.FolderPath, "results");
+        var old = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        for (var i = 0; i < 45; i++)
+        {
+            var path = Path.Combine(results, $"a-round1-{i:00}--mocked.png");
+            File.WriteAllBytes(path, [1]);
+            File.SetLastWriteTimeUtc(path, old);
+        }
+        Directory.CreateDirectory(Path.Combine(results, "watchdog-live"));
+        File.WriteAllBytes(Path.Combine(results, "watchdog-live", "escalation--real.png"), [1, 2]);
+
+        await Service("pass").RunAsync(task, "PROJ-FIXTURE", CancellationToken.None);
+
+        var prompt = Assert.Single(_calls).Prompt;
+        Assert.Contains("newest first:", prompt);
+        Assert.Contains("- results/watchdog-live/escalation--real.png (2 bytes)", prompt);
+        Assert.Contains("results/watchdog-live/ (1 file(s))", prompt);
+        Assert.Contains("older file(s) not listed.", prompt);
+    }
+
+    [Fact]
+    public void Long_report_is_read_past_the_old_clip_and_names_the_sections_it_cut()
+    {
+        var html = "<html><body><h1>Report</h1><p>" + new string('a', 30_000) + "</p><h2>7.1 Time budget by purpose</h2><p>split</p>"
+            + "<p>" + new string('b', ReportContentReviewService.ReportTextCharacters) + "</p><h2>9 Follow-up cards</h2><p>cards</p></body></html>";
+        var text = ReportContentReviewService.ReportText(html);
+
+        var clipped = ReportContentReviewService.ClipReport(html, text);
+
+        Assert.Contains("7.1 Time budget by purpose", clipped);
+        Assert.Contains("Sections not shown above", clipped);
+        Assert.EndsWith("9 Follow-up cards.", clipped);
+        Assert.Equal("Short report.", ReportContentReviewService.ClipReport("<p>Short report.</p>", "Short report."));
+    }
+
     private (TaskInfo Task, RunAttemptDto Run) RemoteResearchCard()
     {
         var folder = Path.Combine(_root, "card");

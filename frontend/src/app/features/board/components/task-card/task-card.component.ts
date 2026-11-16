@@ -94,6 +94,8 @@ import { handleReviewPriorityAction } from './review-priority-action';
 import { TaskCardQuotaNoticeComponent } from '../../../quota';
 import { DossierSliceLinkComponent } from '../../../../components/dossier-slice-link/dossier-slice-link';
 import { AcceptanceReadinessNoteComponent } from '../../../acceptance-readiness/lazy';
+import { ServerCheckoutNoticeComponent } from '../../../server-checkout';
+import { holdsReturnedFocus } from '../../../../directives/modal-focus.directive';
 // Shared clock keeps relative timestamps in lockstep without NG0100 changes.
 const nowTick = signal(Date.now());
 if (typeof window !== 'undefined') {
@@ -102,7 +104,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [StatusIndicatorComponent, TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent, DossierSliceLinkComponent, AcceptanceReadinessNoteComponent],
+  imports: [StatusIndicatorComponent, TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent, DossierSliceLinkComponent, AcceptanceReadinessNoteComponent, ServerCheckoutNoticeComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
@@ -139,12 +141,13 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   /** True when this card should render the just-created highlight. */
   readonly isJustCreated = computed(() => this.highlightJobId() === this.job().id);
 
-  /** Scroll a newly created card into view; take the focus the closed create dialog dropped to the body (AGT-3834). */
+  /** Scroll a newly created card into view; take the focus the closed create dialog dropped or handed back to its opener (AGT-3834). */
   private readonly scrollEffect = effect(() => {
     if (!this.isJustCreated()) return;
     queueMicrotask(() => {
       try {
-        if (!document.activeElement || document.activeElement === document.body) ((this.hostRef.nativeElement as HTMLElement).querySelector('.task-card') as HTMLElement | null)?.focus({ preventScroll: true });
+        const active = document.activeElement;
+        if (!active || active === document.body || holdsReturnedFocus(active)) ((this.hostRef.nativeElement as HTMLElement).querySelector('.task-card') as HTMLElement | null)?.focus({ preventScroll: true });
         this.hostRef.nativeElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
       } catch { /* SSR / detached DOM — ignore */ }
     });

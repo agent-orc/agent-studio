@@ -1,8 +1,10 @@
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   computed,
   effect,
+  ElementRef,
   inject,
   input,
   output,
@@ -28,6 +30,7 @@ import { NowTickService } from '../../../../services/now-tick.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { TaskService } from '../../../../services/task.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
+import { focusLost } from '../workbench-decision-panel/workbench-decision-focus.util';
 import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
@@ -66,6 +69,7 @@ export class WorkbenchViewerHeaderComponent {
   private readonly docs = inject(ProjectDocsService);
   private readonly tasks = inject(TaskService);
   private readonly now = inject(NowTickService).now;
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   readonly referenceKeys = signal<string[]>([]);
   readonly taskStatuses = signal<TaskReferenceStatus[]>([]);
@@ -128,6 +132,10 @@ export class WorkbenchViewerHeaderComponent {
   );
 
   constructor() {
+    // Opened from a control that closed (Needs you): start at the heading, not the body (AGT-3829).
+    afterNextRender(() => {
+      if (focusLost()) this.host.nativeElement.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
+    });
     effect((onCleanup) => {
       const workbench = this.document().workbench;
       const projectName = this.projectName();

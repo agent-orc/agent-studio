@@ -2,6 +2,8 @@
   <div class="create-dialog"
        role="dialog"
        aria-modal="true"
+       aria-labelledby="create-dialog-title"
+       appModalFocus
        [class.create-dialog--drag]="isDragging()"
        (dragover)="onDragOver($event)"
        (dragleave)="onDragLeave($event)"
@@ -13,7 +15,7 @@
             aria-label="Close"
             [cacTooltip]="'Close'"
             (click)="cancelRequest.emit()">×</button>
-    <h2 class="create-dialog__title" data-testid="create-dialog-header">{{ header() }}</h2>
+    <h2 class="create-dialog__title" id="create-dialog-title" data-testid="create-dialog-header">{{ header() }}</h2>
     <div class="create-dialog__legacy" data-testid="create-dialog-legacy-notice">
       <span class="create-dialog__legacy-badge">Legacy</span><span class="create-dialog__legacy-copy">This full-field editor remains available. Please use Orchestrator Chat for the primary task-creation flow.</span><button type="button" class="create-dialog__chat-btn" data-testid="create-in-chat" (click)="openChatRequest.emit()">Create in chat</button>
     </div>

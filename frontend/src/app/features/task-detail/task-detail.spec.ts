@@ -215,3 +215,74 @@ describe('TaskDetailComponent Activity send flow', () => {
     expect(component.chatError()).toBe('The message could not be sent.');
   });
 });
+
+describe('TaskDetailComponent Enter shortcut (AGT-3828)', () => {
+  // AGT-3796 F1: a document-level Enter ran the card's primary action from any
+  // focused button or link in Studio and swallowed that control's own action.
+  async function harness() {
+    await TestBed.configureTestingModule({
+      imports: [TaskDetailComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskDetailComponent);
+    fixture.componentRef.setInput('detail', {
+      info: { id: 'AGT-3828', watchPath: '/workspace', state: '5-human-review' },
+    });
+    const triggerPrimary = vi.fn();
+    (fixture.componentInstance as unknown as { detailHeaderRef: unknown }).detailHeaderRef = { triggerPrimary };
+    const host = fixture.nativeElement as HTMLElement;
+    document.body.appendChild(host);
+    const surface = document.createElement('div');
+    surface.tabIndex = 0;
+    surface.setAttribute('data-detail-keyboard-surface', '');
+    host.appendChild(surface);
+    const enter = (target: HTMLElement) => {
+      const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event;
+    };
+    return { fixture, host, surface, triggerPrimary, enter };
+  }
+
+  it('keeps Enter on a Studio shell button for that button', async () => {
+    const { fixture, triggerPrimary, enter } = await harness();
+    const needsYou = document.createElement('button');
+    needsYou.textContent = 'Needs you';
+    document.body.appendChild(needsYou);
+    try {
+      const event = enter(needsYou);
+      expect(triggerPrimary).not.toHaveBeenCalled();
+      expect(event.defaultPrevented).toBe(false);
+    } finally { needsYou.remove(); fixture.destroy(); }
+  });
+
+  it('keeps Enter on a button inside the card for that button', async () => {
+    const { fixture, surface, triggerPrimary, enter } = await harness();
+    const previous = document.createElement('button');
+    previous.textContent = 'Previous results';
+    surface.appendChild(previous);
+    const event = enter(previous);
+    expect(triggerPrimary).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+    fixture.destroy();
+  });
+
+  it('runs the primary action from the card surface only while no dialog is open', async () => {
+    const { fixture, surface, triggerPrimary, enter } = await harness();
+    const dialog = document.createElement('section');
+    dialog.setAttribute('role', 'dialog');
+    document.body.appendChild(dialog);
+    try {
+      expect(enter(surface).defaultPrevented).toBe(false);
+      expect(triggerPrimary).not.toHaveBeenCalled();
+      dialog.remove();
+      expect(enter(surface).defaultPrevented).toBe(true);
+      expect(triggerPrimary).toHaveBeenCalledTimes(1);
+    } finally { dialog.remove(); fixture.destroy(); }
+  });
+});

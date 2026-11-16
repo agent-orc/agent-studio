@@ -20,6 +20,12 @@ public enum AutoReviewStrandingAction
 /// Time since the scheduled review infrastructure retry of the current review
 /// came due, negative while its backoff runs, null when none is scheduled.
 /// </param>
+/// <param name="ScheduledRetryOverdueLimit">
+/// How long an overdue scheduled retry still owns the card. The retry scheduler
+/// ticks every few seconds, so a retry overdue past this limit has no owner and
+/// parks well before <paramref name="Threshold"/> (AGT-3848). Null reads as
+/// <paramref name="Threshold"/>.
+/// </param>
 /// <param name="CauseBreakerWait">
 /// An open cause breaker holds the card for its release or runs it as the probe.
 /// </param>
@@ -32,7 +38,8 @@ public sealed record AutoReviewStrandingFacts(
     bool CauseBreakerWait = false, bool InfrastructureFailure = false,
     bool InfrastructureRetryAvailable = false, bool InfrastructureRetryScheduled = false,
     bool HostCapacityHeld = false,
-    bool HostCapabilityWait = false, bool HostCapabilityAvailable = false);
+    bool HostCapabilityWait = false, bool HostCapabilityAvailable = false,
+    TimeSpan? ScheduledRetryOverdueLimit = null);
 
 /// <summary>Per-card liveness decision for Auto Review. All ownership facts are read before acting.</summary>
 public static class AutoReviewStrandingPolicy
@@ -55,7 +62,7 @@ public static class AutoReviewStrandingPolicy
 
     public static AutoReviewStrandingAction Decide(AutoReviewStrandingFacts facts)
     {
-        if (facts.ScheduledRetryOverdue is { } overdue && overdue > facts.Threshold)
+        if (facts.ScheduledRetryOverdue is { } overdue && overdue > RetryOverdueLimit(facts))
             return AutoReviewStrandingAction.Escalate;
         if (facts.WithoutOwner <= facts.Threshold
             || facts.SinceLastIntervention is { } elapsed && elapsed <= facts.Threshold
@@ -80,12 +87,15 @@ public static class AutoReviewStrandingPolicy
     }
 
     /// <summary>
-    /// The retry scheduler owns the card while the backoff runs and for one
-    /// threshold after the retry came due. A retry that no tick fires within
+    /// The retry scheduler owns the card while the backoff runs and for the
+    /// overdue limit after the retry came due. A retry that no tick fires within
     /// that time (scheduler disabled or failing) leaves the card ownerless.
     /// </summary>
     private static bool OwnedByScheduledRetry(AutoReviewStrandingFacts facts)
-        => facts.ScheduledRetryOverdue is { } overdue && overdue <= facts.Threshold;
+        => facts.ScheduledRetryOverdue is { } overdue && overdue <= RetryOverdueLimit(facts);
+
+    private static TimeSpan RetryOverdueLimit(AutoReviewStrandingFacts facts)
+        => facts.ScheduledRetryOverdueLimit is { } limit && limit < facts.Threshold ? limit : facts.Threshold;
 }
 
 /// <param name="BuildTestDeferredToBatch">

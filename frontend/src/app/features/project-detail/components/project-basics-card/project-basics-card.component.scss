@@ -13,6 +13,11 @@
   gap: var(--studio-spacing-4);
 }
 
+// No notice renders only Angular's comment anchors; keep the grid gap honest.
+.pbc__server-checkout:empty {
+  display: none;
+}
+
 .pbc__head {
   display: flex;
   align-items: flex-start;
