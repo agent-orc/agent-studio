@@ -41,7 +41,7 @@ import {
 } from '../project-detail/components/project-shell/project-shell.config';
 import type { StudioIconName } from '../../components/studio-icon/studio-icon.component';
 import { BoardFiltersService, flattenGrouped } from '../board';
-import { ConfirmDialogService } from '../../services/confirm-dialog.service';
+import { ProjectLifecycleDialogService } from '../../services/project-lifecycle-dialog.service';
 import { NotificationService } from '../../services/notification.service';
 import { copyTextToClipboard } from '../../services/clipboard.util';
 import { WorkspaceManagerService, ProjectDragDropService, WorkspaceOverlaysService, UiPreferencesService } from '../shell';
@@ -142,7 +142,7 @@ export class StudioShellComponent {
   readonly boardFilters = inject(BoardFiltersService);
   readonly explorerSections = inject(ExplorerSectionsService);
   private readonly explorerWorkbenchState = inject(ExplorerWorkbenchStateService);
-  private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly projectLifecycleDialogs = inject(ProjectLifecycleDialogService);
   private readonly notifications = inject(NotificationService);
   private readonly workspaceManager = inject(WorkspaceManagerService);
   private readonly workspaceOverlays = inject(WorkspaceOverlaysService);
@@ -878,30 +878,7 @@ export class StudioShellComponent {
    */
   async onTreeDeleteProject(e: { projectId: string; displayName: string; shortCode: string | null }): Promise<void> {
     const label = e.displayName || e.projectId;
-    const stageOne = await this.confirmDialog.confirm({
-      title: 'Delete this project?',
-      message: 'This permanently deletes the project and all of its tasks from disk. This cannot be undone.',
-      detail: `${label} (${e.projectId})`,
-      confirmLabel: 'Continue',
-      cancelLabel: 'Cancel',
-      kind: 'danger',
-    });
-    if (!stageOne) return;
-
-    const typedValues = e.shortCode ? [e.displayName, e.shortCode] : [e.displayName];
-    const hint = e.shortCode
-      ? `Type the project name "${e.displayName}" or its code "${e.shortCode}" to confirm.`
-      : `Type the project name "${e.displayName}" to confirm.`;
-    const stageTwo = await this.confirmDialog.confirm({
-      title: 'Confirm permanent deletion',
-      message: 'Last step. Re-type the project to delete it and its entire storage folder.',
-      requireTypedValues: typedValues,
-      requireTypedPrompt: hint,
-      confirmLabel: 'Delete project',
-      cancelLabel: 'Cancel',
-      kind: 'danger',
-    });
-    if (!stageTwo) return;
+    if (!await this.projectLifecycleDialogs.confirmDelete(e)) return;
 
     this.registryProjectBusyId.set(e.projectId);
     this.jobService.deleteRegistryProject(e.projectId).subscribe({

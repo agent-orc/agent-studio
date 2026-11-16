@@ -389,6 +389,9 @@ export class App implements OnInit, OnDestroy {
    * the "+ Add workspace" affordance fires.
    */
   readonly workspaceManager = inject(WorkspaceManagerService);
+  private readonly projectRegistryChangedFx = effect(() => {
+    if (this.workspaceManager.registryChanged() > 0) this.loadWatchPaths();
+  });
   readonly workspaceTokensOpen = this.workspaceOverlays.tokensOpen;
   readonly workspaceScreenshotsOpen = this.workspaceOverlays.screenshotsOpen;
   readonly cliAdminOpen = this.workspaceOverlays.cliAdminOpen;
