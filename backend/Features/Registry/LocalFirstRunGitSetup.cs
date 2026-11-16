@@ -164,22 +164,12 @@ public sealed class LocalFirstRunGitSetup
         }
         if (string.IsNullOrWhiteSpace(project.RootPath))
             project = _projects.SetRootPath(project.Id, checkout);
-        if (keyPath is not null)
+        foreach (var args in CheckoutCredentialConfig(origin, transport, keyPath, credentialConfig))
         {
-            var (remoteSet, _) = await _git.RunAsync(checkout,
-                ["config", "--local", "remote.origin.url", transport], ct);
-            var (sshSet, _) = await _git.RunAsync(checkout,
-                ["config", "--local", "core.sshCommand", LocalFirstRunRepositoryProbe.SshCommand(keyPath)], ct);
-            if (!remoteSet || !sshSet) throw new InvalidOperationException("Could not configure the checkout for its deploy key.");
-        }
-        else
-        {
-            var (remoteSet, _) = await _git.RunAsync(checkout,
-                ["config", "--local", "remote.origin.url", origin], ct);
-            var (includeSet, _) = await _git.RunAsync(checkout,
-                ["config", "--local", "include.path", credentialConfig!], ct);
-            if (!remoteSet || !includeSet)
-                throw new InvalidOperationException("Could not configure the checkout credential helper.");
+            var (configured, _) = await _git.RunAsync(checkout, args, ct);
+            if (!configured) throw new InvalidOperationException(keyPath is not null
+                ? "Could not configure the checkout for its deploy key."
+                : "Could not configure the checkout credential helper.");
         }
         var result = await _probe.ReadAsync(project, "main", ct, force: true,
             keyPath: keyPath, credentialConfig: credentialConfig);
@@ -204,6 +194,22 @@ public sealed class LocalFirstRunGitSetup
         }
         return status;
     }
+
+    /// <summary>
+    /// The checkout-local Git settings that bind a server checkout to its
+    /// verified credential: the deploy key's SSH transport, or the token's
+    /// credential helper. Without a credential the checkout keeps the host's
+    /// own Git access and needs no setting.
+    /// </summary>
+    internal static IReadOnlyList<string[]> CheckoutCredentialConfig(string origin, string transport,
+        string? keyPath, string? credentialConfig)
+        => keyPath is not null
+            ? [["config", "--local", "remote.origin.url", transport],
+                ["config", "--local", "core.sshCommand", LocalFirstRunRepositoryProbe.SshCommand(keyPath)]]
+            : credentialConfig is not null
+                ? [["config", "--local", "remote.origin.url", origin],
+                    ["config", "--local", "include.path", credentialConfig]]
+                : [];
 
     private async Task PersistStatusAsync(LocalGitSetupStatus status, CancellationToken ct)
     {

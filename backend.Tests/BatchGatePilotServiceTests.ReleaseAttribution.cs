@@ -179,6 +179,72 @@ public sealed class BatchGatePilotReleaseAttributionTests : BatchGatePilotServic
         Assert.True(sweep.RunIntegrationHistoryRepairOnce().AlreadyCompleted);
     }
 
+    /// <summary>
+    /// AGT-3854: AGT-3808 escalated because its finding-id subjects were read
+    /// as foreign work. The repair restores it; a subject naming only an
+    /// unreferenced foreign key keeps its escalation.
+    /// </summary>
+    [Fact]
+    public void Escalated_delivery_rejected_for_a_finding_id_subject_is_repaired_once()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 3);
+        var baseSha = RemoteTip();
+        var finding = SeedMember(factory, "DOC-3808", "docs/finding.md", parentSha: baseSha,
+            commitMessage: "DOC-3794-F13: keep per-run tokens and cost in the narrow Overview pane");
+        var foreign = SeedMember(factory, "DOC-3809", "docs/foreign.md", parentSha: baseSha,
+            commitMessage: "fix(DOC-9998): unrelated work");
+        var timeline = factory.Services.GetRequiredService<TimelineLog>();
+        foreach (var (member, named) in new[] { (finding, "DOC-3794"), (foreign, "DOC-9998") })
+        {
+            var folder = Path.Combine(_watchPath, TaskStates.AutoReview, member.Key);
+            ReviewSubjectStore.Write(folder, ReviewSubjectStore.Read(folder)! with
+            {
+                BaseSha = baseSha,
+                IntegrationBranch = "refs/heads/develop",
+            });
+            ClearCommits(factory, member.Key);
+            timeline.Append(folder, TimelineEventKinds.AgentRunFinished, TimelineActors.Agent,
+                "remote run done", member.RunAttemptId, details: new Dictionary<string, string>
+                {
+                    ["commitAttributionWarning"] = $"Remote commit attribution rejected for '{member.Key}': commit {member.ResultSha[..10]} names foreign task '{named}'.",
+                });
+            Assert.Equal(MoveJobStatus.Success, factory.Services.GetRequiredService<TaskStateMachine>()
+                .MoveJob(member.Key, TaskStates.Escalated, _watchPath,
+                    expectedSourceState: TaskStates.AutoReview).Status);
+        }
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        var sweep = new RemoteCompletionAttributionSweep(scanner,
+            factory.Services.GetRequiredService<AgentStudio.Git.GitService>(),
+            factory.Services.GetRequiredService<TaskMutationService>(),
+            factory.Services.GetRequiredService<RemoteTokenReceiptService>(),
+            Path.Combine(_workspace, "migrations", RemoteCompletionAttributionSweep.ReportFileName),
+            _clock, NullLogger<RemoteCompletionAttributionSweep>.Instance,
+            factory.Services.GetRequiredService<TaskStateMachine>(), timeline,
+            factory.Services.GetRequiredService<AttemptAuthorityService>());
+
+        var report = sweep.RunCommitSubjectKeyRepairOnce();
+
+        var row = Assert.Single(report.Tasks);
+        Assert.Equal(finding.Key, row.TaskKey);
+        Assert.Equal(1, row.Commits);
+        Assert.Equal(0, report.UnresolvedTasks);
+        var repaired = scanner.FindJob(finding.Key, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, repaired.State);
+        Assert.Contains(repaired.Commits, commit => commit.Sha == finding.ResultSha
+            && commit.RunAttemptId == finding.RunAttemptId);
+        Assert.Contains(timeline.ReadAll(repaired.FolderPath), evt =>
+            evt.Kind == TimelineEventKinds.CommitSubjectKeyAttributionRepaired
+            && evt.Details?.GetValueOrDefault("reason") == "commit-subject-key-allowed"
+            && evt.Details?.GetValueOrDefault("namedKey") == "DOC-3794");
+        var stillForeign = scanner.FindJob(foreign.Key, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, stillForeign.State);
+        Assert.Empty(stillForeign.Commits);
+        Assert.True(sweep.RunCommitSubjectKeyRepairOnce().AlreadyCompleted);
+    }
+
     [Fact]
     public async Task Unattributable_rebased_member_is_escalated_and_the_other_members_are_released()
     {

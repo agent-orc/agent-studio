@@ -161,11 +161,15 @@ export class RemoteHostCardComponent {
   });
   readonly expanded = input(false);
   readonly linkedSection = input<DetailSection | null>(null);
+  /** AGT-3840: the held capability a link opened this host for. */
+  readonly linkedCapability = input<string | null>(null);
   /** The release every row is measured against; null until it is loaded. */
   readonly stableRelease = input<StableReleaseIdentity | null>(null);
   /** Injected clock so the relative heartbeat label ticks without a per-card timer. */
   readonly now = input<number>(Date.now());
   readonly action = output<{ kind: HostActionKind; id: string }>();
+  /** AGT-3840: re-probe one held capability of this role. */
+  readonly capabilityReprobe = output<{ id: string; capability: string }>();
   readonly capacityChange = output<RuntimeCapacityChange>();
   readonly projectPolicyChange = output<HostProjectPolicyChange>();
   readonly setup = output<RemoteHost>();

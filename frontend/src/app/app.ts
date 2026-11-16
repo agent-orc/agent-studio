@@ -58,6 +58,7 @@ import {
   acceptanceHoldReason,
   triageDecisionRefusal,
   triageDecisionRowState,
+  taskDetailPrimaryShortcutTooltip,
   type MergeAcceptView,
   type TriageButton,
 } from './features/task-detail/runtime';
@@ -165,6 +166,7 @@ import { AuthGateComponent } from './components/auth-gate/auth-gate';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
+import { ServerCheckoutBoardNoticeComponent } from './features/server-checkout';
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -173,7 +175,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
 @Component({
   selector: 'app-root',
   imports: [
-    DeliverySectionComponent, BoardGroupSwitcherComponent,
+    DeliverySectionComponent, BoardGroupSwitcherComponent, ServerCheckoutBoardNoticeComponent,
     TaskColumnComponent,
     ScrollMemoryDirective,
     TaskDetailComponent,
@@ -1368,7 +1370,7 @@ export class App implements OnInit, OnDestroy {
       primaryTooltip: this.studioPrimaryDecisionRefusal()
         ?? (this.studioPrimaryBlockedByIntegration()
           ? acceptanceHoldReason(this.selectedJob()!.info)
-          : `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`),
+          : taskDetailPrimaryShortcutTooltip(this.studioMergeAcceptView()?.statusTooltip || label)),
       awaitingGit: this.studioPrimaryAwaitingGit(),
       blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
       blockedByDecision: !!this.studioPrimaryDecisionRefusal(),
