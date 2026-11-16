@@ -229,16 +229,7 @@ test.describe('Done & Decide — escalated cards do not look like Done', () => {
     await bootBoard(page);
     await setTheme(page, 'dark');
 
-    // Free the board width for the evidence shot. The shell's body grid
-    // reserves a fixed sidebar track (minmax(0, sidebarWidth)px) whenever the
-    // explorer rail is open, squeezing the board to a sliver at 390px — and
-    // panel visibility is not persisted, so it can't be seeded collapsed.
-    // Clicking the active panel toggle hides the rail; Angular drops the
-    // <aside> via @if and the grid reflows the board track to 1fr. This is a
-    // screenshot-framing concern only and does not touch the card under test.
-    await page.locator('[data-testid="studio-activity-bar"] .studio-ab__btn--active[data-panel]')
-      .click({ timeout: 2_000 })
-      .catch(() => undefined);
+    // At 390 px the shell hides the Explorer and the activity rail (AGT-3836).
     await page.waitForTimeout(300);
     // AGT-3590: below tablet width the board shows one container at a time.
     // The thin route mocks leave an empty error-dialog overlay behind, as in
