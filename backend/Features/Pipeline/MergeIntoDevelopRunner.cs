@@ -263,7 +263,8 @@ public sealed partial class MergeIntoDevelopRunner
                     || IsDocumentationDelivery(reservationRepo, integrationBranch,
                         ReviewSubjectStore.Read(jobFolderPath))
                     ? null
-                    : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
+                    : await _batchReservations.AcquireAsync(project, ReservationKind(jobFolderPath),
+                        jobId, ct).ConfigureAwait(false);
                 _holdsBatchReservation.Value = batchReservation is not null;
                 _rejectedPushReplayGate.Value = new RejectedPushReplayGateHolder();
                 // A rejected publication is restored to origin before this
@@ -300,6 +301,25 @@ public sealed partial class MergeIntoDevelopRunner
     /// serialized merge + build-gate + rollback consistency boundary.
     /// </summary>
     public bool IsMergeGateBusy => Volatile.Read(ref _mergeGateUsers) > 0;
+
+    /// <summary>
+    /// AGT-3882: a merge after a per-task batch fallback gate, or any other
+    /// per-task integration. Both wait while a batch flight reserves the project.
+    /// </summary>
+    private static string ReservationKind(string jobFolderPath)
+    {
+        try
+        {
+            return BatchGateOwnershipStore.Read(jobFolderPath)?.FallbackTestedSha is not null
+                ? IntegrationReservationKinds.PerTaskFallbackIntegration
+                : IntegrationReservationKinds.PerTaskIntegration;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: an unreadable batch marker names a per-task integration");
+            return IntegrationReservationKinds.PerTaskIntegration;
+        }
+    }
 
     private static string BranchLockKey(string project, string branch)
         => project + "\0" + TaskIntegrationBranch.Name(branch);
@@ -2303,7 +2323,8 @@ public sealed partial class MergeIntoDevelopRunner
             || IsDocumentationDelivery(reservationRepo, integrationBranch,
                 ReviewSubjectStore.Read(jobFolderPath))
             ? null
-            : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
+            : await _batchReservations.AcquireAsync(project,
+                IntegrationReservationKinds.IntegrationPush, jobId, ct).ConfigureAwait(false);
         var publicationWait = System.Diagnostics.Stopwatch.StartNew();
         var pushGate = _pushGates.GetOrAdd(BranchLockKey(project, integrationBranch),
             static _ => new SemaphoreSlim(1, 1));
