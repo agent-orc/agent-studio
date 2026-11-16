@@ -165,7 +165,13 @@ test('lane indicator and batch panel name the proven-red member, its failing tes
   for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 900 });
     // AGT-3590: below tablet width the board shows one lane group; Human Review sits in Done & Decide.
-    if (width < 768) await page.getByTestId('board-group-switch-decide').click();
+    // A phone board shows a single lane, so the lane picker selects Human Review directly.
+    if (width < 768) {
+      const lanePicker = page.getByTestId('mobile-lane-picker');
+      if (await lanePicker.isVisible())
+        await lanePicker.getByRole('combobox', { name: 'Board lane' }).selectOption('5-human-review');
+      else await page.getByTestId('board-group-switch-decide').click();
+    }
     await indicator.scrollIntoViewIfNeeded();
     for (const theme of THEMES) {
       await setTheme(page, theme);
@@ -215,9 +221,12 @@ test('lane indicator and batch panel name the proven-red member, its failing tes
       await page.waitForTimeout(200);
       await page.screenshot({ path: path.join(RESULTS_DIR, `batch-isolation-panel-${width}-${theme}.png`) });
       await red.screenshot({ path: path.join(RESULTS_DIR, `batch-isolation-culprit-row-${width}-${theme}.png`) });
-      // The evidence line stays one short row instead of a path wrapped over five lines.
+      // The evidence name stays on one line instead of a path wrapped over five lines;
+      // at phone width the path toggle may take a second row beside it.
+      const evidenceName = await red.getByTestId('batch-proven-red-evidence-name').boundingBox();
+      expect(evidenceName!.height, `evidence name at ${width} px`).toBeLessThanOrEqual(24);
       const evidenceLine = await red.locator('.batch-proven-red__evidence').boundingBox();
-      expect(evidenceLine!.height, `evidence line at ${width} px`).toBeLessThanOrEqual(40);
+      expect(evidenceLine!.height, `evidence line at ${width} px`).toBeLessThanOrEqual(width < 768 ? 64 : 40);
     }
   }
 
