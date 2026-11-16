@@ -151,7 +151,8 @@ public sealed record BatchGateManifest(
     bool Diagnostic = false,
     string? ReformedFromBatchId = null,
     string? StackedOnBatchId = null,
-    DateTimeOffset? QueuedSinceUtc = null);
+    DateTimeOffset? QueuedSinceUtc = null,
+    string? SameCodeRerunOfRunId = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,

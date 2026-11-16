@@ -686,6 +686,13 @@ public sealed class RemoteReviewDaemon
                         observedServer = true;
                         if (emptyClaimWarning.Next(claim, DateTime.UtcNow) is { } warning)
                             _log(warning);
+                        // AGT-3840: an operator re-probe from Execution Hosts.
+                        // Advertise the fresh verdict before the next claim poll.
+                        if (claim.ReprobeCapabilities is { Count: > 0 })
+                        {
+                            await ProviderAuthReprobe.RefreshAsync(_options, claim.ReprobeCapabilities, _log, shutdown);
+                            nextCapabilityAdvertisement = DateTime.MinValue;
+                        }
                         if (string.Equals(claim.Status, "claimed", StringComparison.OrdinalIgnoreCase))
                         {
                             if (active.Any(slot => string.Equals(

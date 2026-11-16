@@ -306,8 +306,10 @@ test.describe('Workspace settings home (Dach)', () => {
     await expect(page.getByTestId('cli-window-analysis-claude')).toBeVisible();
     await expect(page.getByTestId('cli-window-analysis-claude')).toContainText('CLI account level');
     await expect(page.getByTestId('cli-window-cards')).toContainText('5h session');
-    await expect(page.getByTestId('cli-effort-split')).toContainText('Unattributed 100%');
-    await expect(page.getByTestId('cli-plausibility')).toContainText('Per-task cap forecast (TE-4)');
+    // AGT-3794-F14: no shipped placeholder and no claim that effort is missing.
+    await expect(page.getByTestId('cli-token-streams')).toContainText('Token streams');
+    await expect(page.getByTestId('cli-plausibility')).not.toContainText('Placeholder');
+    await expect(page.getByTestId('cli-effort-note')).toContainText('Reasoning effort is recorded on each token receipt');
 
     await page.setViewportSize({ width: 1800, height: 1200 });
     for (const theme of themes) {

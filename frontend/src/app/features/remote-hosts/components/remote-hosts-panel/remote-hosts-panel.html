@@ -46,6 +46,8 @@
               [projectSlots]="projectSlots(host)" [allChatUsage]="interactiveUsage()"
               [stableRelease]="stableRelease()" [expanded]="true"
               [linkedSection]="linkedHostId() === selectedId() ? linkedSection() : null"
+              [linkedCapability]="linkedHostId() === selectedId() ? linkedCapability() : null"
+              (capabilityReprobe)="onCapabilityReprobe($event)"
               (action)="onAction($event)" (capacityChange)="onCapacityChange($event)"
               (projectPolicyChange)="onProjectPolicyChange($event)" (setup)="openSetup($event)" />
           } @else if (selectedGate(); as gate) {

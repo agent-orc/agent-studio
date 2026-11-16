@@ -349,6 +349,7 @@ export class RemoteHostsService {
               runnerInstanceId: snapshot.instanceId,
               runnerProtocolVersion: snapshot.protocolVersion,
               capabilityHealth: snapshot.capabilities,
+              heldCapabilities: snapshot.heldCapabilities ?? [],
               capabilities: snapshot.capabilities.map(capability =>
                 capability.version ? `${capability.key} ${capability.version}` : capability.key),
               gitPushStatus,
@@ -552,6 +553,21 @@ export class RemoteHostsService {
     this.log('reprobe-requested', { hostId: id });
     this.patch(id, item => ({ ...item, busyAction: 'reprobe' }));
     this.http.post(`/api/clients/${encodeURIComponent(host.clientId)}/runner-project-preflights/invalidate`, {}).subscribe({
+      next: () => this.reload(),
+      error: error => this.actionFailed(id, error),
+    });
+  }
+
+  /** AGT-3840: ask one role to re-probe one capability; it answers on its next claim. */
+  reprobeCapability(id: string, capability: string): void {
+    const host = this.hosts().find(item => item.id === id);
+    if (!host || host.busyAction || !this.http) return;
+    this.log('capability-reprobe-requested', { hostId: id, capability });
+    this.patch(id, item => ({ ...item, busyAction: 'reprobe' }));
+    this.http.post(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(host.clientId)}/capabilities/reprobe`,
+      { capability },
+    ).subscribe({
       next: () => this.reload(),
       error: error => this.actionFailed(id, error),
     });

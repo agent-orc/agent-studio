@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -12,9 +13,12 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class QuotaServiceDemoSnapshotTests : IDisposable
 {
+    private static readonly DateTime Now = new(2026, 11, 9, 12, 2, 30, DateTimeKind.Utc);
+
     private readonly string _repoDir = Path.Combine(
         Path.GetTempPath(),
         "agent-studio-quota-demo-" + Guid.NewGuid().ToString("N"));
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(Now));
 
     public QuotaServiceDemoSnapshotTests() => Directory.CreateDirectory(_repoDir);
 
@@ -83,20 +87,97 @@ public sealed class QuotaServiceDemoSnapshotTests : IDisposable
     }
 
     [Fact]
-    public void PinnedSnapshot_IsFreshAndCarriesFixedPercentages()
+    public void PinnedSnapshot_IsFreshAndFollowsTheFixedSchedule()
     {
         // clock-independent: the pinned snapshot is built from this explicit instant, never from "now".
-        var now = new DateTime(2026, 11, 9, 12, 0, 0, DateTimeKind.Utc);
+        var codex = DemoQuotaSnapshots.For("codex", Now);
+        var claude = DemoQuotaSnapshots.For("claude", Now);
 
-        var codex = DemoQuotaSnapshots.For("codex", now);
-        var claude = DemoQuotaSnapshots.For("claude", now);
-
-        Assert.Equal(now, codex.FetchedAt);
+        // Read on the 5-minute probe tick, well inside the 10-minute cache TTL.
+        Assert.Equal(new DateTime(2026, 11, 9, 12, 0, 0, DateTimeKind.Utc), codex.FetchedAt);
         Assert.Null(codex.Error);
-        Assert.Equal([18d, 42d], codex.Windows.Select(w => w.UsedPct!.Value));
-        Assert.Equal([24d, 35d], claude.Windows.Select(w => w.UsedPct!.Value));
-        Assert.All(codex.Windows.Concat(claude.Windows), w => Assert.True(w.ResetAt > now));
-        Assert.Empty(DemoQuotaSnapshots.For("gemini", now).Windows);
+        Assert.Equal(["5-hour", "Weekly"], codex.Windows.Select(w => w.Label));
+        Assert.Equal(["Current session (5h)", "Weekly (all models)"], claude.Windows.Select(w => w.Label));
+        Assert.All(codex.Windows.Concat(claude.Windows), w =>
+        {
+            Assert.True(w.ResetAt > Now);
+            Assert.True(w.ObservedStartAt <= codex.FetchedAt);
+            Assert.InRange(w.UsedPct!.Value, 0, 100);
+        });
+        Assert.Empty(DemoQuotaSnapshots.For("gemini", Now).Windows);
+    }
+
+    [Fact]
+    public void PinnedSnapshot_KeepsItsResetInstantAndClimbsUntilTheReset()
+    {
+        var earlier = DemoQuotaSnapshots.For("codex", Now);
+        var later = DemoQuotaSnapshots.For("codex", Now.AddMinutes(40));
+
+        var weeklyBefore = earlier.Windows.Single(w => w.Label == "Weekly");
+        var weeklyAfter = later.Windows.Single(w => w.Label == "Weekly");
+        Assert.Equal(weeklyBefore.ResetAt, weeklyAfter.ResetAt);
+        Assert.True(weeklyAfter.UsedPct > weeklyBefore.UsedPct);
+
+        var afterReset = DemoQuotaSnapshots.For("codex", weeklyBefore.ResetAt!.Value.AddMinutes(10))
+            .Windows.Single(w => w.Label == "Weekly");
+        Assert.Equal(weeklyBefore.ResetAt!.Value.AddDays(7), afterReset.ResetAt);
+        Assert.True(afterReset.UsedPct < weeklyBefore.UsedPct);
+    }
+
+    [Fact]
+    public void PinnedSnapshot_ScheduleIsSeedable()
+    {
+        var anchor = new DateTime(2026, 3, 2, 6, 0, 0, DateTimeKind.Utc);
+        var configuration = Configuration(DemoQuotaSnapshots.AnchorKey, "2026-03-02T06:00:00Z");
+
+        Assert.Equal(anchor, DemoQuotaSnapshots.Anchor(configuration));
+        Assert.Equal(DemoQuotaSnapshots.DefaultAnchorUtc, DemoQuotaSnapshots.Anchor(Configuration("x", "y")));
+        var seeded = DemoQuotaSnapshots.For("claude", Now, anchor);
+        Assert.NotEqual(
+            DemoQuotaSnapshots.For("claude", Now).Windows.Select(w => w.ResetAt),
+            seeded.Windows.Select(w => w.ResetAt));
+        Assert.Equal(seeded, DemoQuotaSnapshots.For("claude", Now, anchor), SnapshotComparer.Instance);
+    }
+
+    [Fact]
+    public void PinnedBackend_BackfillsAndAppendsQuotaHistoryOncePerProbeTick()
+    {
+        var configuration = Configuration("ATP_WORKTREE_TEST_BACKEND", "1");
+        var history = new QuotaHistoryStore(configuration, NullLogger<QuotaHistoryStore>.Instance, _clock);
+        var service = NewService(new CountingProbe(), configuration, history);
+
+        var backfilled = history.Read("codex", Now.AddDays(-30));
+        // One hourly reading per window over the backfill span.
+        Assert.Equal(2 * (int)DemoQuotaSnapshots.BackfillSpan.TotalHours, backfilled.Count);
+        Assert.Contains(backfilled, p => p.Window == "Weekly" && p.ResetAt is not null);
+
+        service.GetCached();
+        service.GetCachedFor("codex");
+        Assert.Equal(backfilled.Count + 2, history.Read("codex", Now.AddDays(-30)).Count);
+
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        service.GetCached();
+        var points = history.Read("codex", Now.AddDays(-30));
+        Assert.Equal(backfilled.Count + 4, points.Count);
+        var weekly = points.Where(p => p.Window == "Weekly").ToList();
+        Assert.True(weekly[^1].UsedPct > weekly[0].UsedPct || weekly[^1].ResetAt != weekly[0].ResetAt);
+
+        // A restart only fills the gap: nothing is recorded twice.
+        var restarted = new QuotaHistoryStore(configuration, NullLogger<QuotaHistoryStore>.Instance, _clock);
+        NewService(new CountingProbe(), configuration, restarted);
+        Assert.Equal(points.Count, restarted.Read("codex", Now.AddDays(-30)).Count);
+    }
+
+    [Fact]
+    public void EmptyFixtureBackend_WritesNoQuotaHistory()
+    {
+        var configuration = Configuration("Quota:Mode", DemoQuotaSnapshots.EmptyFixtureMode);
+        var history = new QuotaHistoryStore(configuration, NullLogger<QuotaHistoryStore>.Instance, _clock);
+        var service = NewService(new CountingProbe(), configuration, history);
+
+        service.GetCached();
+
+        Assert.Empty(history.Read("codex", Now.AddDays(-30)));
     }
 
     [Fact]
@@ -118,7 +199,9 @@ public sealed class QuotaServiceDemoSnapshotTests : IDisposable
         Assert.Equal("codex", snap.CliType);
         Assert.Equal(DemoQuotaSnapshots.Source, snap.Source);
         Assert.Null(snap.Error);
-        Assert.Equal([18d, 42d], snap.Windows.Select(w => w.UsedPct!.Value));
+        Assert.Equal(
+            DemoQuotaSnapshots.For("codex", Now).Windows.Select(w => (w.Label, w.UsedPct, w.ResetAt)),
+            snap.Windows.Select(w => (w.Label, w.UsedPct, w.ResetAt)));
     }
 
     private IConfiguration Configuration(string key, string value)
@@ -131,13 +214,24 @@ public sealed class QuotaServiceDemoSnapshotTests : IDisposable
             .Build();
 
     private QuotaService NewService(IQuotaProbe probe, string key, string value)
-    {
-        var configuration = Configuration(key, value);
-        return new QuotaService(
+        => NewService(probe, Configuration(key, value), history: null);
+
+    private QuotaService NewService(IQuotaProbe probe, IConfiguration configuration, QuotaHistoryStore? history)
+        => new(
             NullLogger<QuotaService>.Instance,
             [probe],
             configuration,
-            new QuotaCacheStore(configuration, NullLogger<QuotaCacheStore>.Instance));
+            new QuotaCacheStore(configuration, NullLogger<QuotaCacheStore>.Instance),
+            history: history,
+            clock: _clock);
+
+    private sealed class SnapshotComparer : IEqualityComparer<QuotaSnapshot>
+    {
+        public static readonly SnapshotComparer Instance = new();
+        public bool Equals(QuotaSnapshot? x, QuotaSnapshot? y)
+            => x is not null && y is not null && x.FetchedAt == y.FetchedAt
+                && x.Windows.SequenceEqual(y.Windows);
+        public int GetHashCode(QuotaSnapshot obj) => obj.FetchedAt.GetHashCode();
     }
 
     private sealed class CountingProbe : IQuotaProbe

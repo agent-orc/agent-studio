@@ -1200,20 +1200,32 @@ test.describe('Execution Hosts settings section', () => {
       }
     }
 
+    // The mocked server keeps the drain and the recorded switch start, so a
+    // reload resumes at the same step (AGT-3852).
     let statusReads = 0;
-    await page.route('**/api/clients/agent-runner-01-review/drain', route => route.fulfill({
-      status: 200, contentType: 'application/json', body: '{}',
-    }));
-    await page.route('**/api/clients/agent-runner-01-review/resume', route => route.fulfill({
-      status: 200, contentType: 'application/json', body: '{}',
-    }));
-    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => {
-      statusReads++;
+    let drainRequestedAt: string | null = null;
+    let switchStartedAt: string | null = null;
+    const drainStatus = () => {
       const busy = statusReads === 1;
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-        draining: statusReads < 4, drained: !busy, running: busy
-          ? [{ kind: 'review', attemptId: 'review-active', taskKey: 'AGT-3648' }] : [],
-      }) });
+      return { draining: !!drainRequestedAt, drained: !!drainRequestedAt && !busy, drainRequestedAt, switchStartedAt,
+        running: busy ? [{ kind: 'review', attemptId: 'review-active', taskKey: 'AGT-3648' }] : [] };
+    };
+    await page.route('**/api/clients/agent-runner-01-review/drain', route => {
+      drainRequestedAt ??= new Date().toISOString();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.route('**/api/clients/agent-runner-01-review/resume', route => {
+      drainRequestedAt = null;
+      switchStartedAt = null;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => {
+      if (drainRequestedAt) statusReads++;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(drainStatus()) });
+    });
+    await page.route('**/api/clients/agent-runner-01-review/deploy-switch', route => {
+      switchStartedAt ??= new Date().toISOString();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(drainStatus()) });
     });
     await update.getByTestId('review-host-update-start').click();
     await expect(update).toHaveAttribute('data-stage', 'blocked');
@@ -1221,8 +1233,27 @@ test.describe('Execution Hosts settings section', () => {
     await expect(update.getByTestId('review-host-update-switch')).toHaveCount(0);
     await update.getByRole('button', { name: 'Check quiet point' }).click();
     await expect(update).toHaveAttribute('data-stage', 'quiet');
+
+    // A reload at the quiet point keeps the drain and the cancel path.
+    await page.reload();
+    await dismissDevErrorDialog(page);
+    await machineRow.click();
+    await expect(update).toHaveAttribute('data-stage', 'quiet');
+    await expect(update.getByTestId('review-host-drained-since')).toBeVisible();
+    await expect(update.getByRole('button', { name: 'Cancel and resume' })).toBeVisible();
     await update.getByTestId('review-host-update-switch').click();
     await expect(update).toHaveAttribute('data-stage', 'switching');
+
+    // A reload after the switch started resumes at verification.
+    await page.reload();
+    await dismissDevErrorDialog(page);
+    await machineRow.click();
+    await expect(update).toHaveAttribute('data-stage', 'switching');
+    await expect(update.getByTestId('review-host-switch-started')).toBeVisible();
+    await expect(update.getByTestId('review-host-update-verify')).toBeVisible();
+    await update.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-review-update-reloaded--mocked.png'),
+      animations: 'disabled' });
 
     await page.unroute('**/api/v1/management/host-releases');
     let releaseReads = 0;
