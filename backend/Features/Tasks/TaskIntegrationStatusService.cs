@@ -231,12 +231,34 @@ public sealed class TaskIntegrationStatusService
                             && string.Equals(receipt.TestLevel, TestExecutionLevels.Full, StringComparison.OrdinalIgnoreCase));
                 publications.Add(new(gate.TreeSha, parent, gate.Describe(), fullSuite));
             }
+            // A fresh integration whose diff has no applicable gate records that
+            // policy decision on its card instead of publishing a passed gate.
+            // The exact published tree is still a valid later publication for
+            // earlier cards. Do not infer this from the current profile: its
+            // commands may have changed since the merge was made.
+            var laterCards = _scanner?.GetResidentIdentityFacts()
+                .Where(source => string.Equals(source.ProjectName, job.ProjectName, StringComparison.Ordinal)
+                    && FileSystemPathComparer.Instance.Equals(source.WatchPath, job.WatchPath))
+                .ToArray() ?? [];
+            foreach (var source in laterCards)
+            {
+                var recorded = IntegrationVerificationStore.Read(source.FolderPath);
+                if (recorded is not { State: IntegrationVerificationStates.Verified,
+                    Evidence: IntegrationVerificationEvidence.GateNotApplicable, GateFailed: false }
+                    || !ReviewSubjectStore.IsValidResultSha(recorded.Sha)
+                    || !laterBySha.TryGetValue(recorded.Sha!, out var parent)
+                    || !IntegrationVerificationProjection.SameBranch(recorded.IntegrationBranch, branch))
+                    continue;
+                publications.Add(new(recorded.Sha!, parent,
+                    $"No gate applied to {source.TaskKey} on published tree {recorded.Sha}"));
+            }
             var batches = _batchGates;
             var currentProfile = BatchGatePilotService.GateProfile(
                 _settings.Get(job.ProjectName).BuildProfile, root);
             var uncountedBaseChecks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var failedBaseChecks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var verdict in batches.ListBaseVerdicts(job.ProjectName))
+            var baseVerdicts = batches.ListBaseVerdicts(job.ProjectName);
+            foreach (var verdict in baseVerdicts)
             {
                 if (!laterBySha.TryGetValue(verdict.BaseSha, out var parent)) continue;
                 if (verdict.Outcome != "pass")
@@ -343,12 +365,22 @@ public sealed class TaskIntegrationStatusService
                         + $"between the verified tree {Short(verification.Sha!)} and it"
                     : uncountedBatches.TryGetValue(hole, out var batchWhy) ? batchWhy
                     : "no batch publication covering it";
+                var batchDetails = _settings.Get(job.ProjectName).BatchGate.Enabled;
+                var sourceCard = laterCards.FirstOrDefault(source =>
+                    string.Equals(IntegrationVerificationStore.Read(source.FolderPath)?.Sha, hole,
+                        StringComparison.OrdinalIgnoreCase)
+                    || AttributedCommits(source).Contains(hole, StringComparer.OrdinalIgnoreCase));
+                var owner = sourceCard is null
+                    ? _git.GetCommitAuthor(root, hole) is { } author ? $"Commit author: {author}. " : string.Empty
+                    : $"Card: {sourceCard.TaskKey} ({sourceCard.Title}). ";
                 return status with { Verification = UnverifiedAcceptance(tip,
-                    $"The later publication {hole} has no passed gate on the first-parent integration line. "
+                    $"The later publication {hole} has no recorded verification on the first-parent integration line. "
                     + $"First uncovered commit after verified tree {Short(verification.Sha!)} up to {Short(tip!)}: {named}; "
-                    + $"{gateAnswer}; {baseAnswer}; {batchAnswer}. "
-                    + "A passed per-task gate on that published tree or a full-suite batch base verdict "
-                    + "for the current gate profile with its evidence would cover it.") with
+                    + owner + gateAnswer
+                    + (batchDetails ? $"; {baseAnswer}; {batchAnswer}" : string.Empty) + ". "
+                    + (batchDetails
+                        ? "A passed gate on the published tree or a full-suite batch base verdict with its evidence would cover it."
+                        : "Ask the project owner to review this commit and record its integration verification.")) with
                 {
                     UncoveredPublication = named,
                 } };

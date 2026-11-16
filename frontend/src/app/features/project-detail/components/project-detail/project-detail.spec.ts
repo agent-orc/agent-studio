@@ -19,6 +19,23 @@ import { ProjectDetailComponent, liveDecisionTone } from './project-detail';
  * stable across template tweaks.
  */
 describe('ProjectDetailComponent (smoke)', () => {
+  it.each(['develop', 'main'])('names the configured %s integration branch in auto-push settings', async (branch) => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDetailComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDetailComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.componentRef.setInput('view', 'settings');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/demo/snapshot').flush({ settings: { integrationBranch: branch } });
+    fixture.detectChanges();
+    const hint = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="project-detail-auto-push-hint"]')?.textContent ?? '';
+    expect(hint).toContain(`integrates into ${branch}`);
+    expect(hint).toContain('Completed auto-push targets main');
+    fixture.destroy();
+  });
   it('renders and persists the lifetime review and reissue limits', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDetailComponent],

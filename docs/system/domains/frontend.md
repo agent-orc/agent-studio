@@ -1097,7 +1097,10 @@ occur. It is not a claim about tunnel transfer time.
 - Project basics also shows the observed checkout's lag behind origin. Its
   status request fetches the published branch; a clean, unlocked checkout that
   is behind offers **Sync checkout**, which calls the explicit project checkout
-  sync endpoint and reports the resulting state.
+  sync endpoint and reports the resulting state. When no checkout holds the
+  integration branch, a clean, unlocked registered checkout offers **Switch
+  checkout to {branch}**. The Execution definition reads the local integration
+  branch tip, including referenced files, and labels that branch in Settings.
 - `frontend/src/app/services/task.service.ts`: task API integration, optimistic
   lane moves, reorder, and rollback.
 - Board card context menus offer neighbouring visible manual lanes (container
