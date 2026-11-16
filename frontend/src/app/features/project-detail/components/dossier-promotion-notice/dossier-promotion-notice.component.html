@@ -1,0 +1,30 @@
+<section class="promotion-notice" data-testid="dossier-promotion-notice"
+         [attr.data-reason]="promotion().reason" aria-label="Implementation cards">
+  <div class="promotion-notice__text">
+    <span class="promotion-notice__label">Implementation cards</span>
+    <span class="promotion-notice__reason" data-testid="dossier-promotion-reason">{{ promotion().message }}</span>
+    @if (createdKey(); as key) {
+      <span class="promotion-notice__hint" role="status" data-testid="dossier-promotion-created">
+        Created {{ key }} in Preparation. Run it to revise this Dossier; its delivery runs the concept review.
+      </span>
+    } @else if (nextStepHint(); as hint) {
+      <span class="promotion-notice__hint">{{ hint }}</span>
+    }
+  </div>
+  @if (!readOnly()) {
+    @if (createdKey()) {
+      <button type="button" class="promotion-notice__button" data-testid="dossier-promotion-open-card"
+              (click)="openConceptCard()">Open {{ createdKey() }}</button>
+    } @else if (nextStep() === 'create-concept-card') {
+      <button type="button" class="promotion-notice__button" data-testid="dossier-promotion-create-concept"
+              [appPendingButton]="creating()" pendingLabel="Creating…"
+              (click)="createConceptCard()">Create a concept card for this Dossier</button>
+    } @else if (nextStep() === 'open-concept-card') {
+      <button type="button" class="promotion-notice__button" data-testid="dossier-promotion-open-card"
+              (click)="openConceptCard()">Open {{ promotion().sourceTaskKey }} to start the concept review</button>
+    }
+  }
+  @if (error(); as message) {
+    <p class="promotion-notice__error" role="alert">{{ message }}</p>
+  }
+</section>

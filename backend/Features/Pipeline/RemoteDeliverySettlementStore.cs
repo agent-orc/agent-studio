@@ -224,6 +224,27 @@ public static class RemoteDeliverySettlementStore
     }
 
     /// <summary>
+    /// AGT-3883: reopens a settled integration of the same passed review that
+    /// may retry without a new review, so the engine decision that the
+    /// stranding watchdog asks for integrates again instead of moving the card
+    /// on the old failed verdict.
+    /// </summary>
+    public static bool ReopenForRetry(string taskFolder, string reviewAttemptId)
+    {
+        var current = Read(taskFolder);
+        if (!MatchesAttempt(current, reviewAttemptId) || !current!.ShouldIntegrate) return false;
+        Write(taskFolder, current with
+        {
+            Stage = RemoteDeliverySettlementStage.IntegrationPending,
+            IntegrationOutcome = null,
+            IntegrationDetail = null,
+            DiscardCompletedReplay = true,
+            RecordedAtUtc = DateTimeOffset.UtcNow,
+        });
+        return true;
+    }
+
+    /// <summary>
     /// True when the record describes the delivery generation that is current
     /// right now. A card that was requeued and re-reviewed has a different
     /// current ReviewAttempt, and its old record must never be replayed.

@@ -67,6 +67,14 @@
         [projectName]="projectName()"
         (promoted)="refreshDecision()"
       />
+    } @else if (promotionBlocked(); as promotion) {
+      <app-dossier-promotion-notice
+        class="workbench-viewer__promotion"
+        [projectName]="projectName()"
+        [document]="doc"
+        [promotion]="promotion"
+        [readOnly]="readOnly()"
+      />
     }
     <div
       class="workbench-viewer__frame-shell"

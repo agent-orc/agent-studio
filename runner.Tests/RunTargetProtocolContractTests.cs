@@ -10,7 +10,7 @@ namespace AgentRunner.Tests;
 
 /// <summary>
 /// IP-1 outbound-only contract: the run-target host only ever calls Studio,
-/// on three declared routes, and holds no listener. Studio being unreachable,
+/// on four declared routes, and holds no listener. Studio being unreachable,
 /// or an older Studio that sends no removal signals, leaves the host's apps alone.
 /// </summary>
 public sealed class RunTargetProtocolContractTests : IDisposable
@@ -45,7 +45,8 @@ public sealed class RunTargetProtocolContractTests : IDisposable
         var observed = JsonDocument.Parse(handler.Requests[2].Body).RootElement.GetProperty("environments")[0];
         Assert.Equal("running", observed.GetProperty("state").GetString());
         Assert.Equal(Artifact, observed.GetProperty("runningArtifact").GetString());
-        Assert.Equal(3, RunTargetClient.RouteTemplates.Count);
+        // The fourth route, secret resolution, is used only for managed database credentials (AGT-3877).
+        Assert.Equal(4, RunTargetClient.RouteTemplates.Count);
     }
 
     [Fact]

@@ -5,10 +5,9 @@ namespace AgentStudio.Publishing;
 /// for accepted (6-completed) tasks. The design invariant is <b>no per-card git
 /// spawn</b> - exactly the rule <see cref="BoardMergeStatusService"/> follows for
 /// the merge signal. Each publish target already carries the set of pending
-/// mainline (first-parent) commit SHAs on the integration branch; a merged task's
-/// mainline anchor (its recorded develop-merge commit, else its branch tip / last
-/// commit) is precisely one of those SHAs when the task touched the target's
-/// scope. So per-task publishability is an in-memory set-membership test against a
+/// commits introduced by scoped mainline changes on the integration branch,
+/// including the second-parent side of an integration merge. So per-task
+/// publishability is an in-memory set-membership test against a
 /// computation that is derived once per project (O(projects) git work), never per
 /// card.
 /// </summary>
@@ -74,10 +73,9 @@ public sealed class TaskPublishableService
     }
 
     /// <summary>
-    /// The SHAs that could match a target's pending mainline set: the task's
-    /// mainline anchor (merge commit / branch tip / last commit) plus its
-    /// attributed commit SHAs, so both merge-based and linear-history repos
-    /// resolve. Full SHAs; the pending set is also full SHAs.
+    /// The SHAs that could match a target's introduced-commit set: the task's
+    /// anchor plus its attributed commits, covering both merges and linear
+    /// history. Full SHAs; the pending set is also full SHAs.
     /// </summary>
     private static List<string> CandidateShas(TaskInfo job)
     {

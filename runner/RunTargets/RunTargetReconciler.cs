@@ -11,7 +11,8 @@ public sealed record RunTargetReconcilerSettings(
 
 public sealed record RunTargetCycleResult(
     IReadOnlyList<RunTargetObservation> Observations,
-    IReadOnlyList<RunTargetJobReport> JobReports);
+    IReadOnlyList<RunTargetJobReport> JobReports,
+    IReadOnlyList<RunTargetDatabaseObservation>? Databases = null);
 
 /// <summary>
 /// Converges the host to Studio's desired state. A new revision is pulled,
@@ -26,7 +27,10 @@ public sealed record RunTargetCycleResult(
 /// state, so it also runs while Studio cannot be reached
 /// (<see cref="SuperviseOnlyAsync"/>). An app key belongs to the project
 /// environment stored under it: a spec or removal for another environment
-/// that maps to the same key is refused.
+/// that maps to the same key is refused. Managed databases (AGT-3877) are
+/// provisioned before the app revision that uses them and outlive it: a
+/// database Studio no longer declares is stopped with its volume kept, and only
+/// an owner's deletion from Studio removes the volume.
 /// </summary>
 public sealed class RunTargetReconciler(
     IRunTargetDocker docker,
@@ -36,7 +40,8 @@ public sealed class RunTargetReconciler(
     RunTargetReconcilerSettings settings,
     TimeProvider clock,
     Func<TimeSpan, CancellationToken, Task> delay,
-    Action<string> log)
+    Action<string> log,
+    IRunTargetCredentialSource? credentials = null)
 {
     private const int MaxEvents = 20;
 
@@ -93,8 +98,9 @@ public sealed class RunTargetReconciler(
             removals.TryAdd(key, removal);
         }
         var removed = new List<RunTargetRemoval>();
+        var deletedDatabases = new List<RunTargetDatabaseDeletion>();
 
-        if (specs.Count > 0 || removals.Count > 0 || state.Apps.Count > 0)
+        if (specs.Count > 0 || removals.Count > 0 || state.Apps.Count > 0 || (desired.DatabaseDeletions ?? []).Count > 0)
         {
             // Removals first, so a domain they free can go to a new app in this cycle.
             foreach (var (key, removal) in removals)
@@ -103,6 +109,10 @@ public sealed class RunTargetReconciler(
                 removed.Add(removal);
             }
             store.Save(state);
+            foreach (var deletion in desired.DatabaseDeletions ?? [])
+            {
+                if (await DeleteDatabaseAsync(deletion, specs, state, ct)) deletedDatabases.Add(deletion);
+            }
             var edgeReady = await EnsureEdgeAsync(state, ct);
             foreach (var (key, spec) in specs)
             {
@@ -143,7 +153,14 @@ public sealed class RunTargetReconciler(
             .Concat(removed.Select(item => new RunTargetObservation(item.Project, item.EnvironmentId, "removed",
                 null, null, 0, now, [])))
             .ToArray();
-        return new(observations, reports);
+        if (offlineReason is null) await MeasureDatabasesAsync(state, ct);
+        var databases = state.Databases.Values
+            .Select(item => new RunTargetDatabaseObservation(item.Project, item.EnvironmentId, item.Name, item.Status,
+                item.Version, item.VolumeBytes, now))
+            .Concat(deletedDatabases.Select(item => new RunTargetDatabaseObservation(item.Project, item.EnvironmentId,
+                item.Name, "deleted", null, null, now)))
+            .ToArray();
+        return new(observations, reports, databases);
     }
 
     private static string Name(RunTargetEnvironmentSpec spec) => $"{spec.Project}/{spec.EnvironmentId}";
@@ -165,6 +182,8 @@ public sealed class RunTargetReconciler(
         if (!await RemoveSlotAsync(app.Previous, ct)) return false;
         if (app.Previous is { } previous) state.PendingStops.RemoveAll(item => item.ComposeProject == previous.ComposeProject);
         app.Previous = null;
+        if (!await RetainDatabasesAsync(key, app.Project, app.EnvironmentId, [], state, removeContainers: true, ct))
+            return false;
         var network = await docker.RemoveNetworkAsync(RunTargetNames.AppNetwork(key), ct);
         if (!network.Ok)
         {
@@ -201,11 +220,18 @@ public sealed class RunTargetReconciler(
             return;
         }
         if (!await AttachAsync(key, name, ct)) return;
+        if (!await EnsureDatabasesAsync(key, spec, state, ct))
+        {
+            Fail(app, spec, reports, RunTargetEvidence.StepFailed, "deploy-step-failed");
+            return;
+        }
 
         var revision = RunTargetNames.Revision(spec);
         if (app.Current is { } running && running.Revision == revision)
         {
             await SuperviseAsync(key, app, state, ct);
+            if (app.Current == running)
+                await RetainDatabasesAsync(key, spec.Project, spec.EnvironmentId, spec.Databases ?? [], state, removeContainers: false, ct);
             if (spec.JobId is not null)
             {
                 // A crash rollback in this pass replaced the revision the job asks for.
@@ -230,14 +256,14 @@ public sealed class RunTargetReconciler(
         var composeProject = key + "-" + revision;
         var candidate = restoring ? app.Previous! : new RunTargetSlot(revision, spec.Artifact, composeProject,
             Path.Combine(store.AppsDirectory, composeProject, "compose.yaml"), spec.ContainerPort, spec.HealthPath,
-            spec.SecretRefs);
+            spec.SecretRefs, SlotDatabases(key, spec));
         if (state.PendingCleanup.Any(item => item.ComposeProject == candidate.ComposeProject))
         {
             log($"run-target: {name} cannot start revision {revision} while its previous Docker cleanup is pending");
             Fail(app, spec, reports, RunTargetEvidence.StepFailed, "deploy-step-failed");
             return;
         }
-        if (await PrepareSecretsAsync(name, spec.Project, candidate, ct) is not { } resolved)
+        if (await PrepareSecretsAsync(name, app, candidate, ct) is not { } resolved)
         {
             Fail(app, spec, reports, RunTargetEvidence.StepFailed, "deploy-step-failed");
             return;
@@ -277,6 +303,7 @@ public sealed class RunTargetReconciler(
         }
         AddEvent(app, restoring || spec.IsRollback ? "rolled-back" : "swapped", spec.Artifact);
         log($"run-target: {name} now runs {spec.Artifact} (revision {revision})");
+        await RetainDatabasesAsync(key, spec.Project, spec.EnvironmentId, spec.Databases ?? [], state, removeContainers: false, ct);
         Report(spec, reports, true, RunTargetEvidence.HealthOk);
     }
 
@@ -359,7 +386,7 @@ public sealed class RunTargetReconciler(
             app.Status = RunTargetCrashPolicy.IsCrashLoop(app.CrashAttempts) ? "crash-loop" : "unhealthy";
             return;
         }
-        if (await PrepareSecretsAsync(name, app.Project, slot, ct) is not { } resolved)
+        if (await PrepareSecretsAsync(name, app, slot, ct) is not { } resolved)
         {
             log($"run-target: {name} cannot restart without its secrets");
             app.Status = "failed";
@@ -416,7 +443,7 @@ public sealed class RunTargetReconciler(
     private async Task<bool> RestoreForRollbackAsync(string name, RunTargetAppState app, RunTargetSlot previous,
         RunTargetHostState state, CancellationToken ct)
     {
-        if (await PrepareSecretsAsync(name, app.Project, previous, ct) is not { } resolved) return false;
+        if (await PrepareSecretsAsync(name, app, previous, ct) is not { } resolved) return false;
         var started = await docker.ComposeUpAsync(previous.ComposeProject, previous.ComposeFile, ct);
         if (!started.Ok || !await WaitHealthyAsync(previous, settings.HealthAttempts, ct))
         {
@@ -428,18 +455,35 @@ public sealed class RunTargetReconciler(
         return await SwapAsync(name, app, previous, restoring: true, state, ct);
     }
 
-    /// <summary>Resolves the slot's secrets from its project's own root and writes them to tmpfs.</summary>
-    private async Task<RunTargetResolvedSecrets?> PrepareSecretsAsync(string name, string project, RunTargetSlot slot,
+    /// <summary>
+    /// Resolves the slot's secrets from its project's own root, adds the
+    /// connection string of each managed database, and writes them to tmpfs.
+    /// </summary>
+    private async Task<RunTargetResolvedSecrets?> PrepareSecretsAsync(string name, RunTargetAppState app, RunTargetSlot slot,
         CancellationToken ct)
     {
         var secretRefs = slot.SecretRefs ?? [];
-        var resolved = await RunTargetResolvedSecrets.ResolveAsync(secrets, project, secretRefs, ct);
+        var resolved = await RunTargetResolvedSecrets.ResolveAsync(secrets, app.Project, secretRefs, ct);
         if (resolved.Missing.Count > 0)
         {
             log($"run-target: {name} is missing secret references in its project's secret root: {string.Join(", ", resolved.Missing)}");
             return null;
         }
-        if (secretRefs.Count == 0) return resolved;
+        if ((slot.Databases ?? []).Count > 0)
+        {
+            var urls = new Dictionary<string, string>(StringComparer.Ordinal);
+            var passwords = new List<string>();
+            foreach (var database in slot.Databases!)
+            {
+                if (await ReadCredentialAsync(name, app.Project, app.EnvironmentId, database.Name, database.PasswordRef, ct)
+                    is not { } password) return null;
+                passwords.Add(password);
+                urls[RunTargetNames.DatabaseUrlFile(database.Name)] =
+                    RunTargetNames.ConnectionString(database.DatabaseKey, database.Name, password);
+            }
+            resolved = resolved.With(urls, passwords);
+        }
+        if (resolved.Values.Count == 0) return resolved;
         if (!secretFiles.IsMemoryBacked())
         {
             log($"run-target: {name} not started: secret directory {secretFiles.Root} is not on tmpfs, so no secret file is written there");
@@ -630,4 +674,249 @@ public sealed class RunTargetReconciler(
         app.Events.Add(new(clock.GetUtcNow().UtcDateTime, kind, artifact));
         if (app.Events.Count > MaxEvents) app.Events.RemoveRange(0, app.Events.Count - MaxEvents);
     }
+
+    /// <summary>Volume usage is measured at most this often; <c>du</c> reads every file of the database.</summary>
+    private static readonly TimeSpan MeasureEvery = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Provisions or converges each declared database before the app revision
+    /// that uses it: its own volume, the data network, the password file on
+    /// tmpfs, then <c>compose up</c> and a readiness check over TCP. A changed
+    /// minor version or size recreates the container on the same volume. A
+    /// different major version is refused; the data stays as it is.
+    /// </summary>
+    private async Task<bool> EnsureDatabasesAsync(string key, RunTargetEnvironmentSpec spec, RunTargetHostState state,
+        CancellationToken ct)
+    {
+        var databases = spec.Databases ?? [];
+        if (databases.Count == 0) return true;
+        var name = Name(spec);
+        var network = await docker.EnsureNetworkAsync(RunTargetNames.DataNetwork(key), ct);
+        if (!network.Ok)
+        {
+            log($"run-target: {name} data network unavailable: {network.Detail}");
+            return false;
+        }
+        foreach (var database in databases)
+        {
+            var databaseKey = RunTargetNames.DatabaseKey(key, database.Name);
+            var label = $"{name} database {database.Name}";
+            if (state.Databases.TryGetValue(databaseKey, out var stored) && !Owns(stored, spec.Project, spec.EnvironmentId, database.Name))
+            {
+                log($"run-target: {label} refused: key {databaseKey} belongs to {stored.Project}/{stored.EnvironmentId} database {stored.Name}");
+                return false;
+            }
+            if (stored is not null && stored.Version.Length > 0
+                && RunTargetNames.MajorOf(stored.Version) != RunTargetNames.MajorOf(database.Version))
+            {
+                log($"run-target: {label} holds PostgreSQL {RunTargetNames.MajorOf(stored.Version)} data; version "
+                    + $"{database.Version} is refused because a major upgrade needs a dump and restore. The data is unchanged.");
+                stored.Status = "upgrade-refused";
+                store.Save(state);
+                return false;
+            }
+            var composeFile = Path.Combine(store.DatabasesDirectory, databaseKey, "compose.yaml");
+            var changed = store.WriteIfChanged(composeFile,
+                RunTargetComposeFile.Database(spec, database, key, databaseKey, secretFiles.Directory(databaseKey)));
+            if (stored is null)
+                state.Databases[databaseKey] = stored = new RunTargetDatabaseState
+                    { Project = spec.Project, EnvironmentId = spec.EnvironmentId, Name = database.Name };
+            stored.ComposeFile = composeFile;
+            stored.PasswordRef = database.PasswordRef;
+            var status = await docker.InspectAsync(databaseKey, ct);
+            if (!changed && status.State == RunTargetContainerState.Running && stored.Status == "running") continue;
+
+            if (await ReadCredentialAsync(name, spec.Project, spec.EnvironmentId, database.Name, database.PasswordRef, ct)
+                is not { } password || !secretFiles.IsMemoryBacked())
+            {
+                if (!secretFiles.IsMemoryBacked())
+                    log($"run-target: {label} not started: secret directory {secretFiles.Root} is not on tmpfs, so no secret file is written there");
+                stored.Status = "failed";
+                store.Save(state);
+                return false;
+            }
+            var resolved = RunTargetResolvedSecrets.FromValues(new Dictionary<string, string> { ["password"] = password });
+            secretFiles.Write(databaseKey, resolved);
+            var previous = stored.Version;
+            var step = await docker.EnsureVolumeAsync(RunTargetNames.DatabaseVolume(databaseKey), ct);
+            if (step.Ok && (changed || status.State == RunTargetContainerState.Missing))
+                step = await docker.PullAsync(RunTargetNames.PostgresImage(database.Version), ct);
+            if (step.Ok)
+            {
+                // From here the volume may hold data of this major version.
+                if (stored.Version.Length == 0) stored.Version = database.Version;
+                store.Save(state);
+                step = await docker.ComposeUpAsync(databaseKey, composeFile, ct);
+            }
+            if (!step.Ok || !await WaitDatabaseReadyAsync(databaseKey, database.Name, ct))
+            {
+                log($"run-target: {label} did not become ready" + (step.Ok ? "" : ": " + resolved.Mask(step.Detail)));
+                stored.Status = "failed";
+                store.Save(state);
+                return false;
+            }
+            stored.Version = database.Version;
+            stored.Status = "running";
+            store.Save(state);
+            log($"run-target: {label} runs PostgreSQL {database.Version}"
+                + (previous.Length > 0 && previous != database.Version ? $", upgraded from {previous}" : ""));
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Stops the environment's databases that <paramref name="keep"/> does not
+    /// name and marks them retained; their volumes stay. When the app leaves
+    /// the host, every database container and the data network go as well.
+    /// </summary>
+    private async Task<bool> RetainDatabasesAsync(string key, string project, string environmentId,
+        IReadOnlyList<RunTargetDatabaseSpec> keep, RunTargetHostState state, bool removeContainers, CancellationToken ct)
+    {
+        var owned = state.Databases.Where(item => item.Value.Project == project && item.Value.EnvironmentId == environmentId)
+            .ToArray();
+        foreach (var (databaseKey, stored) in owned.Where(item => !keep.Any(database => database.Name == item.Value.Name)))
+        {
+            if (stored.Status == "retained" && !removeContainers) continue;
+            var result = !File.Exists(stored.ComposeFile) ? RunTargetDockerResult.Success
+                : removeContainers ? await docker.ComposeDownAsync(databaseKey, stored.ComposeFile, ct)
+                : await docker.ComposeStopAsync(databaseKey, stored.ComposeFile, ct);
+            if (!result.Ok)
+            {
+                log($"run-target: could not stop {project}/{environmentId} database {stored.Name}: {result.Detail}");
+                return false;
+            }
+            secretFiles.Remove(databaseKey);
+            if (stored.Status != "retained")
+                log($"run-target: {project}/{environmentId} database {stored.Name} is stopped; its volume "
+                    + $"{RunTargetNames.DatabaseVolume(databaseKey)} is kept until an owner deletes it in Studio");
+            stored.Status = "retained";
+        }
+        if (removeContainers && owned.Length > 0)
+        {
+            var network = await docker.RemoveNetworkAsync(RunTargetNames.DataNetwork(key), ct);
+            if (!network.Ok)
+            {
+                log($"run-target: could not remove network {RunTargetNames.DataNetwork(key)}: {network.Detail}");
+                return false;
+            }
+        }
+        store.Save(state);
+        return true;
+    }
+
+    /// <summary>
+    /// Deletes a database's container and volume after an owner confirmed it in
+    /// Studio. A database the environment's desired state still declares is
+    /// never deleted. The volume name follows from the database's identity, so
+    /// the deletion also works after the host lost its state.
+    /// </summary>
+    private async Task<bool> DeleteDatabaseAsync(RunTargetDatabaseDeletion deletion,
+        IReadOnlyDictionary<string, RunTargetEnvironmentSpec> specs, RunTargetHostState state, CancellationToken ct)
+    {
+        var label = $"{deletion.Project}/{deletion.EnvironmentId} database {deletion.Name}";
+        if (!RunTargetNames.IsDatabaseName(deletion.Name) || RunTargetNames.SecretScope(deletion.Project) is null)
+        {
+            log($"run-target: refused deletion of {label}: invalid name");
+            return false;
+        }
+        var key = RunTargetNames.AppKey(deletion.Project, deletion.EnvironmentId);
+        var databaseKey = RunTargetNames.DatabaseKey(key, deletion.Name);
+        if (specs.TryGetValue(key, out var spec) && (spec.Databases ?? []).Any(item => item.Name == deletion.Name))
+        {
+            log($"run-target: refused deletion of {label}: the environment still declares it");
+            return false;
+        }
+        if (state.Databases.TryGetValue(databaseKey, out var stored)
+            && !Owns(stored, deletion.Project, deletion.EnvironmentId, deletion.Name))
+        {
+            log($"run-target: refused deletion of {label}: key {databaseKey} belongs to {stored.Project}/{stored.EnvironmentId}");
+            return false;
+        }
+        if (stored is not null && File.Exists(stored.ComposeFile))
+        {
+            var down = await docker.ComposeDownAsync(databaseKey, stored.ComposeFile, ct);
+            if (!down.Ok)
+            {
+                log($"run-target: could not remove the container of {label}: {down.Detail}");
+                return false;
+            }
+        }
+        var removed = await docker.RemoveVolumeAsync(RunTargetNames.DatabaseVolume(databaseKey), ct);
+        if (!removed.Ok)
+        {
+            log($"run-target: could not delete the volume of {label}: {removed.Detail}");
+            return false;
+        }
+        secretFiles.Remove(databaseKey);
+        var directory = Path.Combine(store.DatabasesDirectory, databaseKey);
+        if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        state.Databases.Remove(databaseKey);
+        store.Save(state);
+        log($"run-target: deleted the data of {label}; an owner confirmed the deletion in Studio");
+        return true;
+    }
+
+    /// <summary>Records the size of each running database's data directory, at most every <see cref="MeasureEvery"/>.</summary>
+    private async Task MeasureDatabasesAsync(RunTargetHostState state, CancellationToken ct)
+    {
+        var now = clock.GetUtcNow().UtcDateTime;
+        var measured = false;
+        foreach (var (databaseKey, database) in state.Databases)
+        {
+            if (database.Status != "running" || database.MeasuredAt is { } last && now - last < MeasureEvery) continue;
+            var usage = await docker.ExecAsync(databaseKey, ["du", "-sk", RunTargetNames.DatabaseDataPath], ct);
+            database.MeasuredAt = now;
+            measured = true;
+            if (usage.Ok && long.TryParse(usage.Detail.Split(['\t', ' '], 2)[0].Trim(), out var kilobytes))
+                database.VolumeBytes = kilobytes * 1024;
+            else log($"run-target: could not measure the volume of {database.Project}/{database.EnvironmentId} database {database.Name}");
+        }
+        if (measured) store.Save(state);
+    }
+
+    private async Task<bool> WaitDatabaseReadyAsync(string databaseKey, string database, CancellationToken ct)
+    {
+        // Over TCP: the image's initialisation server listens on the socket only, so ready means the final server.
+        string[] check = ["pg_isready", "-q", "-h", "127.0.0.1", "-p", RunTargetNames.DatabasePort.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "-U", RunTargetNames.DatabaseUser, "-d", database];
+        for (var attempt = 0; attempt < settings.HealthAttempts; attempt++)
+        {
+            if (attempt > 0) await delay(TimeSpan.FromSeconds(settings.HealthIntervalSeconds), ct);
+            if ((await docker.ExecAsync(databaseKey, check, ct)).Ok) return true;
+        }
+        return false;
+    }
+
+    private static IReadOnlyList<RunTargetSlotDatabase>? SlotDatabases(string key, RunTargetEnvironmentSpec spec)
+        => spec.Databases is { Count: > 0 } databases
+            ? databases.Select(item => new RunTargetSlotDatabase(item.Name, RunTargetNames.DatabaseKey(key, item.Name),
+                item.PasswordRef)).ToArray()
+            : null;
+
+    /// <summary>Reads a managed database password from Studio; the reference is logged, the value never.</summary>
+    private async Task<string?> ReadCredentialAsync(string name, string project, string environmentId, string database,
+        string reference, CancellationToken ct)
+    {
+        if (credentials is null)
+        {
+            log($"run-target: {name} cannot read the credential of database {database}: this host has no credential source");
+            return null;
+        }
+        try
+        {
+            var value = await credentials.ReadAsync(project, environmentId, reference, ct);
+            if (value is null) log($"run-target: {name} database {database}: Studio did not issue {reference} to this host");
+            return value;
+        }
+        catch (HttpRequestException ex)
+        {
+            log($"run-target: {name} database {database}: Studio is unreachable for {reference} ({ex.Message})");
+            return null;
+        }
+    }
+
+    private static bool Owns(RunTargetDatabaseState database, string project, string environmentId, string name)
+        => string.Equals(database.Project, project, StringComparison.Ordinal)
+            && string.Equals(database.EnvironmentId, environmentId, StringComparison.Ordinal)
+            && string.Equals(database.Name, name, StringComparison.Ordinal);
 }

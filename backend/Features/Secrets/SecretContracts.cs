@@ -73,6 +73,7 @@ public sealed record SecretWorkloadRequest(
     string? JobId = null,
     string? LeaseToken = null,
     string? TaskKey = null,
-    string? LeaseId = null);
+    string? LeaseId = null,
+    string? EnvironmentId = null);
 
 public sealed record ResolveSecretResponse(string Reference, string ResolvedReference, int Version, string Value);

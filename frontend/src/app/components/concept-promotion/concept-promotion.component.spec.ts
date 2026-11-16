@@ -4,6 +4,7 @@ import { Subject, of, throwError } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PromoteConceptResponse, PromoteConceptTasksResponse } from '../../models/task.model';
 import { TaskService } from '../../services/task.service';
+import { ActionPanelCoordinator } from '../../services/action-panel-coordinator.service';
 import { ConceptPromotionComponent } from './concept-promotion.component';
 import { decisionLabel, promotionProgressLabel, promotionSlices } from './concept-promotion.util';
 
@@ -83,7 +84,9 @@ describe('ConceptPromotionComponent', () => {
     };
     await TestBed.configureTestingModule({
       imports: [ConceptPromotionComponent],
-      providers: [provideZonelessChangeDetection(), { provide: TaskService, useValue: service }],
+      providers: [
+        provideZonelessChangeDetection(), ActionPanelCoordinator, { provide: TaskService, useValue: service },
+      ],
     }).compileComponents();
     fixture = TestBed.createComponent(ConceptPromotionComponent);
     fixture.componentRef.setInput('taskRef', 'DEM-7');
@@ -96,6 +99,25 @@ describe('ConceptPromotionComponent', () => {
     render();
     expect(byTestId('concept-promotion-panel')).toBeNull();
     expect(byTestId('concept-promotion-progress')?.textContent).toContain('1 of 3 slices have cards');
+  });
+
+  it('claims the view\'s one action panel and closes when another panel opens (AGT-3875)', () => {
+    const panels = TestBed.inject(ActionPanelCoordinator);
+    byTestId<HTMLButtonElement>('concept-promotion-open')!.click();
+    render();
+    expect(panels.active()).toBe('concept-promotion');
+    expect(byTestId('concept-promotion-panel')).not.toBeNull();
+
+    panels.claim('dossier-decision');
+    render();
+    expect(byTestId('concept-promotion-panel')).toBeNull();
+    expect(byTestId('concept-promotion-open')).not.toBeNull();
+
+    byTestId<HTMLButtonElement>('concept-promotion-open')!.click();
+    render();
+    byTestId<HTMLButtonElement>('concept-promotion-cancel')!.click();
+    render();
+    expect(panels.active()).toBeNull();
   });
 
   it('opens the slice list and preselects every slice without a card', () => {

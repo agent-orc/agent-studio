@@ -20,6 +20,9 @@ public sealed record EnvironmentDeclaration(
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
     public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
+
+    /// <summary>Managed databases project.yml schema 2 declares for this environment (AGT-3877); only run-zone environments have any.</summary>
+    public IReadOnlyList<ProjectDatabaseDefinition> Databases { get; init; } = [];
     public bool? Protected { get; init; }
     public bool? Automatic { get; init; }
     public string? Requires { get; init; }
@@ -73,6 +76,9 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
     public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
+
+    /// <summary>The approved managed databases; the run zone provisions or upgrades them only through a deploy job.</summary>
+    public IReadOnlyList<ProjectDatabaseDefinition> Databases { get; init; } = [];
     public IReadOnlyList<DeployStepResult> StepResults { get; init; } = [];
     /// <summary>Preview jobs share the normal claim, lease and report queue.</summary>
     public string Kind { get; init; } = "standard";
@@ -354,6 +360,17 @@ public sealed partial class ProjectEnvironmentService
                     Error = $"{file.EnvironmentId}.json diverges from schema 2 project.yml; migrate the declaration before deploying." });
                 continue;
             }
+            // The run zone, not SSH, executes an edge-hosted environment (AGT-3877): the host
+            // reports health without SSH step results, so its job carries no SSH steps.
+            if (legacy.Hosting is not null)
+            {
+                output.Add(file with { Declaration = legacy with
+                {
+                    Variables = variables, Artifacts = definition.Artifacts, Protected = environment.Protected,
+                    Automatic = phase.Automatic, Requires = phase.Requires,
+                } });
+                continue;
+            }
             output.Add(file with { Declaration = legacy with
             {
                 Template = "ssh-v2",
@@ -362,7 +379,27 @@ public sealed partial class ProjectEnvironmentService
                 Automatic = phase.Automatic, Requires = phase.Requires,
             } });
         }
-        return InLifecycleOrder(output);
+        return InLifecycleOrder(WithDatabases(output, definition.Databases));
+    }
+
+    /// <summary>
+    /// Attaches the managed databases of each schema 2 environment (AGT-3877).
+    /// Only the run zone provisions them, so an environment outside it that a
+    /// database applies to is unusable until <c>environments</c> scopes the entry.
+    /// </summary>
+    private static IEnumerable<EnvironmentDeclarationFile> WithDatabases(IEnumerable<EnvironmentDeclarationFile> files,
+        IReadOnlyList<ProjectDatabaseDefinition> databases)
+    {
+        foreach (var file in files)
+        {
+            var name = file.Declaration is { } declaration ? PipelineMigrationPolicy.EnvironmentFor(declaration.Kind) : null;
+            var applying = name is null ? [] : databases.Where(item => item.AppliesTo(name)).ToArray();
+            if (applying.Length == 0) yield return file;
+            else if (file.Declaration!.Hosting is null)
+                yield return file with { Declaration = null, Error = $"{file.EnvironmentId} is not hosted in the run zone, "
+                    + $"so it cannot have the managed database {applying[0].Name}; limit the database to run-zone environments." };
+            else yield return file with { Declaration = file.Declaration with { Databases = applying } };
+        }
     }
 
     /// <summary>Valid declarations in lifecycle order, then broken files; ties break by id.</summary>
@@ -1589,6 +1626,7 @@ public sealed partial class ProjectEnvironmentService
                 Kind = SnapshotKind(deployed, state),
                 Hosting = deployed.Hosting ?? current.Hosting,
                 SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
+                Databases = deployed.Databases,
             }
             : current;
 
@@ -1706,7 +1744,7 @@ public sealed partial class ProjectEnvironmentService
             GuidedFailure: declaration.GuidedFailure, RetryStep: retryStep, RetryOfJobId: retryOfJobId,
             Hosting: declaration.Hosting, EnvironmentKind: declaration.Kind)
         { Tenant = tenant, Data = declaration.Data, SshSteps = declaration.SshSteps,
-            Variables = declaration.Variables, Artifacts = declaration.Artifacts };
+            Variables = declaration.Variables, Artifacts = declaration.Artifacts, Databases = declaration.Databases };
         state.Jobs.Add(job);
         return job;
     }
@@ -1781,6 +1819,7 @@ public sealed partial class ProjectEnvironmentService
         public List<RunTargetObservedRow> Observed { get; set; } = [];
         public List<RunTargetPlacement> Placements { get; set; } = [];
         public List<RunTargetRemovalRecord> RunTargetRemovals { get; set; } = [];
+        public List<ManagedDatabaseRecord> Databases { get; set; } = [];
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
     public sealed record RunTargetObservedRow(string EnvironmentId, RunTargetObservation Observation);

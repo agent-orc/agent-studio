@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -10,6 +11,8 @@ internal static class ReviewAspectInputBudget
     private const int MaximumContextCharacters = 120_000;
     private const int MaximumDiffCharacters = 580_000;
     private const int MaximumFileCharacters = 40_000;
+    private const int MaximumScreenshotCharacters = 24_000;
+    private const int OmissionReserveCharacters = 21_000;
 
     internal sealed record Result(string Prompt, string Report);
 
@@ -34,13 +37,7 @@ internal static class ReviewAspectInputBudget
                 report.AppendLf("Screenshot evidence: " + line.Trim());
         if (material.Contains("[[REVIEW_DIFF_TRUNCATED:", StringComparison.Ordinal))
             report.AppendLf("Source diff was already limited by the review material file and line budget; see its truncation marker.");
-        var context = authored;
-        if (context.Length > MaximumContextCharacters)
-        {
-            report.AppendLf($"Authored context: {context.Length - MaximumContextCharacters} characters omitted.");
-            context = context[..80_000] + "\n[Authored context omitted to meet review input budget.]\n"
-                + context[^39_000..];
-        }
+        var context = BoundContext(authored, report);
 
         var fences = Regex.Matches(material, @"^```diff\r?\n(?<body>[\s\S]*?)^```\r?$", RegexOptions.Multiline);
         if (fences.Count == 0)
@@ -62,6 +59,11 @@ internal static class ReviewAspectInputBudget
             }
             byFence.Add(sections);
         }
+        // A kept Dossier snapshot and the package excerpt take room the diff would
+        // otherwise use, so the diff is cut and named here rather than by the
+        // final CLI-limit trim.
+        var diffBudget = Math.Min(MaximumDiffCharacters, MaximumCharacters - context.Length
+            - dossierSection.Length - MaximumScreenshotCharacters - OmissionReserveCharacters);
         var ordered = all.OrderByDescending(section => IsTemplateOrStyle(section.File))
             .ThenBy(section => section.File, StringComparer.Ordinal).ToArray();
         var selected = new Dictionary<int, string>();
@@ -71,7 +73,7 @@ internal static class ReviewAspectInputBudget
         foreach (var section in ordered)
         {
             var available = Math.Min(MaximumFileCharacters - fileUsage.GetValueOrDefault(section.File) - 1,
-                MaximumDiffCharacters - used - 1);
+                diffBudget - used - 1);
             if (available < 300)
             {
                 omitted.Add(section.File);
@@ -112,6 +114,32 @@ internal static class ReviewAspectInputBudget
             dossierSection);
     }
 
+    /// <summary>
+    /// Bounds the authored prompt. A concept-fit Dossier snapshot span is kept whole:
+    /// the plan builder already bounded it and names every file it left out, so only
+    /// the brief and instructions around it share the context budget.
+    /// </summary>
+    private static string BoundContext(string authored, StringBuilder report)
+    {
+        if (ConceptDossierSnapshotSpan.TrySplit(authored, out var before, out var span, out var after)
+            && span.Length <= ConceptDossierSnapshotSpan.MaximumCharacters)
+        {
+            if (before.Length + after.Length <= MaximumContextCharacters) return authored;
+            report.AppendLf($"Authored context around the Dossier snapshot: {before.Length + after.Length - MaximumContextCharacters} characters omitted; the snapshot is complete.");
+            var tail = Math.Min(after.Length, 39_000);
+            var head = MaximumContextCharacters - tail - 128;
+            if (before.Length > head)
+                before = before[..head] + "\n[Authored context omitted to meet review input budget.]\n";
+            if (after.Length > tail)
+                after = "\n[Authored context omitted to meet review input budget.]\n" + after[^tail..];
+            return before + span + after;
+        }
+        if (authored.Length <= MaximumContextCharacters) return authored;
+        report.AppendLf($"Authored context: {authored.Length - MaximumContextCharacters} characters omitted.");
+        return authored[..80_000] + "\n[Authored context omitted to meet review input budget.]\n"
+            + authored[^39_000..];
+    }
+
     private static Result Finish(string prompt, StringBuilder report, string dossier)
     {
         if (prompt.Length > MaximumCharacters)
@@ -139,10 +167,10 @@ internal static class ReviewAspectInputBudget
 
     private static string Join(string context, string material, string screenshots, string dossier, StringBuilder report)
     {
-        if (screenshots.Length > 24_000)
+        if (screenshots.Length > MaximumScreenshotCharacters)
         {
-            report.AppendLf($"Screenshot section: {screenshots.Length - 24_000} characters omitted.");
-            screenshots = screenshots[..24_000];
+            report.AppendLf($"Screenshot section: {screenshots.Length - MaximumScreenshotCharacters} characters omitted.");
+            screenshots = screenshots[..MaximumScreenshotCharacters];
         }
         var marker = RemoteReviewWorkspace.SharedMaterialMarker;
         var at = context.IndexOf(marker, StringComparison.Ordinal);

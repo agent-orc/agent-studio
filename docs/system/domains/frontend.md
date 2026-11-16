@@ -1074,9 +1074,12 @@ occur. It is not a claim about tunnel transfer time.
   local coding admission is off, and disable remote identities without a
   confirmed coding role or with an unavailable status. Their option labels
   explain why. Onboarding reads local admission from
-  `GET /api/projects/execution-capability`. The guided check reports code
-  channel,
-  `develop`, toolchain, and no-op readiness from the host registry snapshot.
+  `GET /api/projects/execution-capability`. The guided check calls
+  `POST /api/projects/{projectName}/execution-readiness-probe`. The server
+  checks the assigned host's delivery preflight for repository access and the
+  configured integration branch, then compares the detected `project.yml`
+  stack with fresh runner toolchain and coding CLI capabilities. Host readiness
+  reflects the coding executor advertisement; the check does not start a task.
   Board cards deliberately show the actual live runner from the fenced run
   lease, not merely this configured target, so assignment and attribution
   cannot be confused. A fresh connected remote lease also drives the card's
@@ -1107,7 +1110,10 @@ occur. It is not a claim about tunnel transfer time.
 - Project basics also shows the observed checkout's lag behind origin. Its
   status request fetches the published branch; a clean, unlocked checkout that
   is behind offers **Sync checkout**, which calls the explicit project checkout
-  sync endpoint and reports the resulting state.
+  sync endpoint and reports the resulting state. When no checkout holds the
+  integration branch, a clean, unlocked registered checkout offers **Switch
+  checkout to {branch}**. The Execution definition reads the local integration
+  branch tip, including referenced files, and labels that branch in Settings.
 - `frontend/src/app/services/task.service.ts`: task API integration, optimistic
   lane moves, reorder, and rollback.
 - Board card context menus offer neighbouring visible manual lanes (container
