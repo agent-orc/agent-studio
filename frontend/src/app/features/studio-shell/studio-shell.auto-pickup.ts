@@ -20,6 +20,20 @@ export interface ExplorerAutoPickupAggregate {
   autoProjects: readonly string[];
 }
 
+export type ProjectPickupMode = 'auto' | 'manual' | 'paused';
+
+/** Project settings own pickup intent; local runner status supplies a fallback while settings load. */
+export function projectRunnerMode(
+  name: string,
+  pickupModes: Readonly<Record<string, ProjectPickupMode>>,
+  projects: Readonly<Record<string, { mode?: string } | undefined>>,
+): string {
+  const pickupMode = pickupModes[name];
+  if (pickupMode === 'auto') return 'auto-continuous';
+  if (pickupMode === 'manual' || pickupMode === 'paused') return pickupMode;
+  return projects[name]?.mode ?? 'manual';
+}
+
 function blockReason(gate: ProjectPickupGate): string {
   switch (gate.buildProfileStatus) {
     case 'validating':
@@ -56,10 +70,11 @@ export function deriveProjectAutoPickupByName(
   projects: Readonly<Record<string, { mode?: string } | undefined>>,
   gates: Readonly<Record<string, ProjectPickupGate | undefined>>,
   rows: readonly { name: string }[],
+  pickupModes: Readonly<Record<string, ProjectPickupMode>> = {},
 ): ReadonlyMap<string, ProjectAutoPickupIndicator> {
   const map = new Map<string, ProjectAutoPickupIndicator>();
   for (const row of rows) {
-    const mode = projects[row.name]?.mode ?? 'manual';
+    const mode = projectRunnerMode(row.name, pickupModes, projects);
     const gate = gates[row.name];
     if (mode === 'auto-continuous') {
       map.set(row.name, gate?.pickupAllowed === false

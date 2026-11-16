@@ -20,7 +20,7 @@ import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, Watch
 import type { WorkbenchListItem } from '../../models/project-docs.model';
 import { forkJoin } from 'rxjs';
 import { TaskService } from '../../services/task.service';
-import { StudioIconComponent } from '../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent, type StudioIconName } from '../../components/studio-icon/studio-icon.component';
 import { StudioSidebarHeaderComponent } from '../../components/studio-sidebar-header/studio-sidebar-header.component';
 import { EmptyStateComponent } from '../../components/empty-state/empty-state.component';
 import { StudioWelcomeComponent } from './components/studio-welcome/studio-welcome.component';
@@ -39,7 +39,6 @@ import {
   resolveProjectSection,
   type ProjectRailItem,
 } from '../project-detail/components/project-shell/project-shell.config';
-import type { StudioIconName } from '../../components/studio-icon/studio-icon.component';
 import { BoardFiltersService, flattenGrouped } from '../board';
 import { ConfirmDialogService } from '../../services/confirm-dialog.service';
 import { NotificationService } from '../../services/notification.service';
@@ -52,7 +51,8 @@ import { resolveActiveActivityKey } from './components/studio-activity-bar/studi
 import { ExplorerWorkspaceTreeComponent, type ExplorerProjectSurface } from './components/explorer-workspace-tree/explorer-workspace-tree.component';
 import {
   deriveProjectAutoPickupByName,
-  type ProjectAutoPickupIndicator,
+  projectRunnerMode,
+  type ProjectAutoPickupIndicator, type ProjectPickupMode,
 } from './studio-shell.auto-pickup';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from '../../components/menu';
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -66,10 +66,11 @@ import { ExplorerSectionsService } from './services/explorer-sections.service';
 import { ExplorerWorkbenchStateService } from './services/explorer-workbench-state.service';
 import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.project-rows';
 import { StudioTab, studioTabKey } from './studio-shell.types';
-import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
+import { tabAccessibleName, taskIdFromKey, titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
 import { requestErrorMessage } from './studio-shell.request-error';
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
+import { StudioKeyboardEntryComponent } from './components/studio-keyboard-entry/studio-keyboard-entry.component';
 import { OrchestratorFeedStore } from '../orchestrator';
 import { ChatSessionsPanelComponent } from '../orchestrator/lazy';
 import { UsageDetailSurfaceComponent } from '../usage-cockpit/lazy';
@@ -98,7 +99,7 @@ import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
+  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioKeyboardEntryComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -118,6 +119,7 @@ export class StudioShellComponent {
    * that don't pass it keep their job-derived behaviour.
    */
   readonly knownProjectNames = input<readonly string[]>([]);
+  readonly pickupModes = input<Readonly<Record<string, ProjectPickupMode>>>({});
 
   /** Backend WatchPaths feeding the rename-stable `projectStorageByName` join
    *  (a row's storage == registry `storageLocation`, stable across rename). */
@@ -276,7 +278,6 @@ export class StudioShellComponent {
   readonly openWorkspaceScreenshots = output<void>();
   readonly openOrchFeed = output<void>();
   readonly openOrchSettings = output<void>();
-  /** Emits when the user toggles the auto-pickup mode for a project. */
   readonly toggleAuto = output<string>();
   readonly headerCockpit = new StudioHeaderCockpit(this);
 
@@ -351,17 +352,16 @@ export class StudioShellComponent {
     this.projectRows().reduce((sum, r) => sum + r.totalJobs, 0)
   );
 
-  /** Reactive map of project name → current runner mode. */
   autoModeFor(name: string): string {
-    return this.jobService.runnerStatus().projects[name]?.mode ?? 'manual';
+    return projectRunnerMode(name, this.pickupModes(), this.jobService.runnerStatus().projects);
   }
 
-  /** Project name to effective auto-pickup mode plus admission-gate reason. */
   readonly projectAutoPickupByName = computed<ReadonlyMap<string, ProjectAutoPickupIndicator>>(() =>
     deriveProjectAutoPickupByName(
       this.jobService.runnerStatus().projects,
       this.jobService.projectPickupGates(),
       this.projectRows(),
+      this.pickupModes(),
     ),
   );
 
@@ -1144,7 +1144,7 @@ export class StudioShellComponent {
         return 'Dossiers';
       case 'task': {
         const job = this.findJob(tab.taskKey);
-        return job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey);
+        return job?.title || job?.key || job?.id || taskIdFromKey(tab.taskKey);
       }
       case 'hub': {
         const area = this.projectAreaLabel(tab.section);
@@ -1163,7 +1163,7 @@ export class StudioShellComponent {
         return tab.commitSha;
       case 'activity': {
         const job = this.findJob(tab.taskKey);
-        return `Activity · ${job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey)}`;
+        return `Activity · ${job?.title || job?.key || job?.id || taskIdFromKey(tab.taskKey)}`;
       }
       case 'url-preview':
         return this.findProjectUrl(tab.projectName, tab.urlId)?.label || tab.urlId;
@@ -1186,7 +1186,7 @@ export class StudioShellComponent {
   tabPrefix(tab: StudioTab): string | null {
     switch (tab.kind) {
       case 'task':
-        return this.findJob(tab.taskKey)?.key || this.taskIdFromKey(tab.taskKey);
+        return this.findJob(tab.taskKey)?.key || taskIdFromKey(tab.taskKey);
       case 'board':
         return tab.projectName === '__all__' ? 'All' : this.projectShortLabel(tab.projectName);
       case 'hub':
@@ -1201,7 +1201,7 @@ export class StudioShellComponent {
     switch (tab.kind) {
       case 'task': {
         const job = this.findJob(tab.taskKey);
-        return job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey);
+        return job?.title || job?.key || job?.id || taskIdFromKey(tab.taskKey);
       }
       case 'board': return 'Board';
       case 'hub': {
@@ -1219,14 +1219,10 @@ export class StudioShellComponent {
   }
 
   tabVisibleTitle(tab: StudioTab): string { return truncateTabTitle(this.tabTitle(tab)); }
+  tabName(tab: StudioTab): string { return tabAccessibleName(this.tabPrefix(tab), this.tabVisibleTitle(tab), this.tabLabel(tab)); }
 
-  /** A task key is persisted as `<watchPath>::<jobId>`. During shell restore
-   * the tab can render before board data resolves, so its safe fallback must
-   * be the user-facing job id rather than the filesystem-bearing key. */
-  private taskIdFromKey(taskKey: string): string {
-    const separator = taskKey.lastIndexOf('::');
-    return separator >= 0 ? taskKey.slice(separator + 2) : taskKey;
-  }
+  /** The tablist owns only the strip's tab buttons; their close buttons stay outside it. */
+  readonly tabSelectIds = computed(() => this.tabs().map((_, index) => `studio-tab-select-${index}`).join(' '));
 
   /** Leading icon for the tab strip. Deck tabs show their active section's
    *  rail icon (e.g. `book` for Wiki); other kinds render none here. */

@@ -12,6 +12,7 @@ import {
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { RemoteHostsService, codingLocationUnavailableReason, type RemoteHost } from '../../../remote-hosts';
+import { TaskService } from '../../../../services/task.service';
 
 type ProbeState = 'pending' | 'running' | 'passed' | 'failed';
 type ProbeKey = 'code' | 'branch' | 'toolchain' | 'noop';
@@ -52,6 +53,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
   readonly probeTone = probeCheckTone;
 
   private readonly http = inject(HttpClient);
+  private readonly tasks = inject(TaskService);
   readonly hostRegistry = inject(RemoteHostsService);
 
   readonly selectedHostId = signal('local');
@@ -99,6 +101,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
         next: (settings) => {
           const project = settings?.[this.projectName()];
           this.pickupMode.set(project?.pickupMode || 'manual');
+          if (project?.pickupMode) this.tasks.recordProjectPickupMode(this.projectName(), project.pickupMode);
           this.localCodingAdmitted.set(project?.localCodingAdmitted ?? false);
           this.selectedHostId.set(
             project?.executionLocation
@@ -125,6 +128,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
       .subscribe({
         next: (response) => {
           this.pickupMode.set(response.pickupMode || mode);
+          this.tasks.recordProjectPickupMode(this.projectName(), this.pickupMode());
           this.saving.set(false);
           this.log('pickup-mode-saved', { pickupMode: this.pickupMode() });
         },

@@ -184,6 +184,19 @@ public sealed class TokenAggregationService : ITokenAggregator
         return AdHocUsageFold.Aggregate(priced, source);
     }
 
+    public CliWindowAttribution CliWindowAttribution(IEnumerable<(string Name, string WatchPath)> projects,
+        string cliType, DateTime fromUtc, DateTime toUtc, WorkspaceBusUsage? workspaceUsage = null)
+    {
+        var entries = new List<OrchestratorLogEntry>();
+        foreach (var (name, watchPath) in projects)
+        {
+            var projectEntries = _ledger.LoadSnapshot(name, watchPath).Entries;
+            entries.AddRange(workspaceUsage?.MergeInto(name, projectEntries) ?? projectEntries);
+        }
+        entries.AddRange(workspaceUsage?.Unattributed ?? []);
+        return CliWindowAttributionFold.Sum(entries, cliType, fromUtc, toUtc);
+    }
+
     private TokenSummary ProjectLifetimeSummary(string projectName, string watchPath)
         => TokenSummaryFold.ForProject(projectName, PricedLedger(projectName, watchPath));
 

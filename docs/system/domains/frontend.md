@@ -988,11 +988,16 @@ occur. It is not a claim about tunnel transfer time.
   for the browser session. The details panel shows that retained state and an
   explicit discard action. Request rework opens a form with a free-text
   request field and names the source concept card that runs the revision
-  (`revisionCard` on the Dossier document); the model the picker marks as
-  default is preselected. Confirm records the pending receipt (with `request`
-  and `revisionTaskKey`) and starts or queues an ordinary follow-up round on
-  that card through the task continue admission; the receipt shows whether
-  the round started or why it queued. Without a source card the action stays
+  (`revisionCard` on the Dossier document). The form preselects that card's
+  current CLI, model and thinking level (`revisionCard.cliType`, `model`,
+  `thinkingLevel`), not the browser-wide default; a combined task still starts
+  on the browser default (AGT-3838). Choosing another route shows the change
+  from and to before confirmation, because the round and every later round on
+  the card run on the confirmed route. Confirm records the pending receipt
+  (with `request`, `revisionTaskKey`, and `routeChangedFrom` when the route
+  changed) and starts or queues an ordinary follow-up round on that card
+  through the task continue admission; the receipt shows the route change and
+  whether the round started or why it queued. Without a source card the action stays
   disabled with the reason, and confirm writes nothing. After the revision
   lands, the Dossier opens on the owner's recorded selections wherever the
   revised markup still offers them, not on the authored defaults (AGT-3703).
@@ -1097,7 +1102,10 @@ occur. It is not a claim about tunnel transfer time.
 - Project basics also shows the observed checkout's lag behind origin. Its
   status request fetches the published branch; a clean, unlocked checkout that
   is behind offers **Sync checkout**, which calls the explicit project checkout
-  sync endpoint and reports the resulting state.
+  sync endpoint and reports the resulting state. When no checkout holds the
+  integration branch, a clean, unlocked registered checkout offers **Switch
+  checkout to {branch}**. The Execution definition reads the local integration
+  branch tip, including referenced files, and labels that branch in Settings.
 - `frontend/src/app/services/task.service.ts`: task API integration, optimistic
   lane moves, reorder, and rollback.
 - Board card context menus offer neighbouring visible manual lanes (container

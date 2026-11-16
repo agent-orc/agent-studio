@@ -40,6 +40,7 @@ import {
   projectRunnerIndicator,
 } from './features/board';
 import { CreateTaskDialogComponent, FiltersDropdownComponent, ProjectTabsComponent } from './features/board/lazy';
+import { projectRunnerMode } from './features/studio-shell/studio-shell.auto-pickup';
 import {
   TaskDetailComponent,
   DetailLoadErrorComponent,
@@ -51,6 +52,7 @@ import {
   LanePagerService,
   AcceptanceRefusalStore,
   acceptanceRefusalFor,
+  acceptanceRefusalTooltip,
   overflowActionsFor,
   primaryActionForTask,
   mergeAcceptViewFor,
@@ -167,6 +169,7 @@ import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
 import { ServerCheckoutBoardNoticeComponent } from './features/server-checkout';
+import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -360,6 +363,7 @@ export class App implements OnInit, OnDestroy {
   /** Cycle 10c: triage panel + j/k navigation + auto-advance live here. */
   readonly triage = inject(TriageController);
   private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
+  private readonly acceptanceReadiness = inject(AcceptanceReadinessStore);
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
   /**
@@ -1333,7 +1337,7 @@ export class App implements OnInit, OnDestroy {
     const info = this.selectedJob()?.info;
     if (!info || this.studioTriagePrimary()?.id !== 'mark-done' || this.studioPrimaryDecisionRefusal()) return null;
     return acceptanceRefusalFor(info, this.acceptanceRefusals.forTask(info.taskKey),
-      this.studioPrimaryAwaitingGit());
+      this.studioPrimaryAwaitingGit(), this.acceptanceReadiness.itemFor(info));
   });
   /** AGT-2795: the decision lane guard's refusal for the studio primary move. */
   readonly studioPrimaryDecisionRefusal = computed(() => {
@@ -1370,7 +1374,9 @@ export class App implements OnInit, OnDestroy {
       primaryTooltip: this.studioPrimaryDecisionRefusal()
         ?? (this.studioPrimaryBlockedByIntegration()
           ? acceptanceHoldReason(this.selectedJob()!.info)
-          : taskDetailPrimaryShortcutTooltip(this.studioMergeAcceptView()?.statusTooltip || label)),
+          : this.studioAcceptanceRefusal()
+            ? acceptanceRefusalTooltip(this.studioAcceptanceRefusal()!)
+            : taskDetailPrimaryShortcutTooltip(this.studioMergeAcceptView()?.statusTooltip || label)),
       awaitingGit: this.studioPrimaryAwaitingGit(),
       blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
       blockedByDecision: !!this.studioPrimaryDecisionRefusal(),
@@ -2184,13 +2190,12 @@ export class App implements OnInit, OnDestroy {
   }
 
   onToggleAuto(name: string) {
-    const runner = this.jobService.runnerStatus().projects[name];
-    const mode = runner?.mode ?? 'manual';
-    const newMode =
-      mode === 'auto-continuous' || mode === 'auto-single' ? 'paused' : 'auto-continuous';
-    this.jobService.setRunnerMode(name, newMode).subscribe({
-      next: () => {
-        this.jobService.refreshRunnerStatus(true);
+    const mode = projectRunnerMode(name, this.jobService.projectPickupModes(), this.jobService.runnerStatus().projects);
+    const newMode = mode === 'auto-continuous' || mode === 'auto-single' ? 'paused' : 'auto';
+    this.jobService.setProjectPickupMode(name, newMode).subscribe({
+      next: (settings) => {
+        this.jobService.recordProjectPickupMode(name, settings.pickupMode ?? newMode);
+        if (this.jobService.runnerStatus().projects[name]) this.jobService.refreshRunnerStatus(true);
         // F6: a short toast on auto-pickup mode flips. The chip itself only
         // changes a small dot/label — easy to miss when the click lands by
         // accident. The toast gives the operator a clear "this just changed"
@@ -2238,7 +2243,7 @@ export class App implements OnInit, OnDestroy {
   laneAutoMode(state: string, jobs: TaskInfo[]): string {
     const proj = this.laneAutoProject(state, jobs);
     if (!proj) return 'manual';
-    return this.jobService.runnerStatus().projects[proj]?.mode ?? 'manual';
+    return projectRunnerMode(proj, this.jobService.projectPickupModes(), this.jobService.runnerStatus().projects);
   }
 
   /**

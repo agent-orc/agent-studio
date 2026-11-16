@@ -622,6 +622,86 @@ test.describe('Studio route restoration', () => {
     await expect(page.getByTestId('error-dialog')).toHaveCount(0);
   });
 
+  test('decided Dossier with an open promoted slice shows no documented banner', async ({ page }, testInfo) => {
+    // AGT-3837: the concept card is accepted, one of two slices is complete.
+    const blockedItem = {
+      id: 'route-lab',
+      title: 'Delivery record',
+      summary: 'Tracks implementation through its documented outcome.',
+      status: 'decided',
+      phase: 'decision-ready',
+      updatedAtUtc: '2026-08-09T10:00:00Z',
+      entryPath: 'docs/concepts/route-lab.html',
+      valid: true,
+      error: null,
+      sourceTaskKeys: ['AGT-2291'],
+      relatedTaskKeys: [],
+      documentation: {
+        eligible: false,
+        totalCount: 3,
+        terminalCount: 2,
+        openCount: 1,
+        missingCount: 0,
+        references: [
+          { key: 'AGT-2291', exists: true, terminal: true, lane: '6-completed' },
+          { key: 'AGT-2292', exists: true, terminal: true, lane: '6-completed' },
+          { key: 'AGT-2293', exists: true, terminal: false, lane: '2-ready' },
+        ],
+        blockedReason: 'Mark documented waits until every assigned card is completed or archived. '
+          + 'Still open: AGT-2293 (2-ready).',
+      },
+    };
+    const card = (key: string, lane: string, index: number | null) => ({
+      key, id: key.toLowerCase(), title: `Card ${key}`, lane, state: lane,
+      environments: [], section: null, decision: null, implementationIndex: index,
+    });
+    await page.route('**/api/projects/*/workbenches**', async route => {
+      const url = new URL(route.request().url());
+      const json = (body: unknown) => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(body),
+      });
+      if (url.pathname.endsWith('/workbenches/route-lab')) {
+        return json({
+          workbench: blockedItem,
+          html: '<h1>Delivery record</h1><p>Implementation evidence remains readable.</p>',
+          branch: 'task/route',
+          revision: 'a'.repeat(40),
+          workingTreeModified: false,
+          fingerprint: 'b'.repeat(64),
+          cards: {
+            projectName: PROJECT, dossierKey: null, dossierPath: blockedItem.entryPath,
+            implementationSlices: 2, completedSlices: 1,
+            cards: [
+              card('AGT-2291', '6-completed', null),
+              card('AGT-2292', '6-completed', 0),
+              card('AGT-2293', '2-ready', 1),
+            ],
+          },
+        });
+      }
+      if (url.pathname.endsWith('/workbenches')) {
+        return json({ projectName: PROJECT, includesHistory: false, count: 1, items: [blockedItem] });
+      }
+      return route.fallback();
+    });
+
+    await page.goto(`/#/projects/${PROJECT_SLUG}/workbenches/route-lab`, { waitUntil: 'commit' });
+    await expect(page.getByTestId('dossier-slice-progress'))
+      .toContainText('1 / 2 implementation slices complete');
+    await expect(page.getByTestId('workbench-documentation-blocked')).toContainText('Still open: AGT-2293');
+    await expect(page.getByTestId('workbench-documentation-ready')).toHaveCount(0);
+    await expect(page.getByTestId('workbench-documentation-confirm')).toHaveCount(0);
+
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({
+        path: evidencePath(testInfo, `documented-lifecycle-blocked--mocked-${theme}.png`),
+      });
+    }
+
+    await expect(page.getByTestId('error-dialog')).toHaveCount(0);
+  });
+
   test('Board and Hub routes restore project scope and survive reload', async ({ page }) => {
     await page.goto(`/#/projects/${PROJECT_SLUG}/board`, { waitUntil: 'commit' });
     await expect(page.getByTestId('studio-board')).toBeVisible();

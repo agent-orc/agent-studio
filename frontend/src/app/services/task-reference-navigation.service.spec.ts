@@ -6,6 +6,7 @@ import { TaskSelectionService } from '../features/task-detail/state/task-selecti
 import { StudioTabStateService } from '../features/studio-shell/services/studio-tab-state.service';
 import { NotificationService } from './notification.service';
 import { TaskService } from './task.service';
+import { DecisionFocusRequestService } from './decision-focus-request.service';
 import { TaskReferenceNavigationService } from './task-reference-navigation.service';
 
 describe('TaskReferenceNavigationService', () => {
@@ -39,6 +40,7 @@ describe('TaskReferenceNavigationService', () => {
     const openedTabs: unknown[] = [];
     const openedDetails: TaskInfo[] = [];
     const notices: string[] = [];
+    const focusAsks: string[] = [];
 
     const injector = Injector.create({
       providers: [
@@ -46,6 +48,7 @@ describe('TaskReferenceNavigationService', () => {
         { provide: StudioTabStateService, useValue: { open: (tab: unknown) => openedTabs.push(tab) } },
         { provide: TaskSelectionService, useValue: { openDetail: (job: TaskInfo) => openedDetails.push(job) } },
         { provide: NotificationService, useValue: { info: (message: string) => notices.push(message) } },
+        { provide: DecisionFocusRequestService, useValue: { ask: (taskKey: string) => focusAsks.push(taskKey) } },
       ],
     });
 
@@ -58,6 +61,7 @@ describe('TaskReferenceNavigationService', () => {
       openedTabs,
       openedDetails,
       notices,
+      focusAsks,
     };
   }
 
@@ -127,5 +131,18 @@ describe('TaskReferenceNavigationService', () => {
     expect(service.openReferenceOrNotify('AGT-9')).toBe(false);
     expect(openedDetails).toEqual([known]);
     expect(notices).toEqual(['AGT-9 is not loaded in the current workspace view.']);
+  });
+
+  // AGT-3833: Needs you opens a card on its decision area.
+  it('asks for decision focus only when the opener wants it', () => {
+    const known = task({ taskKey: 'C:/Projects/demo::decide-1', key: 'AGT-2792' });
+    const { service, focusAsks } = setup([known]);
+
+    expect(service.openReferenceOrNotify('AGT-2792')).toBe(true);
+    expect(focusAsks).toEqual([]);
+    expect(service.openReferenceOrNotify('AGT-2792', { focusDecision: true })).toBe(true);
+    expect(focusAsks).toEqual(['C:/Projects/demo::decide-1']);
+    expect(service.openReferenceOrNotify('AGT-9', { focusDecision: true })).toBe(false);
+    expect(focusAsks).toEqual(['C:/Projects/demo::decide-1']);
   });
 });
