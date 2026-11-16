@@ -455,9 +455,15 @@ The per-card Auto Review stranding watchdog runs every 30 seconds. After
 pipeline step, a pending or leased ReviewAttempt, a scheduled ReviewInfra
 retry of the current review, a cause breaker wait or probe marker, a pending or
 active formed batch, a queued round, and a queued post-processing step. A
-scheduled retry owns the card while its backoff runs and for one threshold
-after it came due, so a review host restart never escalates a card inside its
-backoff, while a retry that no scheduler tick fires still does (AGT-3691). A
+scheduled retry owns the card while its backoff runs and for
+`AutoReviewStranding:RetryOverdueMinutes` (5 by default, never above the
+threshold) after it came due, so a review host restart never escalates a card
+inside its backoff, while a retry that no scheduler tick fires still does
+(AGT-3691). The scheduler ticks every 15 seconds, so an overdue retry has no
+owner long before the threshold (AGT-3848). The board's `retry-scheduled`
+queue carries `retry.parkAt`, the latest minute the watchdog parks such a
+card; past `dueAt` the card reads "Automatic retry 1 of 2 overdue since ... ·
+parks in Escalated by ..." instead of repeating the past due time. A
 card with none gets a durable intervention receipt in the existing stall-intervention feed and
 its timeline. Report-only cards restart post-processing; coding cards with a
 completed run request a fresh ReviewAttempt; a passed review resumes delivery

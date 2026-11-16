@@ -202,8 +202,8 @@ export class TaskLiveStatusComponent {
       };
     }
     // AGT-3690: a lost review names the cause, the host (a link) and the retry.
-    const loss = reviewLossHeadline(status.queue, clock);
-    const lossTone = status.queue?.state === 'retry-scheduled' ? 'waiting' : 'stalled';
+    const loss = reviewLossHeadline(status.queue, clock, this.now());
+    const lossTone = status.queue?.state === 'retry-scheduled' && !loss?.overdue ? 'waiting' : 'stalled';
     if (loss) return { tone: lossTone, headline: loss.text, loss, detail: activityDetail(task, status.latestEventAt, this.now()), next, attempt: status.attempt };
     if (status.queue?.state === 'stalled') {
       // The headline carries the call to action; the reason names the outcome.

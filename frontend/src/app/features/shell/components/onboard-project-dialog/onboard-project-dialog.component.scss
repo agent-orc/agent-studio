@@ -133,3 +133,14 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+.opd__checkout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--studio-spacing-2);
+  color: var(--studio-fg);
+  font-size: var(--studio-font-size-sm);
+  line-height: 1.4;
+
+  input { margin-top: var(--studio-spacing-1); }
+}

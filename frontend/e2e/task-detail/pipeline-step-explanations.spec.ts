@@ -131,6 +131,69 @@ function makeBlockedReviewDetail() {
   return detail;
 }
 
+// AGT-3812: the projection the backend builds from a grade whose verify-2
+// (npm test) is red on develop without the change (seeded red baseline).
+const RED_SENTENCE = 'npm test (verify-2) is red on develop at 08eb16b7 without this change; failing tests: test.';
+const RED_OUTPUT = 'remote-review-review_453a-baseline-b1885ad01a59_verify-2_stdout_log';
+
+function makeRedIntegrationDetail() {
+  const detail = makeDetail('5-human-review');
+  detail.info.testEvidence = {
+    ...detail.info.testEvidence,
+    evidenceState: 'not-proven',
+    summary: 'Review build-tests Integration branch red at 53010260 (verify-1, verify-2)',
+    sources: [
+      {
+        kind: 'review-build-tests',
+        id: 'review_453a',
+        commit: '53010260',
+        result: 'integration-red',
+        observedAt: '2026-11-15T22:00:43Z',
+        summary: 'Review build-tests Integration branch red at 53010260 (verify-1, verify-2)',
+        reason: RED_SENTENCE,
+        reportRef: 'remote-review-grade-review_453a.md',
+        outputRef: RED_OUTPUT,
+      } as (typeof detail.info.testEvidence.sources)[number],
+    ],
+  };
+  return detail;
+}
+
+const RED_DELIVERY_CLAIM = {
+  taskKey: `${WATCH_PATH}::${JOB_ID}`,
+  jobId: JOB_ID,
+  lane: '5-human-review',
+  deliveryRef: 'agent-studio/results/run_1/fence-3/5301026033f4',
+  integrationBranch: 'develop',
+  releaseBranch: 'main',
+  containmentStatus: 'integrated',
+  integrated: true,
+  released: false,
+  integratedSha: '53010260',
+  mergeCommit: null,
+  mergeSubject: null,
+  mergedAt: null,
+  hasIntegrationRecord: true,
+  class: 'integrated-delivery',
+  findings: [],
+  completionClaim: null,
+  contentReview: {
+    mode: 'coding',
+    currentBriefVersion: '692479f09943aaaa',
+    deliveryBriefVersion: '692479f09943aaaa',
+    reviewBriefVersion: '692479f09943aaaa',
+    requiredAspect: 'requirement-fit',
+    contentStatus: 'pass',
+    contentSummary: 'Demo change verified.',
+    evidenceChecked: null,
+    missing: null,
+    ranAspects: ['build-tests', 'requirement-fit'],
+    skippedAspects: ['visual-review'],
+  },
+  commits: [],
+  detail: null,
+};
+
 function step(id: string, displayName: string, kind: string, runMode: string) {
   return { id, displayName, kind, runMode, dependsOn: [], idempotent: true, stub: false };
 }
@@ -234,6 +297,11 @@ async function installRoutes(
       /* the page may cancel a fallback request during navigation */
     });
   });
+  // The header cockpit reads `clis` from this snapshot; the `[]` fallback
+  // above made it throw and cover the page with the error dialog.
+  await page.route(/\/api\/usage\/cockpit(\?|$)/, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ clis: [] }) }),
+  );
   await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
@@ -649,6 +717,53 @@ test.describe('Pipeline: per-step explanation tooltips', () => {
           path: screenshotPath,
           contentType: 'image/png',
         });
+      }
+    }
+  });
+  test('a red integration branch is stated on Evidence, Result and the acceptance grounds (AGT-3812)', async ({
+    page,
+  }, testInfo) => {
+    await installRoutes(page, '5-human-review', () => 'passed', makeRedIntegrationDetail);
+    const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await page.route(new RegExp(`/api/tasks/${idEsc}/delivery-claim(\\?|$)`), (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(RED_DELIVERY_CLAIM) }),
+    );
+
+    const viewports = [
+      { name: '1280-light', width: 1280, height: 860, theme: 'light' as const },
+      { name: '1280-dark', width: 1280, height: 860, theme: 'dark' as const },
+      { name: '390-light', width: 390, height: 844, theme: 'light' as const },
+    ];
+    for (const viewport of viewports) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+      await dismissErrorDialog(page);
+      await setTheme(page, viewport.theme);
+
+      const grounds = page.getByTestId('completion-content-review');
+      await expect(grounds).toBeVisible({ timeout: 10_000 });
+      await expect(grounds).toHaveAttribute('data-state', 'gap');
+      await expect(page.getByTestId('completion-content-review-state')).not.toHaveAttribute('data-tone', 'success');
+      await expect(page.getByTestId('completion-build-tests-gap')).toContainText(RED_SENTENCE);
+      await expect(page.getByTestId('completion-build-tests-output')).toHaveAttribute('href', new RegExp(RED_OUTPUT));
+      if (RESULTS_DIR) {
+        const shot = path.join(RESULTS_DIR, `agt-3812--acceptance-grounds--${viewport.name}--mocked.png`);
+        await grounds.screenshot({ path: shot });
+        await testInfo.attach(`acceptance-grounds--${viewport.name}`, { path: shot, contentType: 'image/png' });
+      }
+
+      await page.goto(`/#/tasks/${encodeURIComponent(JOB_ID)}?view=evidence%3Aprotocol&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+      await dismissErrorDialog(page);
+      await setTheme(page, viewport.theme);
+      const build = page.getByTestId('test-evidence-source-review-build-tests').first();
+      await expect(build).toHaveAttribute('data-source-result', 'integration-red');
+      await expect(build).toContainText(RED_SENTENCE);
+      await expect(build.getByTestId('test-evidence-source-output-review-build-tests'))
+        .toHaveAttribute('href', new RegExp(RED_OUTPUT));
+      if (RESULTS_DIR) {
+        const shot = path.join(RESULTS_DIR, `agt-3812--evidence-red-integration--${viewport.name}--mocked.png`);
+        await page.getByTestId('ev-section-test').screenshot({ path: shot });
+        await testInfo.attach(`evidence-red-integration--${viewport.name}`, { path: shot, contentType: 'image/png' });
       }
     }
   });

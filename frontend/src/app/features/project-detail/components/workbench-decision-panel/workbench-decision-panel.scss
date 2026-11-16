@@ -157,6 +157,11 @@
   font-size: 0.72rem;
 }
 
+.decision-panel__receipt:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: -2px;
+}
+
 .decision-panel__receipt-note { flex: 1 1 100%; }
 .decision-panel__receipt-note[data-round-status='failed'] { color: var(--studio-error); }
 
