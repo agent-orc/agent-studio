@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskInfo } from '../../../models/task.model';
 import type { TaskIntegrationStatus } from '../../git';
-import { acceptanceRefusalFor, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { acceptanceRefusalFor, contentVerdictHold, serverAcceptanceRefusal } from './acceptance-refusal.model';
 
 const card = (integration: Partial<TaskIntegrationStatus> | null, extra: Partial<TaskInfo> = {}): TaskInfo => ({
   id: 'AGT-1', taskKey: 'wp::AGT-1', state: '5-human-review', title: 'Concept',
@@ -46,6 +46,25 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
     expect(acceptanceRefusalFor(card({ status: 'pending' }, { acceptanceAttemptGap: {
       authorityEpoch: 2, subjectRunAttemptId: 'run-1', resultSha: 'a'.repeat(40), reason: 'gap' } }), null, false))
       .toBeNull();
+  });
+
+  it('holds Accept on a content verdict that is not pass, in the verdict summary (AGT-3874)', () => {
+    const reviewed = (status: string, summary: string, extra: Partial<TaskInfo> = {}) => card({ status: 'integrated' }, {
+      reviewProjection: { attempts: [{ aspects: [
+        { aspect: 'code-quality', status: 'block', classification: 'product', summary: 'Other aspect.' },
+        { aspect: 'requirement-fit', status, classification: 'product', summary },
+      ] }] } as unknown as TaskInfo['reviewProjection'],
+      ...extra,
+    });
+    const target = 'The 830-card first-paint target remains unmet and lacks idle-host confirmation';
+    expect(acceptanceRefusalFor(reviewed('concerns', target), null, false)).toEqual({
+      reason: target, action: 'override', actionLabel: 'Accept with override…', source: 'hold',
+    });
+    expect(acceptanceRefusalFor(reviewed('block', ''), null, false)?.reason)
+      .toBe('The requirement-fit review returned block.');
+    expect(acceptanceRefusalFor(reviewed('pass', 'Fine.'), null, false)).toBeNull();
+    expect(acceptanceRefusalFor(reviewed('concerns', 'Gap.', { mode: 'concept' }), null, false)).toBeNull();
+    expect(contentVerdictHold(card(null))).toBeNull();
   });
 
   it('reads the hint of a code-only server refusal', () => {

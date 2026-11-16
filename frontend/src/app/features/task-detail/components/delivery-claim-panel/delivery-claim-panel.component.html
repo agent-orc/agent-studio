@@ -124,24 +124,37 @@
             } @else if (differenceError(); as message) { <p role="alert">{{ message }}</p> }
           </div>
         }
-        @if (overrideOpen()) {
-          <div class="claim__override-form" data-testid="accept-with-reason-form">
-            <label for="brief-accept-reason">Reason for accepting this delivery</label>
-            <textarea id="brief-accept-reason" data-testid="accept-with-reason-input" rows="3"
-              [value]="writtenReason()" [disabled]="acceptanceBusy()"
-              (input)="writtenReason.set($any($event.target).value)"></textarea>
-            <div class="claim__brief-actions">
-              <button type="button" class="claim__brief-primary" data-testid="accept-with-reason-submit"
-                [disabled]="acceptanceBusy() || writtenReason().trim().length < 8"
-                (click)="acceptWithReason()">Accept with a reason</button>
-              <button type="button" [disabled]="acceptanceBusy()" (click)="overrideOpen.set(false)">Cancel</button>
-            </div>
-            <span>At least 8 characters are required.</span>
-          </div>
-        }
-        @if (acceptanceError(); as message) { <p class="claim__brief-error" data-testid="brief-acceptance-error" role="alert">{{ message }}</p> }
+        <ng-container [ngTemplateOutlet]="acceptWithReasonForm" />
+      </section>
+    } @else if (contentGap(); as review) {
+      <section class="claim__brief-gap" data-testid="content-verdict-acceptance" role="status">
+        <strong>Acceptance is held by the content verdict</strong>
+        <p>The {{ review.requiredAspect }} review of the current brief {{ briefLabel(review.currentBriefVersion) }} returned {{ review.contentStatus }}. {{ review.contentSummary }}</p>
+        <div class="claim__brief-actions">
+          <button type="button" data-testid="review-current-brief" [disabled]="acceptanceBusy()" (click)="reviewAgain()">Review again</button>
+          <button type="button" data-testid="accept-with-reason-open" [disabled]="acceptanceBusy()" (click)="overrideOpen.set(true)">Accept with a reason</button>
+        </div>
+        <ng-container [ngTemplateOutlet]="acceptWithReasonForm" />
       </section>
     }
+    <ng-template #acceptWithReasonForm>
+      @if (overrideOpen()) {
+        <div class="claim__override-form" data-testid="accept-with-reason-form">
+          <label for="brief-accept-reason">Reason for accepting this delivery</label>
+          <textarea id="brief-accept-reason" data-testid="accept-with-reason-input" rows="3"
+            [value]="writtenReason()" [disabled]="acceptanceBusy()"
+            (input)="writtenReason.set($any($event.target).value)"></textarea>
+          <div class="claim__brief-actions">
+            <button type="button" class="claim__brief-primary" data-testid="accept-with-reason-submit"
+              [disabled]="acceptanceBusy() || writtenReason().trim().length < 8"
+              (click)="acceptWithReason()">Accept with a reason</button>
+            <button type="button" [disabled]="acceptanceBusy()" (click)="overrideOpen.set(false)">Cancel</button>
+          </div>
+          <span>At least 8 characters are required.</span>
+        </div>
+      }
+      @if (acceptanceError(); as message) { <p class="claim__brief-error" data-testid="brief-acceptance-error" role="alert">{{ message }}</p> }
+    </ng-template>
   </section>
   <app-integration-dead-end
     [status]="job().integration"

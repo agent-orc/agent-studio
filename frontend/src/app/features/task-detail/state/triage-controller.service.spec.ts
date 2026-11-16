@@ -391,9 +391,14 @@ describe('TriageController · optimistic navigation on Accept', () => {
 
     expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
     expect(TestBed.inject(LanePagerService).snapshot()?.jobs[0].taskKey).toBe(taskA.taskKey);
-    expect(ctrl.moveRefusal()?.message).toContain('Complete the required review for the current brief, or use a written operator override');
+    expect(ctrl.moveRefusal()?.message).toContain('or use Accept with override… next to Accept and give a written reason');
     expect(selection.triageToast()).toBeNull();
     expect(dialog).not.toHaveBeenCalled();
+    // AGT-3874: recorded like the integration refusals, so the toolbar offers the override.
+    expect(TestBed.inject(AcceptanceRefusalStore).forTask(taskA.taskKey)).toEqual({
+      taskKey: taskA.taskKey, code: 'completion-content-gap',
+      message: 'Completion refused: no content verdict for the current brief.',
+    });
   });
 });
 

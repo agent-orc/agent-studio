@@ -7,6 +7,7 @@ import {
   input,
   signal,
 } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import {
   TaskState,
@@ -96,7 +97,7 @@ const DELIVERED_LANES: readonly string[] = [
   selector: 'app-delivery-claim-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, IntegrationDeadEndComponent, AcceptanceAttemptGapNoticeComponent, StatusIndicatorComponent],
+  imports: [NgTemplateOutlet, TooltipDirective, IntegrationDeadEndComponent, AcceptanceAttemptGapNoticeComponent, StatusIndicatorComponent],
   templateUrl: './delivery-claim-panel.component.html',
   styleUrl: './delivery-claim-panel.component.scss',
 })
@@ -284,6 +285,16 @@ export class DeliveryClaimPanelComponent {
     return this.job().state === TaskState.HumanReview && !!review
       && (review.deliveryBriefVersion !== review.currentBriefVersion
         || review.reviewBriefVersion !== review.currentBriefVersion);
+  });
+  /**
+   * AGT-3874: a `concerns` or `block` content verdict on the current brief
+   * refuses Accept as well. It gets the same actions as a changed brief.
+   */
+  readonly contentGap = computed(() => {
+    const review = this.contentReview();
+    const status = review?.contentStatus?.toLowerCase();
+    return this.job().state === TaskState.HumanReview && !this.staleBrief()
+      && (status === 'concerns' || status === 'block') ? review : null;
   });
   readonly overrideOpen = signal(false);
   readonly writtenReason = signal('');

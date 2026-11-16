@@ -16,7 +16,7 @@ export interface AcceptanceRefusal {
   /** The single action offered next to the reason. */
   action: AcceptanceRefusalAction;
   actionLabel: string;
-  /** `hold`: the client keeps Accept disabled. `server`: the server refused a click. */
+  /** `hold`: read from the card's facts before any click. `server`: the server refused a click. */
   source: 'hold' | 'server';
 }
 
@@ -47,7 +47,12 @@ export function acceptanceRefusalFor(
   if (awaitingGit) return null;
   const integration = info.integration;
   const status = integration?.status;
-  if (status === 'integrated' || status === 'not-applicable') return null;
+  if (status === 'integrated' || status === 'not-applicable') {
+    // AGT-3874: a delivered card whose content verdict is not `pass` is
+    // refused with `completion-content-gap`; show it before the click.
+    const content = contentVerdictHold(info);
+    return content ? { reason: content, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' } : null;
+  }
   const branch = integration?.integrationBranch || 'develop';
   if (status === 'conflict-skipped') {
     const failure = integration?.failure;
@@ -70,6 +75,21 @@ export function acceptanceRefusalFor(
             ? 'No delivery branch or commit was found for this card.'
             : `The delivery is not in ${branch} yet.`;
   return { reason, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' };
+}
+
+/**
+ * AGT-3874: the summary of the latest content verdict (requirement-fit, or
+ * concept-fit for a concept card) when it is not `pass`, else null. The
+ * completion content check refuses Accept on any such verdict; a card with no
+ * content verdict yet adds no hold here.
+ */
+export function contentVerdictHold(info: TaskInfo): string | null {
+  const aspect = info.mode === 'concept' ? 'concept-fit' : 'requirement-fit';
+  const verdict = info.reviewProjection?.attempts?.[0]?.aspects
+    ?.find(row => row.aspect?.toLowerCase() === aspect);
+  const status = verdict?.status?.trim().toLowerCase();
+  if (!verdict || !status || status === 'pass') return null;
+  return verdict.summary?.trim() || `The ${aspect} review returned ${status}.`;
 }
 
 /** The refusal sentence of a failed move to Accepted, in the server's words. */
