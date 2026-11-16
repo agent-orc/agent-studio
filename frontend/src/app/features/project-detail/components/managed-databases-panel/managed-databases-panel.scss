@@ -1,0 +1,20 @@
+:host { display: block; min-width: 0; }
+.managed-databases { display: grid; gap: var(--studio-spacing-4); font-variant-numeric: tabular-nums; }
+.managed-databases header { display: flex; justify-content: space-between; gap: var(--studio-spacing-3); align-items: start; }
+.managed-databases h2, .managed-databases h3, .managed-databases p, .managed-databases dl, .managed-databases dd { margin: 0; }
+.managed-databases p, .managed-databases small, .managed-databases dt { color: var(--studio-fg-dim); }
+.managed-databases article { display: grid; gap: var(--studio-spacing-3); padding: var(--studio-spacing-4); background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: 8px; }
+.managed-databases__row { display: grid; gap: var(--studio-spacing-2); padding: var(--studio-spacing-3); background: var(--studio-surface-muted); border-radius: 6px; }
+.managed-databases__head { display: flex; align-items: center; gap: var(--studio-spacing-2); }
+.managed-databases dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--studio-spacing-2) var(--studio-spacing-4); }
+.managed-databases dt { font-size: 12px; }
+.managed-databases code { overflow-wrap: anywhere; }
+.managed-databases__note { color: var(--studio-warn) !important; }
+.managed-databases__confirm { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-2); }
+.managed-databases__confirm label { display: grid; gap: var(--studio-spacing-1); color: var(--studio-fg-dim); }
+.managed-databases input { padding: var(--studio-spacing-1) var(--studio-spacing-2); color: var(--studio-fg); background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: 6px; font-family: var(--font-mono); }
+.managed-databases button { justify-self: start; padding: var(--studio-spacing-1) var(--studio-spacing-2); color: var(--studio-fg); background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: 6px; cursor: pointer; }
+.managed-databases button.managed-databases__danger { color: var(--studio-error); background: color-mix(in srgb, var(--studio-error) 10%, var(--studio-surface)); border-color: color-mix(in srgb, var(--studio-error) 55%, var(--studio-border)); }
+.managed-databases button.managed-databases__ghost { background: transparent; border-color: transparent; }
+.managed-databases button:disabled { opacity: .5; cursor: default; }
+.managed-databases button:focus-visible, .managed-databases input:focus-visible { outline: 2px solid var(--studio-accent-6); outline-offset: 2px; }

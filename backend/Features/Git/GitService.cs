@@ -4950,6 +4950,16 @@ public partial class GitService
         return code == 0 && subject.Length > 0 ? subject : null;
     }
 
+    /// <summary>The author name of one commit, for an uncovered publication refusal.</summary>
+    public string? GetCommitAuthor(string repoRoot, string sha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !ReviewSubjectStore.IsValidResultSha(sha)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "show", "-s", "--format=%an", sha);
+        var author = output.Trim();
+        return code == 0 && author.Length > 0 ? author : null;
+    }
+
     /// <summary>
     /// Recognizes a server document-key mutation only after checking
     /// every changed blob against its first parent. Formatting may change when
@@ -6161,9 +6171,21 @@ public partial class GitService
             return new("invalid", repoRoot, branch, null, null, 0, [], null, "Repository or branch is invalid.");
         var holder = WorktreeHolding(repoRoot, branch);
         if (holder is null)
+        {
+            var (rootDirtyRaw, rootDirtyError, rootDirtyCode) = RunGitReadonly(repoRoot, "status --porcelain=v1 --untracked-files=all");
+            if (rootDirtyCode != 0)
+                return new("error", repoRoot, branch, null, null, 0, [], null, rootDirtyError.Trim());
+            var rootDirty = rootDirtyCode == 0
+                ? rootDirtyRaw.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(line => line.Length > 3 ? line[3..].TrimEnd('\r') : line.TrimEnd('\r')).ToArray()
+                : [];
+            var (rootLockRaw, _, rootLockCode) = RunGitArgs(repoRoot, "rev-parse", "--git-path", "index.lock");
+            var rootLockPath = rootLockCode == 0 ? Path.GetFullPath(rootLockRaw.Trim(), repoRoot) : null;
+            if (rootLockPath is not null && !File.Exists(rootLockPath)) rootLockPath = null;
             return new("not-checked-out", repoRoot, branch, GetBranchTip(repoRoot, $"refs/heads/{branch}"),
-                GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}"), 0, [], null,
+                GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}"), 0, rootDirty, rootLockPath,
                 "No checkout holds this branch.");
+        }
 
         var localSha = GetBranchTip(holder, $"refs/heads/{branch}");
         // The published remote-tracking ref is the base for a new integration.
@@ -6243,6 +6265,18 @@ public partial class GitService
             };
         _checkoutLagStates.TryRemove(LagKey(status.Checkout, branch), out _);
         return GetDeveloperCheckoutStatus(repoRoot, branch) with { Status = "fast-forwarded" };
+    }
+
+    /// <summary>Switches the registered developer checkout onto an unheld integration branch.</summary>
+    public DeveloperCheckoutSyncResult SwitchDeveloperCheckout(string repoRoot, string branch, CancellationToken ct = default)
+    {
+        var status = GetDeveloperCheckoutStatus(repoRoot, branch);
+        if (status.Status != "not-checked-out") return status;
+        if (status.LockFile is not null) return status with { Status = "locked", Reason = "Checkout index is locked." };
+        if (status.DirtyFiles.Count > 0) return status with { Status = "dirty", Reason = "Checkout has uncommitted files." };
+        var (_, error, code) = RunGitArgs(repoRoot, "checkout", branch);
+        if (code != 0) return status with { Status = "switch-failed", Reason = error.Trim() };
+        return GetDeveloperCheckoutStatus(repoRoot, branch) with { Status = "switched" };
     }
 
     /// <summary>

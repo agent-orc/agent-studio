@@ -6,6 +6,7 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { WorkspaceManagementComponent } from './workspace-management.component';
 import type { RegistryProjectSummary, RegistryWorkspaceListItem } from '../../../../models/task.model';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 
 /**
  * AGT-2035 smoke. Compiles + instantiates the standalone component,
@@ -184,5 +185,52 @@ describe('WorkspaceManagementComponent workspace-delete gating', () => {
 
     expect(component.workspaceEnterPredicate(drag, realDrop)).toBe(true);
     expect(component.workspaceEnterPredicate(drag, unassignedDrop)).toBe(false);
+  });
+
+  it('labels archive, restore, and delete for active and archived projects', () => {
+    component.registryWorkspaces.set([workspace({ projects: [
+      { ...project('PROJ-101'), displayName: 'Alpha' },
+      { ...project('PROJ-102'), displayName: 'Beta', archived: true },
+    ] })]);
+    fixture.detectChanges();
+    const rows = fixture.nativeElement.querySelectorAll('[data-testid="settings-project-row"]') as NodeListOf<HTMLElement>;
+    expect(rows[0].querySelector('[data-testid="settings-project-archive"]')?.textContent).toContain('Archive');
+    expect(rows[1].querySelector('[data-testid="settings-project-archive"]')?.textContent).toContain('Restore');
+    expect(rows[0].querySelector('[data-testid="settings-project-delete"]')?.textContent).toContain('Delete');
+    expect(rows[1].querySelector('[data-testid="settings-project-delete"]')?.textContent).toContain('Delete');
+  });
+
+  it('explains archive and restore consequences in the in-app dialog', async () => {
+    const dialogs = TestBed.inject(ConfirmDialogService);
+    const target = { ...project('PROJ-101'), displayName: 'Alpha' };
+    const archive = component.toggleRegistryProjectArchived(target);
+    expect(dialogs.active()?.title).toContain('Alpha (PROJ-101)');
+    expect(dialogs.active()?.message).toContain('open cards');
+    expect(dialogs.active()?.message).toContain('pickup');
+    expect(dialogs.active()?.message).toContain('server checkout');
+    expect(dialogs.active()?.message).toContain('Branches on origin');
+    dialogs.cancel();
+    await archive;
+
+    const restore = component.toggleRegistryProjectArchived({ ...target, archived: true });
+    expect(dialogs.active()?.title).toContain('Restore Alpha (PROJ-101)');
+    expect(dialogs.active()?.message).toContain('open cards');
+    dialogs.cancel();
+    await restore;
+  });
+
+  it('names delete consequences and requires a typed second confirmation', async () => {
+    const dialogs = TestBed.inject(ConfirmDialogService);
+    const deleting = component.wsSettings.deleteProject({ ...project('PROJ-101'), displayName: 'Alpha' });
+    expect(dialogs.active()?.title).toContain('Alpha (PROJ-101)');
+    expect(dialogs.active()?.message).toContain('open cards');
+    expect(dialogs.active()?.message).toContain('pickup');
+    expect(dialogs.active()?.message).toContain('checkout');
+    expect(dialogs.active()?.message).toContain('Branches on origin');
+    dialogs.accept();
+    await Promise.resolve();
+    expect(dialogs.active()?.requireTypedValues).toEqual(['Alpha', 'PROJ-101']);
+    dialogs.cancel();
+    await deleting;
   });
 });

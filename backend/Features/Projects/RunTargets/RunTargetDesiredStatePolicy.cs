@@ -85,7 +85,8 @@ public static partial class RunTargetDesiredStatePolicy
             ?? history.LastOrDefault(item => item.Status is "healthy" or "rolled-back")?.Artifact;
         return new(project, declaration.Id, declaration.Kind, artifact, snapshot?.ContainerPort ?? declaration.ContainerPort,
             hosting.HealthPath, hosting.Domains, hosting.Edge, hosting.Variables, snapshot?.SecretRefs ?? declaration.SecretRefs,
-            hosting.Resources, openJob?.Id, openJob?.LeaseToken, openJob?.IsRollback ?? false);
+            hosting.Resources, openJob?.Id, openJob?.LeaseToken, openJob?.IsRollback ?? false,
+            Databases: ManagedDatabasePolicy.Specs(project, declaration.Id, snapshot?.Databases ?? []));
     }
 
     /// <summary>

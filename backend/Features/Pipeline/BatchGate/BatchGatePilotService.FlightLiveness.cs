@@ -293,15 +293,21 @@ public sealed partial class BatchGatePilotService
                 if (claim.End is not null) continue;
                 var now = _time.GetUtcNow();
                 var facts = claim.Facts(now) with { OwnerGone = OwnerGone(claim.Owner) };
-                if (MonolithTransitionAdapter.BatchFlightClaimExpiryOf(facts) is not { } expiry) continue;
+                if (MonolithTransitionAdapter.BatchFlightClaimExpiryOf(facts) is not { } observed) continue;
+                // AGT-3882: a reservation step that waited on a running per-task
+                // integration keeps its queue position and names that job.
+                var (heldByJob, heldBy) = ReservationHolder(claim);
+                var expiry = MonolithTransitionAdapter.BatchFlightClaimExpiryClassified(claim.Stage, observed,
+                    heldByJob);
                 var manifest = TryReadManifest(claim.BatchId);
                 var outcome = manifest is null ? BatchFlightExpiryOutcome.Recover
                     : MonolithTransitionAdapter.BatchFlightOutcomeOnExpiry(claim.Stage, expiry,
                         PriorFlightExpiries(manifest));
                 var reason = MonolithTransitionAdapter.BatchFlightExpiryReason(claim.Stage, expiry, outcome,
-                    claim.StageDeadlineMinutes);
+                    claim.StageDeadlineMinutes, heldBy);
                 var expired = _store.ExpireFlightClaim(claim, outcome, reason,
-                    settled: outcome == BatchFlightExpiryOutcome.Recover, now, ownerGone: facts.OwnerGone);
+                    settled: outcome == BatchFlightExpiryOutcome.Recover, now, ownerGone: facts.OwnerGone,
+                    reservationHeldByJob: heldByJob);
                 if (expired is null) continue;
                 _logger.LogWarning(
                     "batch-flight-claim-expired batch={BatchId} project={Project} stage={Stage} expiry={Expiry} outcome={Outcome} owner={Owner}",
@@ -316,6 +322,21 @@ public sealed partial class BatchGatePilotService
                 _logger.LogWarning(ex, "batch-flight-claim-expiry-failed batch={BatchId}", claim.BatchId);
             }
         }
+    }
+
+    /// <summary>
+    /// The job a reserving claim waits on (AGT-3882): a running per-task
+    /// integration that holds the project reservation, else the oldest
+    /// approved push that must reach origin first. Null for other steps.
+    /// </summary>
+    private (bool PerTaskJob, string? Description) ReservationHolder(BatchFlightClaim claim)
+    {
+        if (claim.Stage != BatchFlightStage.Reserving || _reservations is null) return (false, null);
+        if (_reservations.PerTaskHolder(claim.Project) is { } holder)
+            return (true, $"{holder.Kind} {holder.TaskKey ?? "(unnamed)"} (since {holder.SinceUtc:O})");
+        return _reservations.GetWait(claim.Project) is { } push
+            ? (false, $"integration-push {push.JobId} (pending since {push.SinceUtc:O})")
+            : (false, null);
     }
 
     /// <summary>
@@ -359,7 +380,8 @@ public sealed partial class BatchGatePilotService
         return _store.ListManifests()
             .Where(other => other.Members.Any(member => members.Contains((member.TaskKey, member.RunAttempt))))
             .Sum(other => _store.StateHistory(other.BatchId)
-                .Count(state => state.FlightClaimExpiry == BatchFlightClaimExpiry.StageDeadlinePassed));
+                .Count(state => state.FlightClaimExpiry is BatchFlightClaimExpiry.StageDeadlinePassed
+                    or BatchFlightClaimExpiry.ReservationHeldByJob));
     }
 
     /// <summary>
@@ -475,7 +497,7 @@ public sealed partial class BatchGatePilotService
     {
         var end = expired.End!;
         var reservation = expired.Stage == BatchFlightStage.Reserving
-            && end.Expiry == BatchFlightClaimExpiry.StageDeadlinePassed;
+            && end.Expiry is BatchFlightClaimExpiry.StageDeadlinePassed or BatchFlightClaimExpiry.ReservationHeldByJob;
         try
         {
             var pending = _store.ListPending();

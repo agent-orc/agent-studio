@@ -50,6 +50,8 @@ interface ExecutionDefinitionResponse {
   lastManifest?: PreparationManifest | null;
   override?: DefinitionOverride | null;
   source: string;
+  branch?: string | null;
+  commitSha?: string | null;
 }
 
 interface StatusPresentation {

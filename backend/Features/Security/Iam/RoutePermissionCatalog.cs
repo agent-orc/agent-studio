@@ -311,6 +311,11 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/environments/{}/volumes/**", null, "environmentId");
         Environment("W", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/volumes/**", null, "environmentId");
+        // AGT-3877: the deletion route also requires a signed-in Owner in its handler.
+        Environment("R", IamPermissions.ProjectRead,
+            "/api/projects/{}/environments/{}/databases/**", null, "environmentId");
+        Environment("W", IamPermissions.EnvironmentProductionDeploy,
+            "/api/projects/{}/environments/{}/databases/**", null, "environmentId");
 
         // OTLP intake checks its own environment token. Studio reads require
         // project access; issuing or revoking an ingest token changes project

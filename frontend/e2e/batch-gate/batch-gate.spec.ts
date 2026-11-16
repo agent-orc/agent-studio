@@ -257,7 +257,12 @@ for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 800 });
     await routeBoard(page, state);
     await page.goto('/?includeFixtures=true');
-    await page.getByRole('tab', { name: 'All projects · Board' }).click();
+    const boardTab = page.getByRole('tab', { name: 'All projects · Board' });
+    // AGT-3836: at 390 px only the active tab shows; the others open from the tab overflow menu.
+    if (width === 390 && !await boardTab.isVisible()) {
+      await page.getByTestId('studio-tab-overflow').click();
+      await page.getByTestId('studio-tab-overflow-menu-item-board:__all__').click();
+    } else await boardTab.click();
     if (width === 390) await page.getByRole('combobox', { name: 'Board lane' })
       .selectOption({ label: 'Post Processing' });
     const opener = page.getByTestId('batch-lane-indicator').first();
@@ -395,7 +400,6 @@ test('board badge, batch panel and project settings save use batch contract', as
   await page.locator('#batch-settings-title').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings');
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.getByTestId('studio-ab-explorer').click();
   await page.getByTestId('batch-phase-metrics').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings-390');
   await page.getByTestId('batch-pre-check-yield').scrollIntoViewIfNeeded();
@@ -423,7 +427,6 @@ test('batch settings explain the missing gate host before a save can succeed', a
   await page.locator('#batch-scope-help').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings-scope-help');
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.getByTestId('studio-ab-explorer').click();
   await page.getByTestId('batch-settings-error').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings-missing-host-390');
   await page.locator('#batch-scope-help').scrollIntoViewIfNeeded();

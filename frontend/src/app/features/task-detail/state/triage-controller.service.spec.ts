@@ -396,6 +396,11 @@ describe('TriageController · optimistic navigation on Accept', () => {
       + 'Send a round to close the gap, review again, or accept with a written reason under Acceptance next steps.');
     expect(selection.triageToast()).toBeNull();
     expect(dialog).not.toHaveBeenCalled();
+    // AGT-3874: recorded like the integration refusals, so the toolbar offers the override.
+    expect(TestBed.inject(AcceptanceRefusalStore).forTask(taskA.taskKey)).toEqual({
+      taskKey: taskA.taskKey, code: 'completion-content-gap',
+      message: 'Acceptance refused: no content verdict for the current brief.',
+    });
   });
 
   /**

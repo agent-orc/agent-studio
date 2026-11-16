@@ -1,0 +1,9 @@
+<button #trigger type="button" class="studio-tab-overflow" data-testid="studio-tab-overflow"
+        [attr.aria-label]="ariaLabel()" aria-haspopup="menu" [attr.aria-expanded]="open()"
+        (click)="toggle($event)">
+  <span aria-hidden="true">⋯</span>
+  <span class="studio-tab-overflow__count" aria-hidden="true">{{ entries().length }}</span>
+</button>
+<app-menu [items]="items()" [open]="open()" [anchorEl]="trigger" placement="below"
+          testIdPrefix="studio-tab-overflow-menu" ariaLabel="Open tabs" [minWidth]="200"
+          (itemClick)="onItem($event)" (closeRequest)="close()" />

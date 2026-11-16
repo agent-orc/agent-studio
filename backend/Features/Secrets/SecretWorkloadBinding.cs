@@ -1,5 +1,6 @@
 using AgentStudio.Projects;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Secrets;
 
@@ -14,11 +15,20 @@ public sealed record DeployJobLease(string JobId, string Project, string Environ
 public sealed record TaskRunLease(string TaskKey, string Project, string RunnerId, string LeaseId,
     IReadOnlyCollection<string>? DeclaredNames = null);
 
+/// <summary>
+/// The managed database credentials of one environment placed on a run host:
+/// <see cref="Names"/> are the generated secret names, <see cref="SecretBindings"/>
+/// their bound references.
+/// </summary>
+public sealed record RunTargetCredentialLease(string Project, string EnvironmentId, string HostId,
+    IReadOnlyList<string> Names, IReadOnlyDictionary<string, string> SecretBindings);
+
 /// <summary>Reads the lease facts a workload binding needs.</summary>
 public interface ISecretWorkloadLeases
 {
     DeployJobLease? FindClaimedDeployJob(string project, string jobId, string leaseToken);
     TaskRunLease? FindLiveTaskRun(string taskKey);
+    RunTargetCredentialLease? FindRunTargetCredentials(string project, string environmentId);
 }
 
 public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments, RunLeaseService leases,
@@ -31,6 +41,14 @@ public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments,
                 bindings.ApprovedReferences(job.Project, job.EnvironmentId, job.SecretRefs,
                     job.EnvironmentKind ?? "production"))
             : null;
+
+    public RunTargetCredentialLease? FindRunTargetCredentials(string project, string environmentId)
+    {
+        if (environments.ManagedDatabaseCredentialLease(project, environmentId) is not { } lease) return null;
+        var names = lease.Names.Select(ProjectDatabaseVocabulary.CredentialName).ToArray();
+        return new(lease.Project, lease.EnvironmentId, lease.HostId, names,
+            bindings.ApprovedReferences(lease.Project, lease.EnvironmentId, names, lease.EnvironmentKind));
+    }
 
     public TaskRunLease? FindLiveTaskRun(string taskKey)
     {
@@ -45,7 +63,9 @@ public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments,
 /// <summary>
 /// Pure binding of an authenticated service credential to a workload. A
 /// deploy job needs the deploy scope, the job's host identity and its lease
-/// token; a task run needs the lease scope and the live lease of that task.
+/// token; a task run needs the lease scope and the live lease of that task;
+/// a run target needs the deploy scope and the placement of the environment
+/// on its own host, and reads only that environment's database credentials.
 /// </summary>
 public static class SecretWorkloadBinding
 {
@@ -58,13 +78,30 @@ public static class SecretWorkloadBinding
                 if (string.IsNullOrWhiteSpace(request.Project) || string.IsNullOrWhiteSpace(request.JobId) || string.IsNullOrWhiteSpace(request.LeaseToken))
                     return Denied("workload-invalid", "A deploy job names project, jobId and leaseToken.");
                 return Decide(runner, request, leases.FindClaimedDeployJob(request.Project, request.JobId, request.LeaseToken), null);
+            case SecretWorkload.RunTarget:
+                if (string.IsNullOrWhiteSpace(request.Project) || string.IsNullOrWhiteSpace(request.EnvironmentId))
+                    return Denied("workload-invalid", "A run target names project and environmentId.");
+                return DecideRunTarget(runner, leases.FindRunTargetCredentials(request.Project, request.EnvironmentId));
             case SecretWorkload.TaskRun:
                 if (string.IsNullOrWhiteSpace(request.TaskKey) || string.IsNullOrWhiteSpace(request.LeaseId))
                     return Denied("workload-invalid", "A task run names taskKey and leaseId.");
                 return Decide(runner, request, null, leases.FindLiveTaskRun(request.TaskKey));
             default:
-                return Denied("workload-invalid", "Workload kind must be 'deploy-job' or 'task-run'.");
+                return Denied("workload-invalid", "Workload kind must be 'deploy-job', 'task-run' or 'run-target'.");
         }
+    }
+
+    public static (SecretWorkload? Workload, SecretAccessDecision Decision) DecideRunTarget(
+        RunnerPrincipal runner, RunTargetCredentialLease? lease)
+    {
+        if (!runner.Scopes.Contains(RunnerScopes.Deploy))
+            return Denied("runner-scope-denied", $"Runner credential lacks '{RunnerScopes.Deploy}'.");
+        if (lease is null)
+            return Denied("workload-lease-invalid", "The environment is not placed in the run zone or has no managed database.");
+        if (!string.Equals(lease.HostId, runner.RunnerId, StringComparison.Ordinal))
+            return Denied("workload-identity-denied", "The environment is placed on another host.");
+        return (new SecretWorkload(SecretWorkload.RunTarget, runner.RunnerId, lease.Project, lease.EnvironmentId,
+            lease.Names, lease.SecretBindings), SecretAccessDecision.Allow);
     }
 
     public static (SecretWorkload? Workload, SecretAccessDecision Decision) Decide(
