@@ -18,6 +18,7 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 import type { ModelRoutingRecommendation } from '../../../quota';
 import { ModelRoutingSuggestionComponent } from '../model-routing-suggestion/model-routing-suggestion.component';
 import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
+import { RovingFocusDirective } from '../../../../directives/roving-focus.directive';
 import { ModalFocusDirective } from '../../../../directives/modal-focus.directive';
 export interface PendingAttachment {
   id: string;
@@ -47,7 +48,7 @@ const PENDING_PREFIX = 'pending-attachment-';
   selector: 'app-create-job-dialog',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent, StatusIndicatorComponent, PendingButtonDirective, ModalFocusDirective],
+  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent, StatusIndicatorComponent, PendingButtonDirective, RovingFocusDirective, ModalFocusDirective],
   templateUrl: './create-task-dialog.component.html',
   styleUrl: './create-task-dialog.component.scss'
 })
@@ -146,6 +147,7 @@ export class CreateTaskDialogComponent implements AfterViewInit {
 
   readonly hasAttachments = computed(() => this.attachments().length > 0);
 
+  @ViewChild('titleInput') private titleInput?: ElementRef<HTMLInputElement>;
   @ViewChild('promptArea') private promptArea?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('fileInput') private fileInput?: ElementRef<HTMLInputElement>;
 
@@ -164,12 +166,10 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   }
 
   ngAfterViewInit(): void {
-    // Focus lands in the prompt textarea so Ctrl+V immediately captures
-    // a clipboard screenshot via the wrapper's (paste) handler. Without
-    // this, the user has to click into the dialog first - the dialog
-    // hint says "paste with Ctrl+V" so silent paste failure is the
-    // reported bug.
-    queueMicrotask(() => this.promptArea?.nativeElement?.focus());
+    // Focus lands on Title, the first field in visual order (AGT-3834).
+    // Ctrl+V still captures a screenshot from here: the paste handler
+    // sits on the dialog, not on the prompt textarea.
+    queueMicrotask(() => this.titleInput?.nativeElement?.focus());
   }
 
   triggerFilePicker(): void {

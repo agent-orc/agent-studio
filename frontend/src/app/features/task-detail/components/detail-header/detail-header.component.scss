@@ -91,7 +91,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--studio-accent) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--studio-accent) 45%, transparent);
-  color: var(--studio-accent);
+  color: var(--studio-accent-strong);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -235,4 +235,11 @@
   cursor: context-menu;
   user-select: none;
   white-space: nowrap;
+}
+
+/* AGT-3833: a card opened from Needs you puts focus on its decision group. */
+:host .detail__triage:focus-visible {
+  outline: 2px solid var(--studio-accent-strong);
+  outline-offset: 2px;
+  border-radius: var(--studio-action-radius-sm);
 }

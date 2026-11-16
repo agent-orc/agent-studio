@@ -4,17 +4,17 @@
         [attr.aria-label]="label()">
     <span class="studio-board-lane-count studio-board-lane-count--ready"
           [cacTooltip]="tooltips.ready" [attr.data-testid]="'studio-explorer-project-board-count-ready-' + projectName()"
-          aria-hidden="true">{{ counts().ready }}</span>
+          aria-hidden="true">{{ counts().ready }} </span>
     <span class="studio-board-lane-count studio-board-lane-count--progress"
           [cacTooltip]="tooltips.progress" [attr.data-testid]="'studio-explorer-project-board-count-progress-' + projectName()"
-          aria-hidden="true">{{ counts().progress }}</span>
+          aria-hidden="true">{{ counts().progress }} </span>
     <span class="studio-board-lane-count studio-board-lane-count--human-review"
           [cacTooltip]="tooltips.humanReview" [attr.data-testid]="'studio-explorer-project-board-count-human-review-' + projectName()"
-          aria-hidden="true">{{ counts().humanReview }}</span>
+          aria-hidden="true">{{ counts().humanReview }} </span>
     @if (decisions() > 0) {
       <span class="studio-board-lane-count studio-board-lane-count--decisions"
             [cacTooltip]="tooltips.decisions" [attr.data-testid]="'studio-explorer-project-board-count-decisions-' + projectName()"
-            aria-hidden="true">{{ decisions() }}</span>
+            aria-hidden="true">{{ decisions() }} </span>
     }
   </span>
 } @else {

@@ -23,7 +23,8 @@ public sealed class BoardCardProjector(
     TaskListGitProjectionCache gitProjection,
     TaskLiveStatusProjection liveStatus,
     ProjectSettingsService projectSettings,
-    BetterCandidateService betterCandidates)
+    BetterCandidateService betterCandidates,
+    TaskIntegrationStatusService integrationStatus)
 {
     /// <summary>
     /// Enriches <paramref name="raw"/> in its order. Transitive waiters are
@@ -46,6 +47,7 @@ public sealed class BoardCardProjector(
                       .WithLiveStatus(liveLookup)
                       .WithMergeSignal(gitLookup.Merge)
                       .WithIntegrationStatus(gitLookup.Integration)
+                      .WithRecordedIntegrationFailure(integrationStatus)
                       .WithPublishSignal(gitLookup.Publish)
                       .WithTestRunEvidence(gitLookup.TestRuns)
                       .Select(job => WithReviewQueue(job, reviewQueue))

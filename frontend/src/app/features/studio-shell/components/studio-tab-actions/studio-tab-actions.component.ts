@@ -13,6 +13,7 @@ import { StudioIconComponent } from '../../../../components/studio-icon/studio-i
 import { ExecutionLocationBadgeComponent }
   from '../../../../components/execution-location-badge/execution-location-badge.component';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { DecisionFocusDirective } from '../../../../components/decision-focus/decision-focus.directive';
 import { laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import { stateLabel as fmtStateLabel } from '../../../../services/format.util';
 import type { RunActivityBadge } from '../../../../services/run-activity.util';
@@ -102,6 +103,7 @@ export interface StudioTabTriage {
     ExecutionLocationBadgeComponent,
     PendingButtonDirective,
     AcceptanceRefusalComponent,
+    DecisionFocusDirective,
   ],
   templateUrl: './studio-tab-actions.component.html',
   styleUrl: './studio-tab-actions.component.scss',

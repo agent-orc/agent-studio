@@ -2063,10 +2063,13 @@ describe('OverviewPaneComponent (smoke)', () => {
       'i', 'i', 'i', 'i', 'i', 'i',
     ]);
     expect(groups.some(g => g.querySelector('.ov-pl-phase__description'))).toBe(false);
-    // Each header is a real toggle button carrying an accessible name that folds
-    // in the aggregate state (state itself rides on aria-expanded, not colour).
+    // Each header is a real toggle button named by its visible text (WCAG
+    // 2.5.3, AGT-3835) and described by the aggregate state (state itself
+    // rides on aria-expanded, not colour).
     expect(groups.every(g => g.tagName === 'BUTTON')).toBe(true);
-    expect(groups.map(g => g.getAttribute('aria-label'))).toEqual([
+    expect(groups.every(g => !g.hasAttribute('aria-label'))).toBe(true);
+    const root = fixture.nativeElement as HTMLElement;
+    expect(groups.map(g => root.querySelector(`#${g.getAttribute('aria-describedby')}`)?.textContent?.trim())).toEqual([
       'PRE STEPS phase, pending, 1 step. Preparation checks before the agent gets the task.',
       'CORE AGENT WORK phase, pending, 1 step. The coding agent work.',
       'ASPECT phase, pending, 1 step. Parallel review passes over the finished work.',
