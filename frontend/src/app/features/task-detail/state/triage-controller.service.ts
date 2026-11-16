@@ -302,7 +302,6 @@ export class TriageController {
           this.acceptanceRefusals.record(serverAcceptanceRefusal(info, err));
           this.acceptanceRefusals.requestFocus(info.taskKey);
           void this.acceptanceReadiness.checkCard(info);
-          this.jobService.refresh(true);
           return;
         }
         if (ev.targetState === '6-completed'
@@ -313,10 +312,7 @@ export class TriageController {
                 && /integrat|delivery|containment/i.test(err.error.error)))) {
           // AGT-3704: never a silent refusal. The toolbar shows the reason
           // next to Accept with the action that resolves it.
-          const refusal = serverAcceptanceRefusal(info, err);
-          this.acceptanceRefusals.record(refusal);
-          this.notifications.warning(refusal.message, 'Accept refused');
-          this.jobService.refresh(true);
+          this.recordAcceptRefusal(info, err);
           return;
         }
         if (err?.status === 409 && err?.error?.code === 'completion-content-gap') return;
@@ -331,6 +327,17 @@ export class TriageController {
         });
       },
     });
+  }
+
+  /**
+   * Keep a refused Accept next to the Accept button with its resolving action
+   * (`acceptanceRefusalFor`), toast the server's refusal, and reload the board.
+   */
+  private recordAcceptRefusal(info: TaskInfo, err: unknown): void {
+    const refusal = serverAcceptanceRefusal(info, err);
+    this.acceptanceRefusals.record(refusal);
+    this.notifications.warning(refusal.message, 'Accept refused');
+    this.jobService.refresh(true);
   }
 
   /** Keep the board and open detail on the persisted lane until reissue completes. */

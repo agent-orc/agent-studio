@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Runner;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 
@@ -87,36 +88,57 @@ public sealed partial class BatchGatePilotService
     }
 
     private void DeriveIsolationFindings(BatchGateManifest parent)
+        => DeriveIsolationFindings(parent,
+            _store.ListManifests().Where(manifest => manifest.ParentBatchId == parent.BatchId));
+
+    /// <summary>
+    /// Records what the green and red children of <paramref name="parent"/>
+    /// prove. AGT-3864: the result depends only on the children and their
+    /// phases. A green or red child wrote its runs and verdict before it took
+    /// that phase, and findings are write-once, so a parent whose children and
+    /// child phases are unchanged since its last derivation in this process
+    /// would record nothing new; with <paramref name="skipSettled"/> it is
+    /// skipped. A restart starts with no memo and derives every parent once.
+    /// </summary>
+    private void DeriveIsolationFindings(BatchGateManifest parent,
+        IEnumerable<BatchGateManifest> childManifests, bool skipSettled = false)
     {
-        var children = _store.ListManifests()
-            .Where(manifest => manifest.ParentBatchId == parent.BatchId)
-            .Select(manifest => (Manifest: manifest, State: _store.LatestState(manifest.BatchId)))
-            .Where(item => item.State.Phase is BatchPhase.Green or BatchPhase.Red)
+        var phases = childManifests.Select(manifest => (Manifest: manifest, Phase: ChildPhase(manifest.BatchId)))
             .ToArray();
+        var fingerprint = string.Join("\n", phases.Select(item => item.Manifest.BatchId + ":" + item.Phase));
+        if (skipSettled && _derivedIsolation.TryGetValue(parent.BatchId, out var derived) && derived == fingerprint)
+            return;
+        var children = phases.Where(item => item.Phase is BatchPhase.Green or BatchPhase.Red).ToArray();
         var green = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var child in children.Where(item => item.State.Phase == BatchPhase.Green))
+        foreach (var child in children.Where(item => item.Phase == BatchPhase.Green))
             foreach (var member in child.Manifest.Members)
             {
                 green.Add(member.TaskKey);
                 Record(member, "proven-green", Evidence(child.Manifest));
             }
-        foreach (var finding in _store.ListIsolationFindings(parent.Scope.Project)
-                     .Where(item => item.ParentBatchId == parent.BatchId && item.Status == "proven-green"))
-            green.Add(finding.TaskKey);
+        var red = children.Where(item => item.Phase == BatchPhase.Red).ToArray();
+        if (red.Length > 0)
+            foreach (var finding in _store.ListIsolationFindings(parent.Scope.Project)
+                         .Where(item => item.ParentBatchId == parent.BatchId && item.Status == "proven-green"))
+                green.Add(finding.TaskKey);
+        // A red child without a readable verdict is derived again on the next tick.
+        var settled = true;
         // AGT-3858: a red same-code re-gate takes the per-card path, so it
         // proves no member red here.
-        foreach (var child in children.Where(item => item.State.Phase == BatchPhase.Red
-                     && item.Manifest.SameCodeRerunOfRunId is null))
+        foreach (var child in red.Where(item => item.Manifest.SameCodeRerunOfRunId is null))
         {
             // A red phase also records transport and cancellation failures. Only
             // an executed deterministic verdict can identify an offender.
             var run = _store.ListRuns(child.Manifest.BatchId).LastOrDefault();
             var verdict = run is null ? null : _store.ReadVerdict(child.Manifest.BatchId, run.BatchRunId);
+            if (verdict is null) settled = false;
             if (verdict?.Classification != "DeterministicSuiteRed") continue;
             var unknown = child.Manifest.Members.Where(member => !green.Contains(member.TaskKey)).ToArray();
             if (unknown.Length == 1)
                 Record(unknown[0], "proven-red", Evidence(child.Manifest));
         }
+        if (settled) _derivedIsolation[parent.BatchId] = fingerprint;
+        else _derivedIsolation.TryRemove(parent.BatchId, out _);
 
         void Record(BatchGateSubject member, string status,
             (string Path, string BatchId, string? RunId) evidence)
@@ -133,6 +155,16 @@ public sealed partial class BatchGatePilotService
                 : (_store.ReadVerdict(child.BatchId, run.BatchRunId)?.EvidencePath ?? string.Empty,
                     child.BatchId, run.BatchRunId);
         }
+    }
+
+    // A published or abandoned batch never changes phase again, so its phase
+    // is read once per process.
+    private BatchPhase ChildPhase(string batchId)
+    {
+        if (_terminalChildPhases.TryGetValue(batchId, out var terminal)) return terminal;
+        var phase = _store.LatestState(batchId).Phase;
+        if (MonolithTransitionAdapter.BatchPhaseIsTerminal(phase)) _terminalChildPhases[batchId] = phase;
+        return phase;
     }
 
     private void RecordIsolationSuperseded(BatchGateManifest parent, BatchGateSubject member)

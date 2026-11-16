@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, computed, effect, inject, input, output, signal } from '@angular/core';
 import { ReviewerSession } from '../../../../services/reviewer-session.service';
+import { DecisionFocusDirective } from '../../../../components/decision-focus/decision-focus.directive';
 import { TaskInfo, TaskState } from '../../../../models/task.model';
 import { laneName, laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import {
@@ -46,7 +47,7 @@ import { injectAcceptanceRefusalTooltip } from '../../state/acceptance-refusal.m
   selector: 'app-detail-header',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent, StatusIndicatorComponent],
+  imports: [ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent, StatusIndicatorComponent, DecisionFocusDirective],
   templateUrl: './detail-header.component.html',
   styleUrl: './detail-header.component.scss'
 })

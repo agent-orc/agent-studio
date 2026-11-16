@@ -108,6 +108,7 @@ function buildInfo(state: string, emptyContext = false, checkoutMissing = false)
       status: 'pending', integrationBranch: 'main', deliveryRef: 'task/AGT-1994', sha: null,
       detail: 'Integration failed', failure: {
         code: 'server-checkout-missing', label: 'Server checkout needed', rebaseRecoveryAvailable: false,
+        replayAvailable: false,
         reason: 'This project needs a server checkout before delivery can integrate.',
       },
     } : null,
@@ -466,6 +467,55 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await setTheme(page, 'light');
     await page.setViewportSize({ width: 390, height: 844 });
     await capture('390');
+  });
+
+  test('after the checkout is fixed, Retry integration merges the same delivery without a reissue', async ({ page }) => {
+    // AGT-3810 (AGT-3795): the owner configures the checkout, the card then
+    // offers Retry integration instead of a new coding run.
+    await openDetail(page, '5e-escalated', false, false, undefined, undefined, true);
+    const panel = page.getByTestId('escalation-summary');
+    await expect(panel.getByTestId('server-checkout-remedy')).toBeVisible();
+    await expect(panel.getByTestId('server-checkout-retry')).toHaveCount(0);
+
+    // The checkout now exists: the backend marks the same failure as replayable.
+    const ready = buildDetail('5e-escalated', false, true);
+    ready.info.integration = { ...ready.info.integration!, status: 'conflict-skipped',
+      failure: { ...ready.info.integration!.failure, replayAvailable: true } };
+    const retries: string[] = [];
+    await page.route('**/api/v1/studio/board**', (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({
+        backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+        failedPickup: [], codeNotComplete: [], review: [], autoReview: [], humanReview: [],
+        escalated: [ready.info], completed: [], archive: [],
+      }) }));
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(ready) }));
+    await page.route(/\/api\/tasks\/[^/]+\/integration\/retry(\?|$)/, (route) => {
+      retries.push(route.request().method());
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        status: 'integrated', movedTo: '5-human-review', reason: 'The delivery integrated without a new review round.',
+        outcome: 'Merged', rung: 0, deliverySha: '1a526e97', integrationBranch: 'main', reviewReused: true,
+      }) });
+    });
+    await page.reload();
+    await page.addStyleTag({ content: '[data-testid="studio-overlay-root"], [role="alert"] { display: none !important; }' });
+    const remedy = page.getByTestId('escalation-summary').getByTestId('server-checkout-remedy');
+    const retry = remedy.getByTestId('server-checkout-retry');
+    await expect(retry).toBeVisible({ timeout: 20_000 });
+    await expect(retry).toHaveText('Retry integration');
+    await expect(page.getByTestId('escalation-summary').getByTestId('escalation-action-reissue-escalated')).toHaveCount(0);
+    mkdirSync(SHOTS_DIR, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await remedy.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-retry-ready-${theme}.png`), animations: 'disabled' });
+    }
+    await setTheme(page, 'light');
+
+    await retry.click();
+    await expect(remedy.getByTestId('server-checkout-retry-outcome'))
+      .toContainText('Integrated into main without a new coding run.');
+    expect(retries).toEqual(['POST']);
+    await remedy.screenshot({ path: path.join(SHOTS_DIR, 'server-checkout-retry-integrated-light.png'), animations: 'disabled' });
   });
 
   test.beforeEach(() => test.setTimeout(90_000));

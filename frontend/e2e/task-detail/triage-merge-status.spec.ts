@@ -320,8 +320,8 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
         fs.mkdirSync(RESULTS_DIR, { recursive: true });
         await gap.screenshot({ path: path.join(RESULTS_DIR, `brief-gap-${theme}-${width}.png`) });
       }
-      await page.getByTestId('studio-triage-action-mark-done').click();
-      await expect(page.getByTestId('task-move-refusal')).toContainText('Acceptance needs content review');
+      await page.locator('[data-testid="studio-triage-action-mark-done"]:visible, [data-testid="studio-mobile-triage-action-mark-done"]:visible').click();
+      await expect(page.getByTestId('task-move-refusal')).toContainText('Send a round to close the gap, review again, or accept with a written reason');
       // A refused optimistic move reopens detail through the core-first API.
       // This fixture supplies the full-detail route, so reopen the same card.
       await openJob(page);

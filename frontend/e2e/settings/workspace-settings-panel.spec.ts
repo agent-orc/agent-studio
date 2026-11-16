@@ -79,8 +79,54 @@ test.describe('Settings — Workspaces section (F47)', () => {
 
     const note = page.getByTestId('settings-workspaces-note');
     await expect(note).toBeVisible();
-    await expect(note).toContainText('ADR-0042');
-    await expect(note).toContainText('F45b');
+    await expect(note).toContainText('archive, restore, or delete');
+    await expect(note).not.toContainText('ADR-0042');
+  });
+
+  test('project lifecycle controls explain consequences and include archived delete', async ({ page }) => {
+    const now = '2026-01-01T00:00:00Z';
+    const projects = [
+      { id: 'PROJ-901', displayName: 'Alpha', shortCode: 'ALP', archived: false },
+      { id: 'PROJ-902', displayName: 'Beta', shortCode: 'BET', archived: true },
+    ].map(project => ({ ...project, sourceType: 'local-folder', workspaceId: 'ws-test',
+      color: null, cliDefault: null, modelDefault: null, sortOrder: 0,
+      storageLocation: `/tmp/${project.id}`, repositoryPath: null, rootPath: null,
+      repositoryUrl: null, urls: [], createdAt: now }));
+    await page.route(/\/api\/(?:v1\/)?workspaces(?:\?.*)?$/, route => {
+      const visible = route.request().url().includes('includeArchived=true') ? projects : projects.slice(0, 1);
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+        { id: 'ws-test', displayName: 'Test workspace', sortOrder: 0, isDefault: true,
+          color: null, createdAt: now, projects: visible },
+      ]) });
+    });
+    await page.route(/\/api\/(?:v1\/)?projects(?:\?.*)?$/, route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(projects),
+    }));
+    await page.goto('/');
+    await openWorkspacesSection(page);
+    await page.getByTestId('settings-workspace-show-archived').click();
+    const alpha = page.locator('[data-project-id="PROJ-901"]');
+    const beta = page.locator('[data-project-id="PROJ-902"]');
+    await expect(alpha.getByRole('button', { name: 'Archive project Alpha' })).toBeVisible();
+    await expect(beta.getByRole('button', { name: 'Restore project Beta' })).toBeVisible();
+    await expect(beta.getByRole('button', { name: 'Delete project Beta' })).toBeVisible();
+    await alpha.getByTestId('settings-project-archive').click();
+    await expect(page.getByTestId('confirm-dialog')).toContainText('open cards');
+    await expect(page.getByTestId('confirm-dialog')).toContainText('Branches on origin');
+    const resultDir = process.env.JOB_RESULTS_DIR ?? 'test-results';
+    mkdirSync(resultDir, { recursive: true });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: join(resultDir, 'project-archive-1280-light.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: join(resultDir, 'project-archive-390-light.png'), fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(resultDir, 'project-archive-1280-dark.png'), fullPage: true });
+    await page.getByTestId('confirm-dialog').getByRole('button', { name: 'Cancel' }).click();
+    await beta.getByTestId('settings-project-delete').click();
+    await expect(page.getByTestId('confirm-dialog')).toContainText('managed server checkout');
+    await expect(page.getByTestId('confirm-dialog')).toContainText('Branches on origin');
+    await page.getByTestId('confirm-dialog').getByRole('button', { name: 'Cancel' }).click();
   });
 
   test('blocks delete while a workspace still holds projects, with the reason in the tooltip (F66)', async ({ page }) => {

@@ -351,6 +351,52 @@ public class PublishTargetServiceTests : IDisposable
     }
 
     [Fact]
+    public void TaskPublishable_NoFfMergeAfterTag_MapsAcceptedFeatureAndExcludesEarlierCard()
+    {
+        var (repoRoot, watchPath) = SetupRepo();
+        WriteWorkflow(repoRoot, "release.yml", NpmReleaseWorkflow);
+        WriteFile(repoRoot, "package.json", """{ "name": "fixture", "version": "0.1.0" }""");
+        WriteFile(repoRoot, "src/index.ts", "export const base = true;");
+        CommitAll(repoRoot, "seed");
+        var beforeTag = HeadSha(repoRoot);
+        RunGit(repoRoot, "tag", "v0.1.0");
+
+        RunGit(repoRoot, "checkout", "-q", "-b", "task/feature");
+        WriteFile(repoRoot, "src/feature.ts", "export const feature = true;");
+        CommitAll(repoRoot, "feat: accepted feature");
+        var featureSha = HeadSha(repoRoot);
+        RunGit(repoRoot, "checkout", "-q", "main");
+        RunGit(repoRoot, "merge", "--no-ff", "-q", "-m", "merge(AGT-1): feature", "task/feature");
+
+        RunGit(repoRoot, "checkout", "-q", "-b", "task/docs");
+        WriteFile(repoRoot, "docs/notes.md", "release notes");
+        CommitAll(repoRoot, "docs: release notes");
+        var docsSha = HeadSha(repoRoot);
+        RunGit(repoRoot, "checkout", "-q", "main");
+        RunGit(repoRoot, "merge", "--no-ff", "-q", "-m", "merge(AGT-2): docs", "task/docs");
+
+        var service = BuildService(repoRoot, watchPath);
+        var target = Assert.Single(service.GetProjectPublishStatus("Demo").Targets);
+        Assert.Equal(1, target.PendingCount);
+
+        var fold = new TaskPublishableService(service, NullLogger<TaskPublishableService>.Instance);
+        var feature = CompletedTask("feature", watchPath, featureSha) with { TaskType = TaskTypes.Feature };
+        var docs = CompletedTask("docs", watchPath, docsSha);
+        var released = CompletedTask("released", watchPath, beforeTag);
+        var lookup = fold.BuildLookup([feature, docs, released]);
+
+        Assert.Contains(target.Id, lookup[feature.TaskKey].TargetIds);
+        Assert.DoesNotContain(docs.TaskKey, lookup.Keys);
+        Assert.DoesNotContain(released.TaskKey, lookup.Keys);
+        var pendingTypes = new[] { feature, docs, released }
+            .Where(task => lookup.TryGetValue(task.TaskKey, out var signal)
+                && signal.TargetIds.Contains(target.Id))
+            .Select(task => task.TaskType);
+        Assert.Equal("0.2.0", PublishActionService.SuggestNextVersion(
+            target.CurrentVersion, pendingTypes));
+    }
+
+    [Fact]
     public void LocateNpm_PrefersRootPackage_SkipsWebsitePackageJson()
     {
         var (repoRoot, _) = SetupRepo();

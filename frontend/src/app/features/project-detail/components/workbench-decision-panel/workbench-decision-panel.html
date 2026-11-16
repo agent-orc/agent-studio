@@ -32,7 +32,7 @@
 
   @if (hasBrowserDraft() && !inline()) {
     <div class="decision-panel__draft" role="status" data-testid="workbench-decision-draft-notice">
-      <app-status-indicator tone="info" label="Draft saved for this browser session." [compact]="true"
+      <app-status-indicator tone="info" label="Draft saved in this browser. Save answers to keep it in the Dossier." [compact]="true"
                             testId="workbench-decision-draft-state" />
       <button type="button"
               class="decision-panel__discard"

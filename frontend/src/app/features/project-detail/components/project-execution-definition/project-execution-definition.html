@@ -45,7 +45,7 @@
       @if (execution.definitionSha256) {
         <code data-testid="execution-definition-sha">{{ execution.definitionSha256.slice(0, 12) }}</code>
       }
-      <span>Source: subject commit</span>
+      <span>Source: {{ execution.branch ? execution.branch + ' tip' : 'integration branch' }}</span>
     </div>
 
     @if (execution.repositoryDefinition) {
@@ -54,7 +54,7 @@
         <pre data-testid="execution-repository-definition"><code>{{ execution.repositoryDefinition }}</code></pre>
       </details>
     } @else {
-      <p class="execution__muted">No <code>.agent-studio/project.yml</code> is present in the checkout.</p>
+      <p class="execution__muted">No <code>.agent-studio/project.yml</code> is present on {{ execution.branch || 'the integration branch' }}.</p>
     }
 
     @if (execution.issues.length > 0) {

@@ -217,6 +217,7 @@ public class PromptEnhancementService
             {
                 Timeout = TimeSpan.FromSeconds(HaikuTimeoutSeconds),
                 Source = AdHocUsageSources.PromptEnhancement,
+                RecordUsage = false, // This service records the parsed result below.
             }, ct).ConfigureAwait(false);
             if (!r.Ok) return (false, null, r.Error);
             return (true, CliOneShotCompatibility.ToClaudeResultEnvelope(r, model), null);

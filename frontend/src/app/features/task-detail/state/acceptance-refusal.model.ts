@@ -111,7 +111,9 @@ export function acceptanceRefusalFor(
   if (ownReadiness && CONTENT_REFUSAL_CLASSES.has(ownReadiness.readiness))
     return contentRefusal(readinessReason(ownReadiness), 'readiness', ownReadiness.refusal, ownReadiness);
   if (awaitingGit) return null;
-  return integrationHold(info) ?? readinessHold(ownReadiness);
+  // AGT-3874: until the dry run answers (after a reload), a content verdict
+  // that is not `pass` already says why Accept will be refused.
+  return integrationHold(info) ?? (ownReadiness ? readinessHold(ownReadiness) : contentVerdictHold(info));
 }
 
 /**
@@ -172,6 +174,22 @@ function integrationHold(info: TaskInfo): AcceptanceRefusal | null {
 /** The reason of a refusal that replaces Accept, or null for any other refusal. */
 export function contentRefusalReason(refusal: AcceptanceRefusal | null): string | null {
   return refusal?.replacesAccept ? refusal.reason : null;
+}
+
+/**
+ * AGT-3874: the hold of the latest content verdict (requirement-fit, or
+ * concept-fit for a concept card) when it is not `pass`, in its summary, else
+ * null. The completion content check refuses Accept on any such verdict; a
+ * card with no content verdict yet adds no hold here.
+ */
+export function contentVerdictHold(info: TaskInfo): AcceptanceRefusal | null {
+  const aspect = info.mode === 'concept' ? 'concept-fit' : 'requirement-fit';
+  const verdict = info.reviewProjection?.attempts?.[0]?.aspects
+    ?.find(row => row.aspect?.toLowerCase() === aspect);
+  const status = verdict?.status?.trim().toLowerCase();
+  if (!verdict || !status || status === 'pass') return null;
+  const reason = verdict.summary?.trim() || `The ${aspect} review returned ${status}.`;
+  return { reason, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' };
 }
 
 /** The refusal sentence of a failed move to Accepted, in the server's words. */

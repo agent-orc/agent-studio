@@ -118,7 +118,7 @@ async function openJobInDetail(page: Page, id: string, watchPath: string) {
 }
 
 async function waitForAcceptReady(page: Page): Promise<void> {
-  await expect(page.getByTestId('studio-triage-action-mark-done')).toBeEnabled({ timeout: 30_000 });
+  await expect(page.locator('[data-testid="studio-triage-action-mark-done"]:visible, [data-testid="studio-mobile-triage-action-mark-done"]:visible')).toBeEnabled({ timeout: 30_000 });
 }
 
 async function openReviewJobReadyToAccept(page: Page, id: string, watchPath: string): Promise<void> {
@@ -152,7 +152,7 @@ async function openReviewJobReadyToAccept(page: Page, id: string, watchPath: str
 
 async function clickAcceptAndWaitForMove(page: Page, moveCount: () => number): Promise<void> {
   for (let attempt = 0; attempt < 3 && moveCount() === 0; attempt++) {
-    const accept = page.getByTestId('studio-triage-action-mark-done');
+    const accept = page.locator('[data-testid="studio-triage-action-mark-done"]:visible, [data-testid="studio-mobile-triage-action-mark-done"]:visible');
     await expect(accept).toBeEnabled({ timeout: 10_000 });
     await accept.click();
     const confirm = page.getByRole('button', { name: 'Accept anyway' });
@@ -187,7 +187,7 @@ for (const view of [
       });
       await clickAcceptAndWaitForMove(page, () => moveCount);
 
-      await expect(page.getByTestId('task-move-refusal')).toContainText('Complete the required review for the current brief, or use a written operator override');
+      await expect(page.getByTestId('task-move-refusal')).toContainText('Send a round to close the gap, review again, or accept with a written reason');
       // AGT-3830: the content refusal's next step replaces Accept, and its reason takes focus.
       await expect(page.locator('[data-testid="acceptance-refusal-action"]:visible')).toHaveText('Review again');
       await expect(page.locator('[data-testid="acceptance-refusal-override"]:visible')).toBeVisible();

@@ -174,6 +174,11 @@ async function installMocks(page: Page): Promise<Captured> {
     workbench: workbench(),
     html: DOSSIER_HTML, branch: 'develop', revision: '0123456789abcdef',
     workingTreeModified: false, fingerprint: 'a'.repeat(64), entryFingerprint: 'entry-a',
+    // The server offers promotion only for a reviewed concept Dossier (AGT-3875).
+    promotion: {
+      available: true, reason: null, message: null, sourceTaskKey: CONCEPT_KEY, sourceJobId: 'delivery-flow-concept',
+      sourceTitle: 'Delivery flow concept', sourceLane: '5-human-review', proposalCount: ITEMS.length,
+    },
     cards: {
       projectName: PROJECT, dossierKey: WORKBENCH_KEY, dossierPath: 'docs/delivery-flow/index.html',
       implementationSlices: ITEMS.length, completedSlices: 0,

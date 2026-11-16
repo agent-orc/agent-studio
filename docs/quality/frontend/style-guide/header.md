@@ -99,6 +99,8 @@ show “does not apply”, “not in a batch”, or a loading placeholder for a 
 that may stay empty. A genuine in-progress operation can show its own progress.
 The global alert describes cross-task health; it is not repeated as a task
 notice. A parked blocker precedes the derived escalation summary.
+For an Escalated card, the Current/Next strip names the operator decision even
+when an earlier Auto Review integration queue or phase remains in its live status.
 
 Use one treatment per class: status narratives use `m.deck-panel-muted`,
 notices use `m.deck-panel`, acute alerts use `m.deck-panel-attention`, and

@@ -234,7 +234,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                     DurationClass = estimate.Class,
                 }, changedFiles, profile, mode, checked((int)Math.Ceiling(timeout.TotalSeconds)), overallSeconds)
             { CachePath = cache, SourceFromCache = warm,
-                GateSlots = options.GateSlots, ProcessorCount = options.ProcessorCount };
+                GateSlots = options.GateSlots, ProcessorCount = options.ProcessorCount,
+                CachePruneAgeHours = options.CachePruneAgeHours };
             invocation = invocation with { InstallationId = _runs.InstallationId };
             await File.WriteAllTextAsync(Path.Combine(local, "request.json"),
                 JsonSerializer.Serialize(invocation, RemoteBuildTestGateRunner.Json), ct);
@@ -740,6 +741,9 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
 
 internal sealed record RemoteGateOptions(string Host, string WorkerPath, string Root, int ProcessorCount, int GateSlots)
 {
+    /// <summary>AGT-3866: <c>RemoteGate:CachePruneAgeHours</c>; 0 lets the worker use its default.</summary>
+    internal int CachePruneAgeHours { get; init; }
+
     internal const string PrimarySection = "RemoteGate";
 
     /// <summary>
@@ -775,7 +779,9 @@ internal sealed record RemoteGateOptions(string Host, string WorkerPath, string 
             || processors is < 1 or > 64 || slots is < 1 or > 64)
             throw new InvalidOperationException(
                 "Remote gate transport requires RemoteGate:SshHost and an absolute RemoteGate:WorkerPath on an approved remote host; local execution is disabled.");
-        return new(host, worker!, root, processors, slots);
+        var pruneAge = Count("CachePruneAgeHours", 0);
+        return new(host, worker!, root, processors, slots)
+            { CachePruneAgeHours = pruneAge is >= 0 and <= 24 * 90 ? pruneAge : 0 };
     }
 
     private static bool SafeRemotePath(string? value) => value is not null
