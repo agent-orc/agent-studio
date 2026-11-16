@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Pipeline;
 
@@ -43,11 +44,15 @@ public interface IRemoteGateTransport
 /// The backend owns gate orchestration, but never executes a build or test.
 /// The explicit remote worker uses the same exact-subject gate implementation.
 /// Missing transport, failed transport, or mismatched evidence fails closed.
+/// AGT-3792: every attempt reports to the one gate host health state, so the
+/// transport failures of any gate (batch, per-task or merge) mark the host
+/// unreachable and any answer from the host ends the outage.
 /// </summary>
 public sealed class RemoteBuildTestGateRunner(
     IRemoteGateTransport transport,
     ILogger<RemoteBuildTestGateRunner> logger,
-    TaskGateCancellationRegistry? cancellationRegistry = null) : IBuildTestGateRunner
+    TaskGateCancellationRegistry? cancellationRegistry = null,
+    GateHostOutageMonitor? hostHealth = null) : IBuildTestGateRunner
 {
     internal const int MaxTransportAttempts = 3;
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -85,16 +90,23 @@ public sealed class RemoteBuildTestGateRunner(
                         && !string.Equals(result.TestedSha, request.ExpectedSha, StringComparison.OrdinalIgnoreCase)))
                     return Failure(request, BuildTestGateFailureKind.MissingSource,
                         "Remote gate evidence does not prove the requested commit and gate.");
-                if (attempt < MaxTransportAttempts && result.Verdict == BuildTestGateVerdict.Fail
+                var transportFailure = result.Verdict == BuildTestGateVerdict.Fail
                     && GateFailureTriagePolicy.ContainsTransportMarker(result.Reason + "\n" + result.Output)
-                    && GateFailureTriagePolicy.FailingItems(result.Output).Count == 0)
+                    && GateFailureTriagePolicy.FailingItems(result.Output).Count == 0;
+                ReportHost(transportFailure, result.Reason + "\n" + result.Output);
+                if (attempt < MaxTransportAttempts && transportFailure)
                 {
                     logger.LogWarning(
                         "remote_gate_transport_retry gate={GateId} expected_sha={ExpectedSha} attempt={Attempt}",
                         request.GateId, request.ExpectedSha, attempt);
                     continue;
                 }
-                return result with { Repository = request.RepositoryPath };
+                // AGT-3792: a gate whose host never answered judged nothing. Every
+                // gate path (batch, per-card, pre-main full suite) reads the kind,
+                // so the transport is a gate environment failure on all of them.
+                return transportFailure
+                    ? result with { Repository = request.RepositoryPath, FailureKind = BuildTestGateFailureKind.Environment }
+                    : result with { Repository = request.RepositoryPath };
             }
             catch (OperationCanceledException)
             {
@@ -112,6 +124,7 @@ public sealed class RemoteBuildTestGateRunner(
                 logger.LogWarning(exception,
                     "remote_gate_transport_failed gate={GateId} expected_sha={ExpectedSha} attempt={Attempt}",
                     request.GateId, request.ExpectedSha, attempt);
+                ReportHost(true, exception.Message);
                 if (attempt < MaxTransportAttempts) continue;
                 return Failure(request, BuildTestGateFailureKind.Environment, "Remote gate transport failure after bounded retries: " + exception.Message)
                     with { DurationMs = started.ElapsedMilliseconds };
@@ -126,6 +139,22 @@ public sealed class RemoteBuildTestGateRunner(
             }
         }
         throw new InvalidOperationException("The bounded transport retry loop did not return a verdict.");
+    }
+
+    /// <summary>
+    /// A transport failure that names an unanswering host counts toward the
+    /// unreachable mark; any other answer means the host was reached.
+    /// </summary>
+    private void ReportHost(bool transportFailure, string evidence)
+    {
+        if (hostHealth is null) return;
+        if (!transportFailure)
+        {
+            hostHealth.Reachable();
+            return;
+        }
+        if (MonolithTransitionAdapter.GateTransportFailureKind(evidence) is not null)
+            hostHealth.TransportFailed(evidence.Trim());
     }
 
     internal static BuildTestGateResult Failure(BuildTestGateRequest request,

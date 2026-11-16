@@ -23,7 +23,8 @@ export interface OperatorAttentionResponse {
 
 /** The decision-event classes of the operator stream, in the order the list shows them. */
 export type AttentionClass =
-  | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'batch' | 'batch-record' | 'push' | 'quota'
+  | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'gate-host' | 'batch' | 'batch-record' | 'push'
+  | 'quota'
   | 'host' | 'installation' | 'other';
 
 /** Where a row's primary action leads. */
@@ -42,6 +43,8 @@ const CLASSES: readonly AttentionClassSpec[] = [
   { key: 'escalation', label: laneName(TaskState.Escalated), action: 'Open card', target: 'card' },
   { key: 'human-review', label: laneName(TaskState.HumanReview), action: 'Review', target: 'card' },
   { key: 'push-blocked', label: 'Push blocked', action: 'Open card', target: 'card' },
+  // AGT-3792: the gate host itself, or the RemoteGate:SshHost setting, is the repair.
+  { key: 'gate-host', label: 'Gate host unreachable', action: 'Open environment', target: 'hosts' },
   { key: 'batch', label: 'Batch needs attention', action: 'Open batch panel', target: 'batch-gate' },
   { key: 'batch-record', label: 'Batch record unreadable', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'push', label: 'Overdue pending push', action: 'Open batch gate', target: 'batch-gate' },
@@ -58,6 +61,7 @@ const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
   'installation.credential': 'installation',
   'escalation.opened': 'escalation',
   'human-review.ready': 'human-review',
+  'gate-host.unreachable': 'gate-host',
   'batch.red': 'batch',
   'batch.isolating': 'batch',
   'batch.running-without-gate': 'batch',

@@ -265,6 +265,23 @@ public sealed class RemoteBuildTestGateRunnerTests
     }
 
     [Fact]
+    public async Task Persistent_transport_answer_is_typed_as_a_gate_environment_failure()
+    {
+        // AGT-3792: the worker's own answer names the refused transport but no
+        // failure kind. Every gate path reads the kind, so the runner types it.
+        var transport = new RecordingTransport
+        {
+            Result = RemoteBuildTestGateRunner.Failure(Request(), BuildTestGateFailureKind.None,
+                "ECONNRESET while streaming the gate result from the gate host"),
+        };
+        var result = await Runner(transport).RunAsync(Request(), [], null, PostStepMode.Fail,
+            TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(RemoteBuildTestGateRunner.MaxTransportAttempts, transport.Calls);
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
+    }
+
+    [Fact]
     public async Task Product_failure_with_transport_text_does_not_retry()
     {
         var transport = new RecordingTransport
