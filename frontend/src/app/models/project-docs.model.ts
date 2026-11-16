@@ -453,6 +453,8 @@ export interface WorkbenchDocumentationProjection {
   openCount: number;
   missingCount: number;
   references: WorkbenchDocumentationReference[];
+  /** Server-written reason naming the open or missing cards; null once the item can be documented. */
+  blockedReason?: string | null;
 }
 
 export interface DocumentWorkbenchRequest {

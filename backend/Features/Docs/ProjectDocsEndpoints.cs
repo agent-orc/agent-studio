@@ -136,6 +136,9 @@ public static class ProjectDocsEndpoints
                 ? Results.NotFound(new { error = "Dossier is not available in the selected Wiki source." })
                 : Results.Ok(document with
                 {
+                    // The refreshed catalogue item carries the documentation
+                    // projection of the same membership as the card list.
+                    Workbench = item ?? document.Workbench,
                     Cards = cards.List(projectName, document.Workbench),
                     RevisionCard = revisions.Target(projectName, document.Workbench.SourceTaskKeys),
                 });
