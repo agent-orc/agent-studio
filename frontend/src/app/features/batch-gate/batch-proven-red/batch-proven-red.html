@@ -17,7 +17,7 @@
     } @else {
       <span>Evidence file unavailable</span>
     }
-    @if (evidenceLabel(); as label) { <code data-testid="batch-proven-red-evidence-label">{{ label }}</code> }
+    @if (finding().evidencePath) { <code data-testid="batch-proven-red-evidence-name">{{ evidenceName() }}</code> }
   </p>
   @if (finding().provingBatchId) {
     <p class="batch-proven-red__run">Proved by batch {{ finding().provingBatchId }}@if (finding().provingRunId) {, run {{ finding().provingRunId }}}</p>

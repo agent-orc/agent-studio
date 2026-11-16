@@ -92,6 +92,7 @@ export class ProjectWorkflowSectionComponent implements OnInit {
   // ---- Live settings backing the read-only transition view ----
   private readonly autoCommit = signal<boolean | null>(null);
   private readonly autoPushStrategy = signal<AutoPushStrategy | null>(null);
+  private readonly integrationBranch = signal<string | null>(null);
   private readonly pipelineCatalogue = signal<readonly PipelineCatalogueStep[]>([]);
   private readonly pipelineOverrides = signal<Record<string, PipelineStepSetting>>({});
 
@@ -112,6 +113,7 @@ export class ProjectWorkflowSectionComponent implements OnInit {
   readonly transitions = computed<readonly TransitionRow[]>(() => {
     const commit = this.autoCommit();
     const push = this.autoPushStrategy();
+    const branch = this.integrationBranch() || 'the repository default branch';
     const gates = this.gateSteps();
     return [
       {
@@ -158,7 +160,7 @@ export class ProjectWorkflowSectionComponent implements OnInit {
         state: push == null ? '…' : AUTO_PUSH_LABELS[push],
         tone: push == null ? 'running' : switchTone(push !== 'never'),
         detail:
-          'On completed pushes git push origin <sha>:refs/heads/main (never force). Immediate also pushes right after auto-commit.',
+          `Accepted work integrates into ${branch}. Completed auto-push targets main and never force-pushes. Immediate also pushes right after auto-commit.`,
         configuredIn: 'Settings',
       },
     ];
@@ -194,7 +196,10 @@ export class ProjectWorkflowSectionComponent implements OnInit {
       error: () => { /* gate count just stays at zero */ },
     });
     this.jobService.getAllProjectSettings().subscribe({
-      next: (all) => this.pipelineOverrides.set(all[project]?.pipelineSteps ?? {}),
+      next: (all) => {
+        this.pipelineOverrides.set(all[project]?.pipelineSteps ?? {});
+        this.integrationBranch.set(all[project]?.integrationBranch?.trim() || null);
+      },
       error: () => { /* keep empty overrides */ },
     });
   }

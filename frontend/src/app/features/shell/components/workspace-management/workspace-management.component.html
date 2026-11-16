@@ -23,6 +23,9 @@
            role="alert"
            data-testid="settings-project-move-error">Could not move project: {{ err }}</div>
     }
+    @if (wsSettings.deleteError(); as err) {
+      <div class="wsm__note wsm__note--error" role="alert">Could not delete project: {{ err }}</div>
+    }
     @if (registryWorkspacesLoading() && registryWorkspaces().length === 0) {
       <div class="wsm__note">Loading workspaces…</div>
     } @else if (registryWorkspaces().length === 0) {
@@ -168,12 +171,20 @@
                               [disabled]="isProjectBusy(p.id)"
                               (click)="openProjectMoveMenu($event, p.id, p.workspaceId || null)">⇄</button>
                       <button type="button"
-                              class="studio-settings-workspace-action studio-settings-workspace-action--danger"
+                              class="studio-settings-workspace-action studio-settings-workspace-action--text"
                               data-testid="settings-project-archive"
-                              [cacTooltip]="p.archived ? 'Un-archive' : 'Archive'"
+                              [attr.aria-label]="(p.archived ? 'Restore' : 'Archive') + ' project ' + p.displayName"
                               [disabled]="isProjectBusy(p.id)"
-                              (click)="toggleRegistryProjectArchived(p.id, p.archived)">
-                        {{ p.archived ? '↺' : '🗄' }}
+                              (click)="toggleRegistryProjectArchived(p)">
+                        {{ p.archived ? 'Restore' : 'Archive' }}
+                      </button>
+                      <button type="button"
+                              class="studio-settings-workspace-action studio-settings-workspace-action--text studio-settings-workspace-action--danger"
+                              data-testid="settings-project-delete"
+                              [attr.aria-label]="'Delete project ' + p.displayName"
+                              [disabled]="isProjectBusy(p.id)"
+                              (click)="wsSettings.deleteProject(p)">
+                        Delete
                       </button>
                     </div>
                   </li>
@@ -200,8 +211,8 @@
     @for (ws of registryWorkspaces(); track ws.id) { <app-workspace-quota-disclosure [workspaceId]="ws.id" [workspaceName]="ws.displayName" /> }
     <p class="wsm__note wsm__note--muted"
        data-testid="settings-workspaces-note">
-      F45b mutation surface (ADR-0042). Click a workspace or project name to rename;
-      use the action buttons for color, reorder, workspace move, archive, and delete.
+      Click a workspace name to rename it. Use the project actions to edit, move,
+      archive, restore, or delete a project.
     </p>
   </div>
   <app-menu

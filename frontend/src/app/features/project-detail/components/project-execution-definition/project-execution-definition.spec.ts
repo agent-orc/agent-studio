@@ -41,6 +41,7 @@ describe('ProjectExecutionDefinitionComponent', () => {
       },
       override: null,
       source: 'subject-commit',
+      branch: 'develop',
     });
     // The Pipeline section renders right after Execution and reads the same project.yml.
     http.expectOne('/api/projects/Quality%20Studio/pipeline-definition').flush({
@@ -53,6 +54,7 @@ describe('ProjectExecutionDefinitionComponent', () => {
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('[data-testid="execution-repository-definition"]')?.textContent)
       .toContain('schemaVersion: 1');
+    expect(root.textContent).toContain('Source: develop tip');
     const cacheState = root.querySelector('[data-testid="execution-cache-state"]') as HTMLElement;
     expect(cacheState.textContent).toContain('hit');
     expect(cacheState.dataset['tone']).toBe('success');

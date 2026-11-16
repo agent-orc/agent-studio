@@ -251,6 +251,10 @@
     "src/app/features/usage-cockpit/components/usage-cost-chip/usage-cost-chip.html": {
       "kind": "popup-trigger",
       "reason": "Today's cost chip. It opens the cost detail as an anchored popover or phone sheet; the value chip is the affordance."
+    },
+    "src/app/features/studio-shell/components/studio-tab-overflow/studio-tab-overflow.html": {
+      "kind": "popup-trigger",
+      "reason": "The phone tab overflow opens an anchored menu of the open tabs; nothing expands in place."
     }
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isolatedRedState, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
 import {
-  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine, batchDateTime, batchEvidenceLabel, BATCH_TIME_ZONE_NOTE,
+  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine, batchDateTime, BATCH_TIME_ZONE_NOTE,
   type BatchGateState,
 } from './batch-gate.model';
 
@@ -18,13 +18,6 @@ it('formats batch dates in UTC like the time lines, without repeating the zone',
   expect(batchDateTime('2026-11-15T23:50:00+02:00')).toBe('15 Nov 2026, 21:50');
   expect(batchDateTime(null)).toBe('Unknown');
   expect(BATCH_TIME_ZONE_NOTE).toBe('Times in UTC');
-});
-
-it('labels isolation evidence by its file name, never the host path', () => {
-  expect(batchEvidenceLabel({ evidencePath: '/tmp/x/agentstudio/instances/i-1/batch-gates/abc/runs/run-17.evidence.jsonl' }))
-    .toBe('run-17.evidence.jsonl');
-  expect(batchEvidenceLabel({ evidencePath: 'C:\\data\\batch-gates\\run-2.evidence.jsonl' })).toBe('run-2.evidence.jsonl');
-  expect(batchEvidenceLabel({ evidencePath: '' })).toBeNull();
 });
 
 describe('batch waiting projection', () => {

@@ -526,15 +526,6 @@ export function batchProvenRedFor(state: BatchGateState | null, member: BatchMem
   return latest?.status === 'proven-red' ? latest : null;
 }
 
-/**
- * Short label of an isolation evidence file: its file name. The recorded path
- * is a host path inside the instance directory and stays out of the UI.
- */
-export function batchEvidenceLabel(finding: Pick<BatchIsolationFinding, 'evidencePath'>): string | null {
-  const name = finding.evidencePath?.split(/[\\/]/).filter(Boolean).at(-1);
-  return name || null;
-}
-
 export function batchIsolationEvidenceUrl(project: string, finding: BatchIsolationFinding): string {
   return `/api/projects/${encodeURIComponent(project)}/batch-gate/isolation-evidence?parentBatchId=${
     encodeURIComponent(finding.parentBatchId)}&taskKey=${encodeURIComponent(finding.taskKey)}`;

@@ -55,6 +55,12 @@ public sealed class AutoReviewDeliveryResumeService
         public const string IntegrationInFlight = "integration-in-flight";
 
         public const string IntegrationOwnedWait = "integration-owned-wait";
+
+        /// <summary>
+        /// The Orchestrator Engine owns delivery, so this monolith pass does
+        /// nothing. The stranding watchdog asks the engine instead (AGT-3883).
+        /// </summary>
+        public const string EngineOwned = "engine-owned";
     }
 
     private readonly TaskScannerService _scanner;
@@ -177,7 +183,7 @@ public sealed class AutoReviewDeliveryResumeService
     {
         ArgumentNullException.ThrowIfNull(task);
         if (!OwnsDelivery())
-            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, Reasons.EngineOwned, Resumed: false);
         var gate = _resumeGates.GetOrAdd(task.ProjectName + "/" + task.Id,
             _ => new SemaphoreSlim(1, 1));
         // An existing resume may own the gate for an entire integration.
@@ -188,7 +194,7 @@ public sealed class AutoReviewDeliveryResumeService
         try
         {
             if (!OwnsDelivery())
-                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
+                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, Reasons.EngineOwned, Resumed: false);
             return await ResumeCoreAsync(task, source, ct).ConfigureAwait(false);
         }
         finally { gate.Release(); }
@@ -293,7 +299,7 @@ public sealed class AutoReviewDeliveryResumeService
         }
 
         if (!OwnsDelivery())
-            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, Reasons.EngineOwned, Resumed: false);
         AutoReviewResumeRetryStore.Write(task.FolderPath, new AutoReviewResumeRetryRecord(
             review.AttemptId, resumeAttempts + 1,
             now + AutoReviewResumeRetryPolicy.Delay(resumeAttempts + 1),
@@ -343,7 +349,7 @@ public sealed class AutoReviewDeliveryResumeService
                 if (!OwnsDelivery())
                 {
                     AutoReviewResumeRetryStore.Clear(task.FolderPath, review.AttemptId);
-                    return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
+                    return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, Reasons.EngineOwned, Resumed: false);
                 }
                 if (!IsCurrent(review!))
                     return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
@@ -495,7 +501,7 @@ public sealed class AutoReviewDeliveryResumeService
         CancellationToken ct)
     {
         if (!OwnsDelivery())
-            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, Reasons.EngineOwned, Resumed: false);
         var outcomeLabel = review.Outcome?.ToString() ?? "Pass";
         if (!IsCurrent(review))
             return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);

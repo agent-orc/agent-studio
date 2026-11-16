@@ -12,6 +12,7 @@ import { ProjectEnvironmentOverviewComponent } from '../project-environment-over
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
+import { ManagedDatabasesPanelComponent } from '../managed-databases-panel/managed-databases-panel';
 import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-page/project-secrets-page.component';
 import { FlowHealthPageComponent, type FlowDetailTarget } from '../../../flow-health';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
@@ -47,7 +48,8 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
-    ProjectOperationsComponent, HostedDataPanelComponent, ProjectSecretsPageComponent, FlowHealthPageComponent,
+    ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
+    FlowHealthPageComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',

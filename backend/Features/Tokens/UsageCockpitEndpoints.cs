@@ -135,7 +135,7 @@ public static class UsageCockpitEndpoints
                     new ProjectTokenDataFreshness { Status = "unavailable",
                         Warning = "The workspace token bus could not be read." }));
             }
-            var cost = UsageCockpitProjection.Cost(pricing, calendar, costInputs);
+            var cost = UsageCockpitProjection.Cost(pricing, calendar, costInputs, DateTime.UtcNow);
             sourceStates["cost"] = cost.Coverage;
 
             var runnerState = TryRead(() => runner.GetStatus(), now);

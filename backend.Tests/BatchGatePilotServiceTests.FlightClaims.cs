@@ -114,6 +114,85 @@ public sealed class BatchGatePilotFlightClaimTests : BatchGatePilotServiceTests
         }
     }
 
+    // AGT-3882: on 16 November 2026 a reserving flight waited behind per-task
+    // gates past its deadline and went behind newer work.
+    [Fact]
+    public async Task Reservation_held_by_a_per_task_gate_names_the_job_and_keeps_the_queue_position()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        ConfigureFlights(factory, reservationDeadlineMinutes: 5);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var reservations = factory.Services.GetRequiredService<BatchIntegrationReservationService>();
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var held = await reservations.AcquireAsync(ProjectName,
+            IntegrationReservationKinds.PerTaskIntegration, "AGT-HOLD", CancellationToken.None);
+        Task<IDisposable>? arrival = null;
+        try
+        {
+            SeedMember(factory, "CODE-HELD-A1", "src/held-a1.cs");
+            SeedMember(factory, "CODE-HELD-A2", "src/held-a2.cs");
+            pilot.RequestCloseNow(ProjectName);
+            await pilot.TickAsync(CancellationToken.None);
+            var batch = Assert.Single(store.ListRecoverableManifests());
+            await WaitUntilAsync(() => reservations.GetBatchWait(ProjectName) is not null);
+
+            // A per-task gate that arrives while the flight reserves is held back.
+            arrival = reservations.AcquireAsync(ProjectName,
+                IntegrationReservationKinds.PerTaskIntegration, "AGT-LATE", CancellationToken.None);
+            using (var state = System.Text.Json.JsonDocument.Parse(
+                       System.Text.Json.JsonSerializer.Serialize(pilot.State(ProjectName))))
+            {
+                var wait = state.RootElement.GetProperty("flightReservationWait");
+                Assert.Equal(batch.BatchId, wait.GetProperty("batchId").GetString());
+                Assert.Equal("AGT-HOLD", wait.GetProperty("holder").GetProperty("TaskKey").GetString());
+                Assert.Equal("per-task-integration", wait.GetProperty("holder").GetProperty("Kind").GetString());
+                Assert.Equal("AGT-LATE", Assert.Single(wait.GetProperty("heldBack").EnumerateArray())
+                    .GetProperty("TaskKey").GetString());
+                Assert.True(wait.TryGetProperty("gateSlots", out _));
+                var row = state.RootElement.GetProperty("batches").EnumerateArray()
+                    .Single(item => item.GetProperty("BatchId").GetString() == batch.BatchId);
+                Assert.Contains("per-task-integration AGT-HOLD holds the project reservation",
+                    row.GetProperty("reservationWaitsFor").GetString());
+            }
+
+            _clock = _clock.AddMinutes(6);
+            await pilot.TickAsync(CancellationToken.None);
+
+            var retried = Assert.Single(store.StateHistory(batch.BatchId), state => state.FlightClaimExpiry is not null);
+            Assert.Equal(BatchPhase.Formed, retried.Phase);
+            Assert.Equal(BatchFlightClaimExpiry.ReservationHeldByJob, retried.FlightClaimExpiry);
+            Assert.Contains("because per-task-integration AGT-HOLD (since ", retried.Reason);
+            Assert.Contains("keeps its queue position", retried.Reason);
+            // Not deferred behind the other formed batches: the same batch claims again first.
+            Assert.Equal([batch.BatchId], pilot.StartOrderForTesting([batch]).Select(item => item.BatchId));
+            var second = await NextClaimAsync(pilot, store, fence: 2);
+            Assert.Equal(batch.BatchId, second.BatchId);
+            Assert.False(arrival.IsCompleted);
+
+            // The running gate ends: the flight takes its reservation before the
+            // held-back gate, which resumes after the flight.
+            held.Dispose();
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+            Assert.Equal(BatchPhase.Published, store.LatestState(batch.BatchId).Phase);
+            using var resumed = await arrival.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            held.Dispose();
+            if (arrival is not null) (await arrival.WaitAsync(TimeSpan.FromSeconds(30))).Dispose();
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 200 && !condition(); attempt++) await Task.Delay(25);
+        Assert.True(condition());
+    }
+
     [Fact]
     public async Task Hung_gate_expires_to_a_retry_and_its_stale_flight_writes_nothing()
     {
