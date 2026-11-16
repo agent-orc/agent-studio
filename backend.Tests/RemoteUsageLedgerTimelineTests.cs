@@ -115,6 +115,85 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
         Assert.Equal(13_300, project.Total);
     }
 
+    /// <summary>
+    /// AGT-3798: the scoped ledger (workspaceId plus fromUtc/toUtc) read only
+    /// bus rows, so a week of receipt-only remote runs read "0 calls".
+    /// </summary>
+    [Fact]
+    public void TimelineRange_CountsAReceiptOnlyRemoteRunInsideTheScopedRange()
+    {
+        var (_, _, ledger) = BuildStack();
+        WriteReceipt(
+            Call("agent:remote-runner:att-1", "claude-opus-5-5", "agent-runner-01", "claude",
+                input: 1_000, output: 500, cacheRead: 100_000, cacheWrite: 2_000, _now.AddHours(-2)),
+            // Outside the range: counted by the lifetime ledger, not by this scope.
+            Call("agent:remote-runner:att-0", "claude-opus-5-5", "agent-runner-01", "claude",
+                input: 7, output: 7, cacheRead: 0, cacheWrite: 0, _now.AddDays(-9)));
+
+        var timeline = ledger.WorkspaceTimelineRange(
+            [(Project, _watchPath)], _now.AddDays(-7), _now, bucketMinutes: 1440);
+
+        var project = Assert.Single(timeline.Projects);
+        Assert.Equal(1, project.Calls);
+        Assert.Equal(103_500, project.Total);
+        Assert.Equal("claude", Assert.Single(Assert.Single(timeline.Models).CliTypes));
+        Assert.Equal("complete", timeline.Freshness.Status);
+        Assert.Contains("task-token-receipts", timeline.Freshness.Sources);
+        Assert.Contains("historical-token-bus", timeline.Freshness.Sources);
+    }
+
+    [Fact]
+    public async Task TimelineRange_MatchesTheTrailingWindowOverTheSameInterval()
+    {
+        var (bridge, store, ledger) = BuildStack();
+        WriteReceipt(Call("agent:remote-runner:att-1", "gpt-6-sol", "agent-runner-01", "codex",
+            input: 4_000, output: 300, cacheRead: 9_000, cacheWrite: 0, _now.AddHours(-3)));
+        await EmitAsync(bridge, store, "agent:claude", TaskId,
+            Usage("claude-sonnet-5", 50_000, 5_000, cacheRead: 0), _now.AddHours(-4));
+        await ChatUsageFallbackReceipts.WriteAsync(_workspace, Project, "turn-1", _now.AddHours(-1),
+            Usage("gpt-6-sol", 2_000, 100, cacheRead: 1_000) with { Host = "agent-runner-02", CliType = "codex" });
+
+        var trailing = ledger.WorkspaceTimeline([(Project, _watchPath)], 24, 60, _now);
+        var range = ledger.WorkspaceTimelineRange([(Project, _watchPath)], _now.AddHours(-24), _now, 60);
+
+        Assert.Equal(3, Assert.Single(range.Projects).Calls);
+        Assert.Equal(Assert.Single(trailing.Projects).Total, Assert.Single(range.Projects).Total);
+        Assert.Equal(trailing.Models.Sum(model => model.Dollars), range.Models.Sum(model => model.Dollars));
+        Assert.Contains("chat-usage-fallback", range.Freshness.Sources);
+    }
+
+    [Fact]
+    public void TimelineRange_AddsAttributedAndUnattributedWorkspaceRows_LikeTheCockpitCost()
+    {
+        var (_, _, ledger) = BuildStack();
+        var workspaceUsage = new WorkspaceBusUsage(
+            new Dictionary<string, IReadOnlyList<OrchestratorLogEntry>>(StringComparer.OrdinalIgnoreCase)
+            {
+                [Project] = [Entry("agent:one-shot:tags", "claude-opus-5-5", "local", _now.AddHours(-1))],
+            },
+            [Entry("agent:one-shot:title", "claude-opus-5-5", "local", _now.AddHours(-2))]);
+
+        var timeline = ledger.WorkspaceTimelineRange(
+            [(Project, _watchPath)], _now.AddDays(-1), _now, 60, workspaceUsage);
+
+        Assert.Equal(1, Assert.Single(timeline.Projects, row => row.Project == Project).Calls);
+        Assert.Equal(1, Assert.Single(timeline.Projects,
+            row => row.Project == TokenAggregationService.UnattributedProject).Calls);
+        Assert.Contains(WorkspaceBusUsage.Source, timeline.Freshness.Sources);
+    }
+
+    [Fact]
+    public void TimelineRange_WithNoProjectInScope_IsNeverCompleteWithoutSources()
+    {
+        var (_, _, ledger) = BuildStack();
+
+        var timeline = ledger.WorkspaceTimelineRange([], _now.AddDays(-7), _now, 1440);
+
+        Assert.Empty(timeline.Freshness.Sources);
+        Assert.Equal("unavailable", timeline.Freshness.Status);
+        Assert.False(string.IsNullOrWhiteSpace(timeline.Freshness.Warning));
+    }
+
     [Fact]
     public void Timeline_UnknownModelId_RendersTheIdNotAnotherModelsLabel()
     {
