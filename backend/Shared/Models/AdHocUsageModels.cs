@@ -25,6 +25,8 @@ public sealed record AdHocUsageRecord
 
     /// <summary>Model id reported by the CLI (e.g. "claude-haiku-4-5").</summary>
     public string Model { get; init; } = "";
+    /// <summary>CLI that executed the call; null on records written before this field existed.</summary>
+    public string? CliType { get; init; }
     public string? ThinkingLevel { get; init; }
     public string? ParticipantId { get; init; }
 

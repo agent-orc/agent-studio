@@ -127,10 +127,13 @@ public sealed partial class BatchGateStore
     /// Ends a claim that is no longer live. Refused while the claim is live or
     /// when another grant replaced it. <paramref name="settled"/> false keeps
     /// the scope closed until <see cref="SettleFlightClaim"/> records that the
-    /// outcome reached the batch.
+    /// outcome reached the batch. <paramref name="reservationHeldByJob"/> records
+    /// that a running per-task integration held the project reservation when
+    /// the reservation step passed its deadline (AGT-3882).
     /// </summary>
     public BatchFlightClaim? ExpireFlightClaim(BatchFlightClaim observed, BatchFlightExpiryOutcome outcome,
-        string reason, bool settled, DateTimeOffset nowUtc, bool ownerGone = false)
+        string reason, bool settled, DateTimeOffset nowUtc, bool ownerGone = false,
+        bool reservationHeldByJob = false)
     {
         var folder = FlightClaimFolder(observed.Project);
         using var guard = ExclusiveGuard(folder, "claim.lock");
@@ -138,6 +141,8 @@ public sealed partial class BatchGateStore
             || MonolithTransitionAdapter.BatchFlightClaimExpiryOf(
                 current.Facts(nowUtc) with { OwnerGone = ownerGone }) is not { } expiry)
             return null;
+        expiry = MonolithTransitionAdapter.BatchFlightClaimExpiryClassified(current.Stage, expiry,
+            reservationHeldByJob);
         var expired = current with
         {
             End = new BatchFlightClaimEnd(nowUtc, reason, expiry, outcome, settled,

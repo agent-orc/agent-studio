@@ -33,10 +33,27 @@ public static class BatchGateStateSnapshotReader
         IReadOnlySet<string>? activePerTaskFlights = null,
         BatchGateInvariantReport? invariants = null,
         string? diskPauseReason = null,
-        int? configuredGateSlots = null)
+        int? configuredGateSlots = null,
+        BatchReservationWait? reservationWait = null)
     {
         // AGT-3569: the durable claim on the project's flight slot, live or last ended.
         var flightClaim = store.ReadFlightClaim(project);
+        // AGT-3882: what a reserving flight waits for, beside the gate slots in use.
+        var flightReservationWait = flightClaim is { End: null, Stage: AgentStudio.OrchestrationDecisions.BatchFlightStage.Reserving }
+            && reservationWait is not null
+            ? new
+            {
+                batchId = flightClaim.BatchId,
+                reservationWait.ReservingSinceUtc,
+                reservationWait.WaitMinutes,
+                holder = reservationWait.Holder,
+                queuedAhead = reservationWait.QueuedAhead,
+                heldBack = reservationWait.HeldBack,
+                pendingPushes = reservationWait.PendingPushes,
+                gateSlots,
+                reservationWait.Reason,
+            }
+            : null;
         // AGT-3694: what each per-task fallback waits for, so an overdue member
         // never shows only its rule.
         var waits = (fallbackWaits ?? []).GroupBy(wait => wait.ReviewAttemptId, StringComparer.Ordinal)
@@ -202,6 +219,8 @@ public static class BatchGateStateSnapshotReader
                     : Math.Max(0, (at - claim.ClaimedAtUtc).TotalMinutes),
                 reservationWaitMinutes = claim?.Stage.ToString() == "Reserving"
                     ? Math.Max(0, (at - claim.StageStartedAtUtc).TotalMinutes) : (double?)null,
+                reservationWaitsFor = claim is not null && flightReservationWait is not null
+                    ? flightReservationWait.Reason : null,
                 nextAction = NextAction(phase, claim, recoveryStatus?.Invoke(manifest.BatchId), at),
                 liveFlight = hasLiveFlight,
                 recoveryStatus = phase.Phase == BatchPhase.Running && !hasLiveFlight
@@ -489,6 +508,7 @@ public static class BatchGateStateSnapshotReader
             reviewFixWaits = reviewFixWaits ?? [],
             detachedFlights = detachedFlights ?? [],
             flightClaim,
+            flightReservationWait,
             fallbackWaits = fallbackWaits ?? [],
             fallbackStalls = store.ListFallbackStalls(project, 20),
             isolationFindings = store.ListIsolationFindings(project)

@@ -42,6 +42,7 @@ public sealed class BusAdHocUsageReader
             Ts = m.CreatedAt,
             Source = m.Topic ?? AdHocUsageSources.Unknown,
             Model = t?.Model ?? "",
+            CliType = t?.CliType,
             InputTokens = (int)(t?.Input ?? 0),
             OutputTokens = (int)(t?.Output ?? 0),
             CacheReadTokens = (int)(t?.CacheRead ?? 0),

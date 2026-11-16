@@ -25,9 +25,14 @@
     "reason": "Button verb ('Archive' / 'Archived') for archiving a project. Not the 7-archive lane."
   },
   {
-    "file": "src/app/features/shell/components/workspace-management/workspace-management.component.ts",
+    "file": "src/app/services/project-lifecycle-dialog.service.ts",
     "literal": "Archive",
     "reason": "Confirm-dialog verb for archiving a project registry entry. Not the 7-archive lane."
+  },
+  {
+    "file": "src/app/features/shell/components/workspace-management/workspace-management.component.html",
+    "literal": "Archive",
+    "reason": "Button verb for archiving a project registry entry. Not the 7-archive lane."
   },
   {
     "file": "src/app/features/project-detail/components/project-cli-environment-section/project-cli-environment-section.ts",

@@ -11,7 +11,7 @@ interface QuotaLimits {
   computeCoreHoursPerWeek: number | null;
   hostingSlots: number | null;
 }
-interface QuotaUsage { modelTokens: number; modelCostUsd: number; computeCoreHours: number; hostingSlots: number }
+interface QuotaUsage { modelTokens: number; modelCostUsd: number; computeCoreHours: number; hostingSlots: number; unpricedRuns?: number }
 interface QuotaConsumer { projectId: string; project: string; cardId: string | null; modelTokens: number; computeCoreHours: number }
 interface QuotaProjectConsumer { projectId: string; project: string; modelTokens: number; computeCoreHours: number }
 interface QuotaSnapshot {

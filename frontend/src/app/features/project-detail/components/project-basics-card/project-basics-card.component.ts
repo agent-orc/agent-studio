@@ -76,6 +76,7 @@ export class ProjectBasicsCardComponent {
   readonly savedMessage = signal<string | null>(null);
   readonly checkout = signal<CheckoutStatus | null>(null);
   readonly syncingCheckout = signal(false);
+  readonly switchingCheckout = signal(false);
   readonly checkoutTone = checkoutStatusTone;
 
   readonly workspaceId = signal('');
@@ -164,6 +165,25 @@ export class ProjectBasicsCardComponent {
           this.checkout.set({ status: 'error', branch: this.checkout()?.branch ?? '', behind: 0,
             dirtyFiles: [], lockFile: null, reason: 'Could not sync the checkout.' });
         this.syncingCheckout.set(false);
+      },
+    });
+  }
+
+  switchCheckout(): void {
+    const name = this.project()?.displayName;
+    if (!name || this.switchingCheckout()) return;
+    this.switchingCheckout.set(true);
+    const version = ++this.checkoutRequestVersion;
+    this.http.post<CheckoutStatus>(`/api/projects/${encodeURIComponent(name)}/checkout/switch`, {}).subscribe({
+      next: status => {
+        if (version === this.checkoutRequestVersion) this.checkout.set(status);
+        this.switchingCheckout.set(false);
+      },
+      error: () => {
+        if (version === this.checkoutRequestVersion)
+          this.checkout.set({ status: 'error', branch: this.checkout()?.branch ?? '', behind: 0,
+            dirtyFiles: [], lockFile: null, reason: 'Could not switch the checkout.' });
+        this.switchingCheckout.set(false);
       },
     });
   }

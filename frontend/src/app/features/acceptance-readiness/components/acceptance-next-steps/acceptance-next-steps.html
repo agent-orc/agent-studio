@@ -9,6 +9,8 @@
       <app-status-indicator [tone]="tone()" [label]="item.headline" [compact]="true" testId="acceptance-next-steps-status" />
       <p data-testid="acceptance-next-steps-reason">Accept will be refused. {{ item.reason }}</p>
       @if (item.missing) { <p class="next-steps__missing" data-testid="acceptance-next-steps-missing">Missing: {{ item.missing }}</p> }
+    } @else if (contentGap(); as review) {
+      <p data-testid="content-verdict-acceptance">Accept will be refused. The {{ review.requiredAspect }} review of the current brief {{ briefLabel(review.currentBriefVersion) }} returned {{ review.contentStatus }}. {{ review.contentSummary }}</p>
     }
     <div class="next-steps__actions">
       @if (item()?.round) {

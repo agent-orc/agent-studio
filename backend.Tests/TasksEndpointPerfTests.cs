@@ -775,6 +775,8 @@ internal sealed class FakeTokenAggregator : ITokenAggregator
     public TokenTimeline WorkspaceTimeline(IEnumerable<(string Name, string WatchPath)> projects, int windowHours, int bucketMinutes, DateTime? nowUtc = null) => throw new NotImplementedException();
     public TokenTimeline WorkspaceTimelineRange(IEnumerable<(string Name, string WatchPath)> projects, DateTime fromUtc, DateTime toUtc, int bucketMinutes, WorkspaceBusUsage? workspaceUsage = null) => throw new NotImplementedException();
     public AdHocUsageAggregate AdHocAggregate(DateTime? since = null) => throw new NotImplementedException();
+    public CliWindowAttribution CliWindowAttribution(IEnumerable<(string Name, string WatchPath)> projects,
+        string cliType, DateTime fromUtc, DateTime toUtc, WorkspaceBusUsage? workspaceUsage = null) => throw new NotImplementedException();
 
     public Dictionary<string, TaskTokenSummary> WorkspacePerJob(string projectName, string watchPath)
     {

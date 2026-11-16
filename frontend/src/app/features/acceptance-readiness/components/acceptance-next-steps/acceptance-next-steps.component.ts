@@ -57,9 +57,21 @@ export class AcceptanceNextStepsComponent {
     return item && item.readiness !== 'ready' && item.stage !== 'admitted' && item.stage !== 'lineage' ? item : null;
   });
 
-  readonly show = computed(() => this.staleBrief() || !!this.item());
+  /**
+   * AGT-3874: a `concerns` or `block` content verdict on the current brief is
+   * refused with `completion-content-gap`. Its review again and written
+   * reason are offered from the claim answer, also before the dry run returns.
+   */
+  readonly contentGap = computed(() => {
+    const review = this.contentReview();
+    const status = review?.contentStatus?.toLowerCase();
+    return this.inReview() && !this.staleBrief()
+      && (status === 'concerns' || status === 'block') ? review : null;
+  });
+
+  readonly show = computed(() => this.staleBrief() || !!this.item() || !!this.contentGap());
   readonly tone = computed(() => readinessPresentation(this.item()?.readiness ?? 'blocked').tone);
-  readonly canReviewAgain = computed(() => this.staleBrief() || this.item()?.stage === 'content');
+  readonly canReviewAgain = computed(() => this.staleBrief() || !!this.contentGap() || this.item()?.stage === 'content');
   readonly canAcceptWithReason = computed(() => acceptanceOverrideAllowed(this.item()?.refusal));
   readonly roundDraft = computed(() => {
     const draft = this.store.draftFor('detail');

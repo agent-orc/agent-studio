@@ -63,7 +63,7 @@ export class ProjectPublishPanelComponent {
       target,
       text: target.firstPublishPending
         ? `${target.label} first publish pending`
-        : `${target.currentVersion ? `${target.label} ${target.currentVersion}` : target.label} → ${target.pendingCount} task${target.pendingCount === 1 ? '' : 's'} pending`,
+        : `${target.currentVersion ? `${target.label} ${target.currentVersion}` : target.label} → ${target.pendingCount} commit${target.pendingCount === 1 ? '' : 's'} pending`,
       tooltip: target.firstPublishPending
         ? `${target.label} has never been published. First publish is a manual operator action.`
         : `Open the guided ${target.kind === 'package' ? 'release' : 'deployment'} flow.`,

@@ -23,6 +23,14 @@ public static class ProjectCheckoutEndpoints
                 ? Results.Ok(git.SyncDeveloperCheckout(target.Path, target.Branch, ct))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}' or repository unavailable." }))
             .RequireStudioRole(StudioRoles.Owner);
+
+        app.MapPost("/api/projects/{projectName}/checkout/switch", (
+            string projectName, TaskScannerService scanner, ProjectRegistry registry,
+            ProjectSettingsService settings, GitService git, CancellationToken ct) =>
+            Resolve(projectName, scanner, registry, settings, git) is { } target
+                ? Results.Ok(git.SwitchDeveloperCheckout(target.Path, target.Branch, ct))
+                : Results.NotFound(new { error = $"Unknown project '{projectName}' or repository unavailable." }))
+            .RequireStudioRole(StudioRoles.Owner);
     }
 
     internal static (string Path, string Branch)? Resolve(

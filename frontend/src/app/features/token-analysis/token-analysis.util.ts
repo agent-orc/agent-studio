@@ -402,7 +402,7 @@ export function scatterPoints(cards: readonly TokenAnalysisCard[]): ScatterPoint
 }
 
 export interface DistributionRow {
-  label: string; tokens: number; costUsd: number; cards: number; medianPerCard: number; p90PerCard: number;
+  label: string; tokens: number; costUsd: number; cards: number; medianPerCard: number; p90PerCard: number; priced: boolean;
 }
 
 function quantile(sorted: readonly number[], q: number): number {
@@ -415,13 +415,14 @@ function quantile(sorted: readonly number[], q: number): number {
 
 /** Tokens per reasoning level or model, with the per-card median and 90th percentile. */
 export function distribution(cards: readonly TokenAnalysisCard[], dimension: 'level' | 'model'): DistributionRow[] {
-  const perGroup = new Map<string, { tokens: number; cost: number; perCard: Map<string, number> }>();
+  const perGroup = new Map<string, { tokens: number; cost: number; priced: boolean; perCard: Map<string, number> }>();
   for (const card of cards) {
     for (const slice of card.slices) {
       const label = slice[dimension];
-      const group = perGroup.get(label) ?? { tokens: 0, cost: 0, perCard: new Map<string, number>() };
+      const group = perGroup.get(label) ?? { tokens: 0, cost: 0, priced: true, perCard: new Map<string, number>() };
       group.tokens += sliceTotal(slice);
       group.cost += slice.costUsd;
+      group.priced &&= slice.priced !== false;
       group.perCard.set(cardId(card), (group.perCard.get(cardId(card)) ?? 0) + sliceTotal(slice));
       perGroup.set(label, group);
     }
@@ -430,7 +431,7 @@ export function distribution(cards: readonly TokenAnalysisCard[], dimension: 'le
     .map(([label, group]) => {
       const values = [...group.perCard.values()].sort((a, b) => a - b);
       return {
-        label, tokens: group.tokens, costUsd: group.cost, cards: values.length,
+        label, tokens: group.tokens, costUsd: group.cost, priced: group.priced, cards: values.length,
         medianPerCard: quantile(values, 0.5), p90PerCard: quantile(values, 0.9),
       };
     })

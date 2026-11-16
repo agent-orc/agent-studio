@@ -120,6 +120,51 @@ export function carryRecordedSelections(
   });
 }
 
+/** Whether any decision point carries a selection or a note. */
+export function hasDecisionInput(responses: readonly WorkbenchDecisionResponse[]): boolean {
+  return responses.some(response => response.selectedOptionIds.length > 0 || Boolean(response.comment?.trim()));
+}
+
+/** Whether two answer sets select the same options and carry the same notes. */
+export function sameDecisionResponses(
+  left: readonly WorkbenchDecisionResponse[], right: readonly WorkbenchDecisionResponse[],
+): boolean {
+  const key = (responses: readonly WorkbenchDecisionResponse[]) => JSON.stringify(responses
+    .map(response => ({
+      id: response.decisionId,
+      selected: [...response.selectedOptionIds].sort(),
+      comment: response.comment?.trim() || null,
+    }))
+    .filter(response => response.selected.length > 0 || response.comment)
+    .sort((a, b) => a.id.localeCompare(b.id)));
+  return key(left) === key(right);
+}
+
+/**
+ * Answers the owner changed in this browser that the Dossier does not hold yet
+ * (AGT-3875): a draft with input that differs from the saved answers.
+ */
+export function hasUnsavedAnswers(
+  document: WorkbenchDocument, draft: readonly WorkbenchDecisionResponse[] | null | undefined,
+): boolean {
+  if (!draft || !hasDecisionInput(draft)) return false;
+  const workbench = document.workbench;
+  if (workbench.decision?.state === 'succeeded'
+    || ['decided', 'documented', 'archived'].includes(workbench.status)) return false;
+  return !sameDecisionResponses(draft, workbench.recordedResponses ?? []);
+}
+
+/** `unsaved` beats `saved`: a browser draft that differs from the Dossier is the newer state. */
+export function answerSaveState(
+  document: WorkbenchDocument,
+  responses: readonly WorkbenchDecisionResponse[],
+  draft: readonly WorkbenchDecisionResponse[] | null | undefined,
+): 'saved' | 'unsaved' | 'none' {
+  if (hasUnsavedAnswers(document, draft)) return 'unsaved';
+  const recorded = document.workbench.recordedResponses ?? [];
+  return recorded.length > 0 && sameDecisionResponses(responses, recorded) ? 'saved' : 'none';
+}
+
 /** One readable line for the follow-up round a rework request started or queued. */
 export function revisionRoundText(round: WorkbenchRevisionRound): string {
   const card = round.title ? `${round.taskKey} · ${round.title}` : round.taskKey;
@@ -181,10 +226,10 @@ export function revisionCardRoute(card: WorkbenchRevisionCard | null): AgentChoi
 /** The board card a feature-spawn decision creates, pinned to the confirmed agent route. */
 export function featureJobRequest(
   document: WorkbenchDocument, draft: WorkbenchTaskDraft, points: readonly WorkbenchDecisionPoint[],
-  responses: readonly WorkbenchDecisionResponse[], agent: AgentChoice, watchPath: string,
-): CreateTaskRequest {
+  responses: readonly WorkbenchDecisionResponse[], agent: AgentChoice,
+): Omit<CreateTaskRequest, 'watchPath'> {
   return {
-    title: draft.title, agent: agent.cliType, watchPath,
+    title: draft.title, agent: agent.cliType,
     promptMarkdown: cardPrompt(document, draft, points, responses),
     targetState: draft.initialLane, cliType: agent.cliType,
     model: agent.model || undefined, thinkingLevel: agent.thinkingLevel || undefined,

@@ -720,6 +720,11 @@ public sealed class PipelineHealthService
             IReadOnlyList<TimelineEvent> events;
             try
             {
+                // AGT-3864: the timeline is append-only and an event is stamped
+                // when it is written, so a file last written before the window
+                // holds no event inside it, and an idle or archived card is skipped unread.
+                var path = TaskPaths.TimelineLog(task.FolderPath);
+                if (!File.Exists(path) || File.GetLastWriteTimeUtc(path) < since) continue;
                 events = _timeline.ReadAll(task.FolderPath);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
