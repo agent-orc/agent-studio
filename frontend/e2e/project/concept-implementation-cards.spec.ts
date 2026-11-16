@@ -64,6 +64,7 @@ const PLAN = {
   targetState: '1-preparation',
   watchPath: WATCH_PATH,
   projectName: PROJECT,
+  route: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
 };
 
 interface Captured {
@@ -245,6 +246,10 @@ test.describe('AGT-3701 create implementation cards', () => {
       .toContainText('Delivery mode: A · Queued (recommended)');
     await expect(promotion.getByTestId('concept-promotion-slice-decision-2'))
       .toContainText('No linked decision');
+    await expect(promotion.getByTestId('concept-promotion-slice-route-1'))
+      .toHaveText('Codex · gpt-6-sol · high');
+    await expect(promotion.getByTestId('concept-promotion-slice-route-2'))
+      .toHaveText('Codex · gpt-6-sol · high');
     await expect(promotion.getByTestId('concept-promotion-confirm')).toHaveText('Create all 3 cards');
     await shot(page, 'dossier-create-implementation-cards-light--mocked.png');
 

@@ -102,6 +102,8 @@ public sealed record PromoteConceptResponse
     public string TargetState { get; init; } = TaskStates.Preparation;
     public string WatchPath { get; init; } = "";
     public string ProjectName { get; init; } = "";
+    /// <summary>Route used for every new implementation card in this plan.</summary>
+    public ConceptPromotionRoute? Route { get; init; }
     /// <summary>
     /// Slices that already have a card from an earlier promotion, read from the
     /// source card's spawn ledger. A repeated request returns these cards
@@ -109,6 +111,13 @@ public sealed record PromoteConceptResponse
     /// </summary>
     public List<PromotedConceptTask> Promoted { get; init; } = [];
     public ConceptPromotionRecovery? Recovery { get; init; }
+}
+
+public sealed record ConceptPromotionRoute
+{
+    public string CliType { get; init; } = "claude";
+    public string? Model { get; init; }
+    public string? ThinkingLevel { get; init; }
 }
 
 /// <summary>Durable promotion progress returned after failures and on later plan reads.</summary>

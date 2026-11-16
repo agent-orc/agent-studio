@@ -28,6 +28,7 @@ const PLAN: PromoteConceptResponse = {
   targetState: '1-preparation',
   watchPath: '/tasks',
   projectName: 'Demo',
+  route: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
   promoted: [{ jobId: 'ui-card', taskKey: 'DEM-12', title: 'Implement delivery UI', itemIndex: 1, state: '1-preparation' }],
 };
 
@@ -85,6 +86,7 @@ describe('ConceptPromotionComponent', () => {
     expect(service.getPromoteConcept).toHaveBeenCalledWith('DEM-7', undefined, 'Demo');
     expect(byTestId('concept-promotion-slice-1')?.textContent).toContain('Implement delivery API');
     expect(byTestId('concept-promotion-slice-1')?.textContent).toContain('Delivery mode: A: queued');
+    expect(byTestId('concept-promotion-slice-1')?.textContent).toContain('Codex · gpt-6-sol · high');
     expect(byTestId('concept-promotion-slice-2')?.textContent).toContain('Created DEM-12');
     expect(byTestId<HTMLInputElement>('concept-promotion-slice-check-2')!.disabled).toBe(true);
     expect(byTestId('concept-promotion-confirm')?.textContent).toContain('Create all 2 cards');
