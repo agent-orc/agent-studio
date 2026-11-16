@@ -29,6 +29,9 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
     private readonly TimelineLog _timeline;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ReviewInfrastructureRetryScheduler> _logger;
+    private volatile bool _tickFailed;
+
+    public bool TickFailed => _tickFailed;
 
     public ReviewInfrastructureRetryScheduler(
         AttemptAuthorityService authority,
@@ -63,6 +66,7 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
     {
         var due = _authority.DueReviewInfrastructureRetries();
         var created = 0;
+        var failed = false;
         foreach (var item in due)
         {
             try
@@ -71,6 +75,7 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
             }
             catch (Exception ex)
             {
+                failed = true;
                 _logger.LogWarning(
                     ex,
                     "review-infrastructure-retry-fire-failed attempt={AttemptId} task={TaskKey}",
@@ -78,7 +83,16 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
                     item.TaskKey);
             }
         }
-        created += RecoverMissingReviewAttempts();
+        try
+        {
+            created += RecoverMissingReviewAttempts();
+        }
+        catch
+        {
+            _tickFailed = true;
+            throw;
+        }
+        _tickFailed = failed;
         return created;
     }
 
@@ -327,6 +341,7 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
             }
             catch (Exception ex)
             {
+                _tickFailed = true;
                 _logger.LogWarning(ex, "review-infrastructure-retry-scheduler-tick-failed");
             }
         }

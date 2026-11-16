@@ -1787,6 +1787,12 @@ the Result-SHA against the integration ref directly, so all three freeze the
 same no-change decision. The replan no longer diffs the result ref, which
 usually exists only under `refs/remotes/origin` in the Studio checkout.
 
+The operator decision stream reports one installation-wide
+`review-retry.scheduler-stalled` fact when a scheduled retry is more than two
+default scheduler intervals overdue, or while the retry scheduler is disabled
+or its latest tick failed. Needs you lists the affected cards and their watchdog
+park deadlines. The fact clears when the retries start or their schedules end.
+
 ## Key code and tests
 
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,
