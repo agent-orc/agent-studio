@@ -21,7 +21,7 @@ import { TaskService } from '../../../../services/task.service';
 import { WorkspaceManagerService } from '../../../shell/state/workspace-manager.service';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 import { ProjectRepositoryCardComponent } from '../project-repository-card/project-repository-card';
-import { ServerCheckoutNoticeComponent, ServerCheckoutStore } from '../../../server-checkout';
+import { ServerCheckoutNoticeComponent, ServerCheckoutStore, serverCheckoutMissing } from '../../../server-checkout';
 
 interface CheckoutStatus {
   status: string;
@@ -188,10 +188,11 @@ export class ProjectBasicsCardComponent {
     });
   }
 
-  private loadCheckout(name: string): void {
+  private loadCheckout(project: RegistryProjectSummary): void {
     this.checkout.set(null);
     const version = ++this.checkoutRequestVersion;
-    this.http.get<CheckoutStatus>(`/api/projects/${encodeURIComponent(name)}/checkout/status`).subscribe({
+    if (serverCheckoutMissing(project)) return;
+    this.http.get<CheckoutStatus>(`/api/projects/${encodeURIComponent(project.displayName)}/checkout/status`).subscribe({
       next: (status) => {
         if (version === this.checkoutRequestVersion) this.checkout.set(status);
       },
@@ -272,7 +273,7 @@ export class ProjectBasicsCardComponent {
         )?.[1];
         this.remoteExecutionLocation.set(projectSettings?.executionLocation ?? null);
         this.seed(project);
-        this.loadCheckout(project.displayName);
+        this.loadCheckout(project);
         this.loading.set(false);
       },
       error: () => {

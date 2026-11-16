@@ -1,7 +1,7 @@
 <div class="deploy-area" data-testid="project-deploy-area">
   <header class="deploy-area__head">
     <div><p class="deploy-eyebrow">{{ projectName() }} / Project delivery</p><h1>Deploy</h1><p>Environments, releases, and the path to Production.</p></div>
-    <button type="button" class="deploy-area__refresh" data-testid="deploy-refresh" (click)="refresh()">Refresh</button>
+    <button type="button" class="deploy-area__refresh" data-testid="deploy-refresh" (click)="refresh()" [disabled]="checkoutMissing()">Refresh</button>
   </header>
   <nav class="deploy-tabs" aria-label="Deploy views">
     <button type="button" data-testid="deploy-tab-overview" [attr.aria-current]="view() === 'overview' ? 'page' : null" (click)="show('overview')">Overview</button>
@@ -14,6 +14,12 @@
     <button type="button" data-testid="deploy-tab-runbooks" [attr.aria-current]="view() === 'runbooks' ? 'page' : null" (click)="show('runbooks')">Runbooks</button>
     <button type="button" data-testid="deploy-tab-operations" [attr.aria-current]="view() === 'operations' ? 'page' : null" (click)="show('operations')">Operations</button>
   </nav>
+  @if (checkoutMissing()) {
+    <section class="deploy-section" role="status" data-testid="deploy-checkout-missing">
+      <h2>Server checkout needed</h2>
+      <p>This project needs a server checkout before Deploy is available. Create the checkout in Project Settings.</p>
+    </section>
+  } @else {
   @if (notices().length) {
     <div class="deploy-area__notices" role="status" data-testid="deploy-source-notices">
       @for (notice of notices(); track notice) { <p>{{ notice }}</p> }
@@ -66,4 +72,5 @@
       @placeholder { <p>Loading run details…</p> }
     } @else if (fetchedRun()?.status === 'loading') { <p class="deploy-muted" role="status" data-testid="deploy-run-fetching">Loading run details…</p> }
   </div>
+  }
 </div>

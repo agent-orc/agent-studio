@@ -58,7 +58,7 @@ const AGT3201 = {
 };
 const HOST_ONLY = { status: MISSING, releases: MISSING, deployments: MISSING };
 
-async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
+async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false): Promise<void> {
   await page.route('**/api/**', route => route.fulfill(json([])).catch(() => undefined));
   await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill(json({
     negotiateVersion: 1, connectionId: 'deploy-area-mock', connectionToken: 'deploy-area-mock',
@@ -93,7 +93,10 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   const project = {
     sourceType: 'local-folder', id: 'PROJ-WEB', displayName: PROJECT, shortCode: 'WEB', workspaceId: 'ws',
     color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: STORAGE,
-    repositoryPath: '/srv/repo/website', rootPath: '/srv/repo/website', urls: [], ownershipMappings: [],
+    repositoryPath: missingCheckout ? null : '/srv/repo/website',
+    rootPath: missingCheckout ? null : '/srv/repo/website',
+    repositoryUrl: missingCheckout ? 'https://github.com/example/website.git' : null,
+    urls: [], ownershipMappings: [],
     archived: false, createdAt: '2026-10-01T00:00:00Z',
   };
   await page.route('**/api/v1/workspaces**', route => route.fulfill(json([{ id: 'ws', displayName: 'Workspace', projects: [project] }])));
@@ -168,7 +171,7 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route(`**/api/projects/${PROJECT}/pipeline-definition`, route => answer(route, deploy.pipelineDefinition));
 }
 
-async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs = 30_000): Promise<void> {
+async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs = 30_000, missingCheckout = false): Promise<void> {
   page.on('dialog', dialog => dialog.accept());
   await page.clock.setFixedTime(new Date(DEPLOY_FIXTURE_NOW));
   await page.addInitScript(({ project }) => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -176,7 +179,7 @@ async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs =
     tabs: [{ kind: 'board', projectName: '__all__' }, { kind: 'hub', projectName: project, section: 'deploy' }],
     activeKey: `hub:${project}`,
   })), { project: PROJECT });
-  await mockApp(page, deploy);
+  await mockApp(page, deploy, missingCheckout);
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: navigationTimeoutMs });
   await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay')
     .forEach(element => ((element as HTMLElement).style.display = 'none')));
@@ -194,6 +197,26 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('URL project without checkout shows one Deploy state and stops checkout-dependent reads', async ({ page }) => {
+    let reads = 0;
+    page.on('request', request => {
+      if (request.url().includes('/api/projects/Website/deploy/')
+        || request.url().includes('/api/projects/Website/workbenches')) reads++;
+    });
+    await openDeploy(page, fullMocks(), 30_000, true);
+    await expect(page.getByTestId('deploy-checkout-missing')).toContainText('server checkout');
+    await page.getByTestId('deploy-tab-pipeline').click();
+    await page.getByTestId('deploy-tab-steps').click();
+    await expect(page.getByTestId('deploy-source-notices')).toHaveCount(0);
+    const before = reads;
+    await page.waitForTimeout(1_200);
+    expect(reads).toBe(before);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `agt-3822-checkout-missing-${theme}`);
+    }
+  });
+
   test('shows release card verdicts and opens the stored release range in both themes', async ({ page }) => {
     const releases = deployReleasesFixture();
     const release = releases[0];
