@@ -72,9 +72,10 @@ actions (`actions/deploy-pages`, `actions/upload-pages-artifact`), the classic
 
 For each target, the pending delta is the number of **merged mainline
 (first-parent) commits on the integration branch, since the target's reference
-point, that touch the target's path scope**. First-parent collapses each merged
-task branch to one mainline commit, so the number reads as “how many tasks
-touched this target since it was last shipped”, not raw commit churn.
+point, that touch the target's path scope**. A no-ff integration merge counts
+once on the mainline even when the accepted card has several commits. The badge
+and action panel label this number as commits. The panel lists accepted cards
+whose attributed commits entered through those mainline commits.
 
 - **Path scope.** Package = the package source paths (the manifest's directory),
   minus the website folder and repo-meta folders (`.github`, `docs`,
@@ -95,12 +96,13 @@ touched this target since it was last shipped”, not raw commit churn.
 ### 3.1 UI surfaces (read-only)
 
 - **Project Hub badge:** one badge per non-quiet target, e.g.
-  `NuGet 0.3.1 -> 4 tasks pending`. Green for a normal package delta, violet for
+  `NuGet 0.3.1 -> 4 commits pending`. Green for a normal package delta, violet for
   a website delta, amber for the first-publish state.
 - **Accepted-task chip:** a `publishable: npm, website` chip on a completed task,
   listing the targets whose scope that task's merged work touched. It is derived
-  by set-membership of the task's mainline anchor against each target's pending
-  commit set, once per project rather than once per card.
+  by set-membership of the task's attributed commits against the commits newly
+  introduced by each scoped mainline change, once per project rather than once
+  per card.
 
 ## 4. Special state: first publish pending
 
