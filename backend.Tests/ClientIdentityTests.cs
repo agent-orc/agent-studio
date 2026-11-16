@@ -366,6 +366,26 @@ public class ClientIdentityTests : IDisposable
     }
 
     [Fact]
+    public void DeploySwitchStart_PersistsAcrossRestart_KeepsTheFirstStart_AndClearsOnResume()
+    {
+        var config = BuildConfig();
+        var store = BuildStore(config);
+        var runner = store.Register(new RegisterClientRequest { DisplayName = "review-switch-runner", Kind = ClientIdentityKinds.Service });
+
+        Assert.Null(store.RecordDeploySwitchStart(runner.Id));
+        store.RequestDrain(runner.Id, retireAfterDrain: false);
+        var started = store.RecordDeploySwitchStart(runner.Id)?.DeploySwitchStartedAt;
+        Assert.NotNull(started);
+        Assert.Equal(started, store.RecordDeploySwitchStart(runner.Id)?.DeploySwitchStartedAt);
+        Assert.Equal(started, BuildStore(config).Find(runner.Id)?.DeploySwitchStartedAt);
+
+        var resumed = store.ResumeDrain(runner.Id);
+        Assert.Null(resumed?.DrainRequestedAt);
+        Assert.Null(resumed?.DeploySwitchStartedAt);
+        Assert.Null(BuildStore(config).Find(runner.Id)?.DeploySwitchStartedAt);
+    }
+
+    [Fact]
     public void Retire_DoesNotCompleteWhenClaimPollOmitsTelemetry()
     {
         var config = BuildConfig();
