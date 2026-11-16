@@ -16,14 +16,12 @@ import {
   type TaskInfo,
 } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
 import { IntegrationDeadEndComponent } from '../integration-dead-end/integration-dead-end.component';
 import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-notice/acceptance-attempt-gap-notice.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { reviewBuildTestsGap, taskFileHref } from '../../../test-evidence/components/test-evidence-status/test-evidence-status.component';
-import { AcceptanceReadinessStore, acceptancePrimaryReason, secondaryAcceptanceGaps } from '../../../acceptance-readiness';
+import { AcceptanceNextStepsComponent } from '../../../acceptance-readiness/lazy';
 import { acceptanceRefusalFor } from '../../state/acceptance-refusal.model';
-import { briefGapOf, briefGapSentence, unrecordedBriefSubject } from '../../state/delivery-brief-gap.model';
 
 /** Tri-state containment answer. `unknown` is a question, never a negative. */
 export type DeliveryIntegrationState =
@@ -99,14 +97,12 @@ const DELIVERED_LANES: readonly string[] = [
   selector: 'app-delivery-claim-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, IntegrationDeadEndComponent, AcceptanceAttemptGapNoticeComponent, StatusIndicatorComponent],
+  imports: [TooltipDirective, IntegrationDeadEndComponent, AcceptanceAttemptGapNoticeComponent, StatusIndicatorComponent, AcceptanceNextStepsComponent],
   templateUrl: './delivery-claim-panel.component.html',
   styleUrl: './delivery-claim-panel.component.scss',
 })
 export class DeliveryClaimPanelComponent {
   private readonly tasks = inject(TaskService);
-  private readonly notifications = inject(NotificationService);
-  private readonly readiness = inject(AcceptanceReadinessStore);
 
   readonly job = input.required<TaskInfo>();
   readonly escalated = computed(() => this.job().state === TaskState.Escalated);
@@ -283,81 +279,11 @@ export class DeliveryClaimPanelComponent {
   );
 
   readonly contentReview = computed(() => this.answer()?.contentReview ?? null);
-  /** F12: a missing brief version is unrecorded, never a changed brief. */
-  readonly briefGap = computed(() =>
-    this.job().state === TaskState.HumanReview ? briefGapOf(this.contentReview()) : null);
-  readonly unrecordedBriefSubject = unrecordedBriefSubject;
-
-  /**
-   * F12: the readiness answer's reason leads; the card's other gaps are listed
-   * under it. The build-tests gap keeps its own line with the output link.
-   */
-  readonly primaryReason = computed(() => this.job().state === TaskState.HumanReview
-    ? acceptancePrimaryReason(this.readiness.itemFor(this.job())) : null);
-  readonly secondaryGaps = computed(() => {
-    const primary = this.primaryReason();
-    if (!primary) return [];
-    return secondaryAcceptanceGaps(primary, [
-      acceptanceRefusalFor(this.job(), null, false)?.reason,
-      primary.readiness === 'verdict-stale' ? null : briefGapSentence(this.briefGap(), this.contentReview()),
-    ]);
+  /** F12: the integration hold, listed under the readiness reason in the next steps. */
+  readonly otherGaps = computed(() => {
+    const hold = acceptanceRefusalFor(this.job(), null, false)?.reason;
+    return hold ? [hold] : [];
   });
-  readonly briefLeads = computed(() => !this.primaryReason() || this.primaryReason()!.readiness === 'verdict-stale');
-  readonly overrideOpen = signal(false);
-  readonly writtenReason = signal('');
-  readonly acceptanceBusy = signal(false);
-  readonly acceptanceError = signal<string | null>(null);
-  readonly difference = signal<{ fromVersion: string; toVersion: string; before: string; after: string } | null>(null);
-  readonly differenceOpen = signal(false);
-  readonly differenceError = signal<string | null>(null);
-
-  showDifference(): void {
-    this.differenceOpen.set(true);
-    this.differenceError.set(null);
-    this.tasks.getBriefDifference(this.job().id, this.job().watchPath).subscribe({
-      next: difference => this.difference.set(difference),
-      error: () => this.differenceError.set('The earlier brief text is unavailable for this edit.'),
-    });
-  }
-
-  reviewAgain(): void {
-    if (this.acceptanceBusy()) return;
-    this.acceptanceBusy.set(true);
-    this.acceptanceError.set(null);
-    this.tasks.reviewContentAgainstCurrentBrief(this.job().id, this.job().watchPath).subscribe({
-      next: () => {
-        this.acceptanceBusy.set(false);
-        this.notifications.success('Content review requested for the current brief.');
-        this.tasks.refresh(true);
-      },
-      error: (error: { error?: { error?: string } }) => {
-        this.acceptanceBusy.set(false);
-        this.acceptanceError.set(error.error?.error || 'Could not request content review.');
-      },
-    });
-  }
-
-  acceptWithReason(): void {
-    const reason = this.writtenReason().trim();
-    if (this.acceptanceBusy() || reason.length < 8) return;
-    this.acceptanceBusy.set(true);
-    this.acceptanceError.set(null);
-    const job = this.job();
-    this.tasks.moveJob(job.id, TaskState.Completed, job.watchPath, undefined,
-      reason, true).subscribe({
-      next: () => {
-        this.acceptanceBusy.set(false);
-        this.overrideOpen.set(false);
-        this.writtenReason.set('');
-        this.notifications.success('Accepted with a written reason.');
-        this.tasks.refresh(true);
-      },
-      error: (error: { error?: { error?: string } }) => {
-        this.acceptanceBusy.set(false);
-        this.acceptanceError.set(error.error?.error || 'Could not accept this delivery.');
-      },
-    });
-  }
   readonly contentPassed = computed(() => {
     const review = this.contentReview();
     return review?.contentStatus === 'pass'

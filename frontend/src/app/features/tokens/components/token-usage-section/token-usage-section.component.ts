@@ -51,6 +51,15 @@ export class TokenUsageSectionComponent implements OnInit, OnDestroy {
   readonly ledgerScope = input<UsageLedgerScope | null>(null);
   readonly ledgerScopeLabel = computed(() => this.ledgerScope() ? describeLedgerScope(this.ledgerScope()!) : null);
 
+  /**
+   * The rail item of the page actually shown. A ledger scope renders the
+   * workspace ledger even on a CLI route (older links), so the rail marks the
+   * workspace page then, never a CLI page the owner is not looking at
+   * (AGT-3794-F14).
+   */
+  readonly activePage = computed<WorkspaceTokenUsagePage>(() =>
+    this.ledgerScope() && (this.page() === 'claude' || this.page() === 'codex') ? 'workspace' : this.page());
+
   ngOnInit(): void {
     this.usage.startDetail();
   }

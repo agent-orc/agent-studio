@@ -344,8 +344,8 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     }
   });
   // F12 (the playthrough, DEMO-18): no delivery branch, no content verdict and
-  // no recorded delivery brief. The toolbar, the grounds box and the board
-  // note lead with the readiness answer; the other gaps are listed under it.
+  // no recorded delivery brief. The toolbar, the acceptance next steps and the
+  // board note lead with the readiness answer; the other gaps are listed under it.
   test('unrecorded brief and ranked reasons: one primary reason with its next step in both themes', async ({ page }) => {
     await installBaseRoutes(page);
     await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only' });
@@ -382,17 +382,16 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     }));
     await openJob(page);
 
-    const primary = page.getByTestId('acceptance-primary-reason');
+    const primary = page.getByTestId('acceptance-next-steps');
+    await expect(primary).toHaveAttribute('data-readiness', 'no-content-verdict');
     await expect(primary).toContainText('No content verdict');
     await expect(primary).toContainText(reason);
     await expect(page.getByTestId('acceptance-primary-next-step'))
       .toContainText('Run the requirement-fit review for the current run.');
     await expect(page.getByTestId('acceptance-secondary-gaps')).toContainText('No delivery branch or commit was found for this card.');
     await expect(page.getByTestId('acceptance-secondary-gaps')).toContainText('No brief version was recorded for this delivery or its content verdict.');
-    const gap = page.getByTestId('stale-brief-acceptance');
-    await expect(gap).toHaveAttribute('data-brief-gap', 'unrecorded');
-    await expect(gap).toContainText('No brief version was recorded');
-    await expect(gap).not.toContainText('changed brief');
+    await expect(page.getByTestId('stale-brief-acceptance')).toHaveCount(0);
+    await expect(page.getByTestId('delivery-claim-panel')).not.toContainText('changed brief');
     await expect(page.getByTestId('acceptance-refusal-reason')).toContainText(reason);
     for (const theme of ['dark', 'light'] as const) {
       await setTheme(page, theme);

@@ -3,3 +3,4 @@ export { AcceptanceReadinessStore } from './state/acceptance-readiness.store';
 export * from './models/acceptance-readiness.model';
 export * from './models/acceptance-readiness-groups.util';
 export * from './models/acceptance-primary-reason';
+export * from './models/delivery-brief-gap.model';

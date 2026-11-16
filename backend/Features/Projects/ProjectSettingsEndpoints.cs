@@ -1180,6 +1180,7 @@ public static class ProjectSettingsEndpoints
                 {
                     state = verifyDefinition.State switch
                     {
+                        VerifyDefinitionState.CheckoutMissing => "checkout-missing",
                         VerifyDefinitionState.Missing => "missing",
                         VerifyDefinitionState.DeclaredEmpty => "declared-empty",
                         _ => "derived",

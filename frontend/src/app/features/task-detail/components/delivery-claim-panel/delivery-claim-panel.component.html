@@ -74,18 +74,6 @@
         <app-status-indicator [tone]="groundsPassed() ? 'success' : 'warning'"
                               label="Acceptance grounds"
                               testId="completion-content-review-state" />
-        @if (primaryReason(); as primary) {
-          <div class="claim__primary" data-testid="acceptance-primary-reason" [attr.data-readiness]="primary.readiness">
-            <strong>{{ primary.headline }}</strong>
-            <span>{{ primary.reason }}</span>
-            <span data-testid="acceptance-primary-next-step">Next step: {{ primary.nextStep }}</span>
-            @if (secondaryGaps().length) {
-              <ul class="claim__secondary" data-testid="acceptance-secondary-gaps" aria-label="Other gaps">
-                @for (gap of secondaryGaps(); track gap) { <li>{{ gap }}</li> }
-              </ul>
-            }
-          </div>
-        }
         @if (buildTestsGap(); as gap) {
           <span data-testid="completion-build-tests-gap" [attr.data-result]="gap.result">
             build-tests: {{ gap.reason }}
@@ -116,51 +104,8 @@
         <span>Ran: {{ review.ranAspects.join(', ') || 'none' }} · Skipped: {{ review.skippedAspects.join(', ') || 'none' }}</span>
       </div>
     }
-    @if (briefGap() && contentReview(); as review) {
-      <section class="claim__brief-gap" data-testid="stale-brief-acceptance" [attr.data-brief-gap]="briefGap()" role="status">
-        @if (briefGap() === 'unrecorded') {
-          <strong>No brief version was recorded</strong>
-          <p>No brief version was recorded for {{ unrecordedBriefSubject(review) }}, so it cannot show which brief it was built or reviewed against. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the delivery against the current brief before deciding whether to accept it.</p>
-        } @else {
-          <strong>{{ briefLeads() ? 'Acceptance is blocked by a changed brief' : 'The brief also changed after this delivery' }}</strong>
-          <p>This delivery used brief {{ briefLabel(review.deliveryBriefVersion) }} and its content verdict checked brief {{ briefLabel(review.reviewBriefVersion) }}. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the change before deciding whether to accept this delivery.</p>
-        }
-        <div class="claim__brief-actions">
-          @if (briefGap() === 'changed') {
-            <button type="button" data-testid="brief-difference-link" (click)="showDifference()">See the brief difference</button>
-          }
-          <button type="button" data-testid="review-current-brief" [disabled]="acceptanceBusy()" (click)="reviewAgain()">Review again against the current brief</button>
-          <button type="button" data-testid="accept-with-reason-open" [disabled]="acceptanceBusy()" (click)="overrideOpen.set(true)">Accept with a reason</button>
-        </div>
-        @if (differenceOpen()) {
-          <div class="claim__difference" data-testid="brief-difference">
-            <button type="button" (click)="differenceOpen.set(false)">Close difference</button>
-            @if (difference(); as diff) {
-              <div class="claim__difference-columns">
-                <div><strong>Earlier brief {{ briefLabel(diff.fromVersion) }}</strong><pre>{{ diff.before }}</pre></div>
-                <div><strong>Current brief {{ briefLabel(diff.toVersion) }}</strong><pre>{{ diff.after }}</pre></div>
-              </div>
-            } @else if (differenceError(); as message) { <p role="alert">{{ message }}</p> }
-          </div>
-        }
-        @if (overrideOpen()) {
-          <div class="claim__override-form" data-testid="accept-with-reason-form">
-            <label for="brief-accept-reason">Reason for accepting this delivery</label>
-            <textarea id="brief-accept-reason" data-testid="accept-with-reason-input" rows="3"
-              [value]="writtenReason()" [disabled]="acceptanceBusy()"
-              (input)="writtenReason.set($any($event.target).value)"></textarea>
-            <div class="claim__brief-actions">
-              <button type="button" class="claim__brief-primary" data-testid="accept-with-reason-submit"
-                [disabled]="acceptanceBusy() || writtenReason().trim().length < 8"
-                (click)="acceptWithReason()">Accept with a reason</button>
-              <button type="button" [disabled]="acceptanceBusy()" (click)="overrideOpen.set(false)">Cancel</button>
-            </div>
-            <span>At least 8 characters are required.</span>
-          </div>
-        }
-        @if (acceptanceError(); as message) { <p class="claim__brief-error" data-testid="brief-acceptance-error" role="alert">{{ message }}</p> }
-      </section>
-    }
+    <!-- AGT-3867: every refused acceptance offers the board's next steps here. -->
+    <app-acceptance-next-steps [job]="job()" [contentReview]="contentReview()" [otherGaps]="otherGaps()" />
   </section>
   <app-integration-dead-end
     [status]="job().integration"

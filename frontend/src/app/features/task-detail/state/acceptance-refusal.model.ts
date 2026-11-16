@@ -1,7 +1,9 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, computed, inject, signal, type Signal } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../models/task.model';
 import { serverErrorMessage } from '../../../utils/server-error-message';
 import {
+  AcceptanceReadinessStore,
+  acceptanceOverrideAllowed,
   acceptancePrimaryReason,
   secondaryAcceptanceGaps,
   type AcceptanceReadinessItem,
@@ -13,7 +15,7 @@ import {
  * explained itself only in a tooltip and a refused move only refreshed the
  * board, so an owner could accept a card solely through the raw API.
  */
-export type AcceptanceRefusalAction = 'override' | 'retry-integration';
+export type AcceptanceRefusalAction = 'override' | 'retry-integration' | 'send-round';
 
 export interface AcceptanceRefusal {
   /** Owner-facing sentence: why Accept is held or was refused. */
@@ -40,13 +42,29 @@ export interface ServerAcceptanceRefusal {
 }
 
 const OVERRIDE_LABEL = 'Accept with override…';
+const ROUND_LABEL = 'Send a round…';
+
+/** The completion's own refusal as an acceptance sentence. */
+export function acceptanceRefusalSentence(text: string): string {
+  return text.trim().replace(/^Completion refused:\s*/i, 'Acceptance refused: ');
+}
+
+/** The one action of a refusal: the override when policy allows it, else the round that closes the gap. */
+function nextAction(refusal: string, readiness: AcceptanceReadinessItem | null)
+  : Pick<AcceptanceRefusal, 'action' | 'actionLabel'> {
+  return !acceptanceOverrideAllowed(refusal) && readiness?.round
+    ? { action: 'send-round', actionLabel: ROUND_LABEL }
+    : { action: 'override', actionLabel: OVERRIDE_LABEL };
+}
 
 /**
  * The refusal for `info`, or null when Accept may act. `awaitingGit` is the
  * bounded provenance wait: that state renders its own progress skeleton, so
- * a speculative hold reason is not added beside it. `readiness` is the card's
- * acceptance-readiness answer: when it refuses, its reason leads and the
- * integration hold is listed under it (F12).
+ * a speculative hold reason is not added beside it. `readiness` is the
+ * card's completion dry run (AGT-3867): when it refuses, its reason leads and
+ * the integration hold is listed under it (F12), so an integrated card whose
+ * content review returned concerns says why Accept will be refused before
+ * the click.
  */
 export function acceptanceRefusalFor(
   info: TaskInfo,
@@ -58,20 +76,51 @@ export function acceptanceRefusalFor(
   // The attempt-gap notice owns the run-attempt refusal and its override.
   if (info.acceptanceAttemptGap) return null;
   if (server && server.taskKey === info.taskKey && server.code !== 'run-attempt-missing')
-    return { reason: server.message, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'server' };
+    return { reason: server.message, ...nextAction(server.message, readiness), source: 'server' };
   if (awaitingGit) return null;
   const hold = integrationHold(info);
-  const primary = acceptancePrimaryReason(readiness);
-  if (!primary) return hold;
+  const refused = readinessHold(readiness);
+  const primary = refused ? acceptancePrimaryReason(readiness) : null;
+  if (!refused || !primary) return hold;
+  // A round is the only step when policy forbids the override; otherwise the
+  // integration hold keeps its own action (a retry after a conflict).
+  const action = refused.action === 'send-round' || !hold ? refused : hold;
   return {
     reason: primary.reason,
     headline: primary.headline,
     nextStep: primary.nextStep,
     secondary: secondaryAcceptanceGaps(primary, [hold?.reason]),
-    action: hold?.action ?? 'override',
-    actionLabel: hold?.actionLabel ?? OVERRIDE_LABEL,
+    action: action.action,
+    actionLabel: action.actionLabel,
     source: 'hold',
   };
+}
+
+/**
+ * AGT-3867: the Accept tooltip of a held or refused card. It says why the
+ * click will be refused and names the step that resolves it, instead of only
+ * describing the merge.
+ */
+export function acceptanceRefusalTooltip(refusal: AcceptanceRefusal): string {
+  const reason = refusal.source === 'hold' ? `Accept will be refused. ${refusal.reason}` : refusal.reason;
+  return `${reason} Next step: ${refusal.actionLabel.replace(/…$/, '')}.`;
+}
+
+/** The Accept tooltip of `info` from the recorded refusal and the readiness dry run, in an injection context. */
+export function injectAcceptanceRefusalTooltip(info: () => TaskInfo): Signal<string | null> {
+  const refusals = inject(AcceptanceRefusalStore);
+  const readiness = inject(AcceptanceReadinessStore);
+  return computed(() => {
+    const card = info();
+    const refusal = acceptanceRefusalFor(card, refusals.forTask(card.taskKey), false, readiness.itemFor(card));
+    return refusal ? acceptanceRefusalTooltip(refusal) : null;
+  });
+}
+
+/** A refused completion dry run, except the run-attempt gap, which has its own notice. */
+function readinessHold(item: AcceptanceReadinessItem | null): AcceptanceRefusal | null {
+  if (!item || item.readiness === 'ready' || item.stage === 'admitted' || item.stage === 'lineage') return null;
+  return { reason: item.reason, ...nextAction(item.refusal, item), source: 'hold' };
 }
 
 /** The client-side integration hold: why the board projection keeps Accept disabled. */
@@ -111,7 +160,7 @@ export function serverAcceptanceRefusal(info: TaskInfo, error: unknown): ServerA
   return {
     taskKey: info.taskKey,
     code,
-    message: hint ?? serverErrorMessage(error, 'The server refused the acceptance.'),
+    message: hint ?? acceptanceRefusalSentence(serverErrorMessage(error, 'The server refused the acceptance.')),
   };
 }
 

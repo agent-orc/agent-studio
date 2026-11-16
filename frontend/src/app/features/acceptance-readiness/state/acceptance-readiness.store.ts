@@ -13,10 +13,17 @@ import type {
 } from '../models/acceptance-readiness.model';
 import { groupByReadiness, readinessKey, readyJobs, type ReadinessGroup } from '../models/acceptance-readiness-groups.util';
 
+/**
+ * Where the round was opened. Each host renders only its own drafts, so the
+ * board lane, the card detail and the task toolbar never stack two dialogs.
+ */
+export type AcceptanceRoundOrigin = 'board' | 'detail' | 'toolbar';
+
 /** A round the owner is reviewing before it is sent. */
 export interface AcceptanceRoundDraft {
   readonly job: TaskInfo;
   readonly item: AcceptanceReadinessItem;
+  readonly origin: AcceptanceRoundOrigin;
 }
 
 const BATCH_POLL_MS = 250;
@@ -55,6 +62,12 @@ export class AcceptanceReadinessStore {
     return this.checked() ? groupByReadiness(jobs, this.items(), this.filter()) : null;
   }
 
+  /** The open round draft of `origin`, or null when another host opened it. */
+  draftFor(origin: AcceptanceRoundOrigin): AcceptanceRoundDraft | null {
+    const draft = this.roundDraft();
+    return draft?.origin === origin ? draft : null;
+  }
+
   readyAmong(jobs: readonly TaskInfo[]): TaskInfo[] {
     return readyJobs(jobs, this.items());
   }
@@ -89,7 +102,8 @@ export class AcceptanceReadinessStore {
   /**
    * F12: the open card's readiness when no lane check covered it yet, so its
    * toolbar and acceptance grounds rank their gaps by the same answer as the
-   * board note. Asked once per card activity, also after a failure; a lane check answers as well.
+   * board note. Asked once per card activity, also after a failure; a lane
+   * check answers as well.
    */
   async ensure(job: TaskInfo): Promise<void> {
     if (job.state !== TaskState.HumanReview) return;
@@ -97,15 +111,25 @@ export class AcceptanceReadinessStore {
     const stamp = job.lastActivity ?? '';
     if (this.items().has(key) || this.asked.get(key) === stamp) return;
     this.asked.set(key, stamp);
+    await this.checkCard(job);
+  }
+
+  /**
+   * AGT-3867: checks one Human Review card, for its detail and toolbar, and
+   * merges the answer without touching the lane's grouping state. A failed
+   * check keeps the last answer: the detail then offers no speculative step.
+   */
+  async checkCard(job: TaskInfo): Promise<void> {
+    if (job.state !== TaskState.HumanReview) return;
     try {
       const report = await firstValueFrom(this.http.post<AcceptanceReadinessReport>(
         '/api/tasks/acceptance-readiness',
         { items: [{ jobId: job.id, watchPath: job.watchPath }] },
       ));
-      const item = Array.isArray(report?.items) ? report.items[0] : undefined;
+      const item = Array.isArray(report?.items) ? report.items.find(entry => entry.jobId === job.id) : undefined;
       if (item) this.items.update(current => new Map(current).set(item.taskKey || item.jobId, item));
     } catch {
-      // The card keeps its own gaps unranked; its next activity asks again.
+      // The board check and the server refusal still name the reason.
     }
   }
 
@@ -141,11 +165,11 @@ export class AcceptanceReadinessStore {
     await this.refresh(lane.filter(job => !this.results().some(result => result.accepted && result.jobId === job.id)));
   }
 
-  openRound(job: TaskInfo): void {
+  openRound(job: TaskInfo, origin: AcceptanceRoundOrigin = 'board'): void {
     const item = this.itemFor(job);
     if (!item?.round) return;
     this.roundError.set(null);
-    this.roundDraft.set({ job, item });
+    this.roundDraft.set({ job, item, origin });
   }
 
   closeRound(): void {

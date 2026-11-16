@@ -56,7 +56,7 @@
           <button type="button" class="studio-auto-toggle studio-auto-toggle--inline"
                   [class.studio-auto-toggle--on]="autoModeFor(name) !== 'manual' && autoModeFor(name) !== 'paused'"
                   data-testid="studio-titlebar-auto-toggle"
-                  [attr.aria-label]="autoToggleTooltip(name)"
+                  [attr.aria-label]="autoModeLabelFor(name) + ', ' + autoToggleTooltip(name)"
                   [cacTooltip]="autoToggleTooltip(name)"
                   (click)="toggleAuto.emit(name)">
             <span class="studio-auto-toggle__dot" aria-hidden="true"></span>
@@ -405,11 +405,14 @@
     <section class="studio-editor"
              data-testid="studio-editor">
       <div class="studio-tabbar" data-testid="studio-tabbar">
+        <!-- The tablist owns only the tab buttons (aria-owns); each close
+             button sits beside its tab, outside the tablist (AGT-3835). -->
         <div class="studio-tabbar__list"
-             role="tablist"
              data-testid="studio-tab-list"
              (dragover)="onTabListDragOver($event)"
              (drop)="onTabListDrop($event)">
+          <div class="studio-tabbar__tablist" role="tablist" aria-label="Open tabs"
+               data-testid="studio-tablist" [attr.aria-owns]="tabSelectIds() || null"></div>
           @if (tabs().length === 0) {
             <div class="studio-tab studio-tab--welcome studio-tab--active">
               <span class="studio-tab__title">Welcome</span>
@@ -434,8 +437,9 @@
                  (drop)="onTabDrop($event, tabKey(t))"
                  (dragend)="onTabDragEnd($event)">
               <button type="button" class="studio-tab__select" role="tab"
+                      [id]="'studio-tab-select-' + $index"
                       [attr.aria-selected]="activeKey() === tabKey(t) ? 'true' : 'false'"
-                      [attr.aria-label]="tabLabel(t)"
+                      [attr.aria-label]="tabName(t)"
                       (click)="selectTab(tabKey(t))">
               @if (tabDotColor(t); as dot) {
                 <span class="studio-tab__dot"
@@ -444,7 +448,7 @@
                       aria-hidden="true"></span>
               }
               @if (tabPrefix(t); as prefix) {
-                <span class="studio-tab__prefix">{{ prefix }}</span>
+                <span class="studio-tab__prefix">{{ prefix }} </span>
               }
               @if (tabIcon(t); as icon) {
                 <app-studio-icon [name]="icon" [size]="13"></app-studio-icon>

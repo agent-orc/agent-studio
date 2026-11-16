@@ -51,6 +51,7 @@ import {
   LanePagerService,
   AcceptanceRefusalStore,
   acceptanceRefusalFor,
+  acceptanceRefusalTooltip,
   overflowActionsFor,
   primaryActionForTask,
   mergeAcceptViewFor,
@@ -62,7 +63,6 @@ import {
   type MergeAcceptView,
   type TriageButton,
 } from './features/task-detail/runtime';
-import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 import {
   buildComposerLocationContext,
   OrchestratorFeedStore,
@@ -168,6 +168,7 @@ import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
 import { ServerCheckoutBoardNoticeComponent } from './features/server-checkout';
+import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -1377,7 +1378,9 @@ export class App implements OnInit, OnDestroy {
       primaryTooltip: this.studioPrimaryDecisionRefusal()
         ?? (this.studioPrimaryBlockedByIntegration()
           ? acceptanceHoldReason(this.selectedJob()!.info)
-          : taskDetailPrimaryShortcutTooltip(this.studioMergeAcceptView()?.statusTooltip || label)),
+          : this.studioAcceptanceRefusal()
+            ? acceptanceRefusalTooltip(this.studioAcceptanceRefusal()!)
+            : taskDetailPrimaryShortcutTooltip(this.studioMergeAcceptView()?.statusTooltip || label)),
       awaitingGit: this.studioPrimaryAwaitingGit(),
       blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
       blockedByDecision: !!this.studioPrimaryDecisionRefusal(),

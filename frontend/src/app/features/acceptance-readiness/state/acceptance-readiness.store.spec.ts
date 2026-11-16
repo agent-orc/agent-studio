@@ -193,4 +193,19 @@ describe('AcceptanceReadinessStore', () => {
     await store.ensure(reviewCard('d', { state: '2-ready' }));
     http.expectNone('/api/tasks/acceptance-readiness');
   });
+
+  it('checks one card for its detail without grouping the lane (AGT-3867)', async () => {
+    const done = store.checkCard(cards[1]);
+    await answer({ items: [readinessItem('b', 'review-concerns')] });
+    await done;
+    expect(store.itemFor(cards[1])?.readiness).toBe('review-concerns');
+    expect(store.checked()).toBe(false);
+  });
+
+  it('hands a round draft only to the host that opened it (AGT-3867)', async () => {
+    await check();
+    store.openRound(cards[1], 'detail');
+    expect(store.draftFor('detail')?.job.id).toBe('b');
+    expect(store.draftFor('board')).toBeNull();
+  });
 });

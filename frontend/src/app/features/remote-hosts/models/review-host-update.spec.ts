@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reviewUpdateTarget, reviewQuietPoint, reviewHeartbeatProvesUpdate } from './review-host-update';
+import { reviewUpdateTarget, reviewQuietPoint, reviewHeartbeatProvesUpdate, reviewUpdateStepFromStatus } from './review-host-update';
 import type { RemoteHost } from './remote-host.model';
 import type { HostReleaseDriftSnapshot } from './host-release-drift';
 
@@ -29,6 +29,25 @@ describe('review host update proof', () => {
     const sameCommit = { ...review, release: { ...review.release!, commit: stable.commit },
       releaseDrift: { ...review.releaseDrift!, state: 'current' as const } };
     expect(reviewUpdateTarget([sameCommit], stable)?.expectedImageRef).toBe(expectedImage);
+  });
+
+  it('marks a still draining review role without drift as not pending', () => {
+    const updated = { ...review, status: 'draining' as const,
+      release: { ...review.release!, commit: stable.commit, imageRef: expectedImage },
+      releaseDrift: { ...review.releaseDrift!, state: 'current' as const,
+        release: { ...review.releaseDrift!.release!, commit: stable.commit, imageRef: expectedImage } } };
+    expect(reviewUpdateTarget([updated], stable)).toMatchObject({ clientId: 'review-1', updatePending: false });
+    expect(reviewUpdateTarget([{ ...updated, status: 'online' as const }], stable)).toBeNull();
+    expect(reviewUpdateTarget([review], stable)?.updatePending).toBe(true);
+  });
+
+  it('derives the resume step from the server drain status and recorded switch start', () => {
+    expect(reviewUpdateStepFromStatus({ draining: false, drained: false, running: [] }).step).toBe('ready');
+    expect(reviewUpdateStepFromStatus({ draining: true, drained: false,
+      running: [{ kind: 'review', attemptId: 'a1', taskKey: 'AGT-1' }] }).step).toBe('blocked');
+    expect(reviewUpdateStepFromStatus({ draining: true, drained: true, running: [] }).step).toBe('quiet');
+    expect(reviewUpdateStepFromStatus({ draining: true, drained: true, running: [],
+      switchStartedAt: '2026-11-15T09:05:00Z' }).step).toBe('switching');
   });
 
   it('refuses the quiet point while a review is active', () => {

@@ -75,6 +75,49 @@ describe('TreeRowComponent (smoke)', () => {
     expect(btn.getAttribute('aria-current')).toBeNull();
   });
 
+  it('starts the aria-label with the visible label and count, glyph letter excluded (AGT-3835)', async () => {
+    TestBed.configureTestingModule({
+      imports: [TreeRowComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    const fixture = TestBed.createComponent(TreeRowComponent);
+    fixture.componentRef.setInput('label', 'Dossiers');
+    fixture.componentRef.setInput('glyphChar', 'D');
+    fixture.componentRef.setInput('count', 6);
+    fixture.componentRef.setInput('ariaLabel', 'Dossiers, 6 dossiers');
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const row = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('button.tree-row')!;
+    expect(row.textContent!.replace(/\s+/g, ' ').trim()).toBe('Dossiers 6');
+    expect(row.getAttribute('aria-label')).toBe('Dossiers, 6 dossiers');
+    fixture.componentRef.setInput('ariaLabel', 'Open Dossiers');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(row.getAttribute('aria-label')).toBe('Dossiers 6, Open Dossiers');
+  });
+
+  it('keeps the aria-label when it starts with the visibleName, row metadata aside (AGT-3835)', async () => {
+    TestBed.configureTestingModule({
+      imports: [TreeRowComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    const fixture = TestBed.createComponent(TreeRowComponent);
+    fixture.componentRef.setInput('label', 'Runner: fresh start');
+    fixture.componentRef.setInput('meta', '21.07.2026');
+    fixture.componentRef.setInput('ariaLabel', 'Runner: fresh start, inherited');
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const row = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('button.tree-row')!;
+    expect(row.getAttribute('aria-label')).toBe('Runner: fresh start 21.07.2026, Runner: fresh start, inherited');
+    fixture.componentRef.setInput('visibleName', 'Runner: fresh start');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(row.textContent).toContain('21.07.2026');
+    expect(row.getAttribute('aria-label')).toBe('Runner: fresh start, inherited');
+  });
+
   it('can reserve chevron and glyph columns for iconless rows', () => {
     TestBed.configureTestingModule({
       imports: [TreeRowComponent],
