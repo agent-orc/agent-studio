@@ -171,7 +171,9 @@ This path does not use title urgency, risk, or changed-path overlap. Its fallbac
 the project batch reservation. A later direct integration must hold the
 reservation through its merge gate and possible rollback. It acquires the
 reservation after the per-project merge lock, so a queued per-task integration
-does not block a formed batch. Its machine queue
+does not block a formed batch. While a batch flight reserves the project, a
+new per-task integration waits until the flight holds the reservation
+(AGT-3882). Its machine queue
 wait is capped at two minutes and its gate run at 25 minutes. The batch
 gate state reports the combined 27-minute reservation gate cap.
 When the gate host has more than one slot, per-task fallback gates leave the
