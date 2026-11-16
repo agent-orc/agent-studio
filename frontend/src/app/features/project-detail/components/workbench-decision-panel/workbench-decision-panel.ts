@@ -1,14 +1,18 @@
 import { DatePipe } from '@angular/common';
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   computed,
   effect,
+  ElementRef,
   inject,
+  Injector,
   input,
   LOCALE_ID,
   output,
   signal,
+  untracked,
 } from '@angular/core';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
@@ -38,6 +42,7 @@ import {
   revisionRoundText,
   selectedDecisionText,
 } from './workbench-decision-panel.util';
+import { focusLost } from './workbench-decision-focus.util';
 
 @Component({
   selector: 'app-workbench-decision-panel',
@@ -67,6 +72,8 @@ export class WorkbenchDecisionPanelComponent {
   private readonly tasks = inject(TaskService);
   private readonly publicDemo = inject(PublicDemoModeService);
   private readonly datePipe = new DatePipe(inject(LOCALE_ID));
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
   private readonly operationId = signal('');
 
   readonly actor = signal('Operator');
@@ -124,6 +131,10 @@ export class WorkbenchDecisionPanelComponent {
   readonly browserDraft = computed(() =>
     this.drafts.draft(this.projectName(), this.document().workbench.id));
   readonly hasBrowserDraft = computed(() => this.browserDraft() !== null && !this.settled());
+  /** Mirrors the template branch that renders `workbench-decision-receipt`. */
+  private readonly receiptShown = computed(() =>
+    !(this.mutationBlocked() && !this.settled()) && this.gateReady()
+    && (this.persistedDecision() !== null || this.settled()));
 
   constructor() {
     effect(() => {
@@ -143,6 +154,21 @@ export class WorkbenchDecisionPanelComponent {
       });
       onCleanup(() => subscription.unsubscribe());
     });
+    // The receipt replaces the control that confirmed the decision. Focus it when
+    // it appears so keyboard focus does not drop to the body (AGT-3829).
+    let receiptShown: boolean | null = null;
+    effect(() => {
+      const shown = this.receiptShown();
+      if (receiptShown === false && shown) untracked(() => this.focusReceipt());
+      receiptShown = shown;
+    });
+  }
+
+  private focusReceipt(): void {
+    afterNextRender(() => {
+      const root = this.host.nativeElement;
+      if (focusLost(root)) root.querySelector<HTMLElement>('[data-testid="workbench-decision-receipt"]')?.focus();
+    }, { injector: this.injector });
   }
 
   updateActor(event: Event): void {

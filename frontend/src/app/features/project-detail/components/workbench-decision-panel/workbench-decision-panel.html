@@ -55,7 +55,7 @@
       Decisions open when this Dossier's descriptor sets status decision-pending or phase decision-ready.
     </p>
   } @else if (persistedDecision(); as decision) {
-    <div class="decision-panel__receipt" data-testid="workbench-decision-receipt">
+    <div class="decision-panel__receipt" data-testid="workbench-decision-receipt" tabindex="-1">
       <span>
         <app-status-indicator class="decision-panel__outcome" [tone]="outcomeTone(decision)" [compact]="true"
                               testId="workbench-decision-outcome"
@@ -112,7 +112,7 @@
       }
     </div>
   } @else if (settled()) {
-    <div class="decision-panel__receipt" data-testid="workbench-decision-receipt">
+    <div class="decision-panel__receipt" data-testid="workbench-decision-receipt" tabindex="-1">
       <span><strong>In implementation</strong> · {{ decisionPoints().length }} decision point{{ decisionPoints().length === 1 ? '' : 's' }} recorded</span>
       @if (selectedSummary()) {
         <span class="decision-panel__receipt-note" data-testid="workbench-decision-response-receipt">{{ selectedSummary() }}</span>

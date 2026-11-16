@@ -1,5 +1,5 @@
 import {
-  ChangeDetectionStrategy, Component, DestroyRef, ElementRef,
+  ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector,
   computed, effect, inject, input, output, signal, untracked,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -42,6 +42,7 @@ import {
   taskKeyTail,
   unlinkedCardFailure,
 } from '../workbench-decision-panel/workbench-decision-panel.util';
+import { bindFormEscape, focusAfterRender } from '../workbench-decision-panel/workbench-decision-focus.util';
 
 type ActionMode = 'feature-spawn' | 'rework' | null;
 type DecisionOutcome = Exclude<ActionMode, null> | 'record-only';
@@ -71,7 +72,10 @@ export class WorkbenchDecisionActionsComponent {
   private readonly catalog = inject(CliCatalogStore);
   private readonly destroyRef = inject(DestroyRef);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
   private restoredDraftKey = '';
+  /** The bar control that opened the confirmation form; closing it returns focus there. */
+  private opener = 'workbench-decision-start';
   private readonly operationId = signal('');
 
   readonly mode = signal<ActionMode>(null);
@@ -153,6 +157,10 @@ export class WorkbenchDecisionActionsComponent {
       if (key !== this.restoredDraftKey) untracked(() => this.preselectDefaultModel());
       this.restoredDraftKey = key;
     });
+    // Escape closes the open form even below another modal-stack entry (AGT-3829).
+    bindFormEscape(computed(() => this.mode() !== null),
+      () => this.host.nativeElement.querySelector('.decision-actions__confirmation'),
+      () => { if (this.pending()) return false; this.closeConfirmation(); return true; });
   }
 
   updateTitle(event: Event): void {
@@ -184,6 +192,8 @@ export class WorkbenchDecisionActionsComponent {
     if (!this.canPrepareFeature()) return;
     this.seedFeatureDraft();
     this.mode.set('feature-spawn');
+    this.opener = 'workbench-decision-start';
+    this.focusAfterRender('workbench-decision-title');
   }
 
   recordPartial(): void {
@@ -207,8 +217,8 @@ export class WorkbenchDecisionActionsComponent {
     this.operationId.set(draft.operationId ?? operationId);
     this.request.set(draft.request ?? '');
     this.mode.set('rework');
-    queueMicrotask(() => this.host.nativeElement.querySelector<HTMLTextAreaElement>(
-      '[data-testid="workbench-decision-rework-request"]')?.focus());
+    this.opener = 'workbench-decision-rework';
+    this.focusAfterRender('workbench-decision-rework-request');
   }
 
   closeConfirmation(event?: Event): void {
@@ -221,7 +231,7 @@ export class WorkbenchDecisionActionsComponent {
     this.operationId.set('');
     // The card's route was a rework preselection; a combined task starts on the browser default again.
     if (leavingRework) { this.restoreAgent(defaultAgent()); this.preselectDefaultModel(); }
-    queueMicrotask(() => this.focusPrimaryAction());
+    this.focusAfterRender(this.opener);
   }
 
   createFeatureCard(): void {
@@ -419,9 +429,9 @@ export class WorkbenchDecisionActionsComponent {
     });
   }
 
-  private focusPrimaryAction(): void {
-    this.host.nativeElement.querySelector<HTMLButtonElement>(
-      '[data-testid="workbench-decision-start"]')?.focus();
+  /** Move focus to the counterpart of a control the form swap removed (AGT-3829). */
+  private focusAfterRender(testId: string): void {
+    focusAfterRender(this.host.nativeElement, this.injector, testId, 'button, input, textarea');
   }
 
   private finish(): void {
