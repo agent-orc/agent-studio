@@ -60,7 +60,7 @@
                 (click)="openUsageDetail.emit({ section: 'cli', cliId: cli.cliId })">
           <strong>{{ v.name }}</strong>
           @if (v.weekly.reported) { <span>WK {{ v.weekly.value }}</span> }
-          @if (v.session.reported) { <span>Session {{ v.session.value }}</span> }
+          @if (v.session.reported) { <span class="statusbar__usage-session">Session {{ v.session.value }}</span> }
           @if (v.state === 'stale') { <span class="statusbar__age">{{ age(cli.fetchedAt) }}</span> }
         </button>
         @if (hostProblem(cli.cliId); as problem) {
