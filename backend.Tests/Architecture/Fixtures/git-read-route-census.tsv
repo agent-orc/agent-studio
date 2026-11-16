@@ -121,7 +121,7 @@
 /api/git/inventory	free	-	-	-
 /api/git/project-commit/diff	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/project-commit/files	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
-/api/git/summary	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
+/api/git/summary	reachable	measured-zero	-	-
 /api/host/filesystems	free	-	-	-
 /api/hosts/{id}/operations/{attemptId}	free	-	-	-
 /api/integrations/quality-studio/connection	free	-	-	-
@@ -324,7 +324,7 @@
 /api/runner/global/orchestrator-session	free	-	-	-
 /api/runner/integration-lease/{projectName}/{integrationBranch}	free	-	-	-
 /api/runner/lease/{taskKey}	free	-	-	-
-/api/runner/orchestrator-feed	reachable	gap	Docs/Wiki	Wiki ref/config-generation projection for Dossier decisions
+/api/runner/orchestrator-feed	reachable	measured-zero	-	-
 /api/runner/post-merge/projects/{project}	free	-	-	-
 /api/runner/release-candidates/{project}/{commit}	reachable	gap	Deploy and environments	Release candidate plan from Task Server source facts
 /api/runner/project-chat/status	free	-	-	-

@@ -303,6 +303,34 @@ public sealed class WikiAgentReadBackfillTests : IDisposable
             item => Assert.Equal("AGT-2244", item.GetProperty("taskKey").GetString()));
     }
 
+    [Fact]
+    public async Task ProcessOutput_RefreshesOnlyTheReadProjectsWikiOncePerBurst()
+    {
+        WriteTask("burst-reader", "AGT-3793");
+        var service = BuildService(out _, out var cache, TimeSpan.FromMilliseconds(50));
+        Assert.True(cache.Preload("Demo"));
+        Assert.True(cache.Preload("Other"));
+        var before = cache.GetStats();
+
+        var at = new DateTime(2026, 11, 15, 21, 0, 0, DateTimeKind.Utc);
+        for (var line = 0; line < 5; line++)
+            Assert.Equal(1, service.ProcessOutput("AGT-3793", new[]
+            {
+                new CliOutputLine { Timestamp = at.AddSeconds(line), Stream = "stdout", Text = "● Read docs/concepts/overview.md" },
+            }));
+        var waited = Stopwatch.StartNew();
+        while (cache.GetStats().Fills == before.Fills && waited.Elapsed < TimeSpan.FromSeconds(10))
+            await Task.Delay(20);
+        await Task.Delay(200);
+
+        // One rebuild of the read project; before AGT-3793 each line rebuilt every project.
+        var after = cache.GetStats();
+        Assert.Equal(before.Fills + 1, after.Fills);
+        Assert.Equal(before.MutationInvalidations + 1, after.MutationInvalidations);
+        var page = cache.GetSnapshot("Demo")!.MetadataByRelPath["concepts/overview.md"];
+        Assert.Equal(5, page.AgentReads!.Total);
+    }
+
     private void WriteTask(string id, string key)
     {
         var taskDir = Path.Combine(_tasks, TaskStates.Progress, id);
@@ -319,6 +347,10 @@ public sealed class WikiAgentReadBackfillTests : IDisposable
     }
 
     private WikiAgentReadService BuildService(out TaskScannerService scanner)
+        => BuildService(out scanner, out _, null);
+
+    private WikiAgentReadService BuildService(
+        out TaskScannerService scanner, out WikiContentCache cache, TimeSpan? refreshDelay)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -326,6 +358,9 @@ public sealed class WikiAgentReadBackfillTests : IDisposable
                 ["WatchPaths:0:Name"] = "Demo",
                 ["WatchPaths:0:Path"] = _tasks,
                 ["WatchPaths:0:RepositoryPath"] = _repo,
+                ["WatchPaths:1:Name"] = "Other",
+                ["WatchPaths:1:Path"] = Path.Combine(_root, "other-tasks"),
+                ["WatchPaths:1:RepositoryPath"] = _repo,
                 ["TaskRepository"] = _tasks,
             })
             .Build();
@@ -335,13 +370,18 @@ public sealed class WikiAgentReadBackfillTests : IDisposable
         scanner.SetIndexCache(indexCache);
         var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
         var docs = new ProjectDocsService(scanner, registry, NullLogger<ProjectDocsService>.Instance);
+        cache = new WikiContentCache(docs, NullLogger<WikiContentCache>.Instance);
+        docs.SetWikiContentCache(cache);
         return new WikiAgentReadService(
             scanner,
             registry,
             new WikiAgentReadStore(),
             docs,
             config,
-            NullLogger<WikiAgentReadService>.Instance);
+            NullLogger<WikiAgentReadService>.Instance)
+        {
+            LiveReadRefreshDelay = refreshDelay ?? TimeSpan.FromSeconds(2),
+        };
     }
 
     public void Dispose()

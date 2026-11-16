@@ -781,9 +781,16 @@ public partial class GitService
         lock (_statusCacheLock) _statusCache.Clear();
     }
 
+    // Board tile summary (AGT-3793): the request reads the last published
+    // snapshot; a background refresh recomputes it when the observed ref and
+    // index files of a project moved, or when the snapshot is older than the
+    // working-tree bound below (unstaged edits move no Git file).
     private readonly object _summaryLock = new();
-    private DateTime _summaryAt = DateTime.MinValue;
-    private List<GitProjectSummary> _summaryCache = [];
+    private SummarySnapshot? _summary;
+    private Task<List<GitProjectSummary>>? _summaryRefresh;
+    internal static readonly TimeSpan SummaryWorkingTreeMaxAge = TimeSpan.FromSeconds(60);
+
+    private sealed record SummarySnapshot(List<GitProjectSummary> Summaries, IReadOnlyList<string> Keys, DateTime At);
 
     // SHA-range answers (commits / file list / diff) are deterministic once
     // a run has captured HeadShaBefore..HeadShaAfter: git history is
@@ -870,6 +877,16 @@ public partial class GitService
     public string? GetHeadShaCached(string root)
     {
         if (string.IsNullOrWhiteSpace(root)) return null;
+        // AGT-3793: the ref files answer without a process and always name the
+        // current commit; the TTL only spares the Git fallback.
+        if (Directory.Exists(root))
+        {
+            switch (GitRefFiles.TryResolveHead(root, out var fromFiles))
+            {
+                case GitRefFileAnswer.Found: return fromFiles;
+                case GitRefFileAnswer.Absent: return null;
+            }
+        }
         if (_headShaCache.TryGetValue(root, out var cached) && DateTime.UtcNow - cached.At < HeadShaTtl)
             return cached.Sha;
         var sha = ReadHeadShaAt(root);
@@ -1100,6 +1117,18 @@ public partial class GitService
     }
 
     /// <summary>
+    /// Expires the short time-to-live probes (HEAD and ref SHAs, working-tree
+    /// status) and keeps every cache keyed by an observed commit. Tests use it
+    /// to stand for the minutes between two live reads of an unchanged repository.
+    /// </summary>
+    internal void ExpireShortLivedProbesForTesting()
+    {
+        _headShaCache.Clear();
+        _refShaCache.Clear();
+        InvalidateStatusCache();
+    }
+
+    /// <summary>
     /// Drops the HEAD-sha and HEAD-keyed memo caches. Tests that commit into a
     /// fixture repo and then re-query within the 2s HEAD TTL call this so the new
     /// commit is observed immediately; production just lets HEAD roll over.
@@ -1115,17 +1144,75 @@ public partial class GitService
     }
 
     /// <summary>
-    /// Per-project summary, cached for ~3 seconds so the board's tile-pills
-    /// can ask freely without spawning N git processes per render.
+    /// Per-project summary for the board's tile pills. Starts no Git: it
+    /// returns the last published snapshot (empty before the first one) and
+    /// queues one background refresh when a project's observed HEAD, ref or
+    /// index files changed, or the snapshot is older than
+    /// <see cref="SummaryWorkingTreeMaxAge"/>. Before AGT-3793 every request
+    /// after a three-second expiry ran three Git processes per project on the
+    /// request (39 for 13 projects), past the read guard ceiling.
     /// </summary>
     public List<GitProjectSummary> GetSummaries()
     {
+        var keys = ObserveSummaryKeys();
         lock (_summaryLock)
         {
-            if (DateTime.UtcNow - _summaryAt < TimeSpan.FromSeconds(3))
-                return _summaryCache;
+            var current = _summary;
+            if (current is null || !current.Keys.SequenceEqual(keys, StringComparer.Ordinal)
+                || DateTime.UtcNow - current.At >= SummaryWorkingTreeMaxAge)
+                StartSummaryRefreshLocked(keys);
+            return current?.Summaries ?? [];
         }
+    }
 
+    /// <summary>Recomputes the summaries now, or joins the refresh in flight.</summary>
+    internal Task<List<GitProjectSummary>> RefreshSummariesAsync()
+    {
+        var keys = ObserveSummaryKeys();
+        lock (_summaryLock) return StartSummaryRefreshLocked(keys);
+    }
+
+    private Task<List<GitProjectSummary>> StartSummaryRefreshLocked(IReadOnlyList<string> keys)
+    {
+        if (_summaryRefresh is { IsCompleted: false } running) return running;
+        // The refresh belongs to no request: without the flow it would count
+        // against the read guard and telemetry scope of the request that saw
+        // the change.
+        using (ExecutionContext.SuppressFlow())
+        {
+            _summaryRefresh = Task.Run(() =>
+            {
+                using var telemetry = GitProcessTelemetry.BeginRequest("git/summary-refresh", _logger);
+                var list = ComputeSummaries();
+                lock (_summaryLock) _summary = new SummarySnapshot(list, keys, DateTime.UtcNow);
+                return list;
+            });
+        }
+        return _summaryRefresh;
+    }
+
+    /// <summary>
+    /// One key per project from file metadata only: the configured path, the
+    /// ref signature (HEAD, loose and packed refs) and the index file, which
+    /// moves on stage, commit, checkout and merge.
+    /// </summary>
+    private List<string> ObserveSummaryKeys()
+    {
+        var keys = new List<string>();
+        foreach (var entry in _scanner.GetWatchPaths())
+        {
+            var configured = ResolveConfiguredRepositoryPath(entry) ?? "";
+            var root = configured.Length == 0 ? null : GitRefFiles.WorkTreeRoot(configured) ?? configured;
+            var gitDirectory = GitRefSignature.ResolveGitDirectory(root);
+            var index = gitDirectory is null ? null : new FileInfo(Path.Combine(gitDirectory, "index"));
+            keys.Add(string.Join('\0', entry.Name, configured, GitRefSignature.Capture(root).ToString(),
+                index is { Exists: true } ? $"{index.LastWriteTimeUtc.Ticks}:{index.Length}" : "-"));
+        }
+        return keys;
+    }
+
+    private List<GitProjectSummary> ComputeSummaries()
+    {
         var list = new List<GitProjectSummary>();
         foreach (var entry in _scanner.GetWatchPaths())
         {
@@ -1142,13 +1229,13 @@ public partial class GitService
                 continue;
             }
 
-            var (statusOut, _, statusCode) = RunGit(root, "status --porcelain=v1");
+            var (statusOut, _, statusCode) = RunGitReadonly(root, "status --porcelain=v1");
             var fileCount = statusCode == 0
                 ? statusOut.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l))
                 : 0;
 
-            var (branchOut, _, _) = RunGit(root, "rev-parse --abbrev-ref HEAD");
-            var (numOut, _, _) = RunGit(root, "diff --numstat HEAD");
+            var branch = ReadBranchAt(root);
+            var (numOut, _, _) = RunGitReadonly(root, "diff --numstat HEAD");
             var added = 0; var removed = 0;
             foreach (var line in numOut.Split('\n'))
             {
@@ -1161,14 +1248,8 @@ public partial class GitService
 
             list.Add(new GitProjectSummary(
                 entry.Name, root, root, true,
-                string.IsNullOrWhiteSpace(branchOut) ? null : branchOut.Trim(),
+                string.IsNullOrWhiteSpace(branch) ? null : branch.Trim(),
                 fileCount, added, removed));
-        }
-
-        lock (_summaryLock)
-        {
-            _summaryCache = list;
-            _summaryAt = DateTime.UtcNow;
         }
         return list;
     }
