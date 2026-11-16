@@ -142,7 +142,7 @@ CLAUDE
 }
 
 first_run_start_runners() {
-  local role runner_id coding_slots review_slots preload cli_dir
+  local role runner_id coding_slots review_slots preload cli_dir codex_bin
   FIRST_RUN_RUNNER_PIDS=()
   for role in coding review; do
     runner_id="first-run-${role}"
@@ -153,11 +153,21 @@ first_run_start_runners() {
     if [[ "${role}" == review ]]; then preload="${PW_E2E_WORKSPACE}/review-cpu-max.so"; fi
     cli_dir="${PW_E2E_WORKSPACE}/bin"
     if [[ "${role}" == review ]]; then cli_dir="${cli_dir}/review"; fi
+    # A profile may swap the coding host's Codex CLI only. The runner names the
+    # provider after the file name, so any other name loses provider-auth:codex.
+    codex_bin="${cli_dir}/codex"
+    if [[ "${role}" == coding && -n "${FIRST_RUN_CODING_CLI_BIN:-}" ]]; then
+      codex_bin="${FIRST_RUN_CODING_CLI_BIN}"
+    fi
+    if [[ "${codex_bin##*/}" != codex ]]; then
+      echo "The ${role} host Codex CLI must be named codex: ${codex_bin}" >&2
+      return 1
+    fi
     mkdir -p "${PW_E2E_WORKSPACE}/${role}-work" "${PW_E2E_WORKSPACE}/${role}-state"
     RUNNER_SERVER_URL="http://127.0.0.1:${PW_E2E_BACKEND_PORT}" \
     RUNNER_ID="${runner_id}" RUNNER_NAME="${runner_id}" RUNNER_HOSTNAME=first-run-host \
     RUNNER_ROLE="${role}" RUNNER_CLI_TYPE=codex \
-    RUNNER_CODEX_CLI_BIN="${FIRST_RUN_CODING_CLI_BIN:-${cli_dir}/codex}" \
+    RUNNER_CODEX_CLI_BIN="${codex_bin}" \
     RUNNER_CLAUDE_CLI_BIN="${cli_dir}/claude" \
     RUNNER_GIT_REMOTE='https://github.com/agent-studio/first-run-e2e.git' \
     RUNNER_GIT_PUSH_REMOTE='https://github.com/agent-studio/first-run-e2e.git' \

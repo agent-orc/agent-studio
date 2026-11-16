@@ -90,9 +90,15 @@ bash scripts/worktree-test-stack.sh down
 - Quota probes are off (AGT-3593). With `ATP_WORKTREE_TEST_BACKEND=1`, the
   `public-demo-readonly` profile, or `Quota:Mode=demo`, `QuotaService` never
   spawns the host's CLIs and never reads a quota cache file. It serves the
-  pinned demo snapshot from `DemoQuotaSnapshots` (fixed percentages, current
-  timestamps), so captures show the footer quota without exposing the runner
-  host's real subscription usage.
+  pinned demo snapshot from `DemoQuotaSnapshots`, so captures show the footer
+  quota without exposing the runner host's real subscription usage. Each
+  window resets on a fixed schedule seeded by `Quota:DemoAnchorUtc` (default
+  `2026-01-05T00:00:00Z`); its used percentage climbs linearly from zero after
+  each reset, read on a 5-minute probe tick. The backend backfills seven days
+  of hourly readings into the quota history on start and appends one reading
+  per tick, so quota history, Card analysis quota windows and burn forecasts
+  work in the demo, owner-day and worktree test stacks (AGT-3794-F15). The
+  `fixture-empty` mode serves no windows and writes no history.
 
 ## Verifying
 

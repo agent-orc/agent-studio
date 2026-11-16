@@ -204,11 +204,14 @@ test('Auto Review watchdog park links its receipt and retries the same delivery'
       createdAt: '2026-11-09T01:00:00Z', lastActivity: PARKED_AT,
       watchPath: WATCH_PATH, projectName: PROJECT, folderPath: `${WATCH_PATH}/${JOB_ID}`,
       commits: [], orchestratorVerdict: 'escalate',
+      phase: 'integrating',
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [],
+        queue: { kind: 'review', state: 'integration' } },
       parkedBlocker: {
         blockerType: 'environmental', conditionKind: 'review-retry-available',
         conditionDescription: 'A completed immutable delivery is still current and can receive a fresh review attempt.',
         lane: '5e-escalated', parkedAt: PARKED_AT,
-        reason: '[environmental] Auto Review had no active owner for 4 minutes. Last run completed at 2026-11-09 01:23 UTC. Last review ended as ExecutorRestarted at 2026-11-09 01:27 UTC. Infrastructure retry budget is exhausted.',
+        reason: '[environmental] Auto Review had no active owner for 7 minutes. Last run completed at 2026-11-09 01:23 UTC. Last review ended as ExecutorRestarted at 2026-11-09 08:16 UTC. The scheduled infrastructure retry missed its due time. Infrastructure retry 1 of 2 was due at 2026-11-09 08:17:00 UTC, is 6 minutes overdue; the retry scheduler did not start it.',
         cause: 'escalated', causeDetail: 'auto-review-stranded', recallStatus: 'recallable',
         lastEvaluatedAt: NOW, detail: 'The completed delivery is available for Retry review.',
         evaluationAgeSeconds: 0, evaluationStale: false, requiresDecisionCard: false,
@@ -228,7 +231,8 @@ test('Auto Review watchdog park links its receipt and retries the same delivery'
       decidedAtUtc: PARKED_AT, affectedCards: [JOB_ID], headline: 'Auto Review parked',
       receipt: { id: 'watchdog-1', subject: `auto-review:${JOB_ID}`, action: 'Escalate',
         autonomy: 'A1', status: 'escalated', observed: 'No Auto Review owner.',
-        done: 'Parked the card.', why: 'No running review owned the card.',
+        done: 'Infrastructure retry 1 of 2 was due at 2026-11-09 08:17:00 UTC, is 6 minutes overdue; the retry scheduler did not start it.',
+        why: 'The scheduled retry passed its overdue limit without the retry scheduler starting it.',
         before: '4-auto-review', after: '5e-escalated', undo: 'Undo restores Auto Review.',
         chain: [], undoable: true },
     }],
@@ -247,8 +251,13 @@ test('Auto Review watchdog park links its receipt and retries the same delivery'
   await page.addStyleTag({ content: HIDE_DEV_DIALOG });
   await dismissDevErrorDialog(page);
   await expect(page.getByTestId('parked-blocker-type')).toHaveText('Environmental · Auto Review watchdog', { timeout: 30_000 });
+  await expect(page.getByTestId('task-live-current')).toContainText('Operator decision needed');
+  await expect(page.getByTestId('task-live-next')).toContainText('Operator decision');
   await expect(page.getByTestId('parked-blocker-statement')).toContainText('Parked by the Auto Review watchdog.');
   await expect(page.getByTestId('parked-blocker-statement')).toContainText('ExecutorRestarted');
+  await expect(page.getByTestId('parked-blocker-statement')).toContainText('retry 1 of 2 was due at 2026-11-09 08:17:00 UTC');
+  await expect(page.getByTestId('parked-blocker-statement')).toContainText('the retry scheduler did not start it');
+  await expect(page.getByTestId('parked-blocker-statement')).not.toContainText('retry limit reached');
   await expect(page.getByTestId('parked-blocker-condition')).toContainText('fresh review attempt');
   await expect(page.getByTestId('parked-watchdog-receipt-link')).toHaveAttribute('href', '#watchdog-receipt-watchdog-1');
   await expect(page.getByTestId('escalation-action-retry-review')).toBeVisible();

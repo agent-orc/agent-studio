@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * Add Task dialog — "Generate" button next to the Title field.
+ * Add Task dialog — "Generate title" button in the Prompt actions toolbar (beside the Title field until AGT-3834).
  *
  * The button calls POST /api/title/generate, which spawns a Haiku
  * subprocess. To keep this spec deterministic and free, we intercept
