@@ -2707,6 +2707,15 @@ holder. `RUNNER_SOURCE_FACTS_PRODUCER=0` turns the producer off on a host.
 
 ## Operational stall monitoring (AGT-3206)
 
+The project cache and server guard share `GitStaleLockPolicy` from
+`TaskServer.Contracts`. The cache uses its one-minute stale Git lock rule before
+delivery preflight and before each fetch. It clears an aged lock only when no
+Git process owns the repository, and waits once for young or owned locks.
+Claim-path fetches disable automatic commit graph writes and maintenance.
+Failed project preflights retain the start of a continuous identical failure;
+after ten minutes the operational sweep opens one host and project case with
+the Git error. A successful preflight removes the fact and closes that case.
+
 The Watcher runs an operational sweep every five minutes by default, including
 when proposal drafting is disabled. `Watcher:OperationalMonitoringEnabled` is
 the separate kill switch (default `true`). The observe-first option from the
