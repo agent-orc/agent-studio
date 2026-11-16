@@ -185,6 +185,8 @@ test('owner-day seeds 30 or more recent cards and owner triage scenes', () => {
     assert.equal(['DEMO-13', 'DEMO-24', 'DEMO-26', 'DEMO-27', 'DEMO-28']
       .filter((key) => task(key).state === '4-auto-review').length, 5);
     assert.equal(task('DEMO-21').mode, 'concept');
+    assert.equal(task('DEMO-24').tokenSummary.allModelsPriced, false);
+    assert.equal(task('DEMO-24').tokenSummary.entries[1].model, 'demo-unpriced-model');
     assert.deepEqual(task('DEMO-21').references.workbenches, ['DEMO-W2']);
     assert.equal(task('DEMO-19').state, '5-human-review');
     assert.equal(readJson(join(root, 'projects/demo-app/tasks/000/DEMO-19/results/completion-refusal.json')).outcome, 'refused');
@@ -204,6 +206,105 @@ test('owner-day seeds 30 or more recent cards and owner triage scenes', () => {
   }
 });
 
+test('pipeline history has durable token receipts with the same calls and counters', () => {
+  withSeed((root) => {
+    const history = SNAPSHOT.tasks.filter((task) => task.history);
+    assert.equal(history.length, 10);
+    for (const task of history) {
+      const folder = taskFolder(root, task);
+      const card = readJson(join(folder, 'task.json'));
+      const pipeline = readJson(join(folder, 'pipeline-execution.json'));
+      assert.equal(card.tokenSummary.calls, pipeline.steps.length, task.key);
+      assert.equal(card.tokenSummary.entries.length, pipeline.steps.length, task.key);
+      for (const [index, step] of pipeline.steps.entries()) {
+        const call = card.tokenSummary.entries[index];
+        assert.equal(call.ts, step.startedAt, task.key);
+        assert.equal(call.model, step.model, task.key);
+        for (const field of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens'])
+          assert.equal(call[field], step[field], `${task.key} ${field}`);
+      }
+      assert.equal(card.tokenSummary.totalTokens,
+        card.tokenSummary.entries.reduce((sum, call) => sum + call.inputTokens + call.outputTokens
+          + call.cacheReadTokens + call.cacheCreationTokens, 0));
+    }
+  });
+});
+
+test('owner-day review cards carry distinct acceptance evidence', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-owner-acceptance-'));
+  try {
+    execFileSync(process.execPath, [SEED, '--root', root, '--owner-day'], { stdio: 'pipe', windowsHide: true });
+    const appRoot = join(root, 'projects/demo-app');
+    assert.equal(git(appRoot, 'remote', 'get-url', 'origin'), join(root, '.metadata/demo-app-origin.git'));
+    for (const key of ['DEMO-5', 'DEMO-6', 'DEMO-14']) {
+      const folder = join(appRoot, 'tasks/000', key);
+      const card = readJson(join(folder, 'task.json'));
+      const receipt = readJson(join(folder, 'integration-verification.json'));
+      const content = readJson(join(folder, 'aspect-requirement-fit.json'));
+      const context = readJson(join(folder, 'content-review-context.json'));
+      assert.equal(card.commits.length, 1, `${key} needs a delivery`);
+      assert.equal(card.commits[0].filesChanged, 1);
+      assert.equal(git(appRoot, 'merge-base', '--is-ancestor', card.commits[0].sha,
+        'refs/remotes/origin/develop'), '', `${key} must be published on develop`);
+      assert.equal(receipt.state, 'integrated-verified');
+      assert.equal(receipt.gateVerdict, 'Ok');
+      assert.match(receipt.reason, /Simulated/);
+      assert.equal(content.status, 'pass');
+      assert.equal(context.briefVersion, readFileSync(join(folder, '.metadata/brief-version'), 'utf8').trim());
+    }
+    const refused = join(appRoot, 'tasks/000/DEMO-19');
+    assert.equal(readJson(join(refused, 'aspect-requirement-fit.json')).status, 'concerns');
+    assert.equal(readJson(join(refused, 'integration-verification.json')).state, 'integrated-verified');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('isolated owner-day seed writes a readable red batch ledger beside its disposable state', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-batch-state-'));
+  try {
+    execFileSync(process.execPath, [SEED, '--root', root, '--owner-day', '--state-root', join(root, 'data')],
+      { windowsHide: true });
+    const identity = readFileSync(join(root, '.batch-state-installation-id'), 'utf8').trim();
+    const store = join(root, 'data', 'agentstudio', 'instances', identity, 'batch-gates');
+    const folder = readdirSync(store).find(name =>
+      readJson(join(store, name, 'manifest.json')).batchId === 'demo-report-batch-1');
+    assert.ok(folder);
+    const batch = join(store, folder);
+    const manifest = readJson(join(batch, 'manifest.json'));
+    assert.equal(manifest.scope.project, 'Demo App');
+    assert.deepEqual(manifest.members.map(member => member.taskKey), ['DEMO-20', 'DEMO-24']);
+    const state = readJson(join(batch, 'state', '00000002.json'));
+    assert.equal(state.phase, 7);
+    assert.match(state.reason, /isolation|triage/i);
+    const run = readJson(join(batch, 'runs', 'demo-report-run-1.json'));
+    assert.equal(run.host, 'demo-gate.invalid');
+    const verdictFile = readdirSync(join(batch, 'runs')).find(name => name.endsWith('.verdict.json'));
+    assert.ok(verdictFile);
+    assert.equal(readJson(join(batch, 'runs', verdictFile)).outcome, 'red');
+    assert.equal(readJson(join(batch, 'runs', verdictFile)).classification, 'DeterministicSuiteRed');
+    const findingsFolder = join(store, 'isolation-findings');
+    const findings = readdirSync(join(findingsFolder, readdirSync(findingsFolder)[0]))
+      .map(name => readJson(join(findingsFolder, readdirSync(findingsFolder)[0], name)));
+    assert.deepEqual(findings.map(finding => finding.status).sort(), ['proven-green', 'proven-red']);
+    assert.equal(readJson(join(root, 'project-settings.json'))['Demo App'].BatchGate.Enabled, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('owner-day gate state cannot be directed outside the demo workspace', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-batch-boundary-'));
+  try {
+    assert.throws(() => execFileSync(process.execPath,
+      [SEED, '--root', root, '--owner-day', '--state-root', tmpdir()], { stdio: 'pipe', windowsHide: true }),
+    /Command failed/);
+    assert.equal(readdirSync(root).length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('every board lane is discoverable on disk', () => {
   withSeed((root) => {
     const lanes = new Set();
@@ -217,6 +318,15 @@ test('every board lane is discoverable on disk', () => {
       '0-backlog', '1-preparation', '2-ready', '3-progress', '4-auto-review',
       '5-human-review', '5e-escalated', '6-completed', '7-archive',
     ]);
+  });
+});
+
+test('DEMO-9 Result references its seeded screenshot from the task results folder', () => {
+  withSeed((root) => {
+    const folder = taskFolder(root, { project: 'demo-app', key: 'DEMO-9' });
+    const status = readFileSync(join(folder, 'status.md'), 'utf8');
+    assert.match(status, /!\[\]\(results\/reports-export--real\.png\)/);
+    assert.ok(statSync(join(folder, 'results', 'reports-export--real.png')).size > 0);
   });
 });
 

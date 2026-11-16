@@ -556,7 +556,9 @@ test('paused batch shows its ordered per-task handoff on the board', async ({ pa
     perTaskGates: Array.from({ length: 4 }, (_, index) => ({
       taskKey: index === 1 ? key : `${path}::AGT-${index + 1}`,
       reviewAttemptId: `review-${index + 1}`, position: index + 1, total: 4,
-      batchId: 'batch-9', reason, running: false,
+      batchId: 'batch-9', reason, running: false, slotCapacity: 3,
+      startEstimateUnavailableReason: 'Full-suite duration is unknown.',
+      lastProgressAtUtc: '2026-11-10T12:01:00Z',
     })),
   };
   await routeBoard(page, batchState, () => undefined, { ...grouped,
@@ -574,6 +576,10 @@ test('paused batch shows its ordered per-task handoff on the board', async ({ pa
   await expect(page.getByTestId('batch-lane-indicator').first()).toContainText('Per-task gates: 4 queued · 0 running');
   await page.getByTestId('batch-lane-indicator').first().click();
   await expect(page.getByTestId('batch-per-task-gates')).toContainText('AGT-2 · 2 of 4 · Queued');
+  await expect(page.getByTestId('batch-per-task-gates')).toContainText('3 per-task slots');
+  await expect(page.getByTestId('batch-per-task-gates')).toContainText('Start estimate unavailable: Full-suite duration is unknown.');
+  await expect(page.getByTestId('batch-per-task-gates')).toContainText('Last progress');
+  await expect(page.getByTestId('batch-per-task-gates')).toContainText('Red escalates the card; green integrates it.');
   await expect(page.getByTestId('batch-panel')).toContainText('Waiting cards (0)');
   await expect(page.getByTestId('batch-panel')).toContainText('Moved to per-task gates after pause: flaky quarantine requires a fresh gate verdict');
   await page.getByRole('button', { name: 'Close batch panel' }).click();
@@ -597,11 +603,10 @@ test('paused batch handoff is read from the real backend store', async ({ page, 
   const batchId = 'batch-real-paused';
   const pauseReason = 'flaky quarantine requires a fresh gate verdict';
   const event = `batch ${batchId} paused: ${pauseReason}`;
-  const digest = createHash('sha256').update(`${nodePath.resolve('..', 'backend')}\n${nodePath.resolve(workspace!)}`)
-    .digest('hex').slice(0, 20);
+  const installationId = fs.readFileSync(nodePath.join(workspace!, '.batch-state-installation-id'), 'utf8').trim();
   // The webServer process receives the isolated XDG root; Playwright itself does not.
   const dataHome = nodePath.join(workspace!, 'data');
-  const storeRoot = nodePath.join(dataHome, 'agentstudio', 'instances', digest, 'batch-gates');
+  const storeRoot = nodePath.join(dataHome, 'agentstudio', 'instances', installationId, 'batch-gates');
   const safeName = (value: string) => createHash('sha256').update(value).digest('hex');
   const write = (relative: string, value: unknown) => {
     const file = nodePath.join(storeRoot, relative);
@@ -650,14 +655,18 @@ test('paused batch handoff is read from the real backend store', async ({ page, 
     const response = await request.get(`${backendUrl}/api/projects/${encodeURIComponent(projectName)}/batch-gate/state?history=10`);
     expect(response.ok(), await response.text()).toBeTruthy();
     const actual = await response.json() as { batches: { batchId: string; phase: string }[];
-      perTaskGates: { taskKey: string; position: number; total: number }[] };
+      perTaskGates: { taskKey: string; position: number; total: number; slotCapacity: number;
+        startEstimateUnavailableReason: string; lastProgressAtUtc: string }[] };
     expect(actual.batches).toContainEqual(expect.objectContaining({ batchId, phase: 'abandoned' }));
     expect(actual.perTaskGates).toHaveLength(4);
     expect(actual.perTaskGates[1]).toMatchObject({ taskKey: key, position: 2, total: 4 });
+    expect(actual.perTaskGates[1].slotCapacity).toBeGreaterThanOrEqual(0);
+    expect(actual.perTaskGates[1].startEstimateUnavailableReason).toBeTruthy();
+    expect(actual.perTaskGates[1].lastProgressAtUtc).toBeTruthy();
 
     await routeBoard(page, null, () => undefined, { ...grouped, autoReview: [{ ...task,
       projectName, liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: { kind: 'review' } },
-    }] });
+    }] }, false, projectName);
     await page.goto('/?includeFixtures=true');
     await page.getByRole('tab', { name: 'All projects · Board' }).click();
     const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
@@ -665,18 +674,22 @@ test('paused batch handoff is read from the real backend store', async ({ page, 
       `Per-task gate queued (2 of 4) after ${event}`);
     await expect(card.getByTestId('batch-member-event')).toContainText(event);
     await expect(card.getByTestId('batch-member-event')).toContainText('Red escalates; green integrates.');
+    await page.getByTestId('batch-lane-indicator').first().click();
+    const fallback = page.getByTestId('batch-per-task-gate').filter({ hasText: key });
+    await expect(fallback).toContainText('Start estimate unavailable:');
+    await expect(fallback).toContainText('Last progress');
+    await expect(fallback).toContainText('Red escalates the card; green integrates it.');
     const evidence = process.env.JOB_RESULTS_DIR;
     if (evidence) {
       fs.mkdirSync(evidence, { recursive: true });
-      for (const theme of ['light', 'dark'] as const) {
-        await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
-        await page.screenshot({ path: nodePath.join(evidence, `paused-batch-real-${theme}.png`) });
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        for (const theme of ['light', 'dark'] as const) {
+          await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+          await fallback.scrollIntoViewIfNeeded();
+          await page.screenshot({ path: nodePath.join(evidence, `paused-batch-gate-${width}-${theme}.png`) });
+        }
       }
-      await page.setViewportSize({ width: 390, height: 844 });
-      await page.addStyleTag({ content: '.dialog__overlay { display: none !important; }' });
-      await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Post Processing' });
-      await card.scrollIntoViewIfNeeded();
-      await page.screenshot({ path: nodePath.join(evidence, 'paused-batch-real-390.png') });
     }
   } finally {
     fs.rmSync(storeRoot, { recursive: true, force: true });

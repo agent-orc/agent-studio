@@ -27,3 +27,7 @@ export {
   type TriageActionPayload,
   type TriageButton,
 } from './state/triage-actions.model';
+export {
+  TASK_DETAIL_PRIMARY_SHORTCUT,
+  taskDetailPrimaryShortcutTooltip,
+} from './task-detail-keyboard.util';

@@ -2,6 +2,8 @@
   <div class="create-dialog"
        role="dialog"
        aria-modal="true"
+       aria-labelledby="create-dialog-title"
+       appModalFocus
        [class.create-dialog--drag]="isDragging()"
        (dragover)="onDragOver($event)"
        (dragleave)="onDragLeave($event)"
@@ -13,7 +15,7 @@
             aria-label="Close"
             [cacTooltip]="'Close'"
             (click)="cancelRequest.emit()">×</button>
-    <h2 class="create-dialog__title" data-testid="create-dialog-header">{{ header() }}</h2>
+    <h2 class="create-dialog__title" id="create-dialog-title" data-testid="create-dialog-header">{{ header() }}</h2>
     <div class="create-dialog__legacy" data-testid="create-dialog-legacy-notice">
       <span class="create-dialog__legacy-badge">Legacy</span><span class="create-dialog__legacy-copy">This full-field editor remains available. Please use Orchestrator Chat for the primary task-creation flow.</span><button type="button" class="create-dialog__chat-btn" data-testid="create-in-chat" (click)="openChatRequest.emit()">Create in chat</button>
     </div>
@@ -72,7 +74,7 @@
           [model]="newModel()"
           [thinkingLevel]="newThinkingLevel()"
           [availableModels]="availableModels()"
-          [emptyModelLabel]="defaultsPending() ? 'Resolving model…' : 'Policy default'"
+          [emptyModelLabel]="defaultsPending() ? 'Resolving model…' : defaultsError() ? 'Model defaults unavailable' : 'Policy default'"
           eyebrow="Agent for new task"
           triggerTestid="create-agent"
           pickerTestidPrefix="create-agent-picker"
@@ -80,6 +82,12 @@
           (modelChange)="newModel.set($event); modelSelectionTouched.emit()"
           (thinkingLevelChange)="newThinkingLevel.set($event); modelSelectionTouched.emit()" />
         @if (policySuggestion(); as suggestion) { <app-model-routing-suggestion [suggestion]="suggestion" [explicit]="modelSelectionExplicit()" (usePolicy)="policySelectionRequest.emit()" /> }
+        @if (defaultsError(); as error) {
+          <div class="create-dialog__defaults-error" data-testid="create-defaults-error" role="alert">
+            <span>{{ error }}</span>
+            <button type="button" class="btn" data-testid="create-defaults-retry" (click)="retryDefaultsRequest.emit()">Retry</button>
+          </div>
+        }
       </div>
     </div>
     <app-create-mode-picker [(mode)]="newMode" [(allowWebAccess)]="newAllowWebAccess" />
@@ -201,7 +209,7 @@
       <button class="btn btn--primary" data-testid="create-submit"
               (click)="submitRequest.emit()"
               [appPendingButton]="submitting()" pendingLabel="Creating…"
-              [disabled]="!newTitle().trim() || routingPending() || routing()?.requiresQuestion || defaultsPending() || submitting()">Create</button>
+              [disabled]="!newTitle().trim() || routingPending() || routing()?.requiresQuestion || defaultsPending() || defaultsError() || submitting()">Create</button>
     </div>
     <input #fileInput
            type="file"

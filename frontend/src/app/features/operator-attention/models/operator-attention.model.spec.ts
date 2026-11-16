@@ -60,6 +60,15 @@ describe('operator attention model', () => {
     expect(attentionActionLabel(orphan, escalation.spec)).toBe('Open Activity');
   });
 
+  it('opens the environment settings for an unreachable gate host (AGT-3792)', () => {
+    const outage = item('gate-host.unreachable', { cardKey: null, cards: ['AGT-3772', 'AGT-3789'], project: null });
+    expect(attentionClassOf(outage.type)).toBe('gate-host');
+    const [group] = groupAttention([outage]);
+    expect(group.spec.label).toBe('Gate host unreachable');
+    expect(attentionTarget(group.items[0], group.spec)).toBe('hosts');
+    expect(attentionActionLabel(group.items[0], group.spec)).toBe('Open environment');
+  });
+
   it('opens the card of a blocked push (AGT-3695)', () => {
     const [blocked] = groupAttention([item('push.blocked')]);
     expect(blocked.spec.label).toBe('Push blocked');

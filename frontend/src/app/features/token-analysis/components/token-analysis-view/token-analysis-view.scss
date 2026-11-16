@@ -127,6 +127,14 @@
 }
 
 .tav__wide { grid-column: 1 / -1; }
+
+.tav__rank {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+}
+
+.tav__rank-label { color: var(--studio-fg-dim); font-size: 0.76rem; }
 .tav__time { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
 .tav__note { margin: 0; color: var(--studio-fg-muted); font-size: 0.7rem; }
 

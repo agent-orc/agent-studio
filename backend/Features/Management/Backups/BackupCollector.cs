@@ -25,6 +25,8 @@ public sealed record BackupCollectRequest(
 /// </summary>
 public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause pause)
 {
+    private static readonly string[] OperationsRequired =
+        ["principals/principals.json", "agent-secret/token", "client-secret/token", "data/operations.db"];
     /// <summary>Called after each file capture; tests use it to write while the backup reads.</summary>
     public Action<string>? AfterCapture { get; init; }
 
@@ -77,6 +79,7 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                     foreach (var source in options.Sources)
                     {
                         if (!Directory.Exists(source.Path)) continue;
+                        var symlinksBefore = stats.Symlinks;
                         var checkouts = source.Projects ? CheckoutRoots(source.Path) : [];
                         var roots = new List<string> { source.Path };
                         if (source.Projects)
@@ -85,6 +88,15 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                                                   && Directory.Exists(storage)));
                         foreach (var root in roots)
                             Walk(writer, request, source, root, checkouts, contents, stats, ReleaseWhenOverdue, cancellationToken);
+                        if (source.Name == "operations" && stats.Unreadable.Any(entry => entry.Path == "operations"
+                                || entry.Path.StartsWith("operations/", StringComparison.Ordinal)))
+                            throw new BackupException("backup-operations-unreadable",
+                                "Operations authority has unreadable files; the archive was refused.");
+                        if (source.Name == "operations" && (stats.Symlinks != symlinksBefore
+                            || stats.Unsettled.Any(member => member.StartsWith("operations/", StringComparison.Ordinal))
+                            || OperationsRequired.Any(relative => !contents.Any(entry => entry.Path == "operations/" + relative))))
+                            throw new BackupException("backup-operations-incomplete",
+                                "Operations authority changed or could not be captured completely; the archive was refused.");
                     }
                     if (!stats.HoldReleased) stats.HeldMilliseconds = held.ElapsedMilliseconds;
                 }
@@ -131,6 +143,13 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
             var present = Directory.Exists(source.Path);
             if (!present && !source.Optional)
                 throw new BackupException("backup-source-missing", $"Backup source {source.Name} ({source.Path}) does not exist.");
+            if (source.Name == "operations" && present)
+            {
+                foreach (var relative in OperationsRequired)
+                    if (!File.Exists(Path.Combine(source.Path, relative))
+                        || new FileInfo(Path.Combine(source.Path, relative)).LinkTarget is not null)
+                        throw new BackupException("backup-operations-incomplete", $"Operations authority is missing {relative}; the archive was refused.");
+            }
             sources.Add(new BackupManifestSource(source.Name, source.Path, source.Projects, present));
             if (!present || !source.Projects) continue;
             foreach (var (root, worktree) in BackupCheckouts.Discover(source.Path))

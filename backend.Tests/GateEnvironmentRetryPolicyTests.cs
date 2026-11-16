@@ -153,6 +153,34 @@ public sealed class GateEnvironmentRetryPolicyTests
             reviewPassed: true, attemptsSpent: 0, lastAttemptAt: null, failedAt: Failed,
             GateEnvironmentRetryOptions.Default, Failed.AddHours(1));
         Assert.Equal(GateEnvironmentRetryAction.Ignore, decision.Action);
+        Assert.Equal(GateEnvironmentRetryReasons.TransportAwaitsGateHost, decision.Reason);
+    }
+
+    [Fact]
+    public void Transport_failure_is_a_gate_environment_failure_the_operator_may_replay()
+    {
+        // AGT-3792 (AGT-3403, 15 November 2026): the retry answered
+        // not-a-gate-environment-failure because the ladder's exclusion of
+        // transport failures also excluded them from the operator's retry.
+        var status = Status(AcceptedIntegrationFailureCodes.GateEnvironmentFailure);
+        status = status with
+        {
+            Failure = status.Failure! with
+            {
+                Reason = "The build gate blocked the merge into develop: Remote gate transport failure after "
+                    + "bounded retries: ssh exited 255: ssh: connect to host 172.30.83.1 port 12222: Connection refused",
+            },
+        };
+        var facts = GateEnvironmentRetryFactsReader.Facts(Task(TaskStates.Escalated), status,
+            reviewPassed: true, attemptsSpent: 0, lastAttemptAt: null, failedAt: Failed,
+            GateEnvironmentRetryOptions.Default, Failed.AddHours(1));
+
+        Assert.True(facts.IsGateEnvironmentFailure);
+        Assert.True(facts.TransportFailure);
+        Assert.False(GateEnvironmentRetryFactsReader.IsGateEnvironmentFailure(status));
+        Assert.Null(GateEnvironmentRetryPolicy.OperatorReplayRefusal(facts));
+        Assert.Equal(GateEnvironmentRetryReasons.NoPassedReview,
+            GateEnvironmentRetryPolicy.OperatorReplayRefusal(facts with { ReviewPassed = false }));
     }
 
     [Fact]

@@ -12,15 +12,16 @@ import { ClaudeSignInDialogService, CodexSignInDialogService, DeviceLoginCodeEnt
 import { claudeSignInTarget, providerAuthTone, signInTarget, type ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
 import { latestRepositoryProbes, normalizeProjectRegistryEntries } from '../../../remote-hosts/models/deployment-checkpoints';
 import type { InstallationIdentity, ProjectRegistryEntry, ProjectRegistryRead, RepositoryStatus } from '../../../remote-hosts/models/deployment-checkpoints';
-import { credentialFreeRepositoryUrl, deviceLoginTone, gitSetupTone, providerBadgeWaitReason, type DeviceLogin, type GitSetup, type HostJoinToken, type NetworkProof, type Probe, type ProofCard } from './first-run-checklist.models';
+import { credentialFreeRepositoryUrl, deviceLoginTone, downloadTextFile, gitSetupTone, pickProject, providerBadgeReady, providerBadgeWaitReason, savedProof, type DeviceLogin, type GitSetup, type HostJoinToken, type NetworkProof, type Probe, type ProofCard } from './first-run-checklist.models';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { readInstallationIdentity } from './first-run-installation';
+import { ServerCheckoutNoticeComponent, ServerCheckoutStore } from '../../../server-checkout';
 
 /** Installation facts are re-read from the authority and runner probes on every refresh. */
 @Component({
   selector: 'app-first-run-checklist',
   standalone: true,
-  imports: [StatusIndicatorComponent, DeviceLoginCodeEntryComponent],
+  imports: [StatusIndicatorComponent, DeviceLoginCodeEntryComponent, ServerCheckoutNoticeComponent],
   templateUrl: './first-run-checklist.component.html',
   styleUrl: './first-run-checklist.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -35,6 +36,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   private readonly providers = inject(ProviderAuthStatusService);
   private readonly codexSignIn = inject(CodexSignInDialogService);
   private readonly claudeSignIn = inject(ClaudeSignInDialogService);
+  private readonly serverCheckout = inject(ServerCheckoutStore);
   private poll: ReturnType<typeof setInterval> | null = null;
   private loginPoll: ReturnType<typeof setInterval> | null = null;
   private gitPoll: ReturnType<typeof setInterval> | null = null;
@@ -49,7 +51,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   readonly taskServerUnavailable = computed(() => !this.localProfile() && this.identity().error);
   readonly projects = signal<Probe<readonly ProjectRegistryEntry[]>>({ value: null, error: false });
   readonly repository = signal<Probe<RepositoryStatus>>({ value: null, error: false });
-  readonly proof = signal<ProofCard | null>(this.savedProof());
+  readonly proof = signal<ProofCard | null>(savedProof());
   readonly proofDetail = signal<TaskDetail | null>(null);
   readonly networkProof = signal<NetworkProof | null>(null);
   readonly proofError = signal<string | null>(null);
@@ -72,7 +74,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   readonly joinValid = computed(() => /^https:\/\/[^\s/@?#]+\/?$/.test(this.joinServerUrl().trim())
     && /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(this.joinRunnerName().trim()));
   readonly joinCommand = computed(() => `chmod 600 ./join.token && sudo ./agent-studio-setup --mode agent-host --join-token-file ./join.token --runner-name ${this.joinRunnerName().trim()} --role ${this.joinRole()}`);
-  readonly registrationValid = computed(() => !!this.firstProject()?.shortCode
+  readonly registrationValid = computed(() => !!this.selectedProject()?.shortCode
     && credentialFreeRepositoryUrl(this.repositoryUrl())
     && (!this.localProfile() || this.repositoryUrl().trim().startsWith('https://'))
     && !!this.integrationRef().trim());
@@ -86,7 +88,10 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   readonly gitSetupValid = computed(() => (this.localProfile() || !!this.gitRunnerId())
     && !!this.repository().value?.registration?.repositoryUrl
     && (this.gitMethod() === 'deploy-key' || this.gitToken().length >= 20));
-  readonly firstProject = computed(() => this.projects().value?.find(project => !project.archived) ?? null);
+  readonly activeProjects = computed(() => this.projects().value?.filter(project => !project.archived) ?? []);
+  /** AGT-3809: repository access is verified per project, not only for the first one. */
+  readonly selectedProjectId = signal<string | null>(null);
+  readonly selectedProject = computed(() => pickProject(this.activeProjects(), this.selectedProjectId()));
   readonly localProfile = computed(() => this.auth.status()?.profile === 'local');
   readonly ownerReady = computed(() => this.localProfile() || ((this.monolithWithoutTaskServer()
       ? this.monolithOwnerStatus().value?.bootstrapRequired === false : this.identity().value?.ownerBootstrapped === true)
@@ -99,13 +104,13 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   readonly providersReady = computed(() => {
     const required = this.providerBadges().filter(badge =>
       (badge.provider === 'codex' || badge.provider === 'claude') && this.badgeHostOnline(badge));
-    return required.length > 0 && required.every(badge => this.badgeReady(badge));
+    return required.length > 0 && required.every(badge => providerBadgeReady(badge, this.nowMs()));
   });
   readonly selectedProvider = computed(() => this.providerBadges().find(badge =>
     (badge.provider === 'codex' || badge.provider === 'claude') && this.badgeHostOnline(badge)
-    && this.badgeReady(badge)) ?? null);
-  readonly repositoryReady = computed(() => !!this.firstProject()?.id && !!this.repository().value?.registration
-    && (!this.localProfile() || !!this.firstProject()?.repositoryPath));
+    && providerBadgeReady(badge, this.nowMs())) ?? null);
+  readonly repositoryReady = computed(() => !!this.selectedProject()?.id && !!this.repository().value?.registration
+    && (!this.localProfile() || !!this.selectedProject()?.repositoryPath));
   readonly gitReady = computed(() => {
     const status = this.repository().value;
     if (!status) return false;
@@ -168,7 +173,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
         this.networkProof.set(null);
         localStorage.removeItem('studio-first-run-proof');
       }
-      const project = result.projects.value?.find(item => !item.archived);
+      const project = pickProject(result.projects.value?.filter(item => !item.archived) ?? [], this.selectedProjectId());
       if (!project) return of({ value: null, error: false } as Probe<RepositoryStatus>);
       const repositoryUrl = this.localProfile()
         ? `/api/first-run/projects/${encodeURIComponent(project.id)}/repository`
@@ -177,7 +182,11 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
         map(value => ({ value, error: false } as Probe<RepositoryStatus>)),
         catchError(() => of({ value: null, error: true } as Probe<RepositoryStatus>)));
     })).subscribe({
-      next: repository => { this.repository.set(repository); this.finishReload(); this.refreshProof(); },
+      next: repository => {
+        // A checkout the access setup cloned must clear the project's server checkout notice too.
+        if (this.localProfile() && this.selectedProject()) this.serverCheckout.load(this.selectedProject()!.id);
+        this.repository.set(repository); this.finishReload(); this.refreshProof();
+      },
       error: () => this.finishReload(),
     });
   }
@@ -185,8 +194,17 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
     this.loading.set(false);
     if (this.reloadQueued) { this.reloadQueued = false; this.reload(); }
   }
+  selectProject(id: string): void {
+    if (id === this.selectedProject()?.id) return;
+    this.selectedProjectId.set(id);
+    // A pending access setup belongs to the project it was started for.
+    if (this.gitPoll) { clearInterval(this.gitPoll); this.gitPoll = null; }
+    localStorage.removeItem('studio-first-run-git-setup-id');
+    this.gitSetup.set(null); this.gitSetupError.set(null); this.repository.set({ value: null, error: false });
+    this.reload();
+  }
   openProject(): void {
-    const project = this.firstProject();
+    const project = this.selectedProject();
     if (project) this.openProjectSettings.emit(project.displayName);
     else this.workspaces.openProjectOnboard('');
   }
@@ -198,7 +216,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
     const local = this.localProfile();
     const url = local ? '/api/first-run/git-setups' : '/api/v1/management/runner-git-setups';
     const body = local ? {
-      projectId: this.firstProject()!.id, method: this.gitMethod(),
+      projectId: this.selectedProject()!.id, method: this.gitMethod(),
       token: this.gitMethod() === 'token' ? this.gitToken() : null,
     } : {
       runnerId: this.gitRunnerId(), repositoryUrl: this.repository().value!.registration!.repositoryUrl,
@@ -279,13 +297,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   }
   downloadJoinToken(): void {
     const token = this.joinToken()?.joinToken;
-    if (!token) return;
-    const blobUrl = URL.createObjectURL(new Blob([token + '\n'], { type: 'text/plain' }));
-    const link = document.createElement('a');
-    link.href = blobUrl;
-    link.download = 'join.token';
-    link.click();
-    URL.revokeObjectURL(blobUrl);
+    if (token) downloadTextFile('join.token', token + '\n');
   }
 
   async copyJoinCommand(): Promise<void> {
@@ -293,7 +305,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   }
 
   registerRepository(): void {
-    const project = this.firstProject();
+    const project = this.selectedProject();
     if (!project || this.registering()) return;
     this.registering.set(true);
     this.registrationError.set(null);
@@ -363,18 +375,13 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
       alias === host.id || alias === host.clientId || alias === host.capacityHostId));
   }
 
-  badgeReady(badge: ProviderAuthBadge): boolean {
-    return badge.reachable && badge.state === 'ok' && !!badge.lastSeenAt
-      && this.nowMs() - Date.parse(badge.lastSeenAt) < 5 * 60_000;
-  }
-
   badgeWaitReason(badge: ProviderAuthBadge): string | null {
     return providerBadgeWaitReason(badge, this.badgeHostOnline(badge), this.nowMs());
   }
 
   startProof(): void {
     if (!this.canStartProof()) return;
-    const project = this.firstProject()!;
+    const project = this.selectedProject()!;
     const provider = this.selectedProvider()!;
     const watchPath = this.localProfile() ? project.storageLocation : undefined;
     this.creatingProof.set(true);
@@ -438,12 +445,5 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
       next: detail => { this.proofDetail.set(detail); this.proofError.set(null); },
       error: () => this.proofError.set('The proof card could not be read. Retry after the Task Server reconnects.'),
     });
-  }
-
-  private savedProof(): ProofCard | null {
-    try {
-      const value = JSON.parse(localStorage.getItem('studio-first-run-proof') ?? 'null') as ProofCard | null;
-      return value?.id && value.projectId && value.installationId ? value : null;
-    } catch { return null; }
   }
 }

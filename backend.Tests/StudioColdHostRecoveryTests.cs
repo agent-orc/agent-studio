@@ -3,8 +3,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Management;
+using AgentStudio.Pipeline;
 using AgentStudio.Secrets;
 using AgentStudio.Security;
+using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts.BatchGate;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -44,6 +47,56 @@ public sealed class StudioColdHostRecoveryTests
         var secret = await provider.PutAsync(SecretScope.Workspace, "recovery-probe", secretValue,
             SecretActor.Human(owner.User.Id));
 
+        // Use the persisted Task Server authority, rather than synthetic attempt files.
+        var authority = new AttemptAuthorityService(fixture.Configuration(),
+            NullLogger<AttemptAuthorityService>.Instance, () => clock.GetUtcNow().UtcDateTime);
+        var activeRun = authority.AcquireRun("PROJ-A-Active", "PROJ-A", null,
+            "fake-coding-cli", "lost-host", 600, "cold-host-code-claim").RunAttempt!;
+        var reviewRun = authority.AcquireRun("PROJ-B-AutoReview", "PROJ-B", null,
+            "fake-coding-cli", "lost-host", 600, "cold-host-review-source").RunAttempt!;
+        Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(reviewRun.AttemptId, reviewRun.LastFence,
+                reviewRun.AuthorityEpoch, "cold-host-review-source-settle"),
+            Outcome = "done", ResultSha = "abcdef0123456789",
+        }).Status);
+        var activeReview = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "PROJ-B-AutoReview", "PROJ-B", "abcdef0123456789", reviewRun.AttemptId,
+            "requirements", "policy", [], "cold-host-review-create")).ReviewAttempt!;
+        activeReview = authority.ClaimReview(activeReview.AttemptId, "fake-review-cli", "lost-host",
+            600, "cold-host-review-claim").ReviewAttempt!;
+
+        var batchRoot = Path.Combine(fixture.Home, ".local", "share", "agentstudio", "batch-gates");
+        var batches = new BatchGateStore(batchRoot);
+        var now = clock.GetUtcNow();
+        const string baseSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string candidateSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        foreach (var (id, project, published) in new[]
+                 { ("cold-red", "PROJ-A", false), ("cold-published", "PROJ-B", true) })
+        {
+            var scope = new BatchGateScope(project, project, "develop", "full", "profile", "fixture");
+            var members = Enumerable.Range(0, 2).Select(index => new BatchGateSubject(
+                $"{project}-batch-{index}", project, project, "develop", "full", "profile", "fixture",
+                "refs/heads/recovery", baseSha, activeRun.AttemptId, 1, 1, baseSha,
+                true, true, true, true, false, null, false, now, index + 1L)).ToArray();
+            var digest = BatchGatePolicy.MembershipDigest(baseSha, scope, members);
+            batches.CloseManifest(new BatchGateManifest(id, scope, baseSha, digest, now,
+                members, [], members.Select(member => member.TaskKey).ToArray()));
+            BatchGateStates.Reach(batches, new BatchGateState(id, digest, BatchPhase.Assembled,
+                candidateSha, 1, now));
+            var evidencePath = Path.Combine(batchRoot, id + "-evidence.json");
+            Write(batchRoot, id + "-evidence.json", "{}");
+            var run = new BatchGateRunRecord(id + "-run", id, digest, baseSha, candidateSha,
+                "full", "profile", "fake-gate-cli", 1, ["fake-test"], now, evidencePath);
+            batches.RecordRun(run);
+            batches.RecordVerdict(new BatchGateRunVerdict(run.BatchRunId, id, digest,
+                candidateSha, "profile", published ? "pass" : "fail", published ? "passed" : "red",
+                evidencePath, now));
+            if (published)
+                batches.RecordPublication(new BatchGatePublication(id, digest, run.BatchRunId,
+                    baseSha, candidateSha, candidateSha, 1, 1, now));
+        }
+
         var expected = new Dictionary<string, string>(StringComparer.Ordinal);
         var projects = new[] { (Id: "PROJ-A", Name: "alpha"), (Id: "PROJ-B", Name: "beta") };
         foreach (var project in projects)
@@ -70,8 +123,6 @@ public sealed class StudioColdHostRecoveryTests
             JsonSerializer.Serialize(new { projects = projects.Select(p => new { id = p.Id, name = p.Name }) }));
         var records = new[]
         {
-            "attempts/PROJ-A-Active.json", "reviews/PROJ-B-AutoReview.json",
-            "batches/red/manifest.json", "batches/published/manifest.json",
             "settlements/PROJ-A-Done.json", "integrations/PROJ-B-Done.json",
         };
         foreach (var record in records)
@@ -167,11 +218,40 @@ public sealed class StudioColdHostRecoveryTests
         foreach (var (record, digest) in recordDigests)
             Assert.Equal(digest, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(destinations["home"],
                 ".local", "share", "agentstudio", record)))));
-        Assert.Single(Directory.GetFiles(Path.Combine(destinations["home"], ".local", "share", "agentstudio", "attempts")));
-        Assert.Single(Directory.GetFiles(Path.Combine(destinations["home"], ".local", "share", "agentstudio", "reviews")));
-        Assert.Single(Directory.GetFiles(Path.Combine(destinations["home"], ".local", "share", "agentstudio", "batches", "published")));
-        Assert.ThrowsAny<Exception>(() => BackupRestore.Restore(archive, BackupKey.Load(fixture.KeyFile),
-            new BackupRestorePlan(destinations, CloneCheckouts: true)));
+        var reopenedAuthority = new AttemptAuthorityService(restoredConfig,
+            NullLogger<AttemptAuthorityService>.Instance, () => clock.GetUtcNow().UtcDateTime);
+        var restoredRun = reopenedAuthority.GetTaskProjection("PROJ-A-Active");
+        var restoredReview = reopenedAuthority.GetTaskProjection("PROJ-B-AutoReview");
+        Assert.Equal(activeRun.AttemptId, restoredRun.CurrentRunAttempt?.AttemptId);
+        Assert.Equal(activeReview.AttemptId, restoredReview.CurrentReviewAttempt?.AttemptId);
+        Assert.Single(restoredRun.RunAttempts);
+        Assert.Single(restoredReview.ReviewAttempts);
+        Assert.Equal(AttemptWriteStatus.Duplicate, reopenedAuthority.AcquireRun("PROJ-A-Active", "PROJ-A",
+            null, "fake-coding-cli", "lost-host", 600, "cold-host-code-claim").Status);
+        Assert.Equal(AttemptWriteStatus.Duplicate, reopenedAuthority.CreateReviewAttempt(
+            new CreateReviewAttemptRequest("PROJ-B-AutoReview", "PROJ-B", "abcdef0123456789",
+                reviewRun.AttemptId, "requirements", "policy", [], "cold-host-review-create")).Status);
+        Assert.Equal(AttemptWriteStatus.Duplicate, reopenedAuthority.ClaimReview(activeReview.AttemptId,
+            "fake-review-cli", "lost-host", 600, "cold-host-review-claim").Status);
+        Assert.Single(reopenedAuthority.GetTaskProjection("PROJ-A-Active").RunAttempts);
+        Assert.Single(reopenedAuthority.GetTaskProjection("PROJ-B-AutoReview").ReviewAttempts);
+        var reopenedBatches = new BatchGateStore(Path.Combine(destinations["home"], ".local", "share",
+            "agentstudio", "batch-gates"));
+        Assert.Equal(new[] { "cold-published", "cold-red" },
+            reopenedBatches.ListManifests().Select(manifest => manifest.BatchId).OrderBy(id => id));
+        Assert.Single(reopenedBatches.ListRuns("cold-red"));
+        Assert.Single(reopenedBatches.ListRuns("cold-published"));
+        Assert.Null(reopenedBatches.ReadPublication("cold-red"));
+        Assert.Equal("cold-published", reopenedBatches.ReadPublication("cold-published")?.BatchId);
+        var publishedSubjects = reopenedBatches.ListManifests()
+            .Where(manifest => reopenedBatches.ReadPublication(manifest.BatchId) is not null)
+            .SelectMany(manifest => manifest.Members.Select(member => member.TaskKey)).ToArray();
+        Assert.Equal(publishedSubjects.Length, publishedSubjects.Distinct(StringComparer.Ordinal).Count());
+        Assert.Throws<IOException>(() => reopenedBatches.RecordPublication(
+            reopenedBatches.ReadPublication("cold-published")!));
+        var secondRestore = Assert.Throws<BackupException>(() => BackupRestore.Restore(archive,
+            BackupKey.Load(fixture.KeyFile), new BackupRestorePlan(destinations, CloneCheckouts: true)));
+        Assert.Equal("restore-target-not-empty", secondRestore.Code);
 
         var evidence = new
         {
@@ -189,7 +269,13 @@ public sealed class StudioColdHostRecoveryTests
             measuredRecoveryPointSeconds = (lossAt - DateTimeOffset.Parse(manual.CreatedAt)).TotalSeconds,
             measuredRecoveryTimeSeconds = recoveryTimer.Elapsed.TotalSeconds,
             recoveryTimeBasis = "archive fetch from local off-host directory through files restored and key installed",
-            liveRestartDeduplicationProved = false,
+            restoredRunAttemptId = activeRun.AttemptId,
+            restoredReviewAttemptId = activeReview.AttemptId,
+            redBatchId = "cold-red",
+            publishedBatchId = "cold-published",
+            publicationCount = reopenedBatches.ListManifests().Count(manifest =>
+                reopenedBatches.ReadPublication(manifest.BatchId) is not null),
+            idempotentReplayProved = true,
         };
         if (Environment.GetEnvironmentVariable("JOB_RESULTS_DIR") is { Length: > 0 } results)
         {

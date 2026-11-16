@@ -595,4 +595,100 @@ public sealed partial class BatchGatePilotService
             throw new IOException("Batch integration bookkeeping could not be recorded.");
     }
 
+    /// <summary>
+    /// Repairs only a published, passed member whose release was recorded as
+    /// unattributable. The pre-publication tip preserves the delivery range
+    /// even after develop contains the candidate.
+    /// </summary>
+    private async Task RepairPublishedUnattributedAsync(CancellationToken ct)
+    {
+        foreach (var pending in _store.ListAllPending().Where(item =>
+                     _store.ReadPendingOutcome(item.ReviewAttemptId) == "release-unattributed"))
+        {
+            ct.ThrowIfCancellationRequested();
+            var subject = pending.Subject;
+            var task = _scanner.FindJob(subject.TaskKey, pending.WatchPath);
+            if (task?.State != TaskStates.Escalated || task.PendingIntent is not null
+                || !File.Exists(Path.Combine(task.FolderPath, "task.json"))) continue;
+            var projection = _authority.GetTaskProjection(AuthorityKey(task));
+            if (projection.CurrentReviewAttempt?.AttemptId != pending.ReviewAttemptId
+                || projection.CurrentRunAttempt?.AttemptId != subject.RunAttempt
+                || projection.CurrentReviewAttempt.Outcome is not
+                    (ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect)) continue;
+            var envelope = ReviewSubjectStore.Read(task.FolderPath);
+            if (envelope is null || envelope.RunAttemptId != subject.RunAttempt
+                || !string.Equals(envelope.ResultSha, subject.ResultSha,
+                    StringComparison.OrdinalIgnoreCase)) continue;
+            var deliveryRef = envelope.ImmutableResultRef ?? envelope.ResultRef;
+            if (string.IsNullOrWhiteSpace(deliveryRef)) continue;
+            foreach (var manifest in _store.ListManifests().Where(item =>
+                         item.Members.Any(member => member.TaskKey == subject.TaskKey
+                             && member.RunAttempt == subject.RunAttempt)))
+            {
+                var publication = _store.ReadPublication(manifest.BatchId);
+                var replay = _store.TryReadReplay(manifest.BatchId, subject.TaskKey);
+                if (publication is null || replay?.Outcome != "admitted"
+                    || publication.MembershipDigest != manifest.MembershipDigest
+                    || publication.PreTipSha != manifest.BaseSha
+                    || publication.TestedCandidateSha != publication.VerifiedRemoteSha)
+                    continue;
+                var run = _store.ReadRun(manifest.BatchId, publication.BatchRunId);
+                if (publication.BatchRunId != run.BatchRunId
+                    || publication.TestedCandidateSha != run.CandidateSha
+                    || !PassingPublicationRun(manifest, run)
+                    || _store.TryReadMember(manifest.BatchId, subject.TaskKey,
+                        run.BatchRunId) is null) continue;
+                var verified = _git.VerifyDeliveredCommit(pending.RepositoryPath,
+                    manifest.Scope.IntegrationBranch, publication.VerifiedRemoteSha);
+                if (!verified.IsVerified) continue;
+                var range = _git.InspectRemoteDeliveryCommitRange(pending.RepositoryPath,
+                    deliveryRef, subject.ResultSha,
+                    manifest.Scope.IntegrationBranch, envelope.BaseSha, ct,
+                    taskKey: subject.TaskKey, fallbackIntegrationBaseSha: manifest.BaseSha);
+                if (!range.Success || range.Commits.Count == 0)
+                {
+                    _logger.LogWarning("batch-release-attribution-repair-refused task={TaskKey} reason={Reason}",
+                        subject.TaskKey, range.Warning);
+                    continue;
+                }
+                var attributed = RemoteCommitAttributionGuard.Attribute(subject.TaskKey,
+                    deliveryRef, range.Commits,
+                    envelope.Repository, RemoteCommitAttributionGuard.CardReferencedKeys(task));
+                var rewritten = replay.Strategy == BatchReplayStrategies.Merge ? []
+                    : replay.Replacements.Where(item => !string.Equals(item.OriginalSha,
+                        item.RebasedSha, StringComparison.OrdinalIgnoreCase)).ToArray();
+                if (!attributed.Accepted || rewritten.Any(item =>
+                        !attributed.Commits.Any(commit => string.Equals(commit.Sha,
+                            item.OriginalSha, StringComparison.OrdinalIgnoreCase))))
+                {
+                    _logger.LogWarning("batch-release-attribution-repair-refused task={TaskKey} reason={Reason}",
+                        subject.TaskKey, attributed.Warning ?? "Replacement source was not attributed.");
+                    continue;
+                }
+                if (!_mutations.SetRemoteCommitAttributionOnFolder(task.FolderPath,
+                        subject.RunAttempt,
+                        string.IsNullOrWhiteSpace(envelope.Executor)
+                            ? "remote-runner-repair" : envelope.Executor,
+                        subject.ResultSha, attributed.Commits)
+                    || rewritten.Length > 0 && !_mutations.RecordMechanicalRebaseOnFolder(
+                        task.FolderPath, rewritten)) continue;
+                BatchGateOwnershipStore.Write(task.FolderPath, new BatchGateOwnership(
+                    pending.ReviewAttemptId, subject, manifest.BatchId, run.BatchRunId));
+                RecordBatchIntegration(task.FolderPath, manifest, run, replay);
+                var moved = await _transitions.MoveAsync(task.Id, TaskStates.HumanReview,
+                    task.WatchPath, ct, cause: $"batch-attribution-repair:{manifest.BatchId}",
+                    suppressProductExecution: true, expectedSourceState: TaskStates.Escalated,
+                    transitionCause: LaneChangeCauses.ReviewVerdict,
+                    transitionDetail: "batch-release-attribution-repaired").ConfigureAwait(false);
+                if (moved.Status != MoveJobStatus.Success) continue;
+                PublicationStep(manifest, run, "attributed", subject.TaskKey);
+                PublicationStep(manifest, run, "released", subject.TaskKey);
+                _reviewJournal.RecordRemoteReviewParkVerdict(task.ProjectName, task.Id,
+                    moved.NewFolderPath ?? task.FolderPath, "Pass",
+                    "Published batch attribution and replacement mapping repaired.");
+                break;
+            }
+        }
+    }
+
 }

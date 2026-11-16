@@ -12,10 +12,20 @@ namespace AgentStudio.Pipeline;
 /// Any run that reaches the host ends the outage with one Operations event;
 /// an outage longer than <see cref="GateHostOutagePolicy.EscalateMinutesConfigKey"/>
 /// escalates once for the gate, never once per member.
+/// <para>
+/// AGT-3792: the monitor is the installation's one gate host health state,
+/// shared with the gate transport and the orphan sweep. With a transport
+/// probe no batch forms and no gate run starts while the host is unreachable;
+/// each tick probes the host when the backoff allows, and the first answer
+/// lets the pending members form one batch.
+/// </para>
 /// </summary>
 public sealed partial class BatchGatePilotService
 {
     public const string HostOutageTopic = "gate-host-outage";
+
+    /// <summary>The verdict and lane label of a gate run that could not reach the gate host.</summary>
+    private const string GateHostUnavailableVerdict = "gate-host-unavailable";
 
     public GateHostOutageMonitor HostOutage => _hostOutage;
 
@@ -28,10 +38,39 @@ public sealed partial class BatchGatePilotService
         => _configuration?.GetValue<int?>(GateHostOutagePolicy.EscalateMinutesConfigKey) is > 0 and var minutes
             ? TimeSpan.FromMinutes(minutes) : GateHostOutagePolicy.DefaultEscalateAfter;
 
+    /// <summary>
+    /// Probes the gate host when the open outage's backoff allows. A probe
+    /// that answers ends the outage; the planner forms the next batch on this
+    /// same tick.
+    /// </summary>
+    private async Task ProbeGateHostAsync(CancellationToken ct)
+    {
+        if (await _hostOutage.ProbeIfDueAsync(ct).ConfigureAwait(false) is { } answer)
+        {
+            if (_hostOutage.Current is { } open)
+                _logger.LogInformation(
+                    "gate-host-probe host={Host} reachable=false since={Since} failed_probes={FailedProbes} error={Error}",
+                    _hostOutage.Host, open.SinceUtc, open.FailedProbes, answer.Error);
+            else
+                _logger.LogInformation("gate-host-probe host={Host} reachable={Reachable}",
+                    _hostOutage.Host, answer.Reachable);
+        }
+        if (_hostOutage.Current is { } outage)
+            EscalateGateHostOutageIfDue(outage.WatchPaths.FirstOrDefault()
+                ?? _scanner.GetWatchPaths().FirstOrDefault()?.Path ?? string.Empty);
+    }
+
     /// <summary>A run that could not reach the host: opens or extends the outage.</summary>
     private void RecordGateHostUnavailable(string runKey, BuildTestGateResult gate, string watchPath)
     {
-        var outage = _hostOutage.Unreachable(runKey, gate.Reason ?? gate.Output ?? "transport failure");
+        var outage = _hostOutage.Unreachable(runKey, gate.Reason ?? gate.Output ?? "transport failure", watchPath);
+        if (outage is null)
+        {
+            _logger.LogWarning(
+                "gate-host-transport-failure run={RunKey} error={Error}: the gate host is not marked unreachable yet",
+                runKey, gate.Reason);
+            return;
+        }
         _logger.LogWarning(
             "gate-host-unavailable run={RunKey} since={Since} failed_probes={FailedProbes} affected={Affected} error={Error}",
             runKey, outage.SinceUtc, outage.FailedProbes, outage.AffectedRuns.Count, outage.LastError);
@@ -41,7 +80,7 @@ public sealed partial class BatchGatePilotService
     /// <summary>A run that the outage holds before it starts.</summary>
     private void HoldForGateHost(string runKey, string watchPath)
     {
-        _hostOutage.Held(runKey);
+        _hostOutage.Held(runKey, watchPath);
         EscalateGateHostOutageIfDue(watchPath);
     }
 
@@ -61,28 +100,37 @@ public sealed partial class BatchGatePilotService
                 + $"({Minutes((long)(_time.GetUtcNow() - outage.SinceUtc).TotalMilliseconds)} min, "
                 + $"{outage.FailedProbes} failed probe(s)). {outage.AffectedRuns.Count} run(s) wait in "
                 + $"{TaskStates.AutoReview}: {string.Join(", ", outage.AffectedRuns)}. "
-                + "Repair the gate host transport; the gate resumes on its own once a probe reaches it.",
+                + MonolithTransitionAdapter.GateHostOwnerAdvice(_hostOutage.Host),
             Reasoning = outage.LastError,
         });
     }
 
-    /// <summary>A run reached the host. Ends an open outage with its one Operations event.</summary>
-    private void RecordGateHostReachable(string watchPath)
+    /// <summary>A run reached the host. Ends an open outage; <see cref="OnGateHostOutageEnded"/> reports it.</summary>
+    private void RecordGateHostReachable() => _hostOutage.Reachable();
+
+    /// <summary>
+    /// The one Operations event of a closed outage, whoever reached the host:
+    /// a batch or per-task gate, a merge gate, or the transport probe.
+    /// </summary>
+    private void OnGateHostOutageEnded(GateHostOutageEnded ended)
     {
-        if (_hostOutage.Reachable() is not { } ended) return;
         _logger.LogWarning(
             "gate-host-outage-ended since={Since} ended={Ended} failed_probes={FailedProbes} affected={Affected}",
             ended.SinceUtc, ended.EndedUtc, ended.FailedProbes, string.Join(",", ended.AffectedRuns));
-        Service<OrchestratorLog>()?.Append(watchPath, new OrchestratorLogEntry
-        {
-            Ts = ended.EndedUtc.UtcDateTime,
-            Kind = OrchestratorLogKinds.Alert,
-            Topic = HostOutageTopic,
-            Summary = $"Gate host outage from {ended.SinceUtc.UtcDateTime:yyyy-MM-dd HH:mm:ss} to "
-                + $"{ended.EndedUtc.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC "
-                + $"({ended.FailedProbes} failed probe(s){(ended.Escalated ? ", escalated" : "")}). "
-                + $"Affected runs resumed: {string.Join(", ", ended.AffectedRuns)}. No member was escalated.",
-        });
+        var watchPaths = ended.WatchPaths.Count > 0 ? ended.WatchPaths
+            : _scanner.GetWatchPaths().Select(entry => entry.Path).Where(path => !string.IsNullOrEmpty(path))
+                .ToArray();
+        foreach (var watchPath in watchPaths)
+            Service<OrchestratorLog>()?.Append(watchPath, new OrchestratorLogEntry
+            {
+                Ts = ended.EndedUtc.UtcDateTime,
+                Kind = OrchestratorLogKinds.Alert,
+                Topic = HostOutageTopic,
+                Summary = $"Gate host outage from {ended.SinceUtc.UtcDateTime:yyyy-MM-dd HH:mm:ss} to "
+                    + $"{ended.EndedUtc.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC "
+                    + $"({ended.FailedProbes} failed probe(s){(ended.Escalated ? ", escalated" : "")}). "
+                    + $"Affected runs resumed: {string.Join(", ", ended.AffectedRuns)}. No member was escalated.",
+            });
     }
 
     /// <summary>
@@ -99,7 +147,7 @@ public sealed partial class BatchGatePilotService
                 ? ownership with { FallbackGateActive = true, FallbackGateStarts = 0 }
                 : new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject, FallbackGateActive: true),
             ct).ConfigureAwait(false);
-        Lane(pending, "gate-host-unavailable", outcome: "resume-per-task",
+        Lane(pending, GateHostUnavailableVerdict, outcome: "resume-per-task",
             reason: _hostOutage.Current?.WaitingReason ?? gate.Reason);
     }
 
@@ -110,13 +158,13 @@ public sealed partial class BatchGatePilotService
     private void HoldBatchForGateHost(BatchGateManifest manifest, BatchGateRunRecord run,
         BuildTestGateResult gate, IReadOnlyList<BatchGatePendingRecord> gated, long fence)
     {
-        RecordVerdict(run, gate, "gate-host-unavailable");
+        RecordVerdict(run, gate, GateHostUnavailableVerdict);
         RecordGateHostUnavailable(run.BatchRunId, gate,
             gated.FirstOrDefault()?.WatchPath ?? ProjectWatchPath(manifest.Scope.Project, gated) ?? string.Empty);
-        var reason = _hostOutage.Current?.WaitingReason ?? "gate host unreachable; waiting";
+        var reason = _hostOutage.Current?.WaitingReason ?? "gate host transport failed; waiting";
         State(manifest, BatchPhase.Abandoned, null, fence, reason);
         ReturnToPending(manifest);
         foreach (var member in gated)
-            Lane(member, "gate-host-unavailable", outcome: "requeued", reason: reason);
+            Lane(member, GateHostUnavailableVerdict, outcome: "requeued", reason: reason);
     }
 }

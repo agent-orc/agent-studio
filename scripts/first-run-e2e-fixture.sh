@@ -157,7 +157,7 @@ first_run_start_runners() {
     RUNNER_SERVER_URL="http://127.0.0.1:${PW_E2E_BACKEND_PORT}" \
     RUNNER_ID="${runner_id}" RUNNER_NAME="${runner_id}" RUNNER_HOSTNAME=first-run-host \
     RUNNER_ROLE="${role}" RUNNER_CLI_TYPE=codex \
-    RUNNER_CODEX_CLI_BIN="${cli_dir}/codex" \
+    RUNNER_CODEX_CLI_BIN="${FIRST_RUN_CODING_CLI_BIN:-${cli_dir}/codex}" \
     RUNNER_CLAUDE_CLI_BIN="${cli_dir}/claude" \
     RUNNER_GIT_REMOTE='https://github.com/agent-studio/first-run-e2e.git' \
     RUNNER_GIT_PUSH_REMOTE='https://github.com/agent-studio/first-run-e2e.git' \

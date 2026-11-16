@@ -18,6 +18,7 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 import type { ModelRoutingRecommendation } from '../../../quota';
 import { ModelRoutingSuggestionComponent } from '../model-routing-suggestion/model-routing-suggestion.component';
 import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
+import { ModalFocusDirective } from '../../../../directives/modal-focus.directive';
 export interface PendingAttachment {
   id: string;
   file: File;
@@ -46,7 +47,7 @@ const PENDING_PREFIX = 'pending-attachment-';
   selector: 'app-create-job-dialog',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent, StatusIndicatorComponent, PendingButtonDirective],
+  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent, StatusIndicatorComponent, PendingButtonDirective, ModalFocusDirective],
   templateUrl: './create-task-dialog.component.html',
   styleUrl: './create-task-dialog.component.scss'
 })
@@ -58,6 +59,7 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly routing = input<ComponentRoutingResolution | null>(null); readonly routingPending = input(false);
   readonly submitting = input(false);
   readonly defaultsPending = input(false);
+  readonly defaultsError = input<string | null>(null);
   readonly policySuggestion = input<ModelRoutingRecommendation | null>(null); readonly modelSelectionExplicit = input(false);
   readonly newTitle = model<string>('');
   readonly newWatchPath = model<string>('');
@@ -109,6 +111,7 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly openChatRequest = output<void>();
   readonly submitRequest = output<void>();
   readonly watchPathChange = output<string>();
+  readonly retryDefaultsRequest = output<void>();
 
   readonly isDragging = model<boolean>(false);
   readonly attachmentError = model<string | null>(null);

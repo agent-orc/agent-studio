@@ -7,6 +7,19 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runbook="$repo_root/docs/operations/setup/studio-backup-restore.md"
 restore="$repo_root/deploy/compose/monolith-networked/restore-backup.sh"
 
+if [ "${1:-}" = --live ]; then
+  shift
+  if [ "$#" -ne 0 ]; then
+    echo 'Usage: fresh-host-recovery-drill.sh [--live]' >&2
+    exit 2
+  fi
+  exec bash "$repo_root/scripts/monolith-networked-backup-restore.test.sh"
+fi
+if [ "$#" -ne 0 ]; then
+  echo 'Usage: fresh-host-recovery-drill.sh [--live]' >&2
+  exit 2
+fi
+
 for step in {1..11}; do
   rg -q "id=\"fresh-host-step-$step\"" "$runbook" || {
     echo "Missing owner restore step $step" >&2

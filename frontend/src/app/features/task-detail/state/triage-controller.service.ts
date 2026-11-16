@@ -193,6 +193,10 @@ export class TriageController {
     reason?: string,
   ): void {
     const keepTaskOpen = ev.actionId === 'reissue-escalated';
+    if (keepTaskOpen) {
+      this.reissueKeptOpen(info, ev);
+      return;
+    }
     this.moveRefusal.set(null);
     const lane = this.jobSelection.triageLaneState ?? info.state;
     const peers = this.jobSelection.triageLanePeers();
@@ -217,10 +221,8 @@ export class TriageController {
     // pager snapshot (the lane iteration the user opened detail in)
     // and the prefetched core, so the new panel paints without a
     // roundtrip.
-    if (!keepTaskOpen) {
-      if (!this.jobSelection.advanceAfterMutation(info.taskKey)) {
-        this.advanceToNextInLane(lane, info.taskKey, peers);
-      }
+    if (!this.jobSelection.advanceAfterMutation(info.taskKey)) {
+      this.advanceToNextInLane(lane, info.taskKey, peers);
     }
 
     let persistResolve!: () => void;
@@ -253,14 +255,6 @@ export class TriageController {
         this.jobService.endOptimisticPersist();
         persistResolve();
         this.acceptanceRefusals.clear(info.taskKey);
-        if (keepTaskOpen) {
-          this.jobService.getDetail(info.id, info.watchPath).subscribe({
-            next: detail => {
-              if (this.jobSelection.selected()?.info.taskKey === info.taskKey)
-                this.jobSelection.selectResolvedDetail(detail, 'replace');
-            },
-          });
-        }
         this.clearActing();
       },
       error: (err) => {
@@ -328,6 +322,80 @@ export class TriageController {
           refusal: guardRefusal,
           returnFocusSelector: `[data-action-id="${ev.actionId}"]`,
         });
+      },
+    });
+  }
+
+  /** Keep the board and open detail on the persisted lane until reissue completes. */
+  private reissueKeptOpen(
+    info: TaskInfo,
+    ev: { targetState: string; actionId: string; reissueInstructions?: { findings: string[]; note: string }; operatorOverride?: boolean; reason?: string },
+  ): void {
+    this.moveRefusal.set(null);
+    const prevIndex = Math.max(this.jobService.findLaneIndex(info.id, info.watchPath, info.state), 0);
+    const pendingId = this.notifications.notify({
+      kind: 'info',
+      message: `Reissuing "${info.title || info.id}" to ${laneLabelFor(ev.targetState)}…`,
+      durationMs: 0,
+      position: 'bottom-right',
+    });
+    this.jobService.beginOptimisticPersist();
+    this.jobService.moveJob(info.id, ev.targetState, info.watchPath, undefined, ev.reason,
+      ev.operatorOverride ?? false, 'revoke', false, ev.reissueInstructions).subscribe({
+      next: () => {
+        this.acceptanceRefusals.clear(info.taskKey);
+        // The POST is durable now. Wait for its detail response before moving
+        // either visible lane, so the header, Overview, and board agree.
+        this.jobService.getDetail(info.id, info.watchPath).subscribe({
+          next: detail => {
+            this.jobService.endOptimisticPersist();
+            const resolvedDetail = detail.info.state === ev.targetState
+              ? detail : { ...detail, info: { ...detail.info, state: ev.targetState } };
+            this.jobService.applyOptimisticMove(info.id, info.watchPath, ev.targetState);
+            if (this.jobSelection.selected()?.info.taskKey === info.taskKey) {
+              const readyPeers = this.jobService.laneJobs(ev.targetState);
+              this.lanePager.capture(ev.targetState,
+                readyPeers.some(peer => peer.taskKey === info.taskKey)
+                  ? readyPeers : [...readyPeers, resolvedDetail.info], info.taskKey);
+              this.jobSelection.selectResolvedDetail(resolvedDetail, 'replace');
+            }
+            this.notifications.dismiss(pendingId);
+            this.undo.offerLaneRevert({
+              jobId: info.id, watchPath: info.watchPath, jobLabel: info.title || info.id,
+              actionLabel: 'Requeued', targetLaneLabel: laneLabelFor(ev.targetState),
+              prevState: info.state, prevIndex,
+            });
+            this.clearActing();
+          },
+          error: () => {
+            this.jobService.endOptimisticPersist();
+            // The move succeeded even when the follow-up read fails. Refresh
+            // the board and selected detail from the server before confirming.
+            this.jobService.applyOptimisticMove(info.id, info.watchPath, ev.targetState);
+            if (this.jobSelection.selected()?.info.taskKey === info.taskKey) {
+              const selected = this.jobSelection.selected()!;
+              const resolvedDetail = { ...selected, info: { ...selected.info, state: ev.targetState } };
+              const readyPeers = this.jobService.laneJobs(ev.targetState);
+              this.lanePager.capture(ev.targetState,
+                readyPeers.some(peer => peer.taskKey === info.taskKey)
+                  ? readyPeers : [...readyPeers, resolvedDetail.info], info.taskKey);
+              this.jobSelection.selectResolvedDetail(resolvedDetail, 'replace');
+            }
+            this.jobService.refresh(true);
+            this.notifications.dismiss(pendingId);
+            this.notifications.info(`Reissue saved. Refreshing "${info.title || info.id}".`);
+            this.clearActing();
+          },
+        });
+      },
+      error: err => {
+        this.jobService.endOptimisticPersist();
+        this.notifications.dismiss(pendingId);
+        this.clearActing();
+        const refusal = typeof err?.error?.error === 'string' ? err.error.error.trim() : '';
+        const message = `The task stayed in ${laneLabelFor(info.state)}. ${refusal || 'The reissue failed.'} Try again.`;
+        this.moveRefusal.set({ taskKey: info.taskKey, message });
+        this.notifications.warning(message, 'Reissue failed');
       },
     });
   }

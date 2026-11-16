@@ -44,6 +44,17 @@ export class WorkbenchDecisionStore {
     return this.mutate(projectName, workbenchId, 'confirm', request);
   }
 
+  recordChoices(
+    projectName: string, workbenchId: string, request: PrepareWorkbenchDecisionRequest,
+  ): Observable<WorkbenchDecisionResult> {
+    return this.prepare(projectName, workbenchId, request).pipe(
+      switchMap(prepared => this.confirm(projectName, workbenchId, {
+        ...request, expectedRevision: prepared.revision,
+        expectedFingerprint: prepared.fingerprint, spawnedTaskKeys: [], confirmed: true,
+      })),
+    );
+  }
+
   /**
    * Records the pending rework receipt and starts (or queues) the follow-up
    * round on the Dossier's source concept card in the same confirm call

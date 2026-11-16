@@ -53,4 +53,17 @@ describe('AccessBackupActivityComponent', () => {
     expect(actor.querySelector('span')?.textContent).toBe('for usr_owner');
     expect(cells(20)[2]).toContain('Restore verification');
   });
+
+  it('distinguishes inventory and content-list reads from backup operations', async () => {
+    backups.activity.set(backupActivity([
+      backupActivity().entries[0],
+      { ...backupActivity().entries[0], sequence: 21, operation: 'backup.inventory.read', target: null, outcome: 'succeeded' },
+      { ...backupActivity().entries[0], sequence: 22, operation: 'backup.contents.read', target: 'studio-backup-archive', outcome: 'failed' },
+    ]));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(cells(21)[2]).toBe('View backup inventory');
+    expect(cells(22)[2]).toBe('View archive contentsstudio-backup-archive');
+    expect(cells(22)[4]).toBe('Failed');
+  });
 });

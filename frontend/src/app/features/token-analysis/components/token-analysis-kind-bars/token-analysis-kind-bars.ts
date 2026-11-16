@@ -1,10 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
-import { formatCompactTokens } from '../../../tokens/token-number-format.util';
-import type { StackRow } from '../../token-analysis.util';
+import { formatCompactTokens, formatCompactUsd } from '../../../tokens/token-number-format.util';
+import type { AnalysisMeasure, StackRow } from '../../token-analysis.util';
 import { kindColor, kindLabel } from '../../token-analysis.util';
 
-/** Stacked usage kinds per card for the most expensive cards (AGT-3267). */
+/**
+ * Stacked usage kinds per card for the top cards (AGT-3267). The rows are
+ * ranked and sized by one measure, cost or tokens, and the header and every
+ * value name it (AGT-3805).
+ */
 @Component({
   selector: 'app-token-analysis-kind-bars',
   standalone: true,
@@ -16,13 +20,23 @@ import { kindColor, kindLabel } from '../../token-analysis.util';
 export class TokenAnalysisKindBarsComponent {
   readonly rows = input.required<StackRow[]>();
   readonly kinds = input.required<string[]>();
+  readonly measure = input<AnalysisMeasure>('cost');
   readonly selectedId = input<string | null>(null);
   readonly cardSelect = output<string>();
 
   readonly max = computed(() => this.rows().reduce((m, row) => Math.max(m, row.total), 0));
   readonly legend = computed(() => this.kinds().map(kind => ({ kind, label: kindLabel(kind), color: kindColor(kind) })));
 
-  readonly fmt = formatCompactTokens;
+  readonly measureLabel = computed(() => this.measure() === 'cost' ? 'theoretical cost' : 'tokens');
+
+  /** Bar end label; the header names the measure. */
+  short(amount: number): string {
+    return this.measure() === 'cost' ? formatCompactUsd(amount) : formatCompactTokens(amount);
+  }
+
+  value(amount: number): string {
+    return this.measure() === 'cost' ? formatCompactUsd(amount) : `${formatCompactTokens(amount)} tokens`;
+  }
 
   width(value: number): string {
     const max = this.max();
@@ -31,6 +45,6 @@ export class TokenAnalysisKindBarsComponent {
 
   segmentTip(row: StackRow, label: string, value: number): string {
     const share = row.total > 0 ? Math.round((value / row.total) * 100) : 0;
-    return `${row.label} · ${label}: ${formatCompactTokens(value)} tokens (${share}%)`;
+    return `${row.label} · ${label}: ${this.value(value)} (${share}%)`;
   }
 }

@@ -9,6 +9,7 @@ import {
   WorkbenchDecisionResponse,
   WorkbenchDocument,
 } from '../../../../models/project-docs.model';
+import { ModalStackService } from '../../../../services/modal-stack.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { TaskService } from '../../../../services/task.service';
 import { CliCatalogStore } from '../../../cli';
@@ -117,6 +118,33 @@ describe('WorkbenchDecisionPanelComponent', () => {
 
   afterEach(() => http.verify());
 
+  it('records one answer while leaving another explicitly open and does not create a card', () => {
+    const partial = [RESPONSES[0], {
+      decisionId: 'proof', kind: 'single', selectedOptionIds: [], comment: null,
+    }];
+    fixture.componentRef.setInput('decisionPoints', [...POINTS, {
+      id: 'proof', kind: 'single', label: 'Choose deletion proof',
+      options: [{ id: 'receipt', label: 'Receipt' }], commentLabel: 'Optional note',
+    }]);
+    fixture.componentRef.setInput('responses', partial);
+    fixture.detectChanges();
+    const record = fixture.nativeElement.querySelector('[data-testid="workbench-decision-record"]') as HTMLButtonElement;
+    expect(record.disabled).toBe(false);
+    expect(fixture.nativeElement.textContent).toContain('1 of 2 answered');
+    record.click();
+    const prepare = http.expectOne('/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/prepare');
+    expect(prepare.request.body).toEqual(expect.objectContaining({ outcome: 'record-only', responses: partial, task: null }));
+    const operationId = prepare.request.body.operationId;
+    prepare.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
+      decisionStage: 'prepared', revision: 'c'.repeat(40), fingerprint: 'b'.repeat(64), responses: partial });
+    const confirm = http.expectOne('/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/confirm');
+    expect(confirm.request.body).toEqual(expect.objectContaining({ outcome: 'record-only',
+      responses: partial, spawnedTaskKeys: [], confirmed: true }));
+    confirm.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
+      decisionStage: 'succeeded', revision: 'd'.repeat(40), fingerprint: 'e'.repeat(64), responses: partial });
+    expect(createJob).not.toHaveBeenCalled();
+  });
+
   it('shows recorded choices after concept acceptance without offering another decision', () => {
     fixture.componentRef.setInput('document', {
       ...DOCUMENT,
@@ -136,8 +164,12 @@ describe('WorkbenchDecisionPanelComponent', () => {
     const confirmation = fixture.nativeElement.querySelector(
       '[data-testid="workbench-decision-feature-confirmation"]');
     expect(confirmation.textContent).toContain('Direct path');
-    expect((confirmation.querySelector('[data-testid="workbench-decision-goal"]') as HTMLTextAreaElement).value)
-      .toBe('Implement Routing policy according to the source Dossier and its recorded decisions.');
+    expect(confirmation.querySelector('[data-testid="workbench-decision-combined-note"]')?.textContent)
+      .toContain('one combined card');
+    const goal = (confirmation.querySelector('[data-testid="workbench-decision-goal"]') as HTMLTextAreaElement).value;
+    expect(goal).not.toContain('Recorded decisions');
+    const preview = confirmation.querySelector('[data-testid="workbench-decision-prompt-preview"]')?.textContent ?? '';
+    expect(preview.split('Direct path').length - 1).toBe(1);
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-draft-notice"]')
       .textContent).toContain('Draft saved');
 
@@ -485,6 +517,61 @@ describe('WorkbenchDecisionPanelComponent', () => {
       cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'medium',
     }));
     confirm.flush({ success: true, outcome: 'rework', decisionStage: 'pending' });
+  });
+
+  it('moves focus into the confirmation form, back to its opener, and onto the receipt (AGT-3829)', async () => {
+    document.body.appendChild(fixture.nativeElement);
+    // An entry registered earlier, such as a background overlay, must not swallow the form's Escape.
+    const background = vi.fn();
+    const releaseBackground = TestBed.inject(ModalStackService).push('background-overlay', background);
+    try {
+      const focused = () => document.activeElement?.getAttribute('data-testid');
+      click('workbench-decision-start');
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-title');
+
+      const feature = fixture.nativeElement.querySelector(
+        '[data-testid="workbench-decision-feature-confirmation"]') as HTMLFormElement;
+      feature.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-start');
+      expect(fixture.nativeElement.querySelector(
+        '[data-testid="workbench-decision-feature-confirmation"]')).toBeNull();
+      expect(background).not.toHaveBeenCalled();
+
+      click('workbench-decision-rework');
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-rework-request');
+      (fixture.nativeElement.querySelector('[data-testid="workbench-decision-rework-confirmation"] .decision-actions__buttons button[type="button"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-rework');
+
+      click('workbench-decision-start');
+      await fixture.whenStable();
+      fixture.componentRef.setInput('document', {
+        ...DOCUMENT,
+        workbench: {
+          ...DOCUMENT.workbench,
+          status: 'decided',
+          decisionStage: 'succeeded',
+          decision: {
+            outcome: 'feature-spawn', state: 'succeeded', operationId: 'workbench-ui-confirmed',
+            sourceRevision: 'a'.repeat(40), sourceFingerprint: 'b'.repeat(64),
+            preparedAt: '2026-11-16T10:00:00Z', preparedBy: 'Operator',
+            confirmedAt: '2026-11-16T10:01:00Z', confirmedBy: 'Operator', decidedAt: '2026-11-16T10:01:00Z',
+            reason: null, failure: null, spawnedTaskKeys: [], responses: RESPONSES, taskDraft: null,
+          },
+        },
+      });
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(focused()).toBe('workbench-decision-receipt');
+    } finally {
+      releaseBackground();
+      fixture.nativeElement.remove();
+    }
   });
 
   function click(testId: string): void {

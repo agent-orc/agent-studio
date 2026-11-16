@@ -67,7 +67,7 @@ public sealed class OperationsAccess(string path, string? revocationsPath = null
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(target))!);
                 var temp = target + ".tmp";
                 var options = new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Options = FileOptions.WriteThrough };
-                if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+                if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
                 using (var stream = new FileStream(temp, options))
                 {
                     JsonSerializer.Serialize(stream, next, OperationsProtocol.Json);

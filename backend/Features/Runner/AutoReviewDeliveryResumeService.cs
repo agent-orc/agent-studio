@@ -508,9 +508,9 @@ public sealed class AutoReviewDeliveryResumeService
             reason: RemoteDeliveryParkReason.NormalizeStoredDetail(integrationDetail)
                 ?? (integrationOutcome == AcceptedIntegrationFailureCodes.DeliveryGateFailed
                     ? RemoteDeliveryParkReason.ForCode(integrationOutcome)
-                    : review.Outcome == ReviewTerminalOutcome.Pass
-                        ? RemoteDeliveryParkReason.CompletedReviewPark
-                        : RemoteDeliveryParkReason.ReviewDecisionPark),
+                    : RemoteDeliveryParkReason.ForReview(
+                        review.Outcome == ReviewTerminalOutcome.Pass,
+                        RemoteReviewSettlementJournal.Read(task.FolderPath, review.AttemptId).Entry?.Report)),
             authorityWrite: new AttemptWriteReference(
                 review.AttemptId, review.LastFence, review.AuthorityEpoch,
                 $"lane:resume:{review.AttemptId}"),

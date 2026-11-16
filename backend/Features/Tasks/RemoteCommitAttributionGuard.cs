@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using AgentStudio.Diagnostics;
 using AgentStudio.Git;
 using AgentStudio.Shared;
 
@@ -12,15 +13,35 @@ public sealed record RemoteCommitAttributionResult(
 /// <summary>
 /// Converts an exact remote runner branch range into task commit attribution.
 /// The whole range is rejected when either the branch belongs to another task
-/// or a commit subject explicitly names another task key. The runner's own
-/// teardown salvage commit for this task is exempt from the subject scan: its
-/// subject carries the card title, which may name related cards (AGT-3717).
+/// or a commit subject names another card's work (AGT-2242 carried foreign
+/// commits on 28.07.2026). The runner's own teardown salvage commit for this
+/// task is exempt from the subject scan: its subject carries the card title,
+/// which may name related cards (AGT-3717).
+/// <para>AGT-3854: a subject is foreign only when it names no own key and at
+/// least one key that the card does not reference itself (its relations,
+/// title and brief). A finding or draft id such as <c>AGT-3794-F13</c> is not
+/// a task key.</para>
 /// </summary>
 public static partial class RemoteCommitAttributionGuard
 {
-    [GeneratedRegex(@"\b[A-Z][A-Z0-9]{1,15}-\d+\b",
+    internal static bool IsOwnedFallbackCommit(GitCommitInfo commit, string taskKey)
+    {
+        if (string.IsNullOrWhiteSpace(commit.Body)) return false;
+        var lines = commit.Body.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim()).ToArray();
+        return lines.Contains($"Agent-Studio-Task: {taskKey.Trim()}", StringComparer.OrdinalIgnoreCase);
+    }
+    // A key directly followed by "-" and letters or digits is a finding or
+    // draft id of that card (AGT-3794-F13, AGT-3796-D9), not a task key.
+    [GeneratedRegex(@"\b[A-Z][A-Z0-9]{1,15}-\d+\b(?!-[A-Z0-9])",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex TaskKeyPattern();
+
+    // In the card's own text a finding id still names its card: a brief that
+    // fixes AGT-3794-F13 references AGT-3794.
+    [GeneratedRegex(@"\b[A-Z][A-Z0-9]{1,15}-\d+\b",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex ReferencedKeyPattern();
 
     // Immutable ResultEnvelope refs are task-neutral by design:
     // <project>/results/run_<id>/fence-<n>/<result-sha>. Their identity is not the ref
@@ -46,7 +67,8 @@ public static partial class RemoteCommitAttributionGuard
         string taskKey,
         string deliveryBranch,
         IReadOnlyList<GitCommitInfo> commits,
-        string? repository = null)
+        string? repository = null,
+        IReadOnlyCollection<string>? referencedKeys = null)
     {
         var expected = taskKey.Trim();
         var normalizedBranch = TaskIntegrationBranch.Name(deliveryBranch);
@@ -66,7 +88,7 @@ public static partial class RemoteCommitAttributionGuard
         foreach (var commit in commits)
         {
             if (RunnerSalvageCommit.IsTeardownFor(commit.Body, expected)) continue;
-            if (ForeignKeyInSubject(commit.Subject, expected) is { } foreign)
+            if (ForeignKeyInSubject(commit.Subject, expected, referencedKeys) is { } foreign)
             {
                 return Rejected(
                     $"Remote commit attribution rejected for '{expected}': commit {commit.ShortSha} names foreign task '{foreign}'.");
@@ -88,11 +110,61 @@ public static partial class RemoteCommitAttributionGuard
         return new RemoteCommitAttributionResult(true, attributed, null);
     }
 
+    /// <summary>
+    /// The first key in <paramref name="subject"/> that makes the commit
+    /// foreign work, or null. A subject naming <paramref name="taskKey"/> is
+    /// the card's own; otherwise a key the card references is allowed.
+    /// </summary>
+    internal static string? ForeignKeyInSubject(
+        string subject,
+        string taskKey,
+        IReadOnlyCollection<string>? referencedKeys = null)
+    {
+        var keys = TaskKeyPattern().Matches(subject).Select(match => match.Value).ToList();
+        if (keys.Any(key => string.Equals(key, taskKey.Trim(), StringComparison.OrdinalIgnoreCase)))
+            return null;
+        return keys.FirstOrDefault(key => referencedKeys?.Contains(key, StringComparer.OrdinalIgnoreCase) != true);
+    }
+
     /// <summary>The first task key in <paramref name="subject"/> other than <paramref name="taskKey"/>.</summary>
-    internal static string? ForeignKeyInSubject(string subject, string taskKey)
+    internal static string? OtherKeyInSubject(string subject, string taskKey)
         => TaskKeyPattern().Matches(subject)
             .Select(match => match.Value)
             .FirstOrDefault(key => !string.Equals(key, taskKey.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Task keys the card names itself: its relations, its title, and its
+    /// brief (<c>prompt.md</c> and its extensions). A commit subject may name
+    /// these without being foreign work.
+    /// </summary>
+    public static IReadOnlyCollection<string> CardReferencedKeys(TaskInfo? task, string? folderPath = null)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (task is null) return keys;
+        void Collect(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            foreach (Match match in ReferencedKeyPattern().Matches(text)) keys.Add(match.Value);
+        }
+        foreach (var (_, target) in task.References.Enumerate()) Collect(target);
+        Collect(task.Title);
+        var folder = folderPath ?? task.FolderPath;
+        if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+        {
+            try
+            {
+                foreach (var path in Directory.EnumerateFiles(folder, "prompt*.md"))
+                    Collect(File.ReadAllText(path));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // An unreadable brief only narrows the allowed keys.
+                SilentCatch.Note(ex, "RemoteCommitAttributionGuard: card brief unreadable");
+            }
+        }
+        keys.Remove((task.Key ?? task.Id).Trim());
+        return keys;
+    }
 
     private static RemoteCommitAttributionResult Rejected(string warning)
         => new(false, [], warning);

@@ -36,6 +36,13 @@ retry. The operator attention feed raises `batch.running-without-gate` once a
 persisted Running phase without a live flight exceeds the configured gate
 timeout plus the two-minute coordinator lease TTL. Recovery contention is
 logged once per batch and reason; the pilot retries on its 30-second tick.
+The same state read exposes `oldestFormed` with its formation age, and each
+batch's `lastProgressAtUtc`, active claim age, reservation wait, and phase-record
+member dispositions. Every nonterminal batch carries `nextAction` and
+`dueAtUtc`: an active claim uses its durable stage deadline, a running batch
+without a flight uses its recovery retry time, and other batches name the next
+pilot tick. These are observation deadlines, not a promise of publication.
+The batch panel shows these facts beside the flight queue and batch history.
 
 An interrupted deterministic red batch ends as `Paused` with reason
 `isolation interrupted` on the next pilot tick when unresolved members remain.
@@ -80,8 +87,14 @@ start time while its flight is active. The board uses this projection for the
 card CURRENT line and lane counts. Each member receives a full suite as a gate
 slot opens; a red gate escalates that card, and a green gate integrates it. The
 batch panel lists the queue in order and excludes its members from cards waiting
-for another batch. The handoff writes one operator-feed event per paused batch
-with its members.
+for another batch. A remaining fallback handoff keeps the lane indicator and
+panel accessible even if the batch planner is disabled. Each panel row shows the
+per-task admission capacity and last recorded handoff progress time. It explains
+that a start estimate is unavailable
+because full-suite duration has no reliable bound, or that no per-task slot is
+available. The state refreshes with the project state feed every 15 seconds
+while visible and watched. The handoff writes one operator-feed event per paused
+batch with its members.
 
 A per-task gate with a completed parsed test report is a card code failure when
 the integration baseline passes and a clean repeat reproduces the failed tests.
@@ -1125,7 +1138,9 @@ Task Server gate protocol remains the target for admission of these subjects.
 The outbound pull worker uses an exclusively scoped `gate.execute` Runner
 credential and starts the release-pinned backend binary with
 `--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
-on that host. The worker registers, claims from `/api/pull-gates`, downloads
+on that host. Pull gate mutations authenticate this service bearer directly;
+they do not require a browser `X-Client-Id` header. The worker registers,
+claims from `/api/pull-gates`, downloads
 the exact source bundle, heartbeats its lease, streams progress through those
 heartbeats, and uploads the result and files from its `artifacts/` run folder.
 The server refuses uploads after lease expiry or replacement. Completed
@@ -1705,8 +1720,14 @@ comparison before Quality Studio's verdict contract can decide a review.
   verdict. Every projected source carries a one-sentence `reason` and a
   `reportRef`; `not-proven` means that the report contains no build-tests verdict
   row, and its reason identifies the missing verify command when the command
-  table records one. The task-detail Evidence tab renders each source and links
-  back to that report.
+  table records one. `integration-red` (AGT-3812) means a build-tests verdict
+  classified `IntegrationBranchDefect`: the command is already red on the
+  integration branch without the change. Its reason is one sentence naming the
+  command, step, branch, baseline and failing tests, and `outputRef` links the
+  baseline output. Such a verdict, or a missing one, keeps the Acceptance
+  grounds from showing green, and the Human Review park names the red branch as
+  the owner's decision. The task-detail Evidence tab renders each source and
+  links back to that report.
 - `backend/Features/Review/ReviewProjection.cs`: the canonical, read-time merge
   of every review attempt across **both** review planes (AGT-2717) - local
   `code-review-grade-*.md` and remote `remote-review-grade-*.md` - into one

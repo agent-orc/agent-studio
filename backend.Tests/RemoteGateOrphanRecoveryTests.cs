@@ -488,10 +488,66 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
         Assert.True(execution.IsCancellationRequested);
     }
 
+    [Fact]
+    public async Task Orphan_cancel_on_an_unreachable_gate_host_waits_for_the_outage_probe()
+    {
+        // AGT-3792: 15 November 2026, one remote_gate_orphan_cancel_pending per run and minute for eight hours.
+        var previous = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
+        previous.Record(new string('c', 32), "gate-a", "/srv/gates");
+        previous.Record(new string('e', 32), "gate-a", "/srv/gates");
+        var current = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('d', 32));
+        var refused = true;
+        var connections = 0;
+        Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
+            CancellationToken ct, Action<string>? output)
+        {
+            connections++;
+            if (refused)
+                throw new IOException("ssh exited 255: ssh: connect to host 172.30.83.1 port 12222: Connection refused");
+            return Task.CompletedTask;
+        }
+        var probe = new SshGateHostProbe(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["RemoteGate:SshHost"] = "gate-a",
+                ["RemoteGate:WorkerPath"] = "/opt/gate/worker.dll",
+                ["RemoteGate:Root"] = "/srv/gates",
+            }).Build(), Run);
+        var monitor = new GateHostOutageMonitor(_clock, probe);
+        var transport = Transport(current, Run, hostHealth: monitor);
+
+        // Each sweep stops at its first refusal; the third marks the host unreachable.
+        for (var sweep = 0; sweep < 3; sweep++)
+        {
+            await transport.CancelOrphanedRunsAsync();
+            _clock.Advance(TimeSpan.FromMinutes(1));
+        }
+        Assert.Equal(3, connections);
+        Assert.NotNull(monitor.Current);
+
+        // Sixty sweeps during the outage open no connection; only the backed-off probe does.
+        for (var sweep = 0; sweep < 60; sweep++)
+        {
+            await transport.CancelOrphanedRunsAsync();
+            await monitor.ProbeIfDueAsync(CancellationToken.None);
+            _clock.Advance(TimeSpan.FromMinutes(1));
+        }
+        Assert.InRange(connections - 3, 5, 15);
+        Assert.Equal(2, current.ReadAll().Count);
+
+        refused = false;
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        await monitor.ProbeIfDueAsync(CancellationToken.None);
+        Assert.Null(monitor.Current);
+        await transport.CancelOrphanedRunsAsync();
+
+        Assert.Empty(current.ReadAll());
+    }
+
     private RemoteGateTransport Transport(RemoteGateRunRegistry registry,
         Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> run,
         Func<RemoteGateRunRecord, bool>? ownerIsAlive = null, OrchestratorLog? activity = null,
-        string section = RemoteGateOptions.PrimarySection)
+        string section = RemoteGateOptions.PrimarySection, GateHostOutageMonitor? hostHealth = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -502,7 +558,8 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
         }).Build();
         return new RemoteGateTransport(configuration, NullLogger<RemoteGateTransport>.Instance,
             _clock, Path.Combine(_root, "local"), _ => { }, runProcess: run, runRegistry: registry,
-            ownerIsAlive: ownerIsAlive ?? (_ => false), activity: activity, section: section);
+            ownerIsAlive: ownerIsAlive ?? (_ => false), activity: activity, section: section,
+            hostHealth: hostHealth);
     }
 
     private static string Git(params string[] args)

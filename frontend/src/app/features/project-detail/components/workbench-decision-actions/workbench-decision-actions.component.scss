@@ -1,7 +1,5 @@
 :host { display: block; min-width: 0; }
 
-.decision-actions__answers { display: inline-flex; min-width: 0; }
-
 .decision-actions__bar {
   display: flex;
   min-width: 0;
@@ -57,6 +55,7 @@
 }
 
 .decision-actions__chosen { margin: 0; }
+.decision-actions__note { margin: 0; color: var(--studio-fg-dim); font-size: 0.72rem; }
 .decision-actions__chosen strong { color: var(--studio-fg-strong); font-weight: 500; overflow-wrap: anywhere; }
 .decision-actions__chosen small { color: var(--studio-fg-muted); font-size: 0.68rem; }
 .decision-actions__confirmation textarea::placeholder { color: var(--studio-fg-muted); }
@@ -101,5 +100,6 @@ textarea:focus-visible { outline: 2px solid var(--studio-accent-3); outline-offs
 
 @media (max-width: 700px) {
   .decision-actions__bar { align-items: flex-start; flex-wrap: wrap; padding-inline: var(--studio-spacing-3); }
+  .decision-actions__buttons { flex-wrap: wrap; width: 100%; justify-content: flex-start; }
   .decision-actions__confirmation { padding-inline: var(--studio-spacing-3); }
 }

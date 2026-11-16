@@ -1,5 +1,5 @@
 import {
-  ChangeDetectionStrategy, Component, DestroyRef, ElementRef,
+  ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector,
   computed, effect, inject, input, output, signal, untracked,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -25,9 +25,11 @@ import {
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
 import {
   actionErrorMessage,
+  answeredDecisionCount,
   bounded,
   cardPrompt,
   createOperationId,
+  featureTaskDraft,
   laneLabel,
   readDefaultCli,
   readDefaultModel,
@@ -37,14 +39,10 @@ import {
   taskKeyTail,
   unlinkedCardFailure,
 } from '../workbench-decision-panel/workbench-decision-panel.util';
+import { bindFormEscape, focusAfterRender } from '../workbench-decision-panel/workbench-decision-focus.util';
 
 type ActionMode = 'feature-spawn' | 'rework' | null;
-
-/** Answer progress of the inline decision points, e.g. "3 inline decision points · ready". */
-export function decisionAnswerCountLabel(count: number, complete: boolean): string {
-  const points = `${count} inline decision point${count === 1 ? '' : 's'}`;
-  return `${points} · ${complete ? 'ready' : 'answer every point in the document'}`;
-}
+type DecisionOutcome = Exclude<ActionMode, null> | 'record-only';
 
 @Component({
   selector: 'app-workbench-decision-actions',
@@ -71,7 +69,10 @@ export class WorkbenchDecisionActionsComponent {
   private readonly catalog = inject(CliCatalogStore);
   private readonly destroyRef = inject(DestroyRef);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
   private restoredDraftKey = '';
+  /** The bar control that opened the confirmation form; closing it returns focus there. */
+  private opener = 'workbench-decision-start';
   private readonly operationId = signal('');
 
   readonly mode = signal<ActionMode>(null);
@@ -88,14 +89,9 @@ export class WorkbenchDecisionActionsComponent {
   readonly requestState = computed(() =>
     this.store.state(this.projectName(), this.document().workbench.id));
   readonly pending = computed(() => this.requestState().pending !== null);
-  readonly answersComplete = computed(() => {
-    if (this.decisionPoints().length === 0) return true;
-    const responses = new Map(this.responses().map(response => [response.decisionId, response]));
-    return this.decisionPoints().every(point =>
-      (responses.get(point.id)?.selectedOptionIds.length ?? 0) > 0);
-  });
-  readonly answerCountLabel = computed(() =>
-    decisionAnswerCountLabel(this.decisionPoints().length, this.answersComplete()));
+  readonly answeredCount = computed(() => answeredDecisionCount(this.decisionPoints(), this.responses()));
+  readonly answersComplete = computed(() => this.answeredCount() === this.decisionPoints().length);
+  readonly canRecordPartial = computed(() => !this.settled() && !this.pending() && this.answeredCount() > 0 && !this.answersComplete());
   readonly selectedSummary = computed(() => selectedDecisionText(
     this.decisionPoints(), this.responses()));
   readonly hasReworkComment = computed(() =>
@@ -153,6 +149,10 @@ export class WorkbenchDecisionActionsComponent {
       if (key !== this.restoredDraftKey) untracked(() => this.preselectDefaultModel());
       this.restoredDraftKey = key;
     });
+    // Escape closes the open form even below another modal-stack entry (AGT-3829).
+    bindFormEscape(computed(() => this.mode() !== null),
+      () => this.host.nativeElement.querySelector('.decision-actions__confirmation'),
+      () => { if (this.pending()) return false; this.closeConfirmation(); return true; });
   }
 
   updateTitle(event: Event): void {
@@ -184,6 +184,18 @@ export class WorkbenchDecisionActionsComponent {
     if (!this.canPrepareFeature()) return;
     this.seedFeatureDraft();
     this.mode.set('feature-spawn');
+    this.opener = 'workbench-decision-start';
+    this.focusAfterRender('workbench-decision-title');
+  }
+
+  recordPartial(): void {
+    if (!this.canRecordPartial()) return;
+    const actor = this.actor().trim();
+    if (!actor) { this.invalid('Add the decision owner.'); return; }
+    this.resetFeedback();
+    const request = { ...this.baseRequest('record-only', actor, null), operationId: createOperationId() };
+    this.store.recordChoices(this.projectName(), this.document().workbench.id, request)
+      .pipe(catchError(error => this.fail(error))).subscribe(() => this.finish());
   }
 
   beginRework(): void {
@@ -197,8 +209,8 @@ export class WorkbenchDecisionActionsComponent {
     this.operationId.set(draft.operationId ?? operationId);
     this.request.set(draft.request ?? '');
     this.mode.set('rework');
-    queueMicrotask(() => this.host.nativeElement.querySelector<HTMLTextAreaElement>(
-      '[data-testid="workbench-decision-rework-request"]')?.focus());
+    this.opener = 'workbench-decision-rework';
+    this.focusAfterRender('workbench-decision-rework-request');
   }
 
   closeConfirmation(event?: Event): void {
@@ -208,7 +220,7 @@ export class WorkbenchDecisionActionsComponent {
     this.drafts.closeAction(this.projectName(), this.document().workbench.id);
     this.mode.set(null);
     this.operationId.set('');
-    queueMicrotask(() => this.focusPrimaryAction());
+    this.focusAfterRender(this.opener);
   }
 
   createFeatureCard(): void {
@@ -301,11 +313,7 @@ export class WorkbenchDecisionActionsComponent {
     );
   }
 
-  /**
-   * A card restored from an older draft may lack its job id. The server
-   * removes an unlinked card by id only, so the id is looked up first; a card
-   * that cannot be found keeps no id and is never removed by its display key.
-   */
+  /** Resolve an older draft's missing id; removal must never use its display key. */
   private resolveCardId(card: WorkbenchDecisionDraftCard): Observable<WorkbenchDecisionDraftCard> {
     if (card.id) return of(card);
     return this.tasks.getDetailByProject(card.taskKey || card.key, this.projectName()).pipe(
@@ -347,7 +355,7 @@ export class WorkbenchDecisionActionsComponent {
   }
 
   private baseRequest(
-    outcome: Exclude<ActionMode, null>, actor: string, task: WorkbenchTaskDraft | null,
+    outcome: DecisionOutcome, actor: string, task: WorkbenchTaskDraft | null,
   ): PrepareWorkbenchDecisionRequest {
     this.validationError.set(null);
     return {
@@ -360,10 +368,11 @@ export class WorkbenchDecisionActionsComponent {
   private seedFeatureDraft(): void {
     this.resetFeedback();
     const operationId = createOperationId();
+    // The prompt owns the decision list; repeating it in the goal duplicated it (AGT-3701).
     const draft = this.drafts.beginFeature(this.projectName(), this.document().workbench.id, {
       actor: this.actor(),
       title: `Implement ${this.document().workbench.title}`,
-      goal: bounded(`Implement ${this.document().workbench.title} according to the source Dossier and its recorded decisions.`, 20_000),
+      goal: bounded(this.document().workbench.summary.trim(), 20_000),
       operationId,
     }, this.responses());
     this.title.set(draft.title);
@@ -374,18 +383,8 @@ export class WorkbenchDecisionActionsComponent {
   }
 
   private featureDraft(): WorkbenchTaskDraft {
-    return {
-      title: this.title().trim() || `Implement ${this.document().workbench.title}`,
-      goal: this.goal().trim(),
-      acceptanceCriteria: [
-        'Implement every recorded Dossier selection and preserve its stated constraints.',
-        'Verify the resulting behavior with the checks required by the affected surface.',
-      ],
-      evidenceLinks: [this.document().workbench.entryPath],
-      chosenOption: bounded(this.selectedSummary(), 2_000) || null,
-      relatedTaskKeys: this.document().workbench.sourceTaskKeys,
-      targetProject: this.projectName(), initialLane: '2-ready', mode: 'coding', taskType: 'feature',
-    };
+    return featureTaskDraft(this.document(), this.projectName(), this.title(),
+      this.goal(), this.selectedSummary());
   }
 
   private agent(): { cliType: CliType; model: string; thinkingLevel: string | null } {
@@ -419,9 +418,9 @@ export class WorkbenchDecisionActionsComponent {
     });
   }
 
-  private focusPrimaryAction(): void {
-    this.host.nativeElement.querySelector<HTMLButtonElement>(
-      '[data-testid="workbench-decision-start"]')?.focus();
+  /** Move focus to the counterpart of a control the form swap removed (AGT-3829). */
+  private focusAfterRender(testId: string): void {
+    focusAfterRender(this.host.nativeElement, this.injector, testId, 'button, input, textarea');
   }
 
   private finish(): void {
@@ -441,6 +440,7 @@ export class WorkbenchDecisionActionsComponent {
     this.validationError.set(message);
     return null;
   }
+
   private resetFeedback(): void {
     this.validationError.set(null);
     this.actionError.set(null);

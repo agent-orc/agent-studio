@@ -26,9 +26,14 @@
     <dl class="tav__stats" data-testid="token-analysis-stats">
       <div><dt>Cards</dt><dd>{{ visible().length }}</dd></div>
       <div><dt>Tokens</dt><dd data-testid="token-analysis-total">{{ fmt(totals().tokens) }}</dd></div>
-      <div><dt>Theoretical cost</dt><dd>{{ usd(totals().cost) }}</dd></div>
+      <div><dt>Theoretical cost</dt><dd data-testid="token-analysis-cost">{{ usd(totals().cost) }}@if (unpricedModels().length) { * }</dd></div>
       <div><dt>Runs in flight</dt><dd data-testid="token-analysis-in-flight">{{ inFlight() }}</dd></div>
     </dl>
+    @if (unpricedModels().length) {
+      <p class="tav__notice" data-testid="token-analysis-unpriced">
+        * Priced subtotal. No list price for {{ unpricedModels().join(', ') }}.
+      </p>
+    }
 
     @if (effective().card) {
       <app-card-token-drilldown [detail]="detail()" [loading]="detailLoading()" [error]="detailError()"
@@ -46,8 +51,14 @@
         <span>Loosen or reset the filters above.</span>
       </div>
     } @else {
+      <div class="tav__rank">
+        <span class="tav__rank-label">Rank cards by</span>
+        <app-segmented-control [options]="measureOptions" [value]="effective().sort" ariaLabel="Rank cards by"
+                               (valueChange)="setMeasure($event)" />
+      </div>
       <div class="tav__grid">
-        <app-token-analysis-kind-bars class="tav__wide" [rows]="stacks()" [kinds]="kinds()"
+        <app-token-analysis-kind-cost class="tav__wide" [breakdown]="kindCost()" [days]="d.days" />
+        <app-token-analysis-kind-bars class="tav__wide" [rows]="stacks()" [kinds]="kinds()" [measure]="effective().sort"
                                       [selectedId]="effective().card" (cardSelect)="selectCard($event)" />
         <div class="tav__wide tav__time">
           <app-token-analysis-time-chart [chart]="chart()" />
@@ -58,7 +69,8 @@
         <app-token-analysis-distribution [levels]="levels()" [models]="models()" [mix]="mix()" />
       </div>
       <app-token-analysis-card-table [cards]="visible()" [remainders]="remainders()" [kinds]="kinds()"
-                                     [selectedId]="effective().card" (cardSelect)="selectCard($event)" />
+                                     [measure]="effective().sort" [selectedId]="effective().card"
+                                     (cardSelect)="selectCard($event)" (sortChange)="setMeasure($event)" />
     }
     <p class="tav__note">{{ d.disclaimer }} Days are UTC.</p>
   }

@@ -80,11 +80,13 @@ case "${host_ca_dir%/}/" in "${data_dir%/}"/*) echo 'STUDIO_HOST_CA_DIR must lie
 case "$backup_key_dir" in /*) ;; *) echo 'STUDIO_BACKUP_KEY_DIR must be absolute' >&2; exit 2;; esac
 case "$backup_key_dir" in *[!0-9A-Za-z._/-]*) echo 'STUDIO_BACKUP_KEY_DIR contains unsupported characters' >&2; exit 2;; esac
 case "${backup_key_dir%/}/" in "${data_dir%/}"/*) echo 'STUDIO_BACKUP_KEY_DIR must lie outside the data directory' >&2; exit 2;; esac
-mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home/.local/share" "$data_dir/api-tmp" "$data_dir/host-certificates" "$data_dir/backups" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$data_dir/origin-pull"
+mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home/.local/share" "$data_dir/api-tmp" "$data_dir/host-certificates" "$data_dir/backups" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$data_dir/origin-pull" "$data_dir/operations-recovery"
+for operations_folder in data principals agent-secret client-secret agent-data; do mkdir -p "$data_dir/operations/$operations_folder"; done
 chmod 711 "$data_dir"
 chmod 700 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/api-tmp" "$data_dir/host-certificates" "$data_dir/backups"
 chmod 700 "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config"
 chmod 755 "$data_dir/origin-pull"
+chmod 750 "$data_dir/operations" "$data_dir/operations"/* "$data_dir/operations-recovery"
 if [ ! -d "$data_dir/workspace/.git" ]; then
   git -C "$data_dir/workspace" init -q -b main
   # .security/ holds access state and secrets; it stays out of every commit.
@@ -118,9 +120,10 @@ chmod 600 "$backup_key_dir/backup.key"
 (umask 077 && mkdir -p "$backup_target_dir")
 if [ "$(id -u)" -eq 0 ]; then
   chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/api-tmp" "$data_dir/host-certificates" "$data_dir/backups" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$host_ca_dir" "$key_file" "$backup_key_dir" "$backup_target_dir"
+  chown -R 1654:1654 "$data_dir/operations" "$data_dir/operations-recovery"
 else
   docker run --rm --user 0 -v "$data_dir:/site" -v "$key_dir:/keys" -v "$host_ca_dir:/host-ca" -v "$backup_key_dir:/backup-key" -v "$backup_target_dir:/backup-target" --entrypoint sh "caddy@sha256:$STUDIO_EDGE_DIGEST" -c \
-    'chown -R 10001:10001 /site/workspace /site/projects /site/home /site/api-tmp /site/host-certificates /site/backups /site/caddy-data /site/caddy-config /site/frontend-data /site/frontend-config /host-ca "/keys/$1" /backup-key /backup-target' \
+    'chown -R 10001:10001 /site/workspace /site/projects /site/home /site/api-tmp /site/host-certificates /site/backups /site/caddy-data /site/caddy-config /site/frontend-data /site/frontend-config /host-ca "/keys/$1" /backup-key /backup-target; chown -R 1654:1654 /site/operations /site/operations-recovery' \
     sh "$(basename "$key_file")"
 fi
 code="$(openssl rand -hex 24)"

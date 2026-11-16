@@ -598,7 +598,6 @@ public class JobsEndpointPerfTests : IDisposable
         var ledger = new ProjectTokenLedger(store, config, new ProjectTokenReceiptReader());
         return new TokenAggregationService(
             busCache,
-            store,
             config,
             ledger,
             jobs,
@@ -774,7 +773,7 @@ internal sealed class FakeTokenAggregator : ITokenAggregator
     public TokenSummaryAggregate WorkspaceAggregate(IEnumerable<(string Name, string WatchPath)> projects) => throw new NotImplementedException();
     public TokenSummaryAggregate? CachedWorkspaceAggregate() => throw new NotImplementedException();
     public TokenTimeline WorkspaceTimeline(IEnumerable<(string Name, string WatchPath)> projects, int windowHours, int bucketMinutes, DateTime? nowUtc = null) => throw new NotImplementedException();
-    public TokenTimeline WorkspaceTimelineRange(IEnumerable<(string Name, string WatchPath)> projects, DateTime fromUtc, DateTime toUtc, int bucketMinutes) => throw new NotImplementedException();
+    public TokenTimeline WorkspaceTimelineRange(IEnumerable<(string Name, string WatchPath)> projects, DateTime fromUtc, DateTime toUtc, int bucketMinutes, WorkspaceBusUsage? workspaceUsage = null) => throw new NotImplementedException();
     public AdHocUsageAggregate AdHocAggregate(DateTime? since = null) => throw new NotImplementedException();
 
     public Dictionary<string, TaskTokenSummary> WorkspacePerJob(string projectName, string watchPath)

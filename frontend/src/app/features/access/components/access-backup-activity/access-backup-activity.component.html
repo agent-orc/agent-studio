@@ -28,7 +28,7 @@
             <td class="backups__summary">@if (entry.summary) { {{ entry.summary }} } @else { <span class="backups__none">–</span> }</td>
           </tr>
         } @empty {
-          <tr><td colspan="6" class="access-hint" data-testid="access-backup-entries-empty">No backup has been created, copied, verified, pruned, or restored yet.</td></tr>
+          <tr><td colspan="6" class="access-hint" data-testid="access-backup-entries-empty">No backup activity has been recorded yet.</td></tr>
         }
       </tbody>
     </table>

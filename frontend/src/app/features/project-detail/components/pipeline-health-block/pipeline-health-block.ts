@@ -38,6 +38,9 @@ export class PipelineHealthBlockComponent implements OnDestroy {
   /** Workspace repositories whose evidence flush keeps failing (AGT-3000). */
   readonly evidenceFlushStalls = computed<PipelineHealthAlert[]>(() =>
     (this.health()?.alerts ?? []).filter(alert => alert.kind === 'evidence-flush-stalled'));
+  /** The gate host health state while the host is unreachable (AGT-3792). */
+  readonly gateHostOutages = computed<PipelineHealthAlert[]>(() =>
+    (this.health()?.alerts ?? []).filter(alert => alert.kind === 'gate-host-unreachable'));
   private readonly tasks = inject(TaskService);
   private readonly poll = setInterval(() => this.refresh(), 60_000);
 

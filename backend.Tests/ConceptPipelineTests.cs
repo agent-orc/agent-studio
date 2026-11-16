@@ -3,6 +3,7 @@ using AgentStudio.Git;
 using AgentStudio.Docs;
 
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -201,70 +202,7 @@ public sealed class ConceptPipelineTests : IDisposable
     [Fact]
     public void Promotion_CreatesCodingCardsFromPublishedDocument_Idempotently()
     {
-        var repository = Path.Combine(_root, "repository");
-        var taskStore = Path.Combine(_root, "tasks");
-        Directory.CreateDirectory(repository);
-        Directory.CreateDirectory(taskStore);
-        var (config, scanner, _, mutations) = BuildServices(repository, taskStore);
-        var sourceId = mutations.CreateJob(new CreateTaskRequest
-        {
-            Id = "concept-source",
-            Title = "Concept source",
-            Mode = TaskModes.Concept,
-            RequiresIntegration = false,
-            WatchPath = taskStore,
-            TargetState = TaskStates.HumanReview,
-        });
-        Assert.NotNull(sourceId);
-        var source = scanner.FindJob(sourceId!, taskStore);
-        Assert.NotNull(source);
-
-        var workbenchDirectory = ConceptWorkbenchContract.CreateScaffold(
-            repository,
-            "delivery-flow",
-            "Delivery flow",
-            "Approved delivery design.",
-            source!.Key ?? source.Id);
-        var descriptorPath = Path.Combine(workbenchDirectory, "workbench.json");
-        var descriptor = JsonSerializer.Deserialize<ConceptWorkbenchDescriptor>(
-            File.ReadAllText(descriptorPath),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-        descriptor = descriptor with
-        {
-            ImplementationTasks =
-            [
-                new ConceptImplementationTask
-                {
-                    Title = "Implement delivery API",
-                    PromptMarkdown = "Add the approved delivery endpoint.",
-                    Section = "§4",
-                    DecisionId = "delivery-mode",
-                },
-                new ConceptImplementationTask
-                {
-                    Title = "Implement delivery UI",
-                    PromptMarkdown = "Add the approved delivery controls.",
-                },
-            ],
-        };
-        File.WriteAllText(
-            descriptorPath,
-            JsonSerializer.Serialize(
-                descriptor,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
-        File.AppendAllText(Path.Combine(workbenchDirectory, "index.html"), """
-            <div data-decision-id="delivery-mode" data-decision-kind="single" data-decision-label="Delivery mode">
-              <label data-option-id="queued" data-option-label="A: queued (recommended)"><input checked></label>
-              <label data-option-id="direct" data-option-label="B: direct"><input></label>
-            </div>
-            """);
-        Assert.True(ConceptWorkbenchStore.Write(source.FolderPath, new ConceptWorkbenchRecord
-        {
-            RepoRelativeDirectory = "docs/delivery-flow",
-            RepoRelativeEntrypoint = "docs/delivery-flow/index.html",
-            Title = descriptor.Title,
-            PublishedAt = DateTime.UtcNow,
-        }));
+        var (taskStore, config, scanner, _, mutations, source) = PublishConceptWithTwoSlices();
 
         var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore);
         Assert.NotNull(plan);
@@ -306,16 +244,16 @@ public sealed class ConceptPipelineTests : IDisposable
         Assert.Equal("§4", apiCard?.Dossier?.Section);
         Assert.Equal("delivery-mode", apiCard?.Dossier?.Decision);
         Assert.Equal(0, apiCard?.Dossier?.ImplementationIndex);
-        using var accepted = JsonDocument.Parse(File.ReadAllText(descriptorPath));
-        Assert.Equal("decided", accepted.RootElement.GetProperty("status").GetString());
+        using var descriptor = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            _root, "repository", "docs", "delivery-flow", "workbench.json")));
+        Assert.NotEqual("decided", descriptor.RootElement.GetProperty("status").GetString());
         Assert.Equal(2, scanner.BuildPromoteConceptPlan(source.Id, taskStore)?.Items.Count);
-        Assert.Equal("decided", Assert.Single(updates).CurrentStatus);
+        Assert.Empty(updates);
     }
 
     [Theory]
     [InlineData("after-card-created", "creating-cards")]
     [InlineData("after-cards-recorded", "cards-recorded")]
-    [InlineData("after-dossier-accepted", "dossier-accepted")]
     public async Task Promotion_Failure_ExposesCreatedKeys_AndRetryConverges(string failurePoint, string expectedPhase)
     {
         var repository = Path.Combine(_root, "repository");
@@ -385,8 +323,9 @@ public sealed class ConceptPipelineTests : IDisposable
         });
         Assert.Equal([result.Created[0].TaskKey], scanner.FindJob(result.Created[1].JobId, taskStore)!
             .References.DependsOn.Select(edge => edge.Key));
-        using var accepted = JsonDocument.Parse(File.ReadAllText(placedDescriptor));
-        Assert.Equal("decided", accepted.RootElement.GetProperty("status").GetString());
+        using var pending = JsonDocument.Parse(File.ReadAllText(placedDescriptor));
+        Assert.Equal("active", pending.RootElement.GetProperty("status").GetString());
+        Assert.Equal("completed", ConceptPromotionRecoveryStore.Read(source.FolderPath)?.Phase);
 
         Directory.CreateDirectory(TaskPaths.ResultsDir(source.FolderPath));
         File.WriteAllText(Path.Combine(TaskPaths.ResultsDir(source.FolderPath), "deliverables.md"),
@@ -413,7 +352,6 @@ public sealed class ConceptPipelineTests : IDisposable
         var move = await transitions.MoveAsync(source.Id, TaskStates.Completed, taskStore);
         Assert.Equal(MoveJobStatus.Success, move.Status);
         var completed = scanner.FindJob(source.Id, taskStore)!;
-        service.RecordPhase(completed, "completed");
         Assert.Equal(TaskStates.Completed, completed.State);
         Assert.Equal("completed", ConceptPromotionRecoveryStore.Read(completed.FolderPath)?.Phase);
     }
@@ -489,6 +427,7 @@ public sealed class ConceptPipelineTests : IDisposable
         var result = service.Promote(source, plan!, new PromoteConceptRequest { ItemIndexes = [2] });
 
         Assert.Equal(["Build store", "Build API", "Build UI"], result.Created.Select(card => card.Title));
+        Assert.Equal([0, 1, 2], result.Created.Select(card => card.ItemIndex));
         var cards = result.Created.Select(card => scanner.FindJob(card.JobId, taskStore)!).ToList();
         var keys = cards.Select(card => card.Key ?? card.Id).ToList();
         Assert.Empty(cards[0].References.DependsOn);
@@ -669,6 +608,160 @@ public sealed class ConceptPipelineTests : IDisposable
             PipelineStepStatus.Skipped,
             execution.Steps.Single(step =>
                 step.StepId == PipelineCatalogue.ConceptPromotionStepId).Status);
+    }
+
+    [Fact]
+    public async Task Promotion_IsSeparateFromAcceptance_AndCreatesOnlyTheSelectedSlices()
+    {
+        var (taskStore, config, scanner, states, mutations, source) = PublishConceptWithTwoSlices();
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+        pipelineLog.Begin(source.FolderPath, PipelineCatalogue.Concept, source.ProjectName, source.Id);
+        var service = new ConceptPromotionService(
+            scanner, mutations,
+            new ManagedRepositoryMutationService(
+                new GitService(NullLogger<GitService>.Instance, scanner, config)),
+            new WorkbenchChangeNotifier(NullLogger<WorkbenchChangeNotifier>.Instance),
+            NullLogger<ConceptPromotionService>.Instance, pipelineLog);
+        var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore)!;
+        Assert.Empty(service.WithPromotedSlices(source, plan).Promoted);
+
+        var result = service.Promote(source, plan, new PromoteConceptRequest { ItemIndexes = [1] });
+
+        var created = Assert.Single(result.Created);
+        Assert.Equal(1, created.ItemIndex);
+        Assert.Equal("Implement delivery UI", created.Title);
+        Assert.Equal(TaskStates.Preparation, created.State);
+        Assert.Equal(TaskStates.HumanReview, scanner.FindJob(source.Id, taskStore)!.State);
+        var descriptorPath = Path.Combine(_root, "repository", "docs", "delivery-flow", "workbench.json");
+        using (var beforeAcceptance = JsonDocument.Parse(File.ReadAllText(descriptorPath)))
+            Assert.NotEqual("decided", beforeAcceptance.RootElement.GetProperty("status").GetString());
+        var promoted = Assert.Single(service.WithPromotedSlices(source, plan).Promoted);
+        Assert.Equal(created.JobId, promoted.JobId);
+        Assert.Equal(1, promoted.ItemIndex);
+        Assert.Equal(PipelineStepStatus.Passed, PromotionStep(source.FolderPath).Status);
+
+        // A refused acceptance is a separate request and cannot erase the
+        // successful promotion response or its ledger-backed card list.
+        var refused = await Transitions(config, scanner, states, mutations, pipelineLog)
+            .MoveAsync(source.Id, TaskStates.Completed, taskStore,
+                expectedSourceState: TaskStates.Ready);
+        Assert.NotEqual(MoveJobStatus.Success, refused.Status);
+        Assert.Equal(TaskStates.HumanReview, scanner.FindJob(source.Id, taskStore)!.State);
+        Assert.Equal(created.JobId,
+            Assert.Single(service.WithPromotedSlices(source, plan).Promoted).JobId);
+
+        Directory.CreateDirectory(TaskPaths.ResultsDir(source.FolderPath));
+        File.WriteAllText(Path.Combine(TaskPaths.ResultsDir(source.FolderPath), "deliverables.md"),
+            "# Approved concept\n\nThe sight review approved this no-code deliverable.\n");
+        CompletionContentFixture.RecordPassedReview(source.FolderPath, "concept-fit");
+        using var services = new ServiceCollection().AddSingleton(service).BuildServiceProvider();
+        var outcome = await Transitions(config, scanner, states, mutations, pipelineLog, services)
+            .MoveAsync(source.Id, TaskStates.Completed, taskStore);
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var accepted = scanner.FindJob(source.Id, taskStore)!;
+        Assert.Equal(TaskStates.Completed, accepted.State);
+        Assert.Equal(PipelineStepStatus.Passed, PromotionStep(accepted.FolderPath).Status);
+        using (var afterAcceptance = JsonDocument.Parse(File.ReadAllText(descriptorPath)))
+            Assert.Equal("decided", afterAcceptance.RootElement.GetProperty("status").GetString());
+        var repeated = service.Promote(accepted, plan, new PromoteConceptRequest { ItemIndexes = [1] });
+        Assert.Equal(created.JobId, Assert.Single(repeated.Created).JobId);
+    }
+
+    private static PipelineStepExecution PromotionStep(string folder)
+    {
+        var execution = JsonSerializer.Deserialize<PipelineExecutionRecord>(
+            File.ReadAllText(Path.Combine(folder, PipelineExecutionLog.FileName)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        return execution.Steps.Single(step => step.StepId == PipelineCatalogue.ConceptPromotionStepId);
+    }
+
+    private static TaskTransitionService Transitions(
+        IConfiguration config, TaskScannerService scanner, TaskStateMachine states,
+        TaskMutationService mutations, PipelineExecutionLog pipelineLog,
+        IServiceProvider? services = null)
+    {
+        var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
+        return new TaskTransitionService(
+            scanner,
+            states,
+            mutations,
+            new GitService(NullLogger<GitService>.Instance, scanner, config, prompts),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config),
+            NullLogger<TaskTransitionService>.Instance,
+            pipelineLog: pipelineLog,
+            services: services);
+    }
+
+    private (string TaskStore, IConfiguration Config, TaskScannerService Scanner, TaskStateMachine States,
+        TaskMutationService Mutations, TaskInfo Source) PublishConceptWithTwoSlices()
+    {
+        var repository = Path.Combine(_root, "repository");
+        var taskStore = Path.Combine(_root, "tasks");
+        Directory.CreateDirectory(repository);
+        Directory.CreateDirectory(taskStore);
+        var (config, scanner, states, mutations) = BuildServices(repository, taskStore);
+        var sourceId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "concept-source",
+            Title = "Concept source",
+            Mode = TaskModes.Concept,
+            RequiresIntegration = false,
+            WatchPath = taskStore,
+            TargetState = TaskStates.HumanReview,
+        });
+        Assert.NotNull(sourceId);
+        var source = scanner.FindJob(sourceId!, taskStore);
+        Assert.NotNull(source);
+
+        var workbenchDirectory = ConceptWorkbenchContract.CreateScaffold(
+            repository,
+            "delivery-flow",
+            "Delivery flow",
+            "Approved delivery design.",
+            source!.Key ?? source.Id);
+        var descriptorPath = Path.Combine(workbenchDirectory, "workbench.json");
+        var descriptor = JsonSerializer.Deserialize<ConceptWorkbenchDescriptor>(
+            File.ReadAllText(descriptorPath),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        descriptor = descriptor with
+        {
+            ImplementationTasks =
+            [
+                new ConceptImplementationTask
+                {
+                    Title = "Implement delivery API",
+                    PromptMarkdown = "Add the approved delivery endpoint.",
+                    Section = "§4",
+                    DecisionId = "delivery-mode",
+                },
+                new ConceptImplementationTask
+                {
+                    Title = "Implement delivery UI",
+                    PromptMarkdown = "Add the approved delivery controls.",
+                },
+            ],
+        };
+        File.WriteAllText(
+            descriptorPath,
+            JsonSerializer.Serialize(
+                descriptor,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        File.AppendAllText(Path.Combine(workbenchDirectory, "index.html"), """
+            <div data-decision-id="delivery-mode" data-decision-kind="single" data-decision-label="Delivery mode">
+              <label data-option-id="queued" data-option-label="A: queued (recommended)"><input checked></label>
+              <label data-option-id="direct" data-option-label="B: direct"><input></label>
+            </div>
+            """);
+        Assert.True(ConceptWorkbenchStore.Write(source.FolderPath, new ConceptWorkbenchRecord
+        {
+            RepoRelativeDirectory = "docs/delivery-flow",
+            RepoRelativeEntrypoint = "docs/delivery-flow/index.html",
+            Title = descriptor.Title,
+            PublishedAt = DateTime.UtcNow,
+        }));
+
+        return (taskStore, config, scanner, states, mutations, scanner.FindJob(source.Id, taskStore)!);
     }
 
     private static ConceptImplementationTask Slice(string id, string title, params string[] dependsOn) => new()

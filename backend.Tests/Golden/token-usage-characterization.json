@@ -1308,55 +1308,69 @@
     "BucketCount": 2508,
     "freshness": {
       "Status": "complete",
-      "asOf": null,
-      "Sources": []
+      "asOf": "2026-10-13T10:00:00.0000000Z",
+      "Sources": [
+        "historical-token-bus",
+        "task-token-receipts",
+        "chat-usage-fallback"
+      ]
     },
     "projects": [
       {
         "Project": "alpha",
-        "Calls": 11,
-        "Input": 263500,
-        "Output": 50300,
-        "CacheRead": 211000,
-        "CacheWrite": 8000,
-        "Total": 532800,
-        "dollars": "0.66475",
+        "Calls": 14,
+        "Input": 287500,
+        "Output": 54700,
+        "CacheRead": 368000,
+        "CacheWrite": 14000,
+        "Total": 724200,
+        "dollars": "0.99365",
         "AllModelsPriced": false,
-        "peakBucketStart": "2026-07-15T10:00:00.0000000Z",
-        "PeakBucketTotal": 160000,
+        "peakBucketStart": "2026-10-12T15:00:00.0000000Z",
+        "PeakBucketTotal": 180000,
         "lastActivity": "2026-10-13T08:15:00.0000000Z",
-        "AgentTokens": 523700,
-        "SupportingTokens": 2300,
+        "AgentTokens": 704700,
+        "SupportingTokens": 12700,
         "OrchestratorTokens": 6800,
         "hosts": [
           {
             "Host": "local",
-            "Calls": 11,
-            "Total": 532800
+            "Calls": 12,
+            "Total": 533800
+          },
+          {
+            "Host": "agent-runner-01",
+            "Calls": 2,
+            "Total": 190400
           }
         ]
       },
       {
         "Project": "beta",
-        "Calls": 3,
-        "Input": 15000,
-        "Output": 3700,
-        "CacheRead": 5000,
+        "Calls": 4,
+        "Input": 17000,
+        "Output": 3800,
+        "CacheRead": 6000,
         "CacheWrite": 0,
-        "Total": 23700,
-        "dollars": "0.119",
+        "Total": 26800,
+        "dollars": "0.1242",
         "AllModelsPriced": true,
         "peakBucketStart": "2026-10-08T10:00:00.0000000Z",
         "PeakBucketTotal": 18000,
-        "lastActivity": "2026-10-13T09:00:00.0000000Z",
+        "lastActivity": "2026-10-13T10:00:00.0000000Z",
         "AgentTokens": 23700,
         "SupportingTokens": 0,
-        "OrchestratorTokens": 0,
+        "OrchestratorTokens": 3100,
         "hosts": [
           {
             "Host": "local",
             "Calls": 3,
             "Total": 23700
+          },
+          {
+            "Host": "agent-runner-02",
+            "Calls": 1,
+            "Total": 3100
           }
         ]
       }
@@ -1544,6 +1558,51 @@
       },
       {
         "Project": "alpha",
+        "bucketStart": "2026-10-12T15:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 20000,
+        "Output": 4000,
+        "CacheRead": 150000,
+        "CacheWrite": 6000,
+        "Total": 180000,
+        "dollars": "0.3125",
+        "AllModelsPriced": true,
+        "AgentTokens": 180000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T16:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 3000,
+        "Output": 400,
+        "CacheRead": 7000,
+        "CacheWrite": 0,
+        "Total": 10400,
+        "dollars": "0.0114",
+        "AllModelsPriced": true,
+        "AgentTokens": 0,
+        "SupportingTokens": 10400,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T17:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 1000,
+        "Output": 0,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 1000,
+        "dollars": "0.005",
+        "AllModelsPriced": true,
+        "AgentTokens": 1000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
         "bucketStart": "2026-10-13T08:00:00.0000000Z",
         "Calls": 1,
         "Input": 9000,
@@ -1571,6 +1630,21 @@
         "AgentTokens": 1100,
         "SupportingTokens": 0,
         "OrchestratorTokens": 0
+      },
+      {
+        "Project": "beta",
+        "bucketStart": "2026-10-13T10:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 2000,
+        "Output": 100,
+        "CacheRead": 1000,
+        "CacheWrite": 0,
+        "Total": 3100,
+        "dollars": "0.0052",
+        "AllModelsPriced": true,
+        "AgentTokens": 0,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 3100
       }
     ],
     "models": [
@@ -1587,6 +1661,23 @@
         "CacheWrite": 0,
         "Total": 320000,
         "dollars": "0.2688",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "claude-opus-5",
+        "ModelLabel": "Claude Opus 5",
+        "Host": "agent-runner-01",
+        "CliTypes": [
+          "claude"
+        ],
+        "Calls": 1,
+        "Input": 20000,
+        "Output": 4000,
+        "CacheRead": 150000,
+        "CacheWrite": 6000,
+        "Total": 180000,
+        "dollars": "0.3125",
         "AllModelsPriced": true
       },
       {
@@ -1627,13 +1718,13 @@
         "ModelLabel": "Claude Opus 5",
         "Host": "local",
         "CliTypes": [],
-        "Calls": 1,
-        "Input": 9000,
+        "Calls": 2,
+        "Input": 10000,
         "Output": 1200,
         "CacheRead": 20000,
         "CacheWrite": 3000,
-        "Total": 33200,
-        "dollars": "0.10375",
+        "Total": 34200,
+        "dollars": "0.10875",
         "AllModelsPriced": true
       },
       {
@@ -1649,6 +1740,23 @@
         "CacheWrite": 0,
         "Total": 18000,
         "dollars": "0.102",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "gpt-6-sol",
+        "ModelLabel": "GPT-6 Sol",
+        "Host": "agent-runner-01",
+        "CliTypes": [
+          "codex"
+        ],
+        "Calls": 1,
+        "Input": 3000,
+        "Output": 400,
+        "CacheRead": 7000,
+        "CacheWrite": 0,
+        "Total": 10400,
+        "dollars": "0.0114",
         "AllModelsPriced": true
       },
       {
@@ -1724,6 +1832,23 @@
         "CacheWrite": 0,
         "Total": 3500,
         "dollars": "0.0055",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "beta",
+        "Model": "gpt-6-sol",
+        "ModelLabel": "GPT-6 Sol",
+        "Host": "agent-runner-02",
+        "CliTypes": [
+          "codex"
+        ],
+        "Calls": 1,
+        "Input": 2000,
+        "Output": 100,
+        "CacheRead": 1000,
+        "CacheWrite": 0,
+        "Total": 3100,
+        "dollars": "0.0052",
         "AllModelsPriced": true
       },
       {

@@ -56,6 +56,23 @@ describe('TokenAnalysisViewComponent', () => {
     expect(el(fixture, 'token-analysis-row-rest')).not.toBeNull();
   });
 
+  it('labels the cost as a priced subtotal and names models without a list price', async () => {
+    const fixture = await render();
+    const response = fixtureResponse();
+    response.cards[0].slices[1].model = 'demo-unpriced-model';
+    response.cards[0].slices[1].priced = false;
+    response.cards[0].slices[1].costUsd = 0;
+    response.cards[0].costUsd = 0.5;
+    response.cards[0].costComplete = false;
+    http.expectOne(r => r.url === ANALYSIS).flush(response);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(el(fixture, 'token-analysis-cost')?.textContent).toContain('*');
+    expect(el(fixture, 'token-analysis-unpriced')?.textContent).toContain('demo-unpriced-model');
+    expect(el(fixture, 'token-analysis-unpriced')?.textContent).toContain('Priced subtotal');
+  });
+
   it('writes filters into the ta= hash segment and keeps the route', async () => {
     const fixture = await render();
     http.expectOne(r => r.url === ANALYSIS).flush(fixtureResponse());
@@ -90,6 +107,37 @@ describe('TokenAnalysisViewComponent', () => {
     expect(events?.querySelectorAll('li').length).toBe(2);
     expect(events?.textContent).toContain('10m 0s');
     expect(events?.textContent).toContain('reasoning 40');
+  });
+
+  it('ranks cards by cost, shows cost per usage kind, and keeps a tokens ranking in the URL (AGT-3805)', async () => {
+    const data = fixtureResponse();
+    // A cache-heavy card: most tokens, least cost.
+    data.cards.push({ ...data.cards[1], jobId: 'job-3', key: 'AGT-3', inFlight: false, totalTokens: 50_000, costUsd: 0.02,
+      slices: [{ ...data.cards[1].slices[0], input: 0, output: 0, cacheRead: 50_000, costUsd: 0.02 }] });
+    const fixture = await render();
+    http.expectOne(r => r.url === ANALYSIS).flush(data);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const order = () => [...fixture.nativeElement.querySelectorAll('[data-testid^="token-analysis-kind-row-"]')]
+      .map((b: Element) => b.textContent?.trim());
+    expect(order()).toEqual(['AGT-1', 'AGT-2', 'AGT-3']);
+    expect(el(fixture, 'token-analysis-kind-bars-measure')?.textContent).toContain('by theoretical cost');
+    expect(el(fixture, 'token-analysis-kind-cost-coding')?.textContent).toContain('$0.620');
+    expect(el(fixture, 'token-analysis-kind-cost-total')?.textContent).toContain('$0.880');
+
+    el(fixture, 'token-analysis-measure-tokens')!.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(order()).toEqual(['AGT-3', 'AGT-1', 'AGT-2']);
+    expect(el(fixture, 'token-analysis-kind-bars-measure')?.textContent).toContain('by tokens');
+    expect(decodeURIComponent(window.location.hash)).toContain('sort=tokens');
+
+    el(fixture, 'token-analysis-sort-cost')!.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(order()).toEqual(['AGT-1', 'AGT-2', 'AGT-3']);
+    expect(window.location.hash).not.toContain('ta=');
   });
 
   it('shows the empty state for a range without usage', async () => {

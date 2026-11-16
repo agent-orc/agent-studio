@@ -83,6 +83,13 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route('**/api/usage/cockpit**', route => route.fulfill(json({}, 503)));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({ ttlSeconds: 600, snapshots: [] })));
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ sessions: [] })));
+  await page.route(url => url.pathname === '/api/v1/operations/structure', route => route.fulfill(json({ nodes: [], links: [] })));
+  await page.route(url => url.pathname === '/api/v1/operations/structure/library', route => route.fulfill(json({ registries: [], consumers: [] })));
+  await page.route('**/api/diagnostics/api-stalls**', route => route.fulfill(json({
+    status: 'ok', intervalMs: 1000, maxDelayMs: 0, alarmThresholdMs: 1000, alarmWindowMinutes: 5, recent: [],
+  })));
+  await page.route('**/api/security/posture', route => route.fulfill(json({ error: 'permission-denied' }, 403)));
+  await page.route('**/api/workspaces/*/quota/admission', route => route.fulfill(json({ error: 'unavailable' }, 503)));
   const project = {
     sourceType: 'local-folder', id: 'PROJ-WEB', displayName: PROJECT, shortCode: 'WEB', workspaceId: 'ws',
     color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: STORAGE,
@@ -354,7 +361,6 @@ test.describe('Project Deploy area (mocked)', () => {
       backups: [stale ? newest : { ...newest, offHost: 'uploaded' }, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
       generatedAt: '2026-10-20T08:00:00+00:00',
     }));
-    await page.route('**/api/security/posture', route => route.fulfill(json({ error: 'permission-denied' }, 403)));
     await page.getByTestId('deploy-tab-operations').click();
     await expect(page.getByTestId('project-operations').getByTestId('operations-backups')).toHaveCount(0);
     await page.getByTestId('project-operations').getByRole('link', { name: 'Settings → Operations' }).click();
@@ -387,7 +393,8 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(handoff).toContainText('Quality Studio');
     await expect(handoff.getByRole('link', { name: 'Fetch both files from the off-host target' }))
       .toHaveAttribute('href', /#fresh-host-step-2$/);
-    await expect(handoff.getByRole('link', { name: 'Re-enrol remote agents and review revocations' }))
+    await expect(handoff).toContainText('Confirm this archive includes operations/; offline fencing required');
+    await expect(handoff.getByRole('link', { name: 'Restore authority, re-enrol remote agents and check revocations' }))
       .toHaveAttribute('href', /#fresh-host-step-8$/);
     const downloadPromise = page.waitForEvent('download');
     await handoff.getByRole('button', { name: 'Download owner handoff' }).click();
@@ -476,8 +483,23 @@ test.describe('Project Deploy area (mocked)', () => {
         restoredAt: '2026-11-10T08:40:00+00:00', restoredBy: 'owner@studio-host-b', keyId: '3f2a9c0d11e4b7a8',
         secretKeyId: '0b1c2d3e4f5a6b7c', secretKeyCopyId: '0b1c2d3e4f5a6b7c', filesRestored: 18_240, checkoutsCloned: 3, skippedSources: [],
       },
+      operationsRecovery: { backupId: restored, fencedAt: '2026-11-10T08:41:00+00:00', items: [
+        { kind: 'reenrol', id: 'host-a', complete: false, oldPrincipalIds: ['old-a'] },
+        { kind: 'agent-revocation', id: 'host-a', complete: false, oldPrincipalIds: ['old-a'] },
+        { kind: 'reenrol', id: 'host-b', complete: false, oldPrincipalIds: ['old-b'] },
+        { kind: 'agent-revocation', id: 'host-b', complete: false, oldPrincipalIds: ['old-b'] },
+        { kind: 'host-certificate-revocations', id: 'installation', complete: false, oldPrincipalIds: [] },
+        { kind: 'operator-revocations', id: 'installation', complete: false, oldPrincipalIds: [] },
+      ] },
     }));
     await page.getByTestId('deploy-tab-operations').click();
+    const projectOperations = page.getByTestId('project-operations');
+    await expect(projectOperations.getByTestId('operations-backups')).toHaveCount(0);
+    const settingsOperations = projectOperations.getByRole('link', { name: 'Settings → Operations' });
+    await expect(settingsOperations).toHaveAttribute('href', '#/workspace/settings/operations');
+    await settingsOperations.click();
+    await expect(page).toHaveURL(/#\/workspace\/settings\/operations$/);
+    await expect(page.getByTestId('workspace-operations')).toBeVisible();
     const backups = page.getByTestId('operations-backups');
     const receipt = backups.getByTestId('operations-backups-restore');
     await expect(receipt).toContainText('owner@studio-host-b');
@@ -489,12 +511,18 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(backups.getByTestId('operations-backups-offhost-unknown').locator('tbody tr')).toHaveCount(3);
     await expect(backups.getByTestId('operations-backups-verification-proved')).toContainText('key on this host');
     await expect(backups.getByTestId('operations-backups-verification-not-proved')).toContainText('backup-key.sh id');
+    const recoverySection = backups.getByTestId('operations-recovery');
+    const recoveryChecks = recoverySection.getByTestId('operations-recovery-checks').locator('li');
+    await expect(recoveryChecks).toHaveCount(6);
+    await expect(backups.getByTestId('operations-recovery-checks').locator('li[data-complete="false"]')).toHaveCount(6);
+    await expect(backups.getByTestId('operations-recovery')).toContainText('Re-enrol remote agent host-b');
     fs.mkdirSync(results, { recursive: true });
     // Tall viewports, so the screenshots hold the whole panel instead of the scrolled part.
     await page.setViewportSize({ width: 1280, height: 1800 });
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await backups.screenshot({ path: path.join(results, `operations-backups-restored-${theme}--mocked.png`) });
+      await recoverySection.screenshot({ path: path.join(results, `operations-recovery-checks-${theme}--mocked.png`) });
     }
     await page.setViewportSize({ width: 390, height: 3000 });
     await expect(receipt).toBeVisible();

@@ -104,6 +104,13 @@ public sealed record TaskTestEvidenceSource
     public string Summary { get; init; } = "";
     public string Reason { get; init; } = "";
     public string ReportRef { get; init; } = "";
+
+    /// <summary>
+    /// Task-folder file holding the command output the reason cites, for a
+    /// review build-tests verdict that found the integration branch red
+    /// (AGT-3812); null otherwise.
+    /// </summary>
+    public string? OutputRef { get; init; }
 }
 
 public sealed record DeploymentTestRunReference

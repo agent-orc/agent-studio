@@ -11,6 +11,100 @@ namespace AgentStudio.Tests;
 public sealed class RemoteCommitAttributionGuardTests
 {
     [Fact]
+    public void InspectRemoteDeliveryCommitRange_ExcludesTwoDevelopMergesButRejectsForeignTaskWork()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "remote-integration-range-" + Guid.NewGuid().ToString("N"));
+        var remote = Path.Combine(root, "origin.git");
+        var repo = Path.Combine(root, "repo");
+        Directory.CreateDirectory(root);
+        try
+        {
+            RunGit(root, $"init -q --bare \"{remote}\"");
+            RunGit(root, $"clone -q \"{remote}\" \"{repo}\"");
+            RunGit(repo, "config user.email test@example.com");
+            RunGit(repo, "config user.name Test");
+            RunGit(repo, "checkout -q -b develop");
+            File.WriteAllText(Path.Combine(repo, "base.txt"), "base");
+            RunGit(repo, "add -A");
+            RunGit(repo, "commit -q -m base");
+            var baseSha = RunGit(repo, "rev-parse HEAD");
+            RunGit(repo, "push -q origin develop");
+            RunGit(repo, "checkout -q -b runner/test/AGT-3786");
+            File.WriteAllText(Path.Combine(repo, "own-one.txt"), "own one");
+            RunGit(repo, "add -A");
+            RunGit(repo, "commit -q -m \"test(AGT-3786): first\"");
+            var ownOne = RunGit(repo, "rev-parse HEAD");
+            string? resolutionMerge = null;
+            string? cleanMerge = null;
+            for (var index = 1; index <= 2; index++)
+            {
+                RunGit(repo, "checkout -q develop");
+                File.WriteAllText(Path.Combine(repo, $"foreign-{index}.txt"), "foreign");
+                RunGit(repo, "add -A");
+                RunGit(repo, $"commit -q -m \"fix(AGT-3784): integrated {index}\"");
+                RunGit(repo, "push -q origin develop");
+                RunGit(repo, "checkout -q runner/test/AGT-3786");
+                RunGit(repo, index == 1
+                    ? "merge -q --no-ff -s ours develop -m \"Merge origin/develop\""
+                    : "merge -q --no-ff develop -m \"Merge origin/develop\"");
+                if (index == 1) resolutionMerge = RunGit(repo, "rev-parse HEAD");
+                else cleanMerge = RunGit(repo, "rev-parse HEAD");
+                File.WriteAllText(Path.Combine(repo, $"own-{index + 1}.txt"), "own");
+                RunGit(repo, "add -A");
+                RunGit(repo, $"commit -q -m \"test(AGT-3786): own {index + 1}\"");
+            }
+            var tip = RunGit(repo, "rev-parse HEAD");
+            RunGit(repo, "push -q origin runner/test/AGT-3786");
+            var config = new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["WatchPaths:0:Name"] = "Fixture",
+                    ["WatchPaths:0:RootPath"] = repo,
+                    ["WatchPaths:0:RepositoryPath"] = repo,
+                    ["WatchPaths:0:Path"] = Path.Combine(repo, ".orchestrator", "jobs"),
+                }).Build();
+            var scanner = new TaskScannerService(config,
+                NullLogger<TaskScannerService>.Instance,
+                new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+            var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+            var range = git.InspectRemoteDeliveryCommitRange(repo,
+                "runner/test/AGT-3786", tip, "refs/heads/develop", baseSha);
+            Assert.True(range.Success, range.Warning);
+            Assert.Equal(5, range.Commits.Count);
+            Assert.Contains(range.Commits, commit => commit.Sha == ownOne);
+            Assert.Contains(range.Commits, commit => commit.Sha == resolutionMerge
+                && commit.IsMerge && commit.FilesChanged == 1);
+            Assert.Contains(range.Commits, commit => commit.Sha == cleanMerge
+                && commit.IsMerge && commit.FilesChanged == 0);
+            Assert.DoesNotContain(range.Commits, commit => commit.Subject.Contains("AGT-3784"));
+            Assert.True(RemoteCommitAttributionGuard.Attribute("AGT-3786",
+                "runner/test/AGT-3786", range.Commits).Accepted);
+
+            RunGit(repo, "push -q origin HEAD:develop");
+            var publishedRange = git.InspectRemoteDeliveryCommitRange(repo,
+                "runner/test/AGT-3786", tip, "refs/heads/develop", baseSha);
+            Assert.True(publishedRange.Success, publishedRange.Warning);
+            Assert.Equal(range.Commits.Select(commit => commit.Sha),
+                publishedRange.Commits.Select(commit => commit.Sha));
+
+            File.WriteAllText(Path.Combine(repo, "foreign-work.txt"), "not integrated");
+            RunGit(repo, "add -A");
+            RunGit(repo, "commit -q -m \"fix(AGT-3784): foreign task work\"");
+            var foreignTip = RunGit(repo, "rev-parse HEAD");
+            RunGit(repo, "push -q origin runner/test/AGT-3786");
+            var foreignRange = git.InspectRemoteDeliveryCommitRange(repo,
+                "runner/test/AGT-3786", foreignTip, "refs/heads/develop", baseSha);
+            Assert.True(foreignRange.Success, foreignRange.Warning);
+            Assert.False(RemoteCommitAttributionGuard.Attribute("AGT-3786",
+                "runner/test/AGT-3786", foreignRange.Commits).Accepted);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public void Attribute_ExactRunnerBranch_PersistsEveryBranchCommitAsAutomatic()
     {
         var commits = new[]
@@ -185,7 +279,9 @@ public sealed class RemoteCommitAttributionGuardTests
     /// <summary>
     /// Only the salvage commit of the expected card is exempt. One that a
     /// runner made for another card, or a message without the salvage
-    /// trailer, is scanned like every agent commit.
+    /// trailer, is scanned like every agent commit. The subject carries no
+    /// own key here: since AGT-3854 a subject naming the card's own key is
+    /// the card's work.
     /// </summary>
     [Theory]
     [InlineData("Agent-Studio-Task: AGT-3591\nAgent-Studio-Salvage: teardown")]
@@ -193,7 +289,7 @@ public sealed class RemoteCommitAttributionGuardTests
     [InlineData("Agent-Studio-Salvage: teardown")]
     public void Attribute_SalvageTrailersOfAnotherCardOrIncomplete_StillScanTheSubject(string trailers)
     {
-        const string subject = "AGT-3702: CP-9 · Guided playthrough slice";
+        const string subject = "CP-9 · Guided playthrough slice";
         var result = RemoteCommitAttributionGuard.Attribute(
             "AGT-3702",
             "runner/agent-runner-01/AGT-3702",
@@ -203,6 +299,124 @@ public sealed class RemoteCommitAttributionGuardTests
 
         Assert.False(result.Accepted);
         Assert.Contains("CP-9", result.Warning, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AGT-3808 (16.11.2026): one commit per playthrough finding, each subject
+    /// named by its draft id. The range was rejected as foreign work.
+    /// </summary>
+    [Fact]
+    public void Attribute_AGT3808FindingIdSubjects_AreAttributed()
+    {
+        var commits = new[]
+        {
+            Commit("56d5a68f3611111111111111111111111111111a",
+                "AGT-3794-F13: keep per-run tokens and cost in the narrow Overview pane"),
+            Commit("2222222222222222222222222222222222222222",
+                "AGT-3794-F14: second finding of the playthrough"),
+            Commit("3333333333333333333333333333333333333333",
+                "AGT-3794-F15: third finding of the playthrough"),
+        };
+
+        var result = RemoteCommitAttributionGuard.Attribute(
+            "AGT-3808", "runner/agent-runner-01/AGT-3808", commits);
+
+        Assert.True(result.Accepted, result.Warning);
+        Assert.Equal(commits.Select(commit => commit.Sha), result.Commits.Select(commit => commit.Sha));
+    }
+
+    [Theory]
+    [InlineData("AGT-3794-F13: keep per-run tokens")]
+    [InlineData("fix(AGT-3796-D9): draft follow-up")]
+    [InlineData("AGT-3794-13b: numbered finding")]
+    public void ForeignKeyInSubject_FindingOrDraftId_IsNotATaskKey(string subject)
+        => Assert.Null(RemoteCommitAttributionGuard.ForeignKeyInSubject(subject, "AGT-3808"));
+
+    [Theory]
+    [InlineData("AGT-3794: playthrough fix", "AGT-3794")]
+    [InlineData("fix(AGT-3794) - trailing dash text", "AGT-3794")]
+    [InlineData("AGT-3794-F13 and AGT-2240", "AGT-2240")]
+    public void ForeignKeyInSubject_PlainKey_IsStillATaskKey(string subject, string expected)
+        => Assert.Equal(expected, RemoteCommitAttributionGuard.ForeignKeyInSubject(subject, "AGT-3808"));
+
+    [Fact]
+    public void Attribute_KeyTheCardReferences_IsAllowed()
+    {
+        var result = RemoteCommitAttributionGuard.Attribute(
+            "AGT-3808",
+            "runner/agent-runner-01/AGT-3808",
+            [
+                Commit("1111111111111111111111111111111111111111", "feat: builds on AGT-3593"),
+                Commit("2222222222222222222222222222222222222222", "docs(AGT-3794): playthrough notes"),
+            ],
+            referencedKeys: ["AGT-3593", "AGT-3794"]);
+
+        Assert.True(result.Accepted, result.Warning);
+        Assert.Equal(2, result.Commits.Count);
+    }
+
+    [Fact]
+    public void Attribute_SubjectNamingTheOwnKey_IsAttributedNextToAnotherKey()
+    {
+        var result = RemoteCommitAttributionGuard.Attribute(
+            "AGT-3808",
+            "runner/agent-runner-01/AGT-3808",
+            [Commit("1111111111111111111111111111111111111111", "fix(AGT-3808): align with AGT-2240")]);
+
+        Assert.True(result.Accepted, result.Warning);
+        Assert.Single(result.Commits);
+    }
+
+    [Fact]
+    public void Attribute_SubjectNamingOnlyAnUnreferencedForeignKey_StillRejectsTheRange()
+    {
+        var result = RemoteCommitAttributionGuard.Attribute(
+            "AGT-3808",
+            "runner/agent-runner-01/AGT-3808",
+            [
+                Commit("1111111111111111111111111111111111111111", "AGT-3794-F13: own finding"),
+                Commit("2222222222222222222222222222222222222222", "feat: builds on AGT-3593 and AGT-2240"),
+            ],
+            referencedKeys: ["AGT-3593", "AGT-3794"]);
+
+        Assert.False(result.Accepted);
+        Assert.Empty(result.Commits);
+        Assert.Contains("names foreign task 'AGT-2240'", result.Warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CardReferencedKeys_ReadsRelationsTitleAndBrief()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "card-referenced-keys-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "prompt.md"),
+                "Fix AGT-3794-F13, AGT-3794-F14 and AGT-3794-F15 for AGT-3808.");
+            File.WriteAllText(Path.Combine(folder, "prompt-2.md"), "Also see AGT-3700.");
+            var task = new TaskInfo
+            {
+                Id = "AGT-3808",
+                Key = "AGT-3808",
+                Title = "Overview pane follow-up of AGT-3790",
+                FolderPath = folder,
+                References = new TaskReferences
+                {
+                    DependsOn = [new TaskDependencyReference("AGT-3593")],
+                    RelatedTo = ["AGT-3601"],
+                },
+            };
+
+            var keys = RemoteCommitAttributionGuard.CardReferencedKeys(task);
+
+            Assert.Equal(
+                ["AGT-3593", "AGT-3601", "AGT-3700", "AGT-3790", "AGT-3794"],
+                keys.Select(key => key.ToUpperInvariant()).Order(StringComparer.Ordinal));
+        }
+        finally
+        {
+            try { Directory.Delete(folder, recursive: true); } catch { }
+        }
     }
 
     [Fact]
@@ -307,6 +521,82 @@ public sealed class RemoteCommitAttributionGuardTests
             Assert.True(exactEnvelopeRange.Success, exactEnvelopeRange.Warning);
             Assert.Equal(baseSha, exactEnvelopeRange.MergeBaseSha);
             Assert.Equal([first, tip], exactEnvelopeRange.Commits.Select(commit => commit.Sha));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void InspectRemoteDeliveryCommitRange_RebasedPastUntransferredRunnerMerge_UsesOwnedHistory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "remote-rebased-base-" + Guid.NewGuid().ToString("N"));
+        var remote = Path.Combine(root, "origin.git");
+        var runner = Path.Combine(root, "runner");
+        var server = Path.Combine(root, "server");
+        Directory.CreateDirectory(root);
+        try
+        {
+            RunGit(root, $"init -q --bare \"{remote}\"");
+            RunGit(root, $"clone -q \"{remote}\" \"{runner}\"");
+            RunGit(runner, "config user.email test@example.com");
+            RunGit(runner, "config user.name Test");
+            RunGit(runner, "checkout -q -b develop");
+            File.WriteAllText(Path.Combine(runner, "base.txt"), "base");
+            RunGit(runner, "add -A");
+            RunGit(runner, "commit -q -m \"chore: base\"");
+            var original = RunGit(runner, "rev-parse HEAD");
+            RunGit(runner, "push -q origin develop");
+            RunGit(runner, "checkout -q -b runner/test/AGT-2389");
+            File.WriteAllText(Path.Combine(runner, "old.txt"), "old");
+            RunGit(runner, "add -A");
+            RunGit(runner, "commit -q -m \"docs: previous result\"");
+            var previous = RunGit(runner, "rev-parse HEAD");
+            RunGit(runner, "checkout -q develop");
+            File.WriteAllText(Path.Combine(runner, "develop.txt"), "develop");
+            RunGit(runner, "add -A");
+            RunGit(runner, "commit -q -m \"docs: develop moves\"");
+            var develop = RunGit(runner, "rev-parse HEAD");
+            RunGit(runner, "push -q origin develop");
+            RunGit(runner, "checkout -q runner/test/AGT-2389");
+            RunGit(runner, "merge -q --no-ff develop -m \"Merge remote-tracking branch 'origin/develop' into runner/test/AGT-2389\"");
+            var fencedBase = RunGit(runner, "rev-parse HEAD");
+            Assert.Equal($"{fencedBase} {previous} {develop}",
+                RunGit(runner, "rev-list --parents -n 1 HEAD"));
+            // The new result is rebased onto develop, so the runner merge is
+            // absent from the pushed result and from the server object store.
+            RunGit(runner, "reset -q --hard develop");
+            File.WriteAllText(Path.Combine(runner, "delivery.txt"), "delivery");
+            RunGit(runner, "add -A");
+            RunGit(runner, "commit -q -m \"feat: own delivery\" -m \"Agent-Studio-Task: AGT-2389\"");
+            var tip = RunGit(runner, "rev-parse HEAD");
+            RunGit(runner, $"push -q origin {tip}:refs/heads/runner/test/AGT-2389");
+            RunGit(root, $"clone -q \"{remote}\" \"{server}\"");
+            var config = new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["WatchPaths:0:Name"] = "Fixture",
+                    ["WatchPaths:0:RootPath"] = server,
+                    ["WatchPaths:0:RepositoryPath"] = server,
+                    ["WatchPaths:0:Path"] = Path.Combine(server, ".orchestrator", "jobs"),
+                }).Build();
+            var scanner = new TaskScannerService(config,
+                NullLogger<TaskScannerService>.Instance,
+                new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+            var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+
+            var range = git.InspectRemoteDeliveryCommitRange(server,
+                "runner/test/AGT-2389", tip, "refs/heads/develop", fencedBase,
+                taskKey: "AGT-2389");
+
+            Assert.True(range.Success, range.Warning);
+            Assert.Equal(develop, range.MergeBaseSha);
+            Assert.Equal([tip], range.Commits.Select(commit => commit.Sha));
+            Assert.Contains(fencedBase[..8], range.Warning);
+            Assert.True(RemoteCommitAttributionGuard.Attribute("AGT-2389",
+                "runner/test/AGT-2389", range.Commits).Accepted);
+            Assert.NotEqual(original, develop);
         }
         finally
         {

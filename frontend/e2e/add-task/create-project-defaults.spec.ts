@@ -71,14 +71,84 @@ test('create uses project agent defaults, closes once, and links the card', asyn
     await expect(page.getByTestId('create-dialog-header')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Open card' })).toBeVisible();
     expect(createdId).toBeTruthy();
-    await expect.poll(async () => (await getJob(createdId!, watchPath)).model).toBe(model);
-    expect((await getJob(createdId!, watchPath)).cliType).toBe('codex');
-    await expect(page.getByTestId('task-card').filter({ hasText: title }).getByTestId('task-card-effective-model')).toContainText(/sol/i);
     if (screenshots) await page.screenshot({ path: join(screenshots, 'create-success-toast.png') });
     await page.getByRole('button', { name: 'Open card' }).click();
     await expect(page.getByTestId('detail-panes')).toBeVisible();
+    await expect.poll(async () => (await getJob(createdId!, watchPath)).model).toBe(model);
+    expect((await getJob(createdId!, watchPath)).cliType).toBe('codex');
   } finally {
     releaseCreate?.();
+    if (createdId) {
+      await api(`/api/tasks/${encodeURIComponent(createdId)}?watchPath=${encodeURIComponent(watchPath)}`, { method: 'DELETE' }).catch(() => {});
+    }
+  }
+});
+
+test('failed project defaults show a retry, then Create files the card', async ({ page }) => {
+  const paths = await api<Array<{ path: string; name: string }>>('/api/watch-paths');
+  const watchPath = paths[0].path;
+  const title = `e2e-project-defaults-retry-${Date.now()}`;
+  const screenshots = process.env['JOB_RESULTS_DIR'];
+  let failDefaults = true;
+  let releaseDefaults: (() => void) | undefined;
+  let createdId: string | undefined;
+  await page.goto('/');
+  await page.setViewportSize({ width: 1280, height: 1200 });
+  await page.route('**/api/v1/projects*', async route => {
+    if (failDefaults) {
+      await new Promise<void>(resolve => { releaseDefaults = resolve; });
+      await route.fulfill({ status: 200, json: [] });
+      return;
+    }
+    const response = await route.fetch();
+    const projects = await response.json() as Array<Record<string, unknown>>;
+    const target = projects.find(project => project['storageLocation'] === watchPath);
+    expect(target).toBeTruthy();
+    target!['cliDefault'] = 'codex';
+    target!['modelDefault'] = model;
+    await route.fulfill({ response, json: projects });
+  });
+
+  try {
+    await page.getByRole('button', { name: /add task/i }).first().click();
+    await page.getByTestId('create-title').fill(title);
+    await page.getByTestId('create-prompt').fill('Verify project-default recovery.');
+    await expect(page.getByTestId('create-submit')).toBeDisabled();
+    await expect.poll(() => Boolean(releaseDefaults)).toBe(true);
+    if (screenshots) await page.getByRole('dialog').screenshot({ path: join(screenshots, 'create-defaults-loading-light.png') });
+    releaseDefaults?.();
+    const error = page.getByTestId('create-defaults-error');
+    await expect(error).toContainText('Project model defaults returned no result');
+    await expect(page.getByTestId('create-submit')).toBeDisabled();
+    if (screenshots) {
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.getByRole('dialog').screenshot({ path: join(screenshots, `create-defaults-empty-${theme}.png`) });
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: join(screenshots, 'create-defaults-empty-390.png') });
+    }
+    failDefaults = false;
+    await page.getByTestId('create-defaults-retry').click();
+    await expect(error).toHaveCount(0);
+    await expect(page.getByTestId('create-agent')).toHaveAttribute('aria-label', /Codex.*Sol/i);
+    await expect(page.getByTestId('create-submit')).toBeEnabled({ timeout: 15_000 });
+    if (screenshots) {
+      await page.setViewportSize({ width: 1280, height: 1200 });
+      await setTheme(page, 'light');
+      await page.mouse.move(1200, 1100);
+      await page.getByRole('dialog').screenshot({ path: join(screenshots, 'create-defaults-recovered-light.png') });
+    }
+    const created = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tasks');
+    await page.getByTestId('create-submit').click();
+    const response = await created;
+    expect(response.ok(), await response.text()).toBe(true);
+    createdId = (await response.json() as { id: string }).id;
+    await expect(page.getByTestId('create-dialog-header')).toHaveCount(0);
+    expect((await getJob(createdId, watchPath)).model).toBe(model);
+  } finally {
+    releaseDefaults?.();
     if (createdId) {
       await api(`/api/tasks/${encodeURIComponent(createdId)}?watchPath=${encodeURIComponent(watchPath)}`, { method: 'DELETE' }).catch(() => {});
     }

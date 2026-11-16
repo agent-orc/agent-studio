@@ -274,6 +274,12 @@ public record MergeIntoIntegrationResult(
     public bool GateExecuted { get; init; }
 
     /// <summary>
+    /// AGT-3811: why no merge gate ran on this fresh merge, in owner wording.
+    /// Null when a gate ran or the merge was not the lane's own.
+    /// </summary>
+    public string? GateSkipReason { get; init; }
+
+    /// <summary>
     /// AGT-3434: the merge gate stood on the per-task batch fallback verdict for
     /// the same tree on the same integration tip and ran no suite.
     /// </summary>
@@ -352,7 +358,8 @@ public record GitCommitInfo(
     int FilesChanged,
     int Added,
     int Removed,
-    string? Body = null);
+    string? Body = null,
+    bool IsMerge = false);
 
 public sealed record RemoteDeliveryCommitRange(
     bool Success,
@@ -780,9 +787,16 @@ public partial class GitService
         lock (_statusCacheLock) _statusCache.Clear();
     }
 
+    // Board tile summary (AGT-3793): the request reads the last published
+    // snapshot; a background refresh recomputes it when the observed ref and
+    // index files of a project moved, or when the snapshot is older than the
+    // working-tree bound below (unstaged edits move no Git file).
     private readonly object _summaryLock = new();
-    private DateTime _summaryAt = DateTime.MinValue;
-    private List<GitProjectSummary> _summaryCache = [];
+    private SummarySnapshot? _summary;
+    private Task<List<GitProjectSummary>>? _summaryRefresh;
+    internal static readonly TimeSpan SummaryWorkingTreeMaxAge = TimeSpan.FromSeconds(60);
+
+    private sealed record SummarySnapshot(List<GitProjectSummary> Summaries, IReadOnlyList<string> Keys, DateTime At);
 
     // SHA-range answers (commits / file list / diff) are deterministic once
     // a run has captured HeadShaBefore..HeadShaAfter: git history is
@@ -869,6 +883,16 @@ public partial class GitService
     public string? GetHeadShaCached(string root)
     {
         if (string.IsNullOrWhiteSpace(root)) return null;
+        // AGT-3793: the ref files answer without a process and always name the
+        // current commit; the TTL only spares the Git fallback.
+        if (Directory.Exists(root))
+        {
+            switch (GitRefFiles.TryResolveHead(root, out var fromFiles))
+            {
+                case GitRefFileAnswer.Found: return fromFiles;
+                case GitRefFileAnswer.Absent: return null;
+            }
+        }
         if (_headShaCache.TryGetValue(root, out var cached) && DateTime.UtcNow - cached.At < HeadShaTtl)
             return cached.Sha;
         var sha = ReadHeadShaAt(root);
@@ -1099,6 +1123,18 @@ public partial class GitService
     }
 
     /// <summary>
+    /// Expires the short time-to-live probes (HEAD and ref SHAs, working-tree
+    /// status) and keeps every cache keyed by an observed commit. Tests use it
+    /// to stand for the minutes between two live reads of an unchanged repository.
+    /// </summary>
+    internal void ExpireShortLivedProbesForTesting()
+    {
+        _headShaCache.Clear();
+        _refShaCache.Clear();
+        InvalidateStatusCache();
+    }
+
+    /// <summary>
     /// Drops the HEAD-sha and HEAD-keyed memo caches. Tests that commit into a
     /// fixture repo and then re-query within the 2s HEAD TTL call this so the new
     /// commit is observed immediately; production just lets HEAD roll over.
@@ -1114,17 +1150,75 @@ public partial class GitService
     }
 
     /// <summary>
-    /// Per-project summary, cached for ~3 seconds so the board's tile-pills
-    /// can ask freely without spawning N git processes per render.
+    /// Per-project summary for the board's tile pills. Starts no Git: it
+    /// returns the last published snapshot (empty before the first one) and
+    /// queues one background refresh when a project's observed HEAD, ref or
+    /// index files changed, or the snapshot is older than
+    /// <see cref="SummaryWorkingTreeMaxAge"/>. Before AGT-3793 every request
+    /// after a three-second expiry ran three Git processes per project on the
+    /// request (39 for 13 projects), past the read guard ceiling.
     /// </summary>
     public List<GitProjectSummary> GetSummaries()
     {
+        var keys = ObserveSummaryKeys();
         lock (_summaryLock)
         {
-            if (DateTime.UtcNow - _summaryAt < TimeSpan.FromSeconds(3))
-                return _summaryCache;
+            var current = _summary;
+            if (current is null || !current.Keys.SequenceEqual(keys, StringComparer.Ordinal)
+                || DateTime.UtcNow - current.At >= SummaryWorkingTreeMaxAge)
+                StartSummaryRefreshLocked(keys);
+            return current?.Summaries ?? [];
         }
+    }
 
+    /// <summary>Recomputes the summaries now, or joins the refresh in flight.</summary>
+    internal Task<List<GitProjectSummary>> RefreshSummariesAsync()
+    {
+        var keys = ObserveSummaryKeys();
+        lock (_summaryLock) return StartSummaryRefreshLocked(keys);
+    }
+
+    private Task<List<GitProjectSummary>> StartSummaryRefreshLocked(IReadOnlyList<string> keys)
+    {
+        if (_summaryRefresh is { IsCompleted: false } running) return running;
+        // The refresh belongs to no request: without the flow it would count
+        // against the read guard and telemetry scope of the request that saw
+        // the change.
+        using (ExecutionContext.SuppressFlow())
+        {
+            _summaryRefresh = Task.Run(() =>
+            {
+                using var telemetry = GitProcessTelemetry.BeginRequest("git/summary-refresh", _logger);
+                var list = ComputeSummaries();
+                lock (_summaryLock) _summary = new SummarySnapshot(list, keys, DateTime.UtcNow);
+                return list;
+            });
+        }
+        return _summaryRefresh;
+    }
+
+    /// <summary>
+    /// One key per project from file metadata only: the configured path, the
+    /// ref signature (HEAD, loose and packed refs) and the index file, which
+    /// moves on stage, commit, checkout and merge.
+    /// </summary>
+    private List<string> ObserveSummaryKeys()
+    {
+        var keys = new List<string>();
+        foreach (var entry in _scanner.GetWatchPaths())
+        {
+            var configured = ResolveConfiguredRepositoryPath(entry) ?? "";
+            var root = configured.Length == 0 ? null : GitRefFiles.WorkTreeRoot(configured) ?? configured;
+            var gitDirectory = GitRefSignature.ResolveGitDirectory(root);
+            var index = gitDirectory is null ? null : new FileInfo(Path.Combine(gitDirectory, "index"));
+            keys.Add(string.Join('\0', entry.Name, configured, GitRefSignature.Capture(root).ToString(),
+                index is { Exists: true } ? $"{index.LastWriteTimeUtc.Ticks}:{index.Length}" : "-"));
+        }
+        return keys;
+    }
+
+    private List<GitProjectSummary> ComputeSummaries()
+    {
         var list = new List<GitProjectSummary>();
         foreach (var entry in _scanner.GetWatchPaths())
         {
@@ -1141,13 +1235,13 @@ public partial class GitService
                 continue;
             }
 
-            var (statusOut, _, statusCode) = RunGit(root, "status --porcelain=v1");
+            var (statusOut, _, statusCode) = RunGitReadonly(root, "status --porcelain=v1");
             var fileCount = statusCode == 0
                 ? statusOut.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l))
                 : 0;
 
-            var (branchOut, _, _) = RunGit(root, "rev-parse --abbrev-ref HEAD");
-            var (numOut, _, _) = RunGit(root, "diff --numstat HEAD");
+            var branch = ReadBranchAt(root);
+            var (numOut, _, _) = RunGitReadonly(root, "diff --numstat HEAD");
             var added = 0; var removed = 0;
             foreach (var line in numOut.Split('\n'))
             {
@@ -1160,14 +1254,8 @@ public partial class GitService
 
             list.Add(new GitProjectSummary(
                 entry.Name, root, root, true,
-                string.IsNullOrWhiteSpace(branchOut) ? null : branchOut.Trim(),
+                string.IsNullOrWhiteSpace(branch) ? null : branch.Trim(),
                 fileCount, added, removed));
-        }
-
-        lock (_summaryLock)
-        {
-            _summaryCache = list;
-            _summaryAt = DateTime.UtcNow;
         }
         return list;
     }
@@ -4998,15 +5086,18 @@ public partial class GitService
     /// commits the task branch is ahead of its fork point - no wall-clock window,
     /// no boundary slack. Returns an empty list when either ref is missing.
     /// </summary>
-    public List<GitCommitInfo> GetCommitsInRangeAtRoot(string repoRoot, string fromRef, string toRef)
+    public List<GitCommitInfo> GetCommitsInRangeAtRoot(string repoRoot, string fromRef, string toRef,
+        string? excludeRef = null)
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return [];
-        if (!IsLikelyBranchName(fromRef) || !IsLikelyBranchName(toRef)) return [];
+        if (!IsLikelyBranchName(fromRef) || !IsLikelyBranchName(toRef)
+            || excludeRef is not null && !IsLikelyBranchName(excludeRef)) return [];
         var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
 
         const char US = '\x1f';
         var fmt = "%H%x1f%h%x1f%aI%x1f%aN%x1f%s";
-        var args = $"log --no-merges --shortstat --pretty=format:\"{fmt}\" {fromRef}..{toRef} {RevisionsOnly}";
+        var args = $"log --no-merges --shortstat --pretty=format:\"{fmt}\" {fromRef}..{toRef}"
+            + (excludeRef is null ? "" : $" --not {excludeRef}") + $" {RevisionsOnly}";
         var (output, _, code) = RunGit(root, args);
         if (code != 0 || string.IsNullOrWhiteSpace(output)) return [];
 
@@ -5044,6 +5135,73 @@ public partial class GitService
         return list;
     }
 
+    // A merge's imported second-parent commits are excluded by the revision
+    // set. The merge object itself belongs to the delivery even when Git made
+    // it cleanly: merge-only conflict-recovery rounds need current-generation
+    // attribution. Its file count is limited to the remerge diff, so imported
+    // integration changes are never presented as changes made by the task.
+    private List<GitCommitInfo> GetDeliveryCommitsAtRoot(string repoRoot, string baseRef,
+        string tipRef, string? excludeRef)
+    {
+        var commits = GetCommitsInRangeAtRoot(repoRoot, baseRef, tipRef, excludeRef);
+        var revisions = $"{baseRef}..{tipRef}";
+        var exclusion = excludeRef is null ? Array.Empty<string>() : new[] { "--not", excludeRef };
+        string[] mergeArgs = ["rev-list", "--merges", revisions, .. exclusion, RevisionsOnly];
+        var (merges, _, mergeCode) = RunGitArgs(repoRoot, mergeArgs);
+        if (mergeCode != 0) return commits;
+        foreach (var sha in merges.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                     .Select(line => line.Trim()))
+        {
+            var (paths, _, pathsCode) = RunGitArgs(repoRoot, "show", "--remerge-diff",
+                "--format=", "--name-only", sha, RevisionsOnly);
+            var changed = pathsCode == 0
+                ? paths.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(path => path.Trim()).Where(path => path.Length > 0).Distinct().ToArray()
+                : [];
+            var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
+                "--format=%H%x1f%h%x1f%aI%x1f%aN%x1f%s", sha);
+            if (metadataCode != 0) continue;
+            var parts = metadata.Trim().Split('\x1f');
+            if (parts.Length < 5 || !DateTime.TryParse(parts[2],
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal
+                    | System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)) continue;
+            commits.Add(new GitCommitInfo(parts[0], parts[1],
+                DateTime.SpecifyKind(at, DateTimeKind.Utc), parts[3], parts[4],
+                changed.Length, 0, 0, IsMerge: true));
+        }
+        if (commits.Count == 0) return commits;
+        string[] orderArgs = ["rev-list", revisions, .. exclusion, RevisionsOnly];
+        var (order, _, orderCode) = RunGitArgs(repoRoot, orderArgs);
+        if (orderCode != 0) return commits;
+        var bySha = commits.ToDictionary(commit => commit.Sha, StringComparer.OrdinalIgnoreCase);
+        return order.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(sha => bySha.GetValueOrDefault(sha.Trim()))
+            .Where(commit => commit is not null).Select(commit => commit!).ToList();
+    }
+
+    private string? DeliveryIntegrationExclusion(string repoRoot, string baseRef,
+        string deliveryRef, string integrationRef)
+    {
+        if (!IsAncestor(repoRoot, deliveryRef, integrationRef)) return integrationRef;
+        // A release may fast-forward the result onto the integration line
+        // before completion. Excluding the live line would hide the result
+        // itself; the latest merged integration parent is its historical tip.
+        var (merges, _, code) = RunGitArgs(repoRoot, "rev-list", "--first-parent",
+            "--merges", $"{baseRef}..{deliveryRef}", RevisionsOnly);
+        if (code != 0) return null;
+        foreach (var merge in merges.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var (parents, _, parentsCode) = RunGitArgs(repoRoot, "rev-list", "--parents",
+                "-n", "1", merge.Trim(), RevisionsOnly);
+            if (parentsCode != 0) continue;
+            var parts = parents.Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 3 && IsAncestor(repoRoot, baseRef, parts[2])
+                && IsAncestor(repoRoot, parts[2], integrationRef)) return parts[2];
+        }
+        return null;
+    }
+
     /// <summary>
     /// Fetches the pushed runner branch, verifies its fenced tip, and returns
     /// the exact merge-base..tip commit range in chronological order.
@@ -5075,7 +5233,9 @@ public partial class GitService
         string expectedResultSha,
         string? recordedIntegrationBranch,
         string? expectedBaseSha,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? taskKey = null,
+        string? fallbackIntegrationBaseSha = null)
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
             return Failed("Repository root does not exist.");
@@ -5110,6 +5270,7 @@ public partial class GitService
                 DeliveryVerificationStatus.ShaMismatch);
         }
 
+        string? missingBaseWarning = null;
         if (!string.IsNullOrWhiteSpace(expectedBaseSha))
         {
             var baseSha = expectedBaseSha.Trim();
@@ -5117,29 +5278,39 @@ public partial class GitService
                 return Failed("Remote delivery has no valid fenced base SHA.");
             var (_, baseError, baseCode) = RunGitArgs(
                 repoRoot, "rev-parse", "--verify", $"{baseSha}^{{commit}}");
-            if (baseCode != 0)
-                return Failed($"Fenced delivery base {AbbreviateSha(baseSha)} is not a commit: {baseError.Trim()}");
-            var (_, ancestorError, ancestorCode) = RunGitArgs(
-                repoRoot, "merge-base", "--is-ancestor", baseSha, deliveryRef);
-            if (ancestorCode != 0)
+            if (baseCode == 0)
+            {
+                var (_, ancestorError, ancestorCode) = RunGitArgs(
+                    repoRoot, "merge-base", "--is-ancestor", baseSha, deliveryRef);
+                if (ancestorCode == 0)
+                {
+                    var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch)
+                        ?? TaskIntegrationBranch.NormalizeRef("main");
+                    var integrationName = TaskIntegrationBranch.Name(integrationBranch);
+                    var integrationRef = $"refs/remotes/origin/{integrationName}";
+                    var (_, _, integrationFetchCode) = FetchWithCatchUpBudget(repoRoot,
+                        cancellationToken, "fetch", "--no-tags", "origin",
+                        $"+refs/heads/{integrationName}:{integrationRef}");
+                    if (integrationFetchCode != 0)
+                        return Failed($"Integration branch '{integrationName}' could not be fetched for delivery attribution.");
+                    // A task may publish its own result before completion. Its
+                    // immutable fenced base remains authoritative in that case.
+                    var exclusion = DeliveryIntegrationExclusion(repoRoot, baseSha,
+                        deliveryRef, integrationRef);
+                    var exactCommits = WithMessagesAtRoot(repoRoot,
+                        GetDeliveryCommitsAtRoot(repoRoot, baseSha, deliveryRef, exclusion));
+                    exactCommits.Reverse();
+                    return new RemoteDeliveryCommitRange(true, integrationBranch, baseSha, tip,
+                        exactCommits, null, DeliveryVerificationStatus.Verified);
+                }
                 return Failed(
                     $"Fenced delivery base {AbbreviateSha(baseSha)} is not an ancestor of result {AbbreviateSha(tip)}: {ancestorError.Trim()}",
                     DeliveryVerificationStatus.BaseNotAncestor);
-
-            var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch);
-            if (integrationBranch is null)
-                integrationBranch = TaskIntegrationBranch.NormalizeRef("main");
-            var exactCommits = WithMessagesAtRoot(repoRoot,
-                GetCommitsInRangeAtRoot(repoRoot, baseSha, deliveryRef));
-            exactCommits.Reverse();
-            return new RemoteDeliveryCommitRange(
-                true,
-                integrationBranch,
-                baseSha,
-                tip,
-                exactCommits,
-                null,
-                DeliveryVerificationStatus.Verified);
+            }
+            else
+                missingBaseWarning = $"Fenced delivery base {AbbreviateSha(baseSha)} is not a commit: {baseError.Trim()}";
+            if (string.IsNullOrWhiteSpace(taskKey))
+                return Failed(missingBaseWarning, DeliveryVerificationStatus.BaseNotAncestor);
         }
 
         var candidates = string.IsNullOrWhiteSpace(recordedIntegrationBranch)
@@ -5154,7 +5325,15 @@ public partial class GitService
             var (_, _, fetchCode) = RunGitArgs(
                 repoRoot, cancellationToken, "fetch", "--no-tags", "origin", fetchIntegration);
             if (fetchCode != 0) continue;
-            var mergeBase = GetMergeBase(repoRoot, integrationRef, deliveryRef);
+            var baseRef = integrationRef;
+            if (missingBaseWarning is not null && !string.IsNullOrWhiteSpace(fallbackIntegrationBaseSha))
+            {
+                var (baseOutput, _, baseCode) = RunGitArgs(repoRoot, "rev-parse", "--verify",
+                    $"{fallbackIntegrationBaseSha}^{{commit}}");
+                if (baseCode != 0) continue;
+                baseRef = baseOutput.Trim();
+            }
+            var mergeBase = GetMergeBase(repoRoot, baseRef, deliveryRef);
             if (string.IsNullOrWhiteSpace(mergeBase)) continue;
             var (distanceText, _, distanceCode) = RunGitArgs(
                 repoRoot, "rev-list", "--count", $"{mergeBase}..{deliveryRef}", RevisionsOnly);
@@ -5167,18 +5346,29 @@ public partial class GitService
             .ThenBy(candidate => string.Equals(candidate.Branch, "main", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .FirstOrDefault();
         if (string.IsNullOrWhiteSpace(selected.Branch))
-            return Failed("No recorded main/develop base line shares history with the remote delivery.");
+            return Failed(missingBaseWarning is null
+                ? "No recorded main/develop base line shares history with the remote delivery."
+                : missingBaseWarning + " No integration merge-base is available for task-owned fallback.");
 
         var commits = WithMessagesAtRoot(repoRoot,
-            GetCommitsInRangeAtRoot(repoRoot, selected.Base, deliveryRef));
+            GetDeliveryCommitsAtRoot(repoRoot, selected.Base, deliveryRef,
+                DeliveryIntegrationExclusion(repoRoot, selected.Base, deliveryRef, selected.Ref)));
         commits.Reverse();
+        if (missingBaseWarning is not null)
+        {
+            commits = commits.Where(commit =>
+                RemoteCommitAttributionGuard.IsOwnedFallbackCommit(commit, taskKey!)).ToList();
+            if (commits.Count == 0)
+                return Failed(missingBaseWarning + " Integration merge-base fallback found no commits with this task's Agent-Studio-Task trailer.");
+        }
         return new RemoteDeliveryCommitRange(
             true,
             TaskIntegrationBranch.NormalizeRef(selected.Branch),
             selected.Base,
             tip,
             commits,
-            null,
+            missingBaseWarning is null ? null : missingBaseWarning
+                + $" Used task-owned commits after integration merge-base {AbbreviateSha(selected.Base)}.",
             DeliveryVerificationStatus.Verified);
 
         RemoteDeliveryCommitRange Failed(

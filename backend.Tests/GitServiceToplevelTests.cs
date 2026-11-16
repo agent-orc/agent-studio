@@ -37,7 +37,7 @@ public class GitServiceToplevelTests : IDisposable
     }
 
     [Fact]
-    public void GetSummaries_RootPathIsSubfolderOfGitRepo_IsReportedAsRepo()
+    public async Task GetSummaries_RootPathIsSubfolderOfGitRepo_IsReportedAsRepo()
     {
         var repoRoot = Path.Combine(_tempDir, "repo");
         var subfolder = Path.Combine(repoRoot, "App");
@@ -52,7 +52,7 @@ public class GitServiceToplevelTests : IDisposable
 
         var git = BuildGitService(("Sub", subfolder));
 
-        var summary = Assert.Single(git.GetSummaries());
+        var summary = Assert.Single(await git.RefreshSummariesAsync());
         Assert.True(summary.IsRepo,
             "RootPath inside a git repo must resolve to its toplevel (git rev-parse --show-toplevel).");
         Assert.Equal(repoRoot, summary.RootPath);
@@ -61,7 +61,7 @@ public class GitServiceToplevelTests : IDisposable
     }
 
     [Fact]
-    public void GetSummaries_RepositoryPathOverridesWorkingDirectory()
+    public async Task GetSummaries_RepositoryPathOverridesWorkingDirectory()
     {
         var repoRoot = Path.Combine(_tempDir, "repo");
         var workingDirectory = Path.Combine(_tempDir, "source", "App");
@@ -77,21 +77,21 @@ public class GitServiceToplevelTests : IDisposable
 
         var git = BuildGitService(("Split", workingDirectory, repoRoot));
 
-        var summary = Assert.Single(git.GetSummaries());
+        var summary = Assert.Single(await git.RefreshSummariesAsync());
         Assert.True(summary.IsRepo);
         Assert.Equal(repoRoot, summary.RootPath);
         Assert.Equal(repoRoot, summary.RepositoryPath);
     }
 
     [Fact]
-    public void GetSummaries_RootPathOutsideAnyRepo_IsNotReportedAsRepo()
+    public async Task GetSummaries_RootPathOutsideAnyRepo_IsNotReportedAsRepo()
     {
         var bare = Path.Combine(_tempDir, "no-repo");
         Directory.CreateDirectory(bare);
 
         var git = BuildGitService(("Bare", bare));
 
-        var summary = Assert.Single(git.GetSummaries());
+        var summary = Assert.Single(await git.RefreshSummariesAsync());
         Assert.False(summary.IsRepo);
     }
 

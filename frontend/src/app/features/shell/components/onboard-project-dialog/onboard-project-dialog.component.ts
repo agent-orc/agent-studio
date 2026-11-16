@@ -17,11 +17,12 @@ import { NotificationService } from '../../../../services/notification.service';
 import { CliCatalogStore } from '../../../cli';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { RemoteHostsService, codingLocationUnavailableReason, type RemoteHost } from '../../../remote-hosts';
+import { ServerCheckoutNoticeComponent, ServerCheckoutStore } from '../../../server-checkout';
 
 @Component({
   selector: 'app-onboard-project-dialog',
   standalone: true,
-  imports: [FormsModule, DialogComponent, ProjectBasicsFormComponent, PendingButtonDirective],
+  imports: [FormsModule, DialogComponent, ProjectBasicsFormComponent, PendingButtonDirective, ServerCheckoutNoticeComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './onboard-project-dialog.component.html',
   styleUrl: './onboard-project-dialog.component.scss',
@@ -33,6 +34,7 @@ export class OnboardProjectDialogComponent {
   private readonly notifications = inject(NotificationService);
   private readonly catalog = inject(CliCatalogStore);
   readonly hostRegistry = inject(RemoteHostsService);
+  private readonly serverCheckout = inject(ServerCheckoutStore);
 
   readonly workspaceId = signal('');
   readonly displayName = signal('');
@@ -62,6 +64,12 @@ export class OnboardProjectDialogComponent {
   readonly submitting = signal(false);
   readonly errorMsg = signal<string | null>(null);
   readonly registryWorkspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
+  /** AGT-3809: a local URL project gets its server checkout in the create flow. */
+  readonly createCheckout = signal(true);
+  readonly offerCheckout = computed(() => this.serverCheckout.enabled() && this.repositoryMode() === 'existing'
+    && !!this.repositoryUrl().trim() && !this.repositoryPath().trim());
+  /** Set after a create that started a checkout; the dialog then shows its progress. */
+  readonly createdProject = signal<{ id: string; displayName: string } | null>(null);
 
   private readonly form = viewChild(ProjectBasicsFormComponent);
 
@@ -149,7 +157,13 @@ export class OnboardProjectDialogComponent {
   }
 
   onCancel(): void {
-    if (!this.submitting()) this.manager.closeProjectOnboard();
+    if (this.createdProject()) this.finish();
+    else if (!this.submitting()) this.manager.closeProjectOnboard();
+  }
+
+  finish(): void {
+    this.createdProject.set(null);
+    this.manager.refreshAfterProjectCreate();
   }
 
   runnerUnavailable(host: RemoteHost): boolean {
@@ -177,6 +191,7 @@ export class OnboardProjectDialogComponent {
   onSubmit(): void {
     if (!this.canSubmit()) return;
     const value = this.formValue();
+    const checkout = this.offerCheckout() && this.createCheckout();
     this.submitting.set(true);
     this.errorMsg.set(null);
     this.tasks.createRegistryProject({
@@ -200,7 +215,13 @@ export class OnboardProjectDialogComponent {
       next: (project) => {
         this.submitting.set(false);
         this.notifications.success(`Project "${project.displayName}" created.`);
-        this.manager.refreshAfterProjectCreate();
+        if (checkout && !project.repositoryPath) {
+          this.createdProject.set({ id: project.id, displayName: project.displayName });
+          this.manager.notifyRegistryChanged();
+          this.serverCheckout.startForNewProject(project.id);
+        } else {
+          this.manager.refreshAfterProjectCreate();
+        }
       },
       error: (error) => {
         this.submitting.set(false);
@@ -230,6 +251,8 @@ export class OnboardProjectDialogComponent {
     this.repositoryVisibility.set('private');
     this.repositoryTemplate.set('static-web');
     this.errorMsg.set(null);
+    this.createCheckout.set(true);
+    this.createdProject.set(null);
   }
 }
 

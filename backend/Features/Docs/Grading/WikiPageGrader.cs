@@ -32,7 +32,7 @@ public static class WikiGradeVerdictParser
     /// </summary>
     public static WikiPageGradeVerdict? TryParse(string? rawText)
     {
-        var json = ExtractJsonObject(rawText);
+        var json = JsonReplyExtractor.ExtractJsonObject(rawText);
         if (json == null) return null;
         try
         {
@@ -69,15 +69,6 @@ public static class WikiGradeVerdictParser
         if (string.IsNullOrEmpty(clean)) return "unknown";
         var first = clean[..1];
         return first is "A" or "B" or "C" or "D" ? first : "unknown";
-    }
-
-    private static string? ExtractJsonObject(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        var start = text.IndexOf('{');
-        var end = text.LastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        return text.Substring(start, end - start + 1);
     }
 
     private static string? GetString(JsonElement obj, string prop) =>
