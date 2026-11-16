@@ -1137,6 +1137,16 @@ public sealed class WorkbenchCatalogueService
             throw new InvalidDataException("decision request is too long.");
         if (revisionTaskKey is { Length: > 100 })
             throw new InvalidDataException("decision revisionTaskKey is too long.");
+        WorkbenchAgentRoute? routeChangedFrom = null;
+        if (value.TryGetProperty("routeChangedFrom", out var routeValue))
+        {
+            if (routeValue.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("decision routeChangedFrom must be an object.");
+            routeChangedFrom = new WorkbenchAgentRoute(
+                OptionalString(routeValue, "cliType"),
+                OptionalString(routeValue, "model"),
+                OptionalString(routeValue, "thinkingLevel"));
+        }
         var spawned = StringArray(value, "spawnedTaskKeys");
         List<WorkbenchDecisionResponse> responses = [];
         if (value.TryGetProperty("responses", out var responsesValue))
@@ -1243,6 +1253,7 @@ public sealed class WorkbenchCatalogueService
         {
             Request = request,
             RevisionTaskKey = revisionTaskKey,
+            RouteChangedFrom = routeChangedFrom,
         };
     }
 
@@ -1527,6 +1538,11 @@ public sealed record WorkbenchDecisionProjection(
     public string? Request { get; init; }
     /// <summary>The card a rework request asked to run the revision.</summary>
     public string? RevisionTaskKey { get; init; }
+    /// <summary>
+    /// The revision card's route before a rework round that changed it; the
+    /// receipt's own route is the one the owner confirmed (AGT-3838).
+    /// </summary>
+    public WorkbenchAgentRoute? RouteChangedFrom { get; init; }
 }
 
 internal sealed record WorkbenchMutationSnapshot(
