@@ -493,6 +493,10 @@ On an unchanged parked card, `POST /api/tasks/{jobId}/review/retry` moves the
 same delivery back to Auto Review and mints a fresh ReviewAttempt. The card also
 links the intervention receipt. Its Undo restores Auto Review only while the
 park's lane entry, card write and attempt identities still match the receipt.
+Undo does not start a review. The receipt directs the operator to **Retry review**
+when the card remains without an owner. After Undo, the watchdog waits one full
+stranding threshold before another park, including when a scheduled retry is
+already overdue and its scheduler is disabled (AGT-3850).
 A passed review that ran its own build and tests (its frozen plan has
 `BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
 admission refuses it with `BuildTestNotDeferred` (AGT-3740).

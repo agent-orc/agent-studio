@@ -160,6 +160,29 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
         Assert.DoesNotContain("retry limit reached", record.Done, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Undo_of_an_overdue_retry_explains_recovery_and_does_not_repark_within_a_threshold()
+    {
+        SeedTask(TaskStates.AutoReview, _time.GetUtcNow().UtcDateTime.AddHours(-2));
+        using var factory = BuildFactory();
+        await ReportExecutorRestartedAsync(factory);
+        _time.Advance(TimeSpan.FromMinutes(7));
+        var watchdog = factory.Services.GetRequiredService<AutoReviewStrandingWatchdog>();
+        var records = factory.Services.GetRequiredService<StallInterventionStore>();
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var park = Assert.Single(records.All());
+        Assert.Contains("Retry review", park.Undo);
+        var threshold = AutoReviewStrandingWatchdog.Threshold(factory.Services.GetRequiredService<IConfiguration>());
+        Assert.Contains($"after {threshold.TotalMinutes:0} minutes", park.Undo);
+        Assert.True((await watchdog.UndoParkAsync(park.Id, "operator")).Undone);
+        Assert.Equal(0, await watchdog.RunOnceAsync());
+        _time.Advance(threshold);
+        Assert.Equal(0, await watchdog.RunOnceAsync());
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey)));
+        _time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+    }
+
     private TaskLiveQueue LiveQueue(WebApplicationFactory<Program> factory)
     {
         var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
@@ -323,6 +346,7 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
                         ["WatchPaths:0:RootPath"] = _watchPath,
                         ["WatchPaths:0:RepositoryPath"] = _watchPath,
                         ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                        ["Runner:ReviewInfrastructureRetry:Enabled"] = "false",
                     }));
                 builder.ConfigureTestServices(services =>
                 {

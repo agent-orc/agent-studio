@@ -97,6 +97,14 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 var previous = interventions.Where(item => item.WriteKey.StartsWith(writePrefix, StringComparison.Ordinal)
                     && item.Status == StallInterventionStatuses.Verified).ToArray();
                 var latest = previous.LastOrDefault();
+                var lastUndo = interventions.Where(item => item.Kind == "auto-review-stranded"
+                        && item.Project == card.ProjectName && item.AffectedCards.Contains(card.Id)
+                        && item.Status == StallInterventionStatuses.Undone
+                        && item.RunAttemptId == run?.AttemptId
+                        && item.DeliveryResultSha == run?.ResultSha
+                        && item.ReviewAttemptId == currentReview?.AttemptId
+                        && item.UndoneAtUtc <= now)
+                    .Max(item => item.UndoneAtUtc);
                 var lastBatchEvent = run is null ? null : manifests
                     .Where(manifest => manifest.Scope.Project == card.ProjectName
                         && manifest.Members.Any(member => IsSubjectForDelivery(member, card.ProjectName, key, run)))
@@ -151,7 +159,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     hostCapacityHeld,
                     waitingCapability is not null,
                     waitingHostAvailable,
-                    RetryOverdueLimit(_configuration));
+                    RetryOverdueLimit(_configuration),
+                    lastUndo is null ? null : now - lastUndo.Value);
                 var action = MonolithTransitionAdapter.AutoReviewStranding(facts);
                 var route = new AutoReviewBatchRouteFacts(
                     currentReview?.Subject.Plan?.BuildTestDeferredToBatch == true,
@@ -501,7 +510,9 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             ReviewAttemptId = _authority.GetTaskProjection(CardKey(card)).CurrentReviewAttempt?.AttemptId,
             DeliveryResultSha = run?.ResultSha,
             Undoable = escalated && parked is not null,
-            Undo = escalated ? "Undo restores Auto Review while this card and delivery are unchanged." : "",
+            Undo = escalated ? "Undo restores Auto Review for this unchanged delivery, but does not start a review. "
+                + $"If the card still has no owner, the watchdog can park it again after {Threshold(_configuration).TotalMinutes:0} minutes. "
+                + "Use Retry review to start a new review attempt." : "",
         };
         _records.Save(record);
         _receipts.Publish(record, _records.All());
@@ -529,7 +540,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             return new(false, "card-changed-since-park", record);
         var updated = record with
         {
-            Status = StallInterventionStatuses.Undone, UndoneAtUtc = DateTime.UtcNow,
+            Status = StallInterventionStatuses.Undone, UndoneAtUtc = _time.GetUtcNow().UtcDateTime,
             UndoneBy = actor, Undoable = false, RevertedBy = $"undo: {actor}",
             Outcome = $"{actor} restored Auto Review for the unchanged delivery.",
         };
