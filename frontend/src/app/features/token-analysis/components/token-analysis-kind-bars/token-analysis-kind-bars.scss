@@ -17,7 +17,7 @@
 
 .kb__row {
   display: grid;
-  grid-template-columns: minmax(64px, 96px) minmax(0, 1fr) 56px;
+  grid-template-columns: minmax(64px, 96px) minmax(0, 1fr) 64px;
   align-items: center;
   gap: var(--studio-spacing-2);
   border-radius: 4px;

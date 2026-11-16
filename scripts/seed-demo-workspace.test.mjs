@@ -185,6 +185,8 @@ test('owner-day seeds 30 or more recent cards and owner triage scenes', () => {
     assert.equal(['DEMO-13', 'DEMO-24', 'DEMO-26', 'DEMO-27', 'DEMO-28']
       .filter((key) => task(key).state === '4-auto-review').length, 5);
     assert.equal(task('DEMO-21').mode, 'concept');
+    assert.equal(task('DEMO-24').tokenSummary.allModelsPriced, false);
+    assert.equal(task('DEMO-24').tokenSummary.entries[1].model, 'demo-unpriced-model');
     assert.deepEqual(task('DEMO-21').references.workbenches, ['DEMO-W2']);
     assert.equal(task('DEMO-19').state, '5-human-review');
     assert.equal(readJson(join(root, 'projects/demo-app/tasks/000/DEMO-19/results/completion-refusal.json')).outcome, 'refused');
@@ -202,6 +204,30 @@ test('owner-day seeds 30 or more recent cards and owner triage scenes', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('pipeline history has durable token receipts with the same calls and counters', () => {
+  withSeed((root) => {
+    const history = SNAPSHOT.tasks.filter((task) => task.history);
+    assert.equal(history.length, 10);
+    for (const task of history) {
+      const folder = taskFolder(root, task);
+      const card = readJson(join(folder, 'task.json'));
+      const pipeline = readJson(join(folder, 'pipeline-execution.json'));
+      assert.equal(card.tokenSummary.calls, pipeline.steps.length, task.key);
+      assert.equal(card.tokenSummary.entries.length, pipeline.steps.length, task.key);
+      for (const [index, step] of pipeline.steps.entries()) {
+        const call = card.tokenSummary.entries[index];
+        assert.equal(call.ts, step.startedAt, task.key);
+        assert.equal(call.model, step.model, task.key);
+        for (const field of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens'])
+          assert.equal(call[field], step[field], `${task.key} ${field}`);
+      }
+      assert.equal(card.tokenSummary.totalTokens,
+        card.tokenSummary.entries.reduce((sum, call) => sum + call.inputTokens + call.outputTokens
+          + call.cacheReadTokens + call.cacheCreationTokens, 0));
+    }
+  });
 });
 
 test('owner-day review cards carry distinct acceptance evidence', () => {
@@ -292,6 +318,15 @@ test('every board lane is discoverable on disk', () => {
       '0-backlog', '1-preparation', '2-ready', '3-progress', '4-auto-review',
       '5-human-review', '5e-escalated', '6-completed', '7-archive',
     ]);
+  });
+});
+
+test('DEMO-9 Result references its seeded screenshot from the task results folder', () => {
+  withSeed((root) => {
+    const folder = taskFolder(root, { project: 'demo-app', key: 'DEMO-9' });
+    const status = readFileSync(join(folder, 'status.md'), 'utf8');
+    assert.match(status, /!\[\]\(results\/reports-export--real\.png\)/);
+    assert.ok(statSync(join(folder, 'results', 'reports-export--real.png')).size > 0);
   });
 });
 

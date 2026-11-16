@@ -51,6 +51,13 @@
         <small>Last 24 h: integration lag p95 {{ metric(e.deliveryLagP95Minutes, ' min') }} · {{ e.queued }} queued · {{ e.gating }} gating</small>
       </div>
     }
+    @for (outage of gateHostOutages(); track outage.kind) {
+      <section class="ph__stall" data-testid="pipeline-health-gate-host">
+        <span class="ph__label">Gate host</span>
+        <strong>{{ outage.summary }}</strong>
+        <small>{{ outage.detail }}</small>
+      </section>
+    }
     @for (stall of evidenceFlushStalls(); track stall.repository ?? stall.detail) {
       <section class="ph__stall" data-testid="pipeline-health-evidence-flush" [attr.data-repository]="stall.repository">
         <span class="ph__label">Workspace evidence flush</span>

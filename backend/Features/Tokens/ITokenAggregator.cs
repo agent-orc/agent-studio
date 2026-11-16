@@ -44,8 +44,14 @@ public interface ITokenAggregator
     /// <summary>(project, time-bucket) cells for the workspace tokens timeline.</summary>
     TokenTimeline WorkspaceTimeline(IEnumerable<(string Name, string WatchPath)> projects, int windowHours, int bucketMinutes, DateTime? nowUtc = null);
 
-    /// <summary>Workspace timeline for an exact UTC calendar interval.</summary>
-    TokenTimeline WorkspaceTimelineRange(IEnumerable<(string Name, string WatchPath)> projects, DateTime fromUtc, DateTime toUtc, int bucketMinutes);
+    /// <summary>
+    /// Workspace timeline for an exact UTC calendar interval over the same merged
+    /// ledger as <see cref="WorkspaceTimeline"/>. <paramref name="workspaceUsage"/>
+    /// (keyed by project name) adds the workspace-scoped one-shot rows the usage
+    /// cockpit cost also counts; its unattributed rows become an Unattributed row.
+    /// </summary>
+    TokenTimeline WorkspaceTimelineRange(IEnumerable<(string Name, string WatchPath)> projects, DateTime fromUtc, DateTime toUtc, int bucketMinutes,
+        WorkspaceBusUsage? workspaceUsage = null);
 
     /// <summary>Workspace-wide ad-hoc one-shot call rollup (TitleGen, SummaryGen, ...).</summary>
     AdHocUsageAggregate AdHocAggregate(DateTime? since = null);

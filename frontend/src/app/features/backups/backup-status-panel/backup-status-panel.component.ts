@@ -3,7 +3,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { take } from 'rxjs';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
-import { recoveryHandoff, recoveryInputs } from '../recovery-handoff';
+import { recoveryHandoff, recoveryInputs, recoveryRunbookUrl } from '../recovery-handoff';
 import {
   formatAge, formatBytes, isBackupOverview, itemOffHostLabel, offHostLabel, offHostListingSummary, offHostTone, overviewLabel, overviewTone,
   verificationLabel, verificationTone, type BackupOverview,
@@ -44,6 +44,7 @@ export class BackupStatusPanelComponent {
   readonly formatAge = formatAge;
   readonly formatBytes = formatBytes;
   readonly recoveryInputs = recoveryInputs;
+  readonly recoveryRunbookUrl = recoveryRunbookUrl;
 
   constructor() { this.load(); }
 

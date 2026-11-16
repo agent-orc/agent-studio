@@ -122,6 +122,48 @@ describe('PipelineHealthBlockComponent', () => {
     expect(stall?.textContent).toContain('index.lock');
   });
 
+  it('shows an unreachable gate host with the waiting members and the owner action (AGT-3792)', async () => {
+    const fixture = TestBed.createComponent(PipelineHealthBlockComponent);
+    fixture.componentRef.setInput('projectName', 'Agent Taskboard');
+    fixture.detectChanges();
+
+    http.expectOne('/api/projects/Agent%20Taskboard/pipeline-health').flush({
+      project: 'Agent Taskboard',
+      capturedAtUtc: '2026-11-15T14:00:00Z',
+      status: 'alarm',
+      activeGate: null,
+      fingerprint: null,
+      lanes: [],
+      alerts: [{
+        kind: 'gate-host-unreachable',
+        severity: 'high',
+        summary: 'Gate host kori-gate unreachable since 2026-11-15 13:10 UTC',
+        detail: 'The gate transport fails because the connection is refused (3 failed attempt(s) and probe(s)). '
+          + 'No batch forms until the host answers. 4 batch member(s) wait in Auto Review, in order: '
+          + 'AGT-3772, AGT-3789, AGT-3790, AGT-3791. Bring the gate host kori-gate back so that its SSH service '
+          + 'answers, or point the gate at another host with the RemoteGate:SshHost setting.',
+        detectedAtUtc: '2026-11-15T13:10:00Z',
+        jobId: 'AGT-3772',
+      }],
+    });
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Agent%20Taskboard/operator-sweeps').flush({
+      project: 'Agent Taskboard', capturedAtUtc: '2026-11-15T14:00:00Z', status: 'healthy', enabled: true,
+      tickIntervalSeconds: 600, maxRoundsPerCard: 4, sweeps: [], cards: [], waitingForPerson: [],
+    });
+    http.expectOne('/api/gate-economics?window=7d').flush({ window: '7d', asOfUtc: '2026-11-15T14:00:00Z', rows: [] });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector('[data-testid="pipeline-health"]')?.getAttribute('data-status')).toBe('alarm');
+    const outage = host.querySelector('[data-testid="pipeline-health-gate-host"]');
+    expect(outage?.textContent).toContain('Gate host kori-gate unreachable since 2026-11-15 13:10 UTC');
+    expect(outage?.textContent).toContain('AGT-3772, AGT-3789, AGT-3790, AGT-3791');
+    expect(outage?.textContent).toContain('RemoteGate:SshHost');
+    expect(host.querySelector('[data-testid="pipeline-health-evidence-flush"]')).toBeNull();
+  });
+
   it('reads its project row from the one gate-economics fetch and ignores a malformed payload (AGT-3070)', async () => {
     const fixture = TestBed.createComponent(PipelineHealthBlockComponent);
     fixture.componentRef.setInput('projectName', 'Agent Taskboard');

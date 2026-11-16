@@ -128,6 +128,39 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store, BatchGateP
     }
 }
 
+/// <summary>
+/// AGT-3792: the gate host health state while the host is unreachable. One
+/// installation-wide fact per outage, naming the waiting batch members and
+/// what the owner can do.
+/// </summary>
+public sealed class OperatorGateHostFactSource(GateHostOutageMonitor monitor, BatchGateStore store)
+    : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.GateHostUnreachable];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    {
+        if (monitor.Current is not { } outage) return [];
+        var waiting = store.ListPending()
+            .OrderBy(item => item.Subject.EnqueueSequence)
+            .Select(item => item.Subject.TaskKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return
+        [
+            new OperatorDecisionFact(OperatorDecisionTypes.GateHostUnreachable,
+                $"{OperatorDecisionTypes.GateHostUnreachable}|{outage.SinceUtc.UtcDateTime:O}", null,
+                waiting.Length == 1 ? waiting[0] : null,
+                GateHostOutageText.Summary(outage, monitor.Host) + ". "
+                    + GateHostOutageText.Detail(outage, monitor.Host, waiting),
+                outage.SinceUtc.UtcDateTime,
+                [new OperatorEvidenceLink("stalls", "/api/watcher/stalls")],
+                waiting,
+                Title: "Gate host unreachable"),
+        ];
+    }
+}
+
 /// <summary>Pending integration pushes past the batch gate's age alert.</summary>
 public sealed class OperatorPendingPushFactSource(
     BatchIntegrationReservationService reservations,

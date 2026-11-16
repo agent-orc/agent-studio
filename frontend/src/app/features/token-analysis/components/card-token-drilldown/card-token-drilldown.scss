@@ -1,7 +1,12 @@
 @use '../../token-analysis' as ta;
 
 :host { display: block; min-width: 0; }
-.dd { @include ta.panel; }
+
+// The event grid follows the panel width, not the viewport (AGT-3805).
+.dd {
+  @include ta.panel;
+  container-type: inline-size;
+}
 
 .dd__head {
   @include ta.panel-head;
@@ -70,6 +75,7 @@
 
 .dd__kind {
   display: inline-flex;
+  white-space: nowrap;
   align-items: center;
   gap: var(--studio-spacing-1);
   color: var(--studio-fg-strong);
@@ -94,7 +100,15 @@
   span { display: block; height: 100%; border-radius: 4px; }
 }
 
-@media (max-width: 700px) {
+// Below this width the token column moves under the event, so the event
+// text keeps a readable line instead of one word per line.
+@container (max-width: 760px) {
+  .dd__event { grid-template-columns: 112px minmax(0, 1fr); }
+  .dd__tokens { grid-column: 2; }
+}
+
+@container (max-width: 480px) {
   .dd__event { grid-template-columns: minmax(0, 1fr); }
+  .dd__tokens { grid-column: auto; }
   .dd__when { flex-direction: row; gap: var(--studio-spacing-2); }
 }

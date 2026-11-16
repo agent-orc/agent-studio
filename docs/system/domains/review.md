@@ -1492,8 +1492,41 @@ Transport failures are retried by `RemoteBuildTestGateRunner` at most three
 times against the identical gate request and exact commit, before the delivery
 router sees a terminal result. A failure naming product test items is not
 retried merely because its output also contains network text. Transport
-exhaustion is excluded from integration replay and retains a typed environment
+exhaustion is excluded from the timed integration replay ladder (decision
+reason `gate-transport-awaits-gate-host`) and retains a typed environment
 blocker; it never starts an agent fix round or accepts the failed gate.
+
+Every transport attempt also reports to the one gate host health state,
+`GateHostOutageMonitor` (AGT-3792). Three consecutive failures of one kind
+(connection refused, banner timeout, no route, name resolution, connection
+timeout; `RemoteGate:HostUnreachableAfterFailures`) mark the host unreachable
+from the first of them. While it is unreachable, an `ssh host true` probe
+checks it with the AGT-3746 backoff instead of a gate run. The batch planner
+forms no batch, the gate-environment ladder spends no rung, and the orphan
+sweep waits. Pipeline health shows `gate-host-unreachable` and Needs you shows
+`gate-host.unreachable`, naming the host, the first failure, the last error,
+the waiting batch members, and the owner's options (bring the host back, or
+point `RemoteGate:SshHost` elsewhere). Once the host has answered, the ladder
+sweep replays each card that a transport failure escalated as
+`gate-environment-exhausted` (source `transport-recovered`, which restarts the
+ladder). It then returns the card to the lane it was escalated from. A card
+escalated for any other gate failure stays where it is.
+
+A transport failure is a gate environment failure on every gate path
+(AGT-3792 follow-up). `RemoteBuildTestGateRunner` types an exhausted transport
+answer as `Environment`; the per-card merge gate and the pre-main full suite
+both record it as the `GateEnvironmentFailure` outcome (the pre-main suite
+used to record `Error` with the code alone); and a batch isolation flight that
+cannot reach the host returns its members to the pool like a batch run,
+instead of parking them as `gate-infrastructure` after its bounded retries.
+`GateEnvironmentRetryPolicy` therefore sees a transport failure as a gate
+environment failure (fact `TransportFailure`): Retry integration
+(`POST /api/tasks/{id}/integration/retry`) replays it with the passed review,
+and a card the transport escalated returns to its lane after that replay too.
+Before, the ladder's predicate left transport failures out entirely, so the
+retry was refused as `not-a-gate-environment-failure` before the review was
+read, which is why the answer carried `latestAttempt: null`. A refused retry
+now names the latest review of the compared delivery whatever the refusal.
 
 ## Integration-branch gate health (AGT-2819)
 

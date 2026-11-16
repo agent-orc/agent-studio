@@ -109,6 +109,7 @@ describe('BackupStatusPanelComponent', () => {
     expect(host.querySelector('[data-testid="operations-backups-verification"]')?.textContent).toContain('Not run yet');
     expect(host.querySelector('[data-testid="operations-backups-key-id"]')?.textContent).toContain('None');
     expect(host.querySelector('[data-testid="operations-backups-secret-key-id"]')?.textContent).toContain('None');
+    expect(host.querySelector('[data-code="backup-not-configured"] a')?.getAttribute('href')).toContain('/blob/develop/docs/operations/setup/studio-backup-restore.md');
   });
 
   it('hides itself for accounts without the management role', async () => {

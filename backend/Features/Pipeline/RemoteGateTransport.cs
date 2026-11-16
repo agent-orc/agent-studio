@@ -50,19 +50,21 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     private readonly AgentStudio.Tasks.TaskScannerService? _scanner;
     private readonly Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> _runProcess;
     private readonly string _section;
+    private readonly GateHostOutageMonitor? _hostHealth;
+    private DateTimeOffset? _orphanSweepDeferredFor;
     private long _lastSweepTicks = NeverSwept;
 
     public RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
         TimeProvider? timeProvider = null, GateSlotUsageTracker? slotUsage = null,
         OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
         PullGateStore? pullGates = null, GateDurationHistory? durations = null,
-        GateCapacitySettings? capacity = null)
+        GateCapacitySettings? capacity = null, GateHostOutageMonitor? hostHealth = null)
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
             WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
             runRegistry: CreateDefaultRegistrySafe(timeProvider ?? TimeProvider.System, configuration, logger),
             activity: activity, scanner: scanner, pullGates: pullGates, durations: durations,
-            capacity: capacity)
+            capacity: capacity, hostHealth: hostHealth)
     {
     }
 
@@ -93,9 +95,11 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
         string section = RemoteGateOptions.PrimarySection,
         PullGateStore? pullGates = null, GateDurationHistory? durations = null,
-        GateCapacitySettings? capacity = null)
+        GateCapacitySettings? capacity = null, GateHostOutageMonitor? hostHealth = null)
     {
         _section = section;
+        // The one gate host health state describes the primary host only.
+        _hostHealth = section == RemoteGateOptions.PrimarySection ? hostHealth : null;
         _configuration = configuration;
         _logger = logger;
         _time = timeProvider;
@@ -367,6 +371,20 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             && (record.OwnerProcessInstance == _runs.ProcessInstance
                 ? !LiveRuns.ContainsKey(record.OwnerProcessInstance + ":" + record.RunId)
                 : !_ownerIsAlive(record))).ToList();
+        // AGT-3792: while the gate host is unreachable the orphans wait for the
+        // outage probe. One line per outage replaces one warning per run and minute.
+        if (records.Count > 0 && _hostHealth?.Current is { } outage)
+        {
+            if (_orphanSweepDeferredFor != outage.SinceUtc)
+            {
+                _orphanSweepDeferredFor = outage.SinceUtc;
+                _logger.LogInformation(
+                    "remote_gate_orphan_cancel_deferred host={Host} runs={Runs} unreachable_since={Since}: "
+                    + "the orphan runs are cancelled once the gate host probe answers",
+                    CurrentOptions().Host, records.Count, outage.SinceUtc);
+            }
+            return;
+        }
         foreach (var record in records)
         {
             ct.ThrowIfCancellationRequested();
@@ -425,6 +443,13 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             {
                 _logger.LogWarning(exception, "remote_gate_orphan_cancel_pending run_id={RunId} host={Host}",
                     record.RunId, record.Host);
+                // The host does not answer: the other orphans would fail the same way.
+                if (_hostHealth is not null
+                    && MonolithTransitionAdapter.GateTransportFailureKind(exception.Message) is not null)
+                {
+                    _hostHealth.TransportFailed(exception.Message);
+                    return;
+                }
             }
         }
     }
@@ -682,9 +707,13 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
 
     internal Task Ssh(RemoteGateOptions options, string cwd, string command,
         TimeSpan timeout, CancellationToken ct, Action<string>? output = null)
-        => RunTransportProcess("ssh", ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        => RunTransportProcess("ssh", SshArguments(options.Host, command), cwd, timeout, ct, output);
+
+    /// <summary>The SSH arguments of every gate transport connection, shared with <see cref="SshGateHostProbe"/>.</summary>
+    internal static IReadOnlyList<string> SshArguments(string host, string command)
+        => ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
-            options.Host, command], cwd, timeout, ct, output);
+            host, command];
 
     internal Task Scp(RemoteGateOptions options, string cwd, string source, string target,
         TimeSpan timeout, CancellationToken ct)

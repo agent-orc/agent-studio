@@ -23,10 +23,10 @@
       <button type="button" class="dd__close" (click)="retry.emit()">Retry</button>
     </div>
   } @else if (detail(); as d) {
-    <ul class="dd__kinds" aria-label="Tokens per usage kind">
+    <ul class="dd__kinds" aria-label="Cost and tokens per usage kind" data-testid="card-token-drilldown-kinds">
       @for (k of kinds(); track k.kind) {
         <li><span class="dd__swatch" [style.background]="k.color"></span>{{ kindLabel(k.kind) }}
-          <span class="dd__num">{{ fmt(k.total) }} · {{ k.share }}%</span></li>
+          <span class="dd__num">{{ usd(k.costUsd) }} · {{ fmt(k.total) }} tokens ({{ k.share }}% of tokens)</span></li>
       }
     </ul>
     <ol class="dd__events" data-testid="card-token-drilldown-events">
@@ -36,7 +36,7 @@
             <span>{{ item.event.at | date: 'MMM d, HH:mm' }}</span>
             @if (duration(item.event.durationMs); as d) { <span class="dd__dim">{{ d }}</span> }
           </div>
-          <div class="dd__what">
+          <div class="dd__what" data-testid="card-token-drilldown-event-what">
             <span class="dd__kind"><span class="dd__swatch" [style.background]="kindColor(item.event.kind)"></span>
               {{ kindLabel(item.event.kind) }}</span>
             <span class="dd__label">{{ item.event.label }}</span>
