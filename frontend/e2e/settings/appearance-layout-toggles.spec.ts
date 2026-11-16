@@ -186,9 +186,12 @@ async function assertSegmentMetrics(page: import('@playwright/test').Page) {
       overflow: group.getBoundingClientRect().right > innerWidth,
     };
   });
-  // Text and thumb colors transition for 120 ms when the OS theme flips.
-  await expect.poll(async () => (await readMetrics()).activeContrast, { timeout: 5_000 })
-    .toBeGreaterThanOrEqual(4.5);
+  // Text, track and thumb colors transition for 120 ms when the OS theme flips; wait until both
+  // the active and the inactive option have settled, not only the active one.
+  await expect.poll(async () => {
+    const { activeContrast, inactiveContrast } = await readMetrics();
+    return Math.min(activeContrast, inactiveContrast);
+  }, { timeout: 5_000 }).toBeGreaterThanOrEqual(4.5);
   const metrics = await readMetrics();
   expect(metrics.optionHeight).toBeGreaterThanOrEqual(24);
   expect(metrics.controlHeight).toBeGreaterThanOrEqual(28);
