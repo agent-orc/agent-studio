@@ -2459,6 +2459,7 @@ export interface ProjectSnapshot {
     maxDeliveredReviewRounds?: number;
     maxAutoReissueAttempts?: number;
     autoPushStrategy: 'never' | 'on-completed' | 'always-immediate';
+    integrationBranch?: string | null;
     runnerMode: string | null;
     orchestratorModel: string | null;
     /** AGT-2839: project override for integration-gate review reuse; null inherits. */

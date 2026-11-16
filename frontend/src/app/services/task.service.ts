@@ -2493,6 +2493,7 @@ export class TaskService {
           autoCommit: boolean;
           crashRecoveryEnabled: boolean;
           autoPushStrategy: 'never' | 'on-completed' | 'always-immediate';
+          integrationBranch?: string | null;
           runnerMode: string | null;
           pickupMode: 'auto' | 'manual' | 'paused';
           executionLocation: string;

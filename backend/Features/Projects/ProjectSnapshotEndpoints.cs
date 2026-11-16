@@ -133,6 +133,7 @@ public static class ProjectSnapshotEndpoints
                     maxAutoReissueAttempts = settings.MaxAutoReissueAttempts
                         ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
                     autoPushStrategy = AutoPushStrategies.Normalize(settings.AutoPushStrategy),
+                    integrationBranch = settings.IntegrationBranch,
                     runnerMode = settings.RunnerMode,
                     pickupMode = ProjectExecutionPolicy.ResolvePickupMode(settings),
                     executionLocation = ProjectExecutionPolicy.ResolveExecutionLocation(settings),
