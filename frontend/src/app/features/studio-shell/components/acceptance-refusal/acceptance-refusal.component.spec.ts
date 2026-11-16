@@ -2,6 +2,9 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
 import { AcceptanceRefusalComponent } from './acceptance-refusal.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
@@ -26,6 +29,8 @@ async function mount(refusal: AcceptanceRefusal, tasks: Partial<Record<'moveJob'
     imports: [AcceptanceRefusalComponent],
     providers: [
       provideZonelessChangeDetection(),
+      provideHttpClient(),
+      provideHttpClientTesting(),
       { provide: TaskService, useValue: { moveJob, retryIntegration, refresh, ...tasks } },
       { provide: NotificationService, useValue: { success, error } },
     ],
@@ -54,6 +59,15 @@ async function mount(refusal: AcceptanceRefusal, tasks: Partial<Record<'moveJob'
 
 describe('AcceptanceRefusalComponent (AGT-3704)', () => {
   afterEach(() => TestBed.resetTestingModule());
+
+  it('opens the round from the toolbar when an override cannot admit the card (AGT-3867)', async () => {
+    const { click, moveJob } = await mount({ reason: 'The required report is missing.', action: 'send-round',
+      actionLabel: 'Send a round…', source: 'hold' });
+    const open = vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'openRound').mockImplementation(() => undefined);
+    await click('acceptance-refusal-action');
+    expect(open).toHaveBeenCalledWith(JOB, 'toolbar');
+    expect(moveJob).not.toHaveBeenCalled();
+  });
 
   it('names the reason next to its one action', async () => {
     const { host } = await mount(OVERRIDE);
@@ -121,7 +135,7 @@ describe('AcceptanceRefusalComponent · content verdict (AGT-3874)', () => {
 
     const { host, find, click, typeReason, moveJob } = await mount(refusal);
     expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent)
-      .toContain('Completion refused: requirement-fit verdict was concerns.');
+      .toContain('Acceptance refused: requirement-fit verdict was concerns.');
     await click('acceptance-refusal-action');
     typeReason('Owner accepts: the first-paint target moves to AGT-3900.');
     await click('acceptance-refusal-submit');

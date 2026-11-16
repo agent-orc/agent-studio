@@ -1,5 +1,5 @@
+import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
 import { ChangeDetectionStrategy, Component, OnInit, computed, forwardRef, inject, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../models/cli.model';
 import { CliCatalogStore } from '../../services/cli-catalog.store';
@@ -49,7 +49,7 @@ export function fallbackStateTone(state: string | null | undefined): StatusTone 
   standalone: true,
   // The badge reads the migration store through the CLI barrel. Defer it so
   // file-order-dependent barrel evaluation cannot leave Angular an undefined dependency.
-  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, DatePipe, StatusIndicatorComponent],
+  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, StatusIndicatorComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -319,8 +319,8 @@ export class CliModelsPanelComponent implements OnInit {
     return 'normal';
   }
 
-  private shortDate(value: string): string {
-    return new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  shortDate(value: string): string {
+    return formatZonedTime(value, browserTimeZone()) ?? value;
   }
 
   setEconomyMode(enabled: boolean): void {

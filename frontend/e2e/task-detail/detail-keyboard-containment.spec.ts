@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from '../fixtures/dev-backend';
 import { api } from '../helpers/api';
-import { createJob } from '../helpers/jobs';
+import { createJob, moveJob } from '../helpers/jobs';
 
 interface WatchPath {
   path: string;
@@ -84,15 +84,23 @@ test.describe('Task detail keyboard containment', () => {
     const watchPath = await pickWatchPath();
     const stamp = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
     const ids = [1, 2, 3].map(index => `e2e-keyboard-${stamp}-${index}`);
+    // Human review is a protected lane: a code-free concept card reaches it from Ready.
     for (const id of ids) {
       await createJob({
         id,
         title: id,
         watchPath,
-        targetState: '5-human-review',
+        targetState: '2-ready',
+        mode: 'concept',
+        requiresIntegration: false,
         promptMarkdown: `# ${id}\n\nKeyboard containment fixture.`,
         fixture: false,
       });
+      await api(`/api/tasks/${encodeURIComponent(id)}/concept-dossier?watchPath=${encodeURIComponent(watchPath)}`, {
+        method: 'POST',
+        body: JSON.stringify({ noDossierNeeded: true, reason: 'Code-free end-to-end fixture.' }),
+      });
+      await moveJob(id, watchPath, '5-human-review');
     }
 
     try {

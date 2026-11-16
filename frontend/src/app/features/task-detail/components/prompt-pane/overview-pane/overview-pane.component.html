@@ -226,7 +226,7 @@
                     [attr.data-phase]="group.phaseKey"
                     [attr.data-tone]="group.tone"
                     [attr.aria-expanded]="!isGroupCollapsed(group)"
-                    [attr.aria-label]="groupAriaLabel(group)"
+                    [attr.aria-describedby]="'ov-pl-phase-desc-' + $index"
                     data-testid="overview-pipeline-phase"
                     (click)="toggleGroup(group)">
               <app-disclosure-marker class="ov-pl-phase__marker" data-testid="overview-pipeline-phase-marker"
@@ -260,14 +260,16 @@
                 }
                 @if (group.offCount > 0) {
                   <span class="ov-pl-phase__off"
-                        data-testid="overview-pipeline-phase-off"
-                        [attr.aria-label]="group.offCount + ' disabled'">{{ group.offCount }} off</span>
+                        data-testid="overview-pipeline-phase-off">{{ group.offCount }} off</span>
                 }
                 @if (group.totalTokens > 0) {
                   <span class="ov-pl-phase__tokens ov-value--mono">{{ formatTokens(group.totalTokens) }}</span>
                 }
               </span>
             </button>
+            <!-- The button's name is its visible text (WCAG 2.5.3); the full
+                 phase summary is its description. -->
+            <span hidden [id]="'ov-pl-phase-desc-' + $index">{{ groupAriaLabel(group) }}</span>
             @if (!isGroupCollapsed(group)) {
             @for (row of group.rows; track row.id) {
           <div class="ov-pl-step" [class.ov-pl-step--disabled]="row.status === 'disabled'"

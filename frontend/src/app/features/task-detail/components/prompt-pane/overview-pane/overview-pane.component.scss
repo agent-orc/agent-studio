@@ -412,8 +412,9 @@
   &[data-tone='concern'] { --ov-pl-phase-accent: var(--severity-warn); }
   &[data-tone='danger'] { --ov-pl-phase-accent: var(--severity-high); }
   &[data-tone='muted'], &[data-tone='not-applicable'], &[data-tone='not-run'], &[data-tone='neutral'] {
+    // Quiet through the neutral accent only: an opacity drop took the label
+    // and summary text below 4.5:1 in the dark theme (AGT-3835).
     --ov-pl-phase-accent: var(--studio-border-strong, var(--studio-border));
-    opacity: 0.7;
   }
 }
 

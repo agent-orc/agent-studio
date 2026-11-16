@@ -2,6 +2,9 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { readinessItem } from '../../../acceptance-readiness/testing/acceptance-readiness.fixtures';
 import { DeliveryClaimPanelComponent } from './delivery-claim-panel.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
@@ -82,6 +85,8 @@ async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())
     imports: [DeliveryClaimPanelComponent],
     providers: [
       provideZonelessChangeDetection(),
+      provideHttpClient(),
+      provideHttpClientTesting(),
       { provide: TaskService, useValue: { getDeliveryClaim, ...tasks } },
       { provide: NotificationService, useValue: { success: vi.fn() } },
     ],
@@ -171,14 +176,39 @@ describe('DeliveryClaimPanelComponent', () => {
 
     it('keeps the changed-brief section unchanged when the brief moved', async () => {
       const { host } = await mountGap({ ...concerns, currentBriefVersion: 'bbbbbbbbbbbbbbbb' });
-      const stale = host.querySelector('[data-testid="stale-brief-acceptance"]');
-      expect(stale?.textContent).toContain('Acceptance is blocked by a changed brief');
-      expect(stale?.querySelector('[data-testid="brief-difference-link"]')).not.toBeNull();
-      expect(stale?.querySelector('[data-testid="review-current-brief"]')?.textContent)
+      expect(host.querySelector('[data-testid="stale-brief-acceptance"]')?.textContent)
+        .toContain('Acceptance is blocked by a changed brief');
+      expect(host.querySelector('[data-testid="brief-difference-link"]')).not.toBeNull();
+      expect(host.querySelector('[data-testid="review-current-brief"]')?.textContent)
         .toContain('Review again against the current brief');
-      expect(stale?.querySelector('[data-testid="accept-with-reason-open"]')).not.toBeNull();
+      expect(host.querySelector('[data-testid="accept-with-reason-open"]')).not.toBeNull();
       expect(host.querySelector('[data-testid="content-verdict-acceptance"]')).toBeNull();
     });
+  });
+  /**
+   * AGT-3867, F10: DEMO-19's content review returned concerns on the current
+   * brief. The detail offered steps only for a changed brief, so the owner had
+   * none; the round that closes the gap existed only on the board card.
+   */
+  it('offers the board next steps for a concern on the current brief', async () => {
+    const review = { ...conceptReview, mode: 'coding' as const, requiredAspect: 'requirement-fit',
+      contentStatus: 'concerns', currentBriefVersion: '028a09dc0b85', deliveryBriefVersion: '028a09dc0b85',
+      reviewBriefVersion: '028a09dc0b85' };
+    const fixture = await mount(job({ state: TaskState.HumanReview }),
+      vi.fn(() => of(answer({ contentReview: review }))));
+    TestBed.inject(HttpTestingController).expectOne('/api/tasks/acceptance-readiness').flush({
+      checkedAtUtc: '2026-11-15T10:00:00Z', counts: {},
+      items: [{ ...readinessItem('task', 'review-concerns'), taskKey: 'agt::task' }],
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="stale-brief-acceptance"]')).toBeNull();
+    expect(host.querySelector('[data-testid="acceptance-next-steps-reason"]')?.textContent)
+      .toContain('The requirement-fit review returned concerns');
+    expect(host.querySelector('[data-testid="acceptance-next-steps-send-round"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="review-current-brief"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="accept-with-reason-open"]')).not.toBeNull();
   });
   describe('AGT-3812 build-tests on the acceptance grounds', () => {
     const passingContent: NonNullable<TaskDeliveryClaimAnswer['contentReview']> = {

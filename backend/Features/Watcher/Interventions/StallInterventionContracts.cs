@@ -57,6 +57,8 @@ public sealed record StallInterventionRecord
     public DateTime? AdmissionStampUtc { get; init; }
 
     public DateTime DecidedAtUtc { get; init; }
+    /// <summary>The last owner change before a watchdog park, retained across an undo.</summary>
+    public DateTime? OwnerLostAtUtc { get; init; }
     /// <summary>The exact parked lane entry and delivery this receipt can restore.</summary>
     public DateTime? ParkedAtUtc { get; init; }
     public long? ParkedTaskWriteTicks { get; init; }
