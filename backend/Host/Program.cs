@@ -2162,6 +2162,18 @@ catch (Exception ex)
     crashRecorder.Record("IntegrationHistoryAttributionRepair", ex);
 }
 
+// Repair passing reviewed deliveries escalated because the subject guard read a
+// finding id or a key the card references as another card's work (AGT-3854).
+if (runRepairSweeps) try
+{
+    hostTimeline.Sweep("CommitSubjectKeyAttributionRepair",
+        () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunCommitSubjectKeyRepairOnce());
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("CommitSubjectKeyAttributionRepair", ex);
+}
+
 // Cap legacy durable CLI logs after the one-time full-history wiki read
 // backfill but before CLI reattachment can append new output. The sweep also
 // ensures the sole rotation file stays outside workspace evidence commits.
