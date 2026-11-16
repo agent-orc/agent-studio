@@ -72,7 +72,10 @@ async function waitForAttention(key: string): Promise<void> {
 /** Opens `key` from Needs you and counts Tab presses until the lane primary has focus. */
 async function tabsFromNeedsYouToPrimary(page: Page, key: string): Promise<number> {
   await expect.poll(async () => {
-    await page.getByTestId('studio-attention-trigger').click();
+    // Open the list only when it is closed: its overlay covers the trigger.
+    if (!await page.getByTestId('studio-attention-list').isVisible()) {
+      await page.getByTestId('studio-attention-trigger').click();
+    }
     const found = await page.getByTestId('studio-attention-list').getByTestId('attention-row-card')
       .getByText(key, { exact: true }).count();
     if (!found) await page.keyboard.press('Escape');
