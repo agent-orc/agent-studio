@@ -17,6 +17,7 @@
     "src/app/features/cli/components/model-selection-view/model-selection-view.component.html",
     "src/app/features/project-detail/components/project-branch-sweep/project-branch-sweep.component.html",
     "src/app/features/project-detail/components/project-runbooks/project-runbooks.html",
+    "src/app/features/project-detail/components/managed-database-backups/managed-database-backups.html",
     "src/app/features/project-detail/components/dossier-card-list/dossier-card-list.component.html",
     "src/app/features/quota/components/workspace-quota-disclosure/workspace-quota-disclosure.html",
     "src/app/features/project-detail/components/workbench-overview/workbench-overview.component.html",
