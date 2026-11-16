@@ -99,4 +99,32 @@ public sealed class BatchFlightClaimPolicyTests
         Assert.Contains("restart recovery", BatchFlightClaimPolicy.ExpiryReason(
             BatchFlightStage.Gating, BatchFlightClaimExpiry.HeartbeatLost, BatchFlightExpiryOutcome.Recover, 165));
     }
+
+    [Theory]
+    [InlineData(BatchFlightStage.Reserving, BatchFlightClaimExpiry.StageDeadlinePassed, true, BatchFlightClaimExpiry.ReservationHeldByJob)]
+    [InlineData(BatchFlightStage.Reserving, BatchFlightClaimExpiry.StageDeadlinePassed, false, BatchFlightClaimExpiry.StageDeadlinePassed)]
+    [InlineData(BatchFlightStage.Reserving, BatchFlightClaimExpiry.HeartbeatLost, true, BatchFlightClaimExpiry.HeartbeatLost)]
+    [InlineData(BatchFlightStage.Gating, BatchFlightClaimExpiry.StageDeadlinePassed, true, BatchFlightClaimExpiry.StageDeadlinePassed)]
+    public void Only_a_reservation_deadline_behind_a_running_per_task_job_is_classified_as_held_by_that_job(
+        BatchFlightStage stage, BatchFlightClaimExpiry expiry, bool perTaskJob, BatchFlightClaimExpiry expected)
+        => Assert.Equal(expected, BatchFlightClaimPolicy.Classify(stage, expiry, perTaskJob));
+
+    [Fact]
+    public void A_reservation_held_by_a_job_names_the_job_keeps_the_queue_position_and_spends_the_budget()
+    {
+        Assert.Equal(BatchFlightExpiryOutcome.Retry, BatchFlightClaimPolicy.Outcome(
+            BatchFlightStage.Reserving, BatchFlightClaimExpiry.ReservationHeldByJob, 0));
+        Assert.Equal(BatchFlightExpiryOutcome.VisibleGate, BatchFlightClaimPolicy.Outcome(
+            BatchFlightStage.Reserving, BatchFlightClaimExpiry.ReservationHeldByJob, 1));
+        var retried = BatchFlightClaimPolicy.ExpiryReason(BatchFlightStage.Reserving,
+            BatchFlightClaimExpiry.ReservationHeldByJob, BatchFlightExpiryOutcome.Retry, 40,
+            "per-task-integration AGT-3868");
+        Assert.Contains("because per-task-integration AGT-3868 held it", retried);
+        Assert.Contains("keeps its queue position", retried);
+        Assert.Contains("per-task gate", BatchFlightClaimPolicy.ExpiryReason(BatchFlightStage.Reserving,
+            BatchFlightClaimExpiry.ReservationHeldByJob, BatchFlightExpiryOutcome.VisibleGate, 40, "x"));
+        Assert.Equal(BatchGateStartPolicy.LeaseDeadlineReason(5) + "; the reservation waited on integration-push AGT-1",
+            BatchFlightClaimPolicy.ExpiryReason(BatchFlightStage.Reserving, BatchFlightClaimExpiry.StageDeadlinePassed,
+                BatchFlightExpiryOutcome.Retry, 5, "integration-push AGT-1"));
+    }
 }

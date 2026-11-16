@@ -315,8 +315,12 @@ public static class MonolithTransitionAdapter
         => BatchFlightClaimPolicy.DeadlineMinutes(stage, reservationDeadlineMinutes, gateTimeoutMinutes);
 
     public static string BatchFlightExpiryReason(BatchFlightStage stage, BatchFlightClaimExpiry expiry,
-        BatchFlightExpiryOutcome outcome, int deadlineMinutes)
-        => BatchFlightClaimPolicy.ExpiryReason(stage, expiry, outcome, deadlineMinutes);
+        BatchFlightExpiryOutcome outcome, int deadlineMinutes, string? heldBy = null)
+        => BatchFlightClaimPolicy.ExpiryReason(stage, expiry, outcome, deadlineMinutes, heldBy);
+
+    public static BatchFlightClaimExpiry BatchFlightClaimExpiryClassified(BatchFlightStage stage,
+        BatchFlightClaimExpiry expiry, bool perTaskJobHoldsReservation)
+        => BatchFlightClaimPolicy.Classify(stage, expiry, perTaskJobHoldsReservation);
 
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
 
