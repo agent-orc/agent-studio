@@ -1,0 +1,15 @@
+@if (view(); as notice) {
+  <div class="checkout-notice" [class.checkout-notice--compact]="compact()" data-testid="server-checkout-notice"
+       [attr.data-state]="notice.state" [attr.data-tone]="notice.tone" role="status" aria-live="polite"
+       (click)="stop($event)" (keydown)="stop($event)">
+    <app-status-indicator [tone]="notice.tone" [label]="notice.headline" [compact]="compact()" testId="server-checkout-state" />
+    <p class="checkout-notice__detail" data-testid="server-checkout-detail">{{ notice.detail }}</p>
+    @if (notice.path) {
+      <p class="checkout-notice__path">Checkout path <code data-testid="server-checkout-path">{{ notice.path }}</code></p>
+    }
+    @if (notice.canStart) {
+      <button type="button" class="checkout-notice__action" [class.checkout-notice__action--primary]="!compact()" data-testid="server-checkout-create"
+              (click)="create($event)">{{ notice.state === 'failed' ? 'Try again' : 'Create server checkout' }}</button>
+    }
+  </div>
+}

@@ -17,6 +17,7 @@ import { ClaudeSignInDialogService } from '../../../remote-hosts/services/claude
 import type { RemoteHost } from '../../../remote-hosts/models/remote-host.model';
 import type { ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
 import { of, throwError } from 'rxjs';
+import { ServerCheckoutStore } from '../../../server-checkout';
 
 describe('first-run repository URL', () => {
   it('accepts a credential-free clone URL', () => {
@@ -42,6 +43,7 @@ describe('FirstRunChecklistComponent probes', () => {
   const host = signal<RemoteHost[]>([]);
   const badges = signal<ProviderAuthBadge[]>([]);
   const authStatus = signal<AuthStatus | null>(null);
+  const serverCheckout = { load: vi.fn(), start: vi.fn(), projectFor: vi.fn(() => null), viewFor: vi.fn(() => null) };
   const deviceLogins = { startDeviceLogin: vi.fn(), deviceLoginStatus: vi.fn(), cancelActiveDeviceLogin: vi.fn(),
     submitDeviceLoginCode: vi.fn() };
   let http: HttpTestingController;
@@ -56,6 +58,7 @@ describe('FirstRunChecklistComponent probes', () => {
 
   beforeEach(() => {
     for (const mock of Object.values(deviceLogins)) mock.mockReset();
+    serverCheckout.load.mockReset();
     localStorage.removeItem('studio-first-run-proof');
     localStorage.removeItem('studio-first-run-git-setup-id');
     host.set([]);
@@ -76,6 +79,7 @@ describe('FirstRunChecklistComponent probes', () => {
       { provide: ProviderAuthStatusService, useValue: { statuses: badges, refresh: vi.fn(), ...deviceLogins } },
       { provide: CodexSignInDialogService, useValue: {} },
       { provide: ClaudeSignInDialogService, useValue: {} },
+      { provide: ServerCheckoutStore, useValue: serverCheckout },
     ] });
     http = TestBed.inject(HttpTestingController);
   });
@@ -408,6 +412,50 @@ describe('FirstRunChecklistComponent probes', () => {
     request.flush({ id: 'local-git-a', state: 'awaiting-github', publicKey: 'ssh-ed25519 sample',
       fetchVerified: false, pushVerified: false });
     expect(component.gitSetup()?.publicKey).toBe('ssh-ed25519 sample');
+    fixture.destroy();
+  });
+
+  it('verifies repository access for a second project chosen in the checklist (AGT-3809)', () => {
+    authStatus.set({ authenticated: true, profile: 'local', bootstrapRequired: false });
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/projects').flush([
+      { id: 'PROJ-1', displayName: 'Demo', shortCode: 'DM', workspaceId: 'ws-a', archived: false,
+        storageLocation: '/tmp/demo', repositoryPath: '/tmp/repo', repositoryUrl: 'https://github.com/example/demo.git' },
+      { id: 'PROJ-2', displayName: 'Library', shortCode: 'LIB', workspaceId: 'ws-a', archived: false,
+        storageLocation: '/tmp/library', repositoryUrl: 'https://github.com/example/library.git' },
+    ]);
+    http.expectOne('/api/first-run/projects/PROJ-1/repository').flush({ registration: {
+      projectId: 'PROJ-1', repositoryUrl: 'https://github.com/example/demo.git',
+      integrationRef: 'main', releaseRef: null, deliveryPolicy: 'reviewed-publication',
+    }, probes: [{ runnerId: 'local', admitted: true, verdict: 'admitted', detail: null,
+      observedAt: new Date().toISOString() }] });
+    fixture.detectChanges();
+    const select = fixture.nativeElement.querySelector('[data-testid="first-run-project-select"]') as HTMLSelectElement;
+    expect([...select.options].map(option => option.textContent?.trim())).toEqual(['Demo', 'Library']);
+
+    select.value = 'PROJ-2';
+    select.dispatchEvent(new Event('change'));
+    http.expectOne('/api/projects').flush([
+      { id: 'PROJ-1', displayName: 'Demo', shortCode: 'DM', workspaceId: 'ws-a', archived: false,
+        storageLocation: '/tmp/demo', repositoryPath: '/tmp/repo', repositoryUrl: 'https://github.com/example/demo.git' },
+      { id: 'PROJ-2', displayName: 'Library', shortCode: 'LIB', workspaceId: 'ws-a', archived: false,
+        storageLocation: '/tmp/library', repositoryUrl: 'https://github.com/example/library.git' },
+    ]);
+    http.expectOne('/api/first-run/projects/PROJ-2/repository').flush({ registration: {
+      projectId: 'PROJ-2', repositoryUrl: 'https://github.com/example/library.git',
+      integrationRef: 'main', releaseRef: null, deliveryPolicy: 'reviewed-publication',
+    }, probes: [] });
+    const component = fixture.componentInstance;
+    expect(component.selectedProject()?.id).toBe('PROJ-2');
+    expect(component.repositoryReady()).toBe(false);
+    expect(serverCheckout.load).toHaveBeenLastCalledWith('PROJ-2');
+
+    component.startGitSetup();
+    const request = http.expectOne('/api/first-run/git-setups');
+    expect(request.request.body).toEqual({ projectId: 'PROJ-2', method: 'deploy-key', token: null });
+    request.flush({ id: 'local-git-b', state: 'awaiting-github', publicKey: 'ssh-ed25519 sample',
+      fetchVerified: false, pushVerified: false });
     fixture.destroy();
   });
 

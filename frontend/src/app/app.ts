@@ -165,6 +165,7 @@ import { AuthGateComponent } from './components/auth-gate/auth-gate';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
+import { ServerCheckoutBoardNoticeComponent } from './features/server-checkout';
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -173,7 +174,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
 @Component({
   selector: 'app-root',
   imports: [
-    DeliverySectionComponent, BoardGroupSwitcherComponent,
+    DeliverySectionComponent, BoardGroupSwitcherComponent, ServerCheckoutBoardNoticeComponent,
     TaskColumnComponent,
     ScrollMemoryDirective,
     TaskDetailComponent,

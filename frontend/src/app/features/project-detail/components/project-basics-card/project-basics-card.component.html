@@ -35,6 +35,8 @@
       [(cliDefault)]="cliDefault"
       [(modelDefault)]="modelDefault" />
 
+    <app-server-checkout-notice class="pbc__server-checkout" [projectId]="project()?.id ?? null" [loadOnOpen]="true" />
+
     @if (remoteRepositoryWarning()) {
       <div class="pbc__remote-warning"
            data-testid="project-remote-repository-warning"
