@@ -12,6 +12,10 @@ export interface RemedyAction {
   project?: string | null;
   /** Stable key of another task the action acts on; absent means the task in view. */
   taskKey?: string | null;
+  /** AGT-3840: the runner identity an Execution Hosts route opens; absent opens the list. */
+  hostId?: string | null;
+  /** AGT-3840: the capability key that route focuses on the host. */
+  capability?: string | null;
 }
 
 export type RemedyActionKind = 'route' | 'setting' | 'api';
@@ -57,7 +61,9 @@ export function remedyLinkLabel(action: RemedyAction): string | null {
   if (action.kind !== 'route') return null;
   switch (action.target) {
     case REMEDY_ROUTES.task: return action.taskKey ? `Open ${action.taskKey}` : 'Open the task';
-    case REMEDY_ROUTES.executionHosts: return 'Open Execution Hosts';
+    case REMEDY_ROUTES.executionHosts:
+      if (action.hostId && action.capability) return `Open ${action.capability} on ${action.hostId}`;
+      return action.hostId ? `Open ${action.hostId}` : 'Open Execution Hosts';
     case REMEDY_ROUTES.gitHubSettings: return 'Open GitHub settings';
     default: return null;
   }
@@ -66,4 +72,11 @@ export function remedyLinkLabel(action: RemedyAction): string | null {
 /** True when operator-facing remedy text reads as a raw HTTP request line. */
 export function startsWithHttpVerb(text: string | null | undefined): boolean {
   return /^\s*(GET|PUT|POST|PATCH|DELETE|HEAD|OPTIONS)\b/.test(text ?? '');
+}
+
+/** AGT-3840: the hash route of one Execution Hosts row, focused on a capability when named. */
+export function executionHostRoute(hostId: string, capability?: string | null): string {
+  const query = new URLSearchParams({ host: hostId });
+  if (capability) query.set('capability', capability);
+  return `/workspace/settings/environment?${query.toString()}`;
 }

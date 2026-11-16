@@ -20,6 +20,9 @@
         (click)="selectedChange.emit(role.id)">
         <span data-testid="remote-host-role-label">{{ role.serviceRole === 'coding' ? 'Coding' : role.serviceRole === 'review' ? 'Review' : 'Runner' }} · <span data-testid="remote-host-role-name">{{ role.name }}</span></span>
         <app-status-indicator [tone]="statusTone(role.status)" [label]="statusLabel(role.status)" [compact]="true" />
+        @if (heldLabel(role); as held) {
+          <span class="host-list__held" data-testid="remote-host-role-held" [attr.title]="heldTitle(role)">{{ held }}</span>
+        }
         <span class="host-list__slots" data-testid="remote-host-slots-summary">{{ slots()(role) }} / {{ capacity(role) ?? 'Unknown' }}</span>
       </button>
     }
