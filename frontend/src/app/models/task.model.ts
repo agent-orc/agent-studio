@@ -2264,6 +2264,11 @@ export interface TaskLiveReviewRetry {
   number?: number | null;
   budget: number;
   dueAt: string;
+  /**
+   * AGT-3848: latest instant the stranding watchdog parks the card when the
+   * retry has not started after `dueAt`. Absent on payloads from older servers.
+   */
+  parkAt?: string | null;
 }
 
 export interface TaskLiveStatus {

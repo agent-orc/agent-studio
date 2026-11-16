@@ -3220,6 +3220,13 @@
           <td>The control plane had no provider login by design. Its short completion paths still used local process execution instead of the accepted coding or review host.</td>
           <td>The observed terminal was a degraded Result summary; other short completions failed. Networked one-shots now travel as bounded Task Server jobs. A host claims only with fresh <code>model-acceptance:&lt;cli&gt;:&lt;model&gt;</code> evidence. With no host, the Result reports <code>waiting for a host with &lt;capability&gt;</code> and defers without spending the summary retry budget. A later accepted host lets the retry complete.</td>
         </tr>
+        <tr id="case-review-retry-overdue-promise">
+          <td>2026-11-15</td>
+          <td><code>AGT-3648 / AGT-3848</code><br><span class="small">review-retry-overdue-promise (S6-F2)</span></td>
+          <td>No CLI crashed. After the review was lost the card said "Automatic retry 1 of 2 at 11:37 PM". At 11:37 the retry did not start, and the card kept the same promise until the stranding watchdog parked it 67 seconds later.</td>
+          <td>The board headline rendered the retry sentence for every <code>retry-scheduled</code> queue and never compared <code>dueAt</code> with the clock; the authority keeps the retry scheduled after its due time when no scheduler tick fires it. The scheduled retry owned the card for a whole stranding threshold (30 minutes by default) after it came due.</td>
+          <td>The observed terminal was <span class="lane">5e-escalated</span>. A scheduled retry now owns the card for <code>AutoReviewStranding:RetryOverdueMinutes</code> (5 by default, never above the threshold) after it came due, as the <code>ScheduledRetryOverdueLimit</code> fact of <code>AutoReviewStrandingPolicy</code>. The live queue carries <code>retry.parkAt</code>, and past the due time the card reads "overdue since ... &middot; parks in Escalated by ...". The park reason says the retry was overdue, not that the retry limit was reached.</td>
+        </tr>
         <tr id="case-review-retry-stranded-by-watchdog">
           <td>2026-11-10</td>
           <td><code>AGT-3648 / AGT-3691</code><br><span class="small">review-retry-stranded-by-watchdog (S6-F15)</span></td>
