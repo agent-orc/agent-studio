@@ -34,6 +34,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         var batches = new BatchGateStore(Path.Combine(_root, "batch-gates"));
         var pushes = new BatchIntegrationReservationService(Path.Combine(_root, "pushes"), _clock, TimeSpan.FromMinutes(3));
         var limits = new ProviderLimitRegistry();
+        var gateHost = new GateHostOutageMonitor(_clock, unreachableAfter: 1);
         var leases = new WatcherLeaseService(Path.Combine(_root, "operator"), _options, log,
             new ControlPlaneAuditLog(Path.Combine(_root, "security"), _clock), _clock);
         using var publisher = new OperatorDecisionPublisher(log,
@@ -53,6 +54,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                     }
                     : null),
                 new OperatorProviderLimitFactSource(limits),
+                new OperatorGateHostFactSource(gateHost, batches),
             ],
             _options, _clock, NullLogger<OperatorDecisionPublisher>.Instance);
 
@@ -101,6 +103,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         File.WriteAllText(Path.Combine(batches.BatchDirectory("stale"), "manifest.json"),
             "{\"batchId\":\"stale\",\"scope\":{\"project\":\"alpha\",\"repo");
         limits.Record(new ProviderLimitStatus("claude", factTime, factTime.AddHours(1), "rate limited", true));
+        gateHost.TransportFailed("ssh: connect to host 172.30.83.1 port 12222: Connection refused");
         Assert.Equal(WatcherLeaseOutcome.Granted, leases.Acquire("service-account:watcher", new WatcherLeaseRequest("laptop")).Outcome);
 
         _clock.Advance(TimeSpan.FromSeconds(5));

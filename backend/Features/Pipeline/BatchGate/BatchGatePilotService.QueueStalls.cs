@@ -176,7 +176,7 @@ public sealed partial class BatchGatePilotService
                 await HoldFallbackForGateHostAsync(live, pending, gate, ct).ConfigureAwait(false);
                 return true;
             }
-            RecordGateHostReachable(live?.WatchPath ?? pending.WatchPath);
+            RecordGateHostReachable();
             return false;
         }
         if (action == GateQueueOverrunAction.Supersede)

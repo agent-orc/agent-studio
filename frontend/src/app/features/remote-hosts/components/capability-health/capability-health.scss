@@ -97,3 +97,51 @@
 .capability dd { margin: 0; color: var(--studio-fg); overflow-wrap: anywhere; }
 .capability details { margin-top: var(--studio-spacing-2); color: var(--studio-fg-dim); font-size: var(--studio-font-size-sm); }
 .capability ol { margin: var(--studio-spacing-2) 0 0; padding-inline-start: var(--studio-spacing-4); }
+
+// AGT-3840: held keys sit above the full admission list; a whole-row tint
+// carries the state, never an edge stripe.
+.held {
+  margin-top: var(--studio-spacing-4);
+  padding-top: var(--studio-spacing-3);
+  border-top: 1px solid var(--studio-border);
+}
+.held > header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+  margin-bottom: var(--studio-spacing-2);
+  color: var(--studio-fg-strong);
+}
+.held > header span { color: var(--studio-fg-dim); font-size: var(--studio-font-size-sm); }
+.held__row {
+  padding: var(--studio-spacing-2);
+  border-top: 1px solid var(--studio-border);
+  background: var(--notify-error-icon-bg);
+  outline: none;
+}
+.held__row[data-state='indeterminate'] { background: var(--notify-warning-icon-bg); }
+.held__row[data-focused='true'] { box-shadow: inset 0 0 0 2px var(--studio-accent); }
+.held__row:focus-visible { box-shadow: inset 0 0 0 2px var(--studio-accent); }
+.held__row dl {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: var(--studio-spacing-2) 0 0;
+  font-size: var(--studio-font-size-sm);
+}
+.held__row dl > div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: var(--studio-spacing-2); }
+.held__row dt { color: var(--studio-fg-dim); }
+.held__row dd { margin: 0; color: var(--studio-fg); overflow-wrap: anywhere; }
+.held__reprobe {
+  min-height: 28px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--studio-fg);
+  font-size: var(--studio-font-size-sm);
+  cursor: pointer;
+}
+.held__reprobe:hover:not(:disabled) { background: var(--studio-bg-hover); }
+.held__reprobe:focus-visible { outline: 2px solid var(--studio-accent); }
+.held__reprobe:disabled { cursor: default; opacity: 0.6; }

@@ -301,6 +301,15 @@ public static class GitReadSpawnScenarios
                 await host.Get($"/api/git/project-commit/diff{project}&sha={sha}");
                 await host.Get("/api/git/cleanup/plan" + project);
             }),
+        Scenario("Idle polls: orchestrator feed cold and warm (AGT-3793)", "Inventory boundary: other reads",
+            ["/api/runner/orchestrator-feed"],
+            async host =>
+            {
+                await host.Get("/api/runner/orchestrator-feed");
+                host.Services.GetRequiredService<AgentStudio.Docs.ProjectDocsService>()
+                    .PreloadWikiContent(GitFactsBoardFixture.ProjectName);
+                await host.Get("/api/runner/orchestrator-feed");
+            }),
         Scenario("Publishing reads: status, panel, stored-run probe", "Inventory boundary: publishing",
             ["/api/projects/{project}/publish-status", "/api/projects/{project}/publish/{targetId}/panel",
              "/api/projects/{project}/publish/{targetId}/run"],

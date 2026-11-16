@@ -66,6 +66,9 @@ public sealed record TaskCoreRecord
     internal TaskCoreSourceStamp TimelineStamp { get; init; }
     public long Version { get; init; }
 
+    /// <summary>The resident task fact this record projects; never serialized.</summary>
+    internal TaskInfo? Source { get; init; }
+
     public static TaskCoreRecord Create(TaskInfo info, WaitsOnStatus? waitsOn = null,
         TaskCoreRecord? previous = null, bool forceSidecars = false)
     {
@@ -77,6 +80,16 @@ public sealed record TaskCoreRecord
         var promptStamp = TaskCoreSourceStamp.Read(promptPath);
         var timelineStamp = TaskCoreSourceStamp.Read(timelinePath);
         var reuse = !forceSidecars && previous?.FolderPath == dir;
+        // AGT-3793: an unchanged fact (the index keeps the instance of an
+        // unchanged archived folder) with unchanged sidecars projects to the
+        // same record. Rebuilding it serialized and hashed every archived card
+        // on each index refresh of an idle board.
+        if (reuse && ReferenceEquals(previous!.Source, info)
+            && previous.Status.State != "stale" && previous.Prompt.State != "stale"
+            && previous.Timeline.State != "stale"
+            && statusStamp == previous.StatusStamp && promptStamp == previous.PromptStamp
+            && timelineStamp == previous.TimelineStamp)
+            return previous.WithDependencies(info, waitsOn);
         var status = reuse && previous!.Status.State != "stale" && statusStamp == previous.StatusStamp
             ? previous.Status : TaskCoreText.Read(statusPath, 1024);
         var prompt = reuse && previous!.Prompt.State != "stale" && promptStamp == previous.PromptStamp
@@ -111,6 +124,7 @@ public sealed record TaskCoreRecord
             NeedsInput = Limit(info.NeedsInput?.FirstLine, 256),
             Status = status, Prompt = prompt, Timeline = timeline,
             StatusStamp = statusStamp, PromptStamp = promptStamp, TimelineStamp = timelineStamp,
+            Source = info,
         };
         return record.WithDependencies(info, waitsOn);
     }

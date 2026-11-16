@@ -1442,14 +1442,11 @@ public sealed partial class MergeIntoDevelopRunner
         }
         if (!gateApplies && changedPaths is not null)
         {
-            const string skipReason =
-                "the merge touches neither frontend/, managed sources, nor the Compose stack, " +
-                "and the project declares no build-profile build commands";
             _logger.LogInformation(
                 "merge-into-develop build gate skipped for project={Project} job={JobId} integration={Integration}: {Reason}",
-                project, jobId, integrationBranch, skipReason);
+                project, jobId, integrationBranch, PreDevelopBuildGate.NotApplicableReason);
             IntegrationGateJournal.Clear(jobFolderPath);
-            return (result, null);
+            return (result with { GateSkipReason = PreDevelopBuildGate.NotApplicableReason }, null);
         }
         if (string.IsNullOrWhiteSpace(preMergeTip))
         {
@@ -1942,10 +1939,7 @@ public sealed partial class MergeIntoDevelopRunner
             if (!VerifyDefinitionPolicy.AdmitsMerge(gate))
             {
                 return (
-                    MergeIntoIntegrationResult.Failed(
-                        gate.FailureKind == BuildTestGateFailureKind.Environment
-                            ? AcceptedIntegrationFailureCodes.GateEnvironmentFailure
-                            : AcceptedIntegrationFailureCodes.BuildGateFailed,
+                    PreMainGateBlocked(gate,
                         $"Pre-main full suite blocked the develop-to-main fast-forward: {gate.Reason}"),
                     gate);
             }
@@ -2116,13 +2110,7 @@ public sealed partial class MergeIntoDevelopRunner
             return (MissingVerifyDefinition(repoRoot, settings.BuildProfile), gate);
         if (!VerifyDefinitionPolicy.AdmitsMerge(gate))
         {
-            return (
-                MergeIntoIntegrationResult.Failed(
-                    gate.FailureKind == BuildTestGateFailureKind.Environment
-                        ? AcceptedIntegrationFailureCodes.GateEnvironmentFailure
-                        : AcceptedIntegrationFailureCodes.BuildGateFailed,
-                    $"Pre-main full suite blocked the merge: {gate.Reason}"),
-                gate);
+            return (PreMainGateBlocked(gate, $"Pre-main full suite blocked the merge: {gate.Reason}"), gate);
         }
 
         var merge = _git.MergeBranchFastForward(
@@ -2133,6 +2121,17 @@ public sealed partial class MergeIntoDevelopRunner
             targetSha);
         return (merge, gate);
     }
+
+    /// <summary>
+    /// The refusal of a merge the pre-main full suite did not admit. AGT-3792:
+    /// a gate environment failure, the gate transport included, carries the
+    /// same outcome as on the develop line, so the gate-environment retry and
+    /// the transport recovery read every gate path alike instead of an Error.
+    /// </summary>
+    internal static MergeIntoIntegrationResult PreMainGateBlocked(BuildTestGateResult gate, string error)
+        => gate.FailureKind == BuildTestGateFailureKind.Environment
+            ? MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.GateEnvironmentFailure, error: error)
+            : MergeIntoIntegrationResult.Failed(AcceptedIntegrationFailureCodes.BuildGateFailed, error);
 
     /// <summary>
     /// The typed refusal of a delivery that no check could verify because the

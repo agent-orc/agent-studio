@@ -743,7 +743,8 @@ public static class V1ReviewPlaneEndpoints
                 unclaimableLog.Record(runnerId,
                     [new Contract.ReviewUnclaimableAttemptDto(
                         review.AttemptId, review.TaskKey, review.CreatedAt,
-                        [quotaDeferredReason])]);
+                        [quotaDeferredReason])],
+                    Contract.ReviewClaimEmptyReasons.QuotaDeferred);
                 return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
                     Contract.ReviewClaimEmptyReasons.QuotaDeferred,
                     quotaDeferredReason));
@@ -755,7 +756,7 @@ public static class V1ReviewPlaneEndpoints
                 ToAttempt(review),
                 subject,
                 lease));
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim).WithReviewClaimReprobes();
 
         api.MapGet("/reviews/attempts/{attemptId}", (
             HttpContext context,
@@ -2273,9 +2274,8 @@ public static class V1ReviewPlaneEndpoints
                         ct,
                         cause: $"remote-review:{attemptId}",
                         reason: integrationParkReason
-                            ?? (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
-                                ? RemoteDeliveryParkReason.CompletedReviewPark
-                                : RemoteDeliveryParkReason.ReviewDecisionPark),
+                            ?? RemoteDeliveryParkReason.ForReview(
+                                settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass, request),
                         authorityWrite: new AttemptWriteReference(
                             attemptId,
                             request.Fence,
@@ -3796,6 +3796,7 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
     private readonly Dictionary<string, ReviewRestartStatus> _reviewRestarts =
         new(StringComparer.Ordinal);
     private readonly List<Contract.ClaimGateEventDto> _claimGateEvents = [];
+    private readonly Dictionary<string, HashSet<string>> _reprobeRequests = new(StringComparer.Ordinal);
     private long _claimGateSequence;
     private readonly object _gate = new();
     private readonly TimeProvider _time;
@@ -4619,39 +4620,124 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             if (!_registrations.TryGetValue(runnerId, out var registration)
                 || registration.InstanceId != instanceId) return new HashSet<string>(StringComparer.Ordinal);
             var admitted = registration.Capabilities.ToHashSet(StringComparer.Ordinal);
-            // AGT-3207: the AI Operator rerouted this provider away from the host
-            // until its login works again, whether or not the host advertised yet.
-            if (_routeExclusions is not null)
-                admitted.RemoveWhere(key => key.StartsWith("provider-auth:", StringComparison.Ordinal)
-                    && _routeExclusions.IsExcluded(registration.HostId, runnerId, key["provider-auth:".Length..]));
-            if (!_capabilityStates.TryGetValue(runnerId, out var state)
-                || state.InstanceId != instanceId)
-            {
-                // AGT-3077: no read proof advertised yet for this instance.
-                admitted.RemoveWhere(IsRepositoryReadKey);
-                return admitted;
-            }
-            var now = _time.GetUtcNow().UtcDateTime;
-            foreach (var capability in state.Capabilities.Where(item =>
-                         item.Key.StartsWith("provider-auth:", StringComparison.Ordinal)))
-            {
-                var unavailable = capability.FreshUntil <= now
-                    || !Claimable(capability.AdvertisedStatus)
-                    || (capability.HealthOutcome ?? capability.Signal) is
-                        "credential_invalid" or "provider_incident" or "indeterminate";
-                if (unavailable) admitted.Remove(capability.Key);
-            }
-            // AGT-3077: a registered repository-read key names a configured
-            // credential, not a working one. Admit it only while the current
-            // advertisement reports a fresh read proof for it.
-            foreach (var key in admitted.Where(IsRepositoryReadKey).ToArray())
-            {
-                var advertised = state.Capabilities.FirstOrDefault(item => item.Key == key);
-                if (advertised is null || advertised.FreshUntil <= now || !Claimable(advertised.AdvertisedStatus))
-                    admitted.Remove(key);
-            }
+            foreach (var hold in CapabilityHoldsLocked(runnerId, registration, _time.GetUtcNow().UtcDateTime))
+                admitted.Remove(hold.Key);
             return admitted;
         }
+    }
+
+    /// <summary>
+    /// AGT-3840: the keys <see cref="AdmittedReviewCapabilities"/> withholds
+    /// from this identity, each with its cause and the probe's own detail.
+    /// Empty for an unknown identity.
+    /// </summary>
+    public IReadOnlyList<Contract.HeldCapabilityDto> HeldCapabilities(string runnerId)
+    {
+        lock (_gate)
+        {
+            return _registrations.TryGetValue(runnerId, out var registration)
+                ? CapabilityHoldsLocked(runnerId, registration, _time.GetUtcNow().UtcDateTime)
+                : [];
+        }
+    }
+
+    /// <summary>
+    /// AGT-3840: queue an operator re-probe of one capability. The runner
+    /// receives it on its next claim answer and refreshes that probe before
+    /// it advertises again. False for an unknown identity.
+    /// </summary>
+    public bool RequestReprobe(string runnerId, string capability)
+    {
+        lock (_gate)
+        {
+            if (!_registrations.ContainsKey(runnerId)) return false;
+            if (!_reprobeRequests.TryGetValue(runnerId, out var keys))
+                _reprobeRequests[runnerId] = keys = new HashSet<string>(StringComparer.Ordinal);
+            keys.Add(capability);
+            return true;
+        }
+    }
+
+    /// <summary>Hands out and forgets the re-probe requests queued for this identity.</summary>
+    public IReadOnlyList<string>? TakeReprobeRequests(string runnerId)
+    {
+        lock (_gate)
+        {
+            if (!_reprobeRequests.Remove(runnerId, out var keys) || keys.Count == 0) return null;
+            return keys.Order(StringComparer.Ordinal).ToArray();
+        }
+    }
+
+    /// <summary>
+    /// The one rule set behind claim admission and the Execution Hosts hold
+    /// list, so the page cannot show a key as usable that claims refuse.
+    /// </summary>
+    private IReadOnlyList<Contract.HeldCapabilityDto> CapabilityHoldsLocked(
+        string runnerId, Registration registration, DateTime now)
+    {
+        var holds = new Dictionary<string, Contract.HeldCapabilityDto>(StringComparer.Ordinal);
+        // AGT-3207: the AI Operator rerouted this provider away from the host
+        // until its login works again, whether or not the host advertised yet.
+        if (_routeExclusions is not null)
+            foreach (var key in registration.Capabilities.Where(key =>
+                         key.StartsWith("provider-auth:", StringComparison.Ordinal)
+                         && _routeExclusions.IsExcluded(registration.HostId, runnerId, key["provider-auth:".Length..])))
+                holds[key] = new(key, Contract.HeldCapabilityStates.Held, Contract.HeldCapabilityCauses.RouteExcluded,
+                    "The AI Operator routed this provider away from the host until its sign-in works again.", null);
+        if (!_capabilityStates.TryGetValue(runnerId, out var state)
+            || state.InstanceId != registration.InstanceId)
+        {
+            // AGT-3077: no read proof advertised yet for this instance.
+            foreach (var key in registration.Capabilities.Where(IsRepositoryReadKey))
+                holds.TryAdd(key, new(key, Contract.HeldCapabilityStates.Indeterminate,
+                    Contract.HeldCapabilityCauses.NoReadProof,
+                    "This instance has not advertised a read proof yet.", null));
+            return holds.Values.OrderBy(hold => hold.Key, StringComparer.Ordinal).ToArray();
+        }
+        foreach (var capability in state.Capabilities.Where(item =>
+                     item.Key.StartsWith("provider-auth:", StringComparison.Ordinal)))
+        {
+            var outcome = capability.HealthOutcome ?? capability.Signal;
+            var hold = capability.FreshUntil <= now
+                ? (Contract.HeldCapabilityStates.Indeterminate, Contract.HeldCapabilityCauses.Stale)
+                : !Claimable(capability.AdvertisedStatus)
+                    ? (Contract.HeldCapabilityStates.Held, Contract.HeldCapabilityCauses.NotReady)
+                    : outcome switch
+                    {
+                        "credential_invalid" => (Contract.HeldCapabilityStates.Held, Contract.HeldCapabilityCauses.CredentialInvalid),
+                        "provider_incident" => (Contract.HeldCapabilityStates.Held, Contract.HeldCapabilityCauses.ProviderIncident),
+                        "indeterminate" => (Contract.HeldCapabilityStates.Indeterminate, Contract.HeldCapabilityCauses.ProbeIndeterminate),
+                        _ => ((string, string)?)null,
+                    };
+            if (hold is not { } held) continue;
+            holds.TryAdd(capability.Key, new(capability.Key, held.Item1, held.Item2,
+                HoldDetail(capability, held.Item2), capability.AdvertisedAt));
+        }
+        // AGT-3077: a registered repository-read key names a configured
+        // credential, not a working one. Admit it only while the current
+        // advertisement reports a fresh read proof for it.
+        foreach (var key in registration.Capabilities.Where(IsRepositoryReadKey))
+        {
+            var advertised = state.Capabilities.FirstOrDefault(item => item.Key == key);
+            if (advertised is null || advertised.FreshUntil <= now || !Claimable(advertised.AdvertisedStatus))
+                holds.TryAdd(key, new(key,
+                    advertised is null || advertised.FreshUntil <= now
+                        ? Contract.HeldCapabilityStates.Indeterminate
+                        : Contract.HeldCapabilityStates.Held,
+                    Contract.HeldCapabilityCauses.NoReadProof,
+                    advertised is null ? "No read proof advertised for this credential." : HoldDetail(advertised, Contract.HeldCapabilityCauses.NoReadProof),
+                    advertised?.AdvertisedAt));
+        }
+        return holds.Values.OrderBy(hold => hold.Key, StringComparer.Ordinal).ToArray();
+    }
+
+    private static string HoldDetail(Contract.CapabilityHealthDto capability, string cause)
+    {
+        var detail = capability.Detail?.Trim() is { Length: > 0 } text ? text : capability.Reason?.Trim();
+        if (cause == Contract.HeldCapabilityCauses.Stale)
+            return $"Advertisement expired at {capability.FreshUntil:yyyy-MM-dd HH:mm} UTC"
+                   + (string.IsNullOrEmpty(detail) ? "." : $"; last probe: {detail}");
+        return string.IsNullOrEmpty(detail) ? $"Advertised {capability.AdvertisedStatus}." : detail;
     }
 
     /// <summary>
@@ -4764,20 +4850,20 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 if (capability is null)
                     return CodingCapabilityAdmission.Blocked(
                         required,
-                        $"Required capability '{key}' was not advertised.");
+                        $"Required capability '{key}' was not advertised.", key);
                 if (capability.FreshUntil <= now)
                     return CodingCapabilityAdmission.Blocked(
                         required,
-                        $"Required capability '{key}' is stale since {capability.FreshUntil:O}.");
+                        $"Required capability '{key}' is stale since {capability.FreshUntil:O}.", key);
                 if (key.StartsWith("provider-auth:", StringComparison.Ordinal)
                     && (capability.HealthOutcome ?? capability.Signal) is
                         "credential_invalid" or "provider_incident" or "indeterminate")
                     return CodingCapabilityAdmission.Blocked(required,
-                        $"Required capability '{key}' is held for {capability.HealthOutcome ?? capability.Signal}.");
+                        $"Required capability '{key}' is held for {capability.HealthOutcome ?? capability.Signal}.", key);
                 if (!Claimable(capability.AdvertisedStatus))
                     return CodingCapabilityAdmission.Blocked(
                         required,
-                        CapabilityMismatchMessage(key, capability));
+                        CapabilityMismatchMessage(key, capability), key);
             }
 
             if (_capabilityFailures.TryGetValue(runnerId, out var failures))
@@ -4792,7 +4878,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 {
                     return CodingCapabilityAdmission.Blocked(
                         required,
-                        $"Required capability '{draining.Key}' is draining until {draining.CooldownUntil:O}.");
+                        $"Required capability '{draining.Key}' is draining until {draining.CooldownUntil:O}.",
+                        draining.WholeHost ? null : draining.Key);
                 }
             }
         }
@@ -5157,12 +5244,15 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
     public sealed record CodingCapabilityAdmission(
         bool Eligible,
         string? Message,
-        IReadOnlyList<string> Required)
+        IReadOnlyList<string> Required,
+        // AGT-3840: the key that blocked admission, so a pickup hold can open it.
+        string? Capability = null)
     {
         public static CodingCapabilityAdmission Blocked(
             IReadOnlyList<string> required,
-            string message)
-            => new(false, message, required);
+            string message,
+            string? capability = null)
+            => new(false, message, required, capability);
     }
 
     public sealed record CliModelCapability(

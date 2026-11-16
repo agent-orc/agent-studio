@@ -44,6 +44,13 @@ public sealed record ProjectTokenDataFreshness
 {
     public static ProjectTokenDataFreshness Empty { get; } = new();
 
+    /// <summary>Read health when no project ledger was in scope.</summary>
+    public static ProjectTokenDataFreshness NoLedgerRead { get; } = new()
+    {
+        Status = "unavailable",
+        Warning = "No project ledger is in scope, so no token source was read.",
+    };
+
     /// <summary><c>complete</c>, <c>partial</c>, or <c>unavailable</c>.</summary>
     public string Status { get; init; } = "complete";
     public string? AsOf { get; init; }
@@ -53,10 +60,11 @@ public sealed record ProjectTokenDataFreshness
     /// <summary>
     /// Read health of several project ledgers: unavailable only when all are,
     /// partial when any is not complete; warnings and sources are de-duplicated.
+    /// No ledger read at all is unavailable, never complete with no sources.
     /// </summary>
     public static ProjectTokenDataFreshness Combine(IReadOnlyList<ProjectTokenDataFreshness> projects)
     {
-        if (projects.Count == 0) return Empty;
+        if (projects.Count == 0) return NoLedgerRead;
         var status = projects.All(p => p.Status == "unavailable")
             ? "unavailable"
             : projects.Any(p => p.Status != "complete") ? "partial" : "complete";

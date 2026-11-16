@@ -1,13 +1,15 @@
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewEncapsulation, inject, input, output } from '@angular/core';
 import { StudioIconComponent } from '../studio-icon/studio-icon.component';
 import { OverlayPortalRef, OverlayPortalService } from '../../services/overlay-portal.service';
+import { ModalFocusDirective } from '../../directives/modal-focus.directive';
 
 /**
  * Reusable modal dialog skeleton.
  *
  * The companion to <app-sidesheet>: this owns the **modal** shape
  * (centred panel, backdrop click-to-close, alertdialog ARIA, Esc
- * cooperation with ModalStackService). The two shapes are
+ * cooperation with ModalStackService, Tab containment and focus return
+ * to the opener through `ModalFocusDirective`). The two shapes are
  * deliberately separate components — they look similar but their
  * interaction semantics differ.
  *
@@ -42,7 +44,7 @@ import { OverlayPortalRef, OverlayPortalService } from '../../services/overlay-p
   selector: 'app-dialog',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [StudioIconComponent],
+  imports: [StudioIconComponent, ModalFocusDirective],
   encapsulation: ViewEncapsulation.None,
   templateUrl: './dialog.component.html',
   styleUrl: './dialog.component.scss',

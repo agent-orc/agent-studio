@@ -104,17 +104,45 @@ public static class ManagementEndpoints
             HttpContext context,
             AgentStudio.Runner.V1ReviewExecutorRegistry registry,
             AgentStudio.Runner.AttemptAuthorityService authority,
+            AgentStudio.Runner.ReviewClaimUnclaimableLog unclaimable,
             IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             // AGT-3690: the restart history is durable authority state; the
             // registry only knows the newest restart of the current instance.
+            // AGT-3840: each role lists the keys claims withhold from it, plus
+            // the keys its refused review claims named, so an Online role that
+            // cannot take the waiting work says why.
             return Results.Ok(registry.ListCapabilitySnapshots()
                 .Select(snapshot => authority.ListReviewDaemonRestarts(snapshot.RunnerId) is { Count: > 0 } restarts
                     ? snapshot with { ReviewRestarts = restarts }
                     : snapshot)
+                .Select(snapshot => AgentStudio.Runner.HeldCapabilityProjection.Merge(
+                        registry.HeldCapabilities(snapshot.RunnerId),
+                        unclaimable.ForExecutor(snapshot.RunnerId)) is { Count: > 0 } held
+                    ? snapshot with { HeldCapabilities = held }
+                    : snapshot)
                 .ToArray());
+        });
+        // AGT-3840: re-probe one capability of one role. The runner refreshes
+        // the probe when its next claim answer carries the request.
+        group.MapPost("/remote-hosts/{id}/capabilities/reprobe", (
+            HttpContext context,
+            string id,
+            AgentStudio.TaskServer.Contracts.CapabilityReprobeRequest request,
+            AgentStudio.Runner.V1ReviewExecutorRegistry registry,
+            IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            var capability = request.Capability?.Trim();
+            if (string.IsNullOrEmpty(capability) || capability.Length > 200 || capability.Any(char.IsWhiteSpace))
+                return Results.Json(new { error = "invalid-capability", message = "Name one capability key." },
+                    statusCode: 400);
+            return registry.RequestReprobe(id, capability)
+                ? Results.Accepted(value: new { runnerId = id, capability, requested = true })
+                : Results.Json(new { error = "runner-not-registered" }, statusCode: 404);
         });
         group.MapGet("/runner-infrastructure-failures", (
             HttpContext context,

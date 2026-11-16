@@ -18,14 +18,27 @@ namespace AgentStudio.Shared;
 /// The stable key of the task the action acts on, when it is another task than
 /// the one the remedy is shown on; null means the task in view.
 /// </param>
+/// <param name="HostId">
+/// AGT-3840: the runner identity an <see cref="RemedyRoutes.ExecutionHosts"/>
+/// route opens; null opens the host list.
+/// </param>
+/// <param name="Capability">AGT-3840: the capability key that route focuses on that host.</param>
 public sealed record RemedyAction(
     string Kind,
     string Target,
     string? Project = null,
-    string? TaskKey = null)
+    string? TaskKey = null,
+    string? HostId = null,
+    string? Capability = null)
 {
     public static RemedyAction Route(string route, string? project = null, string? taskKey = null)
         => new(RemedyActionKinds.Route, route, project, taskKey);
+
+    /// <summary>AGT-3840: open Execution Hosts on one host, focused on one capability when named.</summary>
+    public static RemedyAction ExecutionHost(string? hostId, string? capability, string? project = null)
+        => new(RemedyActionKinds.Route, RemedyRoutes.ExecutionHosts, project,
+            HostId: string.IsNullOrWhiteSpace(hostId) ? null : hostId.Trim(),
+            Capability: string.IsNullOrWhiteSpace(capability) ? null : capability.Trim());
 
     public static RemedyAction Setting(string settingKey, string project)
         => new(RemedyActionKinds.Setting, settingKey, project);

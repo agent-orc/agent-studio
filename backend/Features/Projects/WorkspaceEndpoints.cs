@@ -37,7 +37,8 @@ public static class WorkspaceEndpoints
             (HttpContext context, int? windowHours, int? bucketMinutes, string? workspaceId,
                 DateTime? fromUtc, DateTime? toUtc, string? projectId,
                 TaskScannerService scanner, ITokenAggregator tokens, BetterCandidateUsageReportService candidateUsage,
-                WorkspaceTokensCacheStore cache, WorkspaceRegistry workspaces, ProjectRegistry registry) =>
+                WorkspaceTokensCacheStore cache, WorkspaceRegistry workspaces, ProjectRegistry registry,
+                AgentMessageBusStore bus, IConfiguration configuration) =>
             {
                 var scoped = !string.IsNullOrWhiteSpace(workspaceId);
                 if (scoped && (fromUtc == null || toUtc == null || fromUtc.Value.Kind != DateTimeKind.Utc
@@ -61,7 +62,7 @@ public static class WorkspaceEndpoints
                 var resolvedWindowHours = windowHours ?? WorkspaceTimelineFold.DefaultWindowHours;
                 var resolvedBucketMinutes = bucketMinutes ?? WorkspaceTimelineFold.DefaultBucketMinutes;
                 var timeline = scoped
-                    ? tokens.WorkspaceTimelineRange(projects, fromUtc!.Value, toUtc!.Value, resolvedBucketMinutes)
+                    ? ScopedTimeline()
                     : tokens.WorkspaceTimeline(projects, resolvedWindowHours, resolvedBucketMinutes);
                 var result = timeline with
                 {
@@ -76,6 +77,39 @@ public static class WorkspaceEndpoints
                 // overwrite each other.
                 if (!scoped) cache.WriteTimeline(result.WindowHours, result.BucketMinutes, result);
                 return Results.Ok(result);
+
+                // The scoped ledger reads what the usage cockpit cost reads: each
+                // project's merged ledger plus the workspace-scoped one-shot rows
+                // attributed to it, and the unattributed rows where the cockpit
+                // shows them (AGT-3798).
+                TokenTimeline ScopedTimeline()
+                {
+                    var scopedProjects = visible.Where(p => projectId == null
+                        || string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase)).ToList();
+                    var includeUnattributed = projectId == null && workspace!.IsDefault
+                        && (human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
+                    WorkspaceBusUsage? workspaceUsage = null;
+                    string? workspaceWarning = null;
+                    try
+                    {
+                        var root = configuration["TaskRepository"];
+                        if (string.IsNullOrWhiteSpace(root)) throw new InvalidOperationException();
+                        var workspaceProjects = registry.List().Where(p => !p.Archived
+                            && string.Equals(p.WorkspaceId, workspace!.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+                        workspaceUsage = WorkspaceBusUsage.Read(bus, root, workspaceProjects, scanner, fromUtc!.Value)
+                            .KeyedByName(scopedProjects, includeUnattributed);
+                    }
+                    catch (Exception)
+                    {
+                        workspaceWarning = "The workspace token bus could not be read; one-shot usage outside projects is missing.";
+                    }
+                    var range = tokens.WorkspaceTimelineRange(projects, fromUtc!.Value, toUtc!.Value, resolvedBucketMinutes, workspaceUsage);
+                    return workspaceWarning is null ? range : range with
+                    {
+                        Freshness = ProjectTokenDataFreshness.Combine([range.Freshness,
+                            new ProjectTokenDataFreshness { Status = "partial", Warning = workspaceWarning }]),
+                    };
+                }
             });
 
         // Cache-only timeline read: returns the persisted snapshot for

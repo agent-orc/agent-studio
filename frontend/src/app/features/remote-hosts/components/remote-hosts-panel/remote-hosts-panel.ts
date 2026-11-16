@@ -133,21 +133,31 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     if (this.view() === 'history') untracked(() => this.service.loadClaimGateEvents());
   });
   readonly linkedHostId = signal<string | null>(null);
-  readonly linkedSection = signal<'load' | 'connection' | null>(null);
+  readonly linkedSection = signal<'load' | 'connection' | 'capabilities' | null>(null);
+  /** AGT-3840: the held capability a pickup hold or a held review linked to. */
+  readonly linkedCapability = signal<string | null>(null);
   private readonly hostLink = effect(() => {
     const groups = this.hostGroups();
     const params = new URLSearchParams(this.hash().split('?')[1] ?? '');
     const raw = params.get('host');
-    if (!raw || raw === this.handledHostLink || !groups.length) return;
+    const capability = params.get('capability');
+    const linkKey = capability ? `${raw}|${capability}` : raw;
+    if (!raw || linkKey === this.handledHostLink || !groups.length) return;
     const id = raw.replace(/^machine:/, '');
-    const group = groups.find(item => item.id === id || item.roles.some(role => role.id === id));
+    const group = groups.find(item => item.id === id
+      || item.roles.some(role => role.id === id || role.clientId === id));
     if (!group) return;
-    this.handledHostLink = raw;
-    this.linkedHostId.set(group.id);
-    this.linkedSection.set(params.get('view') === 'telemetry' ? 'load' : params.has('link') ? 'connection' : null);
+    this.handledHostLink = linkKey!;
+    // A capability belongs to one role, so the link opens that role's row.
+    const role = capability ? group.roles.find(item => item.id === id || item.clientId === id) : undefined;
+    const target = role?.id ?? group.id;
+    this.linkedHostId.set(target);
+    this.linkedCapability.set(capability);
+    this.linkedSection.set(capability ? 'capabilities'
+      : params.get('view') === 'telemetry' ? 'load' : params.has('link') ? 'connection' : null);
     this.view.set('list');
-    this.selectedId.set(group.id);
-    this.setExpanded(group.id, true);
+    this.selectedId.set(target);
+    this.setExpanded(target, true);
   });
 
   /** Hosts whose runner reported its one shot claim route unavailable, oldest first. */
@@ -400,6 +410,10 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
       case 'cancel-cli-update': this.service.cancelCliUpdate(evt.id); break;
       case 'revive': this.service.revive(evt.id); break;
     }
+  }
+
+  onCapabilityReprobe(evt: { id: string; capability: string }): void {
+    this.service.reprobeCapability(evt.id, evt.capability);
   }
 
   cancelConfirmation(): void { this.pendingConfirmation.set(null); }

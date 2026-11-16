@@ -295,7 +295,7 @@ public sealed partial class BatchGatePilotService
                 && (known.Contains(owner) || _store.HasManifest(owner)
                     || _store.IsQuarantined(owner)),
             marker?.FallbackGateActive == true || FallbackInFlight(item.ReviewAttemptId),
-            handoffReady, age, maximumWait));
+            handoffReady, age, maximumWait, GateHostUnreachable: _hostOutage.Current is not null));
     }
 
     private static string Kebab(string name)

@@ -199,7 +199,8 @@
             </ul>
           }
           @if (h.serviceRole !== 'review') { <app-git-token-capability mode="warning" [status]="h.gitPushStatus" [detail]="h.gitPushDetail" /> }
-          <app-capability-health [host]="h" />
+          <app-capability-health [host]="h" [focusCapability]="linkedCapability()"
+            (reprobe)="capabilityReprobe.emit({ id: h.id, capability: $event })" />
           }
         </section>
 

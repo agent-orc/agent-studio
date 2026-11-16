@@ -27,8 +27,10 @@ namespace AgentStudio.Pipeline;
 ///
 /// <para>
 /// Convention instead of a settings switch: the gate applies when the project
-/// declares build commands in its <see cref="BuildProfile"/>, or when the exact
-/// merge diff provides a work package (<see cref="AppliesTo"/>).
+/// declares build commands in its <see cref="BuildProfile"/>, when the exact
+/// merge diff provides a work package, or when a code diff lands in a repository
+/// whose project.yml or discovery yields build or test commands
+/// (<see cref="AppliesTo"/>).
 /// A project whose merge touches neither stack merges as before.
 /// The verification itself always runs against the exact merged SHA in an
 /// isolated worktree (<c>RequireExactSubject</c>), so the live checkout is never
@@ -46,7 +48,9 @@ public sealed class PreDevelopBuildGate
     /// exact merge diff touches code that has a convention-derived work package
     /// (Angular specs for <c>frontend/</c>, impacted test projects for managed
     /// sources), or when it can change the Compose stack of a repository that
-    /// carries the render scripts (AGT-2981). A project whose merge touches
+    /// carries the render scripts (AGT-2981), or when a non-documentation diff
+    /// lands in a repository whose own definition yields build or test commands
+    /// (<see cref="TouchesDeclaredCommands"/>). A project whose merge touches
     /// none of these stays ungated rather than receiving an invented command.
     /// </summary>
     public static bool AppliesTo(
@@ -56,7 +60,35 @@ public sealed class PreDevelopBuildGate
         => VerifyCommandPlanner.HasProfileBuildCommands(profile)
             || FrontendWorkPackagePlanner.TouchesFrontend(changedFiles)
             || DotNetWorkPackagePlanner.TouchesDotNet(changedFiles)
-            || ComposeRenderGatePolicy.Commands(repositoryPath, changedFiles).Count > 0;
+            || ComposeRenderGatePolicy.Commands(repositoryPath, changedFiles).Count > 0
+            || TouchesDeclaredCommands(profile, changedFiles, repositoryPath);
+
+    /// <summary>
+    /// AGT-3811: the stack-neutral rule. Commands from
+    /// <c>.agent-studio/project.yml</c> or discovery (a root <c>package.json</c>,
+    /// a Cargo or Go module) gate a merge exactly like central profile build
+    /// commands, so a root-level Node or custom library is no longer the one
+    /// stack that reaches <c>develop</c> unbuilt. A documentation-only diff
+    /// (<see cref="DocsOnlyDeliveryPolicy"/>) cannot change a build or test
+    /// signal and stays ungated; an empty or unknown diff is not covered here.
+    /// </summary>
+    internal static bool TouchesDeclaredCommands(
+        BuildProfile? profile,
+        IReadOnlyList<string>? changedFiles,
+        string? repositoryPath)
+        => changedFiles is { Count: > 0 }
+            && !DocsOnlyDeliveryPolicy.IsDocsOnly(changedFiles)
+            && VerifyCommandPlanner.HasRepositoryBuildOrTestCommands(repositoryPath, profile);
+
+    /// <summary>
+    /// The owner-facing sentence for a merge no gate covers, naming every rule
+    /// it was checked against. Written to the log and to the card's
+    /// integration-verification record.
+    /// </summary>
+    public const string NotApplicableReason =
+        "no gate ran: the merge touches neither frontend/, managed sources, nor the Compose stack, "
+        + "and it changes only documentation or the repository declares no build or test commands "
+        + "(build profile, .agent-studio/project.yml, or discovery)";
 
     /// <summary>
     /// The level matrix for the exact merge diff. Pure, so the four cases are
@@ -72,13 +104,46 @@ public sealed class PreDevelopBuildGate
     /// An unavailable diff resolves to work-package, where the planner's own
     /// conservative fallback takes over; it must never silently become
     /// build-only.
+    /// <para>
+    /// AGT-3811: a repository whose own <c>.agent-studio/project.yml</c> or
+    /// discovery supplies the verify commands, and that has neither a
+    /// <c>frontend/</c> folder nor a tracked .NET project, has no convention
+    /// slice, so build-only would drop its declared tests altogether. A
+    /// non-documentation diff there resolves to work-package, whose unmapped
+    /// fallback runs the declared test commands (for example <c>npm test</c> of
+    /// a root Node library). Central build-profile commands keep the matrix
+    /// above.
+    /// </para>
     /// </summary>
-    public static string ResolveTestLevel(IReadOnlyList<string>? changedFiles)
+    public static string ResolveTestLevel(
+        IReadOnlyList<string>? changedFiles,
+        string? repositoryPath = null,
+        BuildProfile? profile = null)
         => changedFiles is null
             || FrontendWorkPackagePlanner.TouchesFrontend(changedFiles)
             || DotNetWorkPackagePlanner.TouchesDotNet(changedFiles)
+            || TouchesDeclaredStackWithoutConventionSlice(changedFiles, repositoryPath, profile)
                 ? TestExecutionLevels.WorkPackage
                 : TestExecutionLevels.BuildOnly;
+
+    private static bool TouchesDeclaredStackWithoutConventionSlice(
+        IReadOnlyList<string> changedFiles,
+        string? repositoryPath,
+        BuildProfile? profile)
+    {
+        if (changedFiles.Count == 0 || DocsOnlyDeliveryPolicy.IsDocsOnly(changedFiles)
+            || string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
+            return false;
+        if (Directory.Exists(Path.Combine(repositoryPath, "frontend"))) return false;
+        var tracked = TrackedRepositoryFiles.Read(repositoryPath);
+        var dotNetInputs = tracked
+            ?? Directory.EnumerateFiles(repositoryPath, "*", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName).OfType<string>();
+        if (DotNetWorkPackagePlanner.TouchesDotNet(dotNetInputs)) return false;
+        var plan = VerifyCommandPlanner.Plan(repositoryPath, profile);
+        return plan.Source is VerifyPlan.SourceProjectDefinition or VerifyPlan.SourceAutoDiscovery
+            && plan.Commands.Any(command => command.Kind == VerifyCommandKind.Test);
+    }
 
     /// <summary>
     /// Verifies <paramref name="request"/>'s exact subject. The level is pinned
@@ -104,7 +169,8 @@ public sealed class PreDevelopBuildGate
             request with
             {
                 RequireExactSubject = true,
-                RequiredTestLevel = postMergeLevel ?? LevelFor(changedFiles, reuseRemoteReviewVerdict),
+                RequiredTestLevel = postMergeLevel
+                    ?? LevelFor(changedFiles, reuseRemoteReviewVerdict, request.RepositoryPath, profile),
             },
             changedFiles,
             profile,
@@ -119,10 +185,12 @@ public sealed class PreDevelopBuildGate
     /// </summary>
     internal static string LevelFor(
         IReadOnlyList<string>? changedFiles,
-        bool reuseRemoteReviewVerdict)
+        bool reuseRemoteReviewVerdict,
+        string? repositoryPath = null,
+        BuildProfile? profile = null)
         => reuseRemoteReviewVerdict
             ? TestExecutionLevels.CompileOnly
-            : ResolveTestLevel(changedFiles);
+            : ResolveTestLevel(changedFiles, repositoryPath, profile);
 
     /// <summary>
     /// The gate is green on <see cref="BuildTestGateVerdict.Ok"/> and on

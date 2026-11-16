@@ -20,6 +20,8 @@ public sealed class CardPreviewService
     private readonly TimeProvider _clock;
     private readonly ILogger<CardPreviewService> _logger;
     private readonly object _gate = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _integratedDeliveries =
+        new(StringComparer.Ordinal);
 
     public CardPreviewService(TaskScannerService scanner, ProjectEnvironmentService environments,
         ProjectSettingsService settings, TaskIntegrationStatusService integration, GitService git,
@@ -71,9 +73,9 @@ public sealed class CardPreviewService
         var subject = ReviewSubjectStore.Read(task.FolderPath);
         var review = ReviewVerificationStore.Read(task.FolderPath);
         var greenSha = CardPreviewPolicy.IsGreenDelivery(subject, review) ? subject!.ResultSha : null;
-        var integrated = (state is not null || greenSha is not null)
-            && _integration.BuildForCompletion(task).Status == IntegrationStatuses.Integrated;
         var rejected = task.State == TaskStates.Archive;
+        var integrated = CardPreviewPolicy.NeedsIntegration(state?.Preview, greenSha, rejected)
+            && IsIntegrated(task, greenSha ?? state?.Preview.DeliverySha);
         var action = CardPreviewPolicy.Decide(state?.Preview, greenSha, integrated, rejected, now);
         if (action == PreviewLifecycleAction.Remove)
         {
@@ -100,6 +102,22 @@ public sealed class CardPreviewService
             subject!.ResultSha, null, now, now + CardPreviewPolicy.Lifetime, job.Id), spec));
         _scanner.InvalidateCache();
         return state is null || state.Preview.Status is "expired" or "removed";
+    }
+
+    /// <summary>
+    /// Integration of one delivery, remembered once it is integrated: the
+    /// sweep asks every minute for every green card, and an integrated commit
+    /// stays an ancestor of the integration line. Before AGT-3793 each sweep
+    /// recomputed the full completion verdict of every green card (about 170
+    /// lookups a minute on the live board).
+    /// </summary>
+    private bool IsIntegrated(TaskInfo task, string? deliverySha)
+    {
+        var key = task.TaskKey + "\0" + (deliverySha ?? "");
+        if (deliverySha is not null && _integratedDeliveries.ContainsKey(key)) return true;
+        var integrated = _integration.BuildForCompletion(task).Status == IntegrationStatuses.Integrated;
+        if (integrated && deliverySha is not null) _integratedDeliveries.TryAdd(key, 0);
+        return integrated;
     }
 
     private void Sync(TaskInfo task, CardPreviewState state)

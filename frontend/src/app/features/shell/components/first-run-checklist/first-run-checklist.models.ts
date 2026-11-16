@@ -1,5 +1,6 @@
 import type { DeviceLoginStatusResponse, ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
 import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { ProjectRegistryEntry } from '../../../remote-hosts/models/deployment-checkpoints';
 
 export interface Probe<T> { value: T | null; error: boolean }
 export interface ProofCard { id: string; projectId: string; watchPath?: string; installationId: string }
@@ -28,6 +29,11 @@ export function providerBadgeWaitReason(badge: ProviderAuthBadge, hostConnected:
     ? 'Provider probe is stale.' : null;
 }
 
+export function providerBadgeReady(badge: ProviderAuthBadge, nowMs: number): boolean {
+  return badge.reachable && badge.state === 'ok' && !!badge.lastSeenAt
+    && nowMs - Date.parse(badge.lastSeenAt) < 5 * 60_000;
+}
+
 /** Host Git setup state on the shared indicator: waiting on the operator warns, in-flight work runs. */
 export function gitSetupTone(state: string): StatusTone {
   if (state === 'verified') return 'success';
@@ -53,4 +59,25 @@ export function credentialFreeRepositoryUrl(value: string): boolean {
       && (url.protocol !== 'ssh:' ? !url.username : !url.username || url.username === 'git')
       && !url.password && !url.search && !url.hash;
   } catch { return false; }
+}
+
+/** AGT-3809: the checklist's chosen project, else the first active one. */
+export function pickProject(projects: readonly ProjectRegistryEntry[], id: string | null): ProjectRegistryEntry | null {
+  return projects.find(project => project.id === id) ?? projects[0] ?? null;
+}
+
+export function savedProof(): ProofCard | null {
+  try {
+    const value = JSON.parse(localStorage.getItem('studio-first-run-proof') ?? 'null') as ProofCard | null;
+    return value?.id && value.projectId && value.installationId ? value : null;
+  } catch { return null; }
+}
+
+export function downloadTextFile(name: string, text: string): void {
+  const blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(blobUrl);
 }
