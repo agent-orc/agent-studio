@@ -36,6 +36,28 @@ export type IsolatedHtmlNavigation =
  * iframe with `sandbox="allow-scripts"`. The missing `allow-same-origin`
  * capability keeps the resulting document on an opaque origin.
  */
+/**
+ * Give every scrolling element without focusable content a tab stop, and take
+ * it back once the element no longer scrolls. Runs inside the isolated frame,
+ * so it must not reference anything outside its own body.
+ */
+export function focusScrollRegions(doc: Document): void {
+  const marker = 'data-studio-scroll-focus';
+  for (const el of Array.from(doc.body.querySelectorAll<HTMLElement>('*'))) {
+    const style = doc.defaultView!.getComputedStyle(el);
+    const scrollable = /auto|scroll/.test(style.overflowX + ' ' + style.overflowY)
+      && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1);
+    const hasFocusable = !!el.querySelector('a[href], button, input, select, textarea, [tabindex]');
+    if (scrollable && !hasFocusable && !el.hasAttribute('tabindex')) {
+      el.setAttribute('tabindex', '0');
+      el.setAttribute(marker, '');
+    } else if (!scrollable && el.hasAttribute(marker)) {
+      el.removeAttribute('tabindex');
+      el.removeAttribute(marker);
+    }
+  }
+}
+
 export function buildIsolatedHtmlSrcdoc(
   html: string,
   options: {
@@ -140,6 +162,14 @@ export function buildIsolatedHtmlSrcdoc(
   const anchorBridge = wrapper.createElement('script');
   anchorBridge.textContent = isolatedHtmlAnchorBridgeScript();
   wrapper.body.append(anchorBridge);
+
+  // Authored tables and code blocks scroll on narrow frames; a scroll region
+  // must take keyboard focus (WCAG 2.1.1, AGT-3835).
+  const scrollRegions = wrapper.createElement('script');
+  scrollRegions.textContent = `var studioFocusScrollRegions = ${focusScrollRegions.toString()};
+  studioFocusScrollRegions(document);
+  window.addEventListener('resize', function () { studioFocusScrollRegions(document); });`;
+  wrapper.body.append(scrollRegions);
 
   if (options.workbenchDecisions) {
     const style = wrapper.createElement('style');

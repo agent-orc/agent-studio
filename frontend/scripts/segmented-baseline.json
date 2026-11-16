@@ -250,6 +250,12 @@
         "testid:'feed-kind-' + filter.id:class",
         "testid:feed-project-all:class"
       ]
+    },
+    "src/app/features/board/components/create-task-dialog/create-task-dialog.component.html": {
+      "reason": "Tags are a pick-many set of independent toggles; the segmented control is single-select. The chips share one Tab stop through RovingFocusDirective.",
+      "controls": [
+        "testid:'create-tag-' + t.id:pressed"
+      ]
     }
   }
 }

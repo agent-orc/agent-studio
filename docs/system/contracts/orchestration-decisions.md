@@ -130,6 +130,15 @@ inventory of every hosted service and its owner is
 the engine, `GET /healthz/orchestration-engine` answers `ready` or
 `engine-not-live`.
 
+AGT-3797: `StageDecisionPolicy.Coding` answers every settled delivery bound for
+Auto Review with `CreateReview`, but `TransitionDecisionPolicy.CreateReview`
+mints no remote ReviewAttempt for a planning or research card. While the engine
+owns Auto Review, `ReportReviewPolicy.HostRunsReportReview` makes the control
+plane's report review (`EngineReportReviewService`) the owner of such a card,
+and `ReportReviewPolicy.Settle` routes its outcome: a verdict goes to Human
+Review whatever its status, a review waiting for quota or a model host stays in
+Auto Review, and a review without a verdict parks the card with the reason.
+
 AGT-3207 adds the decider `stall-intervention`. `StallInterventionPolicy`
 turns the frozen facts of an AGT-3206 stall case, or of a due follow-up check,
 into a `StallInterventionPlan`: the action with its bounded parameters, the
