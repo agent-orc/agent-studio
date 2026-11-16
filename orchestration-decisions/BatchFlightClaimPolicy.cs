@@ -32,6 +32,15 @@ public enum BatchFlightClaimExpiry
 
     /// <summary>The owner renews the claim, but its current step made no progress in time.</summary>
     StageDeadlinePassed,
+
+    /// <summary>
+    /// The reservation step passed its deadline while a running per-task
+    /// integration held the project reservation (AGT-3882). The batch keeps
+    /// its queue position instead of going behind the other formed batches; the
+    /// expiry still counts against the retry budget, so a job that never ends
+    /// pauses the batch to a visible gate.
+    /// </summary>
+    ReservationHeldByJob,
 }
 
 /// <summary>What an expired claim does with its batch.</summary>
@@ -142,6 +151,20 @@ public static class BatchFlightClaimPolicy
     public static bool Renews(BatchFlightClaimFacts claim) => IsLive(claim);
 
     /// <summary>
+    /// AGT-3882: the expiry the claim records. A reservation step that passed
+    /// its deadline while a running per-task integration held the project
+    /// reservation waited on that job, not on the batch: it is recorded as
+    /// <see cref="BatchFlightClaimExpiry.ReservationHeldByJob"/>. A wait on a
+    /// pending push or an empty reservation keeps the plain deadline expiry,
+    /// so a stuck push still spends the retry budget.
+    /// </summary>
+    public static BatchFlightClaimExpiry Classify(BatchFlightStage stage, BatchFlightClaimExpiry expiry,
+        bool perTaskJobHoldsReservation)
+        => stage == BatchFlightStage.Reserving && expiry == BatchFlightClaimExpiry.StageDeadlinePassed
+           && perTaskJobHoldsReservation
+            ? BatchFlightClaimExpiry.ReservationHeldByJob : expiry;
+
+    /// <summary>
     /// What an expired claim does with its batch. A lost heartbeat leaves the
     /// batch to restart recovery, as a crash does. A missed deadline before
     /// publication retries while the members' earlier expiries stay within
@@ -178,16 +201,27 @@ public static class BatchFlightClaimPolicy
     /// <summary>
     /// The visible phase reason of an expired claim. A formed batch retried
     /// after its reservation deadline keeps the AGT-3562 wording.
+    /// <paramref name="heldBy"/> names the job the reservation step waited on
+    /// (AGT-3882), or null.
     /// </summary>
     public static string ExpiryReason(BatchFlightStage stage, BatchFlightClaimExpiry expiry,
-        BatchFlightExpiryOutcome outcome, int deadlineMinutes)
+        BatchFlightExpiryOutcome outcome, int deadlineMinutes, string? heldBy = null)
     {
+        if (expiry == BatchFlightClaimExpiry.ReservationHeldByJob)
+            return $"flight claim expired: no project reservation within {Math.Max(1, deadlineMinutes)} minutes "
+                + $"because {heldBy ?? "a per-task integration"} held it; "
+                + (outcome == BatchFlightExpiryOutcome.Retry
+                    ? "the batch stays formed and keeps its queue position"
+                    : "retry budget spent, the members go to the per-task gate");
+        var waitedOn = heldBy is null || stage != BatchFlightStage.Reserving ? string.Empty
+            : $"; the reservation waited on {heldBy}";
         if (stage == BatchFlightStage.Reserving && expiry == BatchFlightClaimExpiry.StageDeadlinePassed
             && outcome == BatchFlightExpiryOutcome.Retry)
-            return BatchGateStartPolicy.LeaseDeadlineReason(deadlineMinutes);
+            return BatchGateStartPolicy.LeaseDeadlineReason(deadlineMinutes) + waitedOn;
         var cause = expiry == BatchFlightClaimExpiry.HeartbeatLost
             ? "the flight owner stopped renewing its claim"
             : $"no progress in the {StageName(stage)} step within {deadlineMinutes} minutes";
+        cause += waitedOn;
         return outcome switch
         {
             BatchFlightExpiryOutcome.Retry => $"flight claim expired: {cause}; the members return to the queue",

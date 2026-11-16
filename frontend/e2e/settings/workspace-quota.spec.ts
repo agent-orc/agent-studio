@@ -12,7 +12,7 @@ test('owner can inspect and edit a blocked workspace quota', async ({ page, requ
   const snapshot = {
     workspaceId, projectId: null, weekStartUtc: '2026-10-12T00:00:00Z', weekEndUtc: '2026-10-19T00:00:00Z',
     limits: { modelTokensPerWeek: 100, computeCoreHoursPerWeek: 10, hostingSlots: 2 },
-    usage: { modelTokens: 100, modelCostUsd: 0.42, computeCoreHours: 2, hostingSlots: 1 },
+    usage: { modelTokens: 100, modelCostUsd: 0.42, computeCoreHours: 2, hostingSlots: 1, unpricedRuns: 1 },
     remaining: { modelTokens: 0, modelCostUsd: 0, computeCoreHours: 8, hostingSlots: 1 },
     status: 'blocked', meterComplete: true, overrideActive: false, codingAllowed: false, hostingAllowed: false,
     message: 'Weekly quota reached. New work is paused until Monday 00:00 UTC or an owner override.',
@@ -44,6 +44,7 @@ test('owner can inspect and edit a blocked workspace quota', async ({ page, requ
   const panel = page.getByTestId('workspace-quota');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('100 tokens used');
+  await expect(panel.getByTestId('workspace-quota-cost')).toContainText('priced subtotal + 1 run without price');
   await expect(panel).toContainText('Weekly quota reached');
   await panel.getByLabel('Tokens per week').fill('200');
   await panel.getByRole('button', { name: 'Save quota' }).click();

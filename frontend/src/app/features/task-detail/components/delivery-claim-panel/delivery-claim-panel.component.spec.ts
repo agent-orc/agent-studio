@@ -2,6 +2,9 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { readinessItem } from '../../../acceptance-readiness/testing/acceptance-readiness.fixtures';
 import { DeliveryClaimPanelComponent } from './delivery-claim-panel.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
@@ -75,13 +78,16 @@ function job(overrides: Partial<TaskInfo> = {}): TaskInfo {
   } as TaskInfo;
 }
 
-async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer()))) {
+async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())),
+  tasks: Record<string, unknown> = {}) {
   TestBed.resetTestingModule();
   await TestBed.configureTestingModule({
     imports: [DeliveryClaimPanelComponent],
     providers: [
       provideZonelessChangeDetection(),
-      { provide: TaskService, useValue: { getDeliveryClaim } },
+      provideHttpClient(),
+      provideHttpClientTesting(),
+      { provide: TaskService, useValue: { getDeliveryClaim, ...tasks } },
       { provide: NotificationService, useValue: { success: vi.fn() } },
     ],
   }).compileComponents();
@@ -107,6 +113,102 @@ describe('DeliveryClaimPanelComponent', () => {
     expect(grounds?.textContent).toContain('Contradiction or gap');
     expect(host.querySelector('[data-testid="stale-brief-acceptance"]')?.textContent)
       .toContain('Acceptance is blocked');
+  });
+  describe('AGT-3874 accept with a reason on a content verdict', () => {
+    const concerns: NonNullable<TaskDeliveryClaimAnswer['contentReview']> = {
+      mode: 'coding',
+      currentBriefVersion: 'aaaaaaaaaaaaaaaa',
+      deliveryBriefVersion: 'aaaaaaaaaaaaaaaa',
+      reviewBriefVersion: 'aaaaaaaaaaaaaaaa',
+      requiredAspect: 'requirement-fit',
+      contentStatus: 'concerns',
+      contentSummary: 'The 830-card first-paint target remains unmet and lacks idle-host confirmation',
+      evidenceChecked: null,
+      missing: null,
+      ranAspects: ['build-tests', 'requirement-fit'],
+      skippedAspects: [],
+    };
+
+    async function mountGap(review: NonNullable<TaskDeliveryClaimAnswer['contentReview']>) {
+      const tasks = {
+        moveJob: vi.fn(() => of({})),
+        reviewContentAgainstCurrentBrief: vi.fn(() => of({ reviewAttemptId: 'r-2', briefVersion: 'aaaa' })),
+        refresh: vi.fn(),
+      };
+      const fixture = await mount(job({ state: TaskState.HumanReview }),
+        vi.fn(() => of(answer({ contentReview: review }))), tasks);
+      const host = fixture.nativeElement as HTMLElement;
+      const click = async (testId: string) => {
+        host.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)!.click();
+        fixture.detectChanges();
+        await fixture.whenStable();
+      };
+      return { fixture, host, click, tasks };
+    }
+
+    it('offers Review again and Accept with a reason for concerns on the current brief', async () => {
+      const { fixture, host, click, tasks } = await mountGap(concerns);
+      const section = host.querySelector('[data-testid="content-verdict-acceptance"]');
+      expect(section?.textContent).toContain('returned concerns');
+      expect(section?.textContent).toContain('The 830-card first-paint target remains unmet');
+      expect(host.querySelector('[data-testid="stale-brief-acceptance"]')).toBeNull();
+
+      await click('review-current-brief');
+      expect(tasks.reviewContentAgainstCurrentBrief).toHaveBeenCalledWith('task', '/workspace/tasks');
+
+      await click('accept-with-reason-open');
+      const input = host.querySelector<HTMLTextAreaElement>('[data-testid="accept-with-reason-input"]')!;
+      input.value = 'Owner accepts; first paint moves to a follow-up.';
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      await click('accept-with-reason-submit');
+      expect(tasks.moveJob).toHaveBeenCalledWith('task', TaskState.Completed, '/workspace/tasks', undefined,
+        'Owner accepts; first paint moves to a follow-up.', true);
+    });
+
+    it('offers the actions for block, and none for a pass', async () => {
+      const blocked = await mountGap({ ...concerns, contentStatus: 'block' });
+      expect(blocked.host.querySelector('[data-testid="content-verdict-acceptance"]')).not.toBeNull();
+      const passed = await mountGap({ ...concerns, contentStatus: 'pass' });
+      expect(passed.host.querySelector('[data-testid="content-verdict-acceptance"]')).toBeNull();
+      expect(passed.host.querySelector('[data-testid="accept-with-reason-open"]')).toBeNull();
+    });
+
+    it('keeps the changed-brief section unchanged when the brief moved', async () => {
+      const { host } = await mountGap({ ...concerns, currentBriefVersion: 'bbbbbbbbbbbbbbbb' });
+      expect(host.querySelector('[data-testid="stale-brief-acceptance"]')?.textContent)
+        .toContain('Acceptance is blocked by a changed brief');
+      expect(host.querySelector('[data-testid="brief-difference-link"]')).not.toBeNull();
+      expect(host.querySelector('[data-testid="review-current-brief"]')?.textContent)
+        .toContain('Review again against the current brief');
+      expect(host.querySelector('[data-testid="accept-with-reason-open"]')).not.toBeNull();
+      expect(host.querySelector('[data-testid="content-verdict-acceptance"]')).toBeNull();
+    });
+  });
+  /**
+   * AGT-3867, F10: DEMO-19's content review returned concerns on the current
+   * brief. The detail offered steps only for a changed brief, so the owner had
+   * none; the round that closes the gap existed only on the board card.
+   */
+  it('offers the board next steps for a concern on the current brief', async () => {
+    const review = { ...conceptReview, mode: 'coding' as const, requiredAspect: 'requirement-fit',
+      contentStatus: 'concerns', currentBriefVersion: '028a09dc0b85', deliveryBriefVersion: '028a09dc0b85',
+      reviewBriefVersion: '028a09dc0b85' };
+    const fixture = await mount(job({ state: TaskState.HumanReview }),
+      vi.fn(() => of(answer({ contentReview: review }))));
+    TestBed.inject(HttpTestingController).expectOne('/api/tasks/acceptance-readiness').flush({
+      checkedAtUtc: '2026-11-15T10:00:00Z', counts: {},
+      items: [{ ...readinessItem('task', 'review-concerns'), taskKey: 'agt::task' }],
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="stale-brief-acceptance"]')).toBeNull();
+    expect(host.querySelector('[data-testid="acceptance-next-steps-reason"]')?.textContent)
+      .toContain('The requirement-fit review returned concerns');
+    expect(host.querySelector('[data-testid="acceptance-next-steps-send-round"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="review-current-brief"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="accept-with-reason-open"]')).not.toBeNull();
   });
   describe('AGT-3812 build-tests on the acceptance grounds', () => {
     const passingContent: NonNullable<TaskDeliveryClaimAnswer['contentReview']> = {

@@ -9,6 +9,18 @@ import type {
 } from '../models/tokens.model';
 import type { UsageLedgerScope } from '../../usage-cockpit';
 
+export interface CliWindowAttribution {
+  fromUtc: string;
+  toUtc: string;
+  durationHours: number;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+}
+
 /**
  * Cycle 10d API client for the token-aggregate endpoints. Lifted out
  * of the TaskService god-service per ADR-0034 so the per-feature HTTP
@@ -23,6 +35,12 @@ import type { UsageLedgerScope } from '../../usage-cockpit';
 export class TokensApiService {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = '/api';
+
+  getCliWindowAttribution(cliType: 'claude' | 'codex', label: string, resetAt: string | null) {
+    let params = new HttpParams().set('cliType', cliType).set('label', label);
+    if (resetAt) params = params.set('resetAt', resetAt);
+    return this.http.get<CliWindowAttribution>(`${this.baseUrl}/workspace/tokens/cli-window`, { params });
+  }
 
   /** Per-project token rollup. */
   getTokenSummary(projectName: string) {

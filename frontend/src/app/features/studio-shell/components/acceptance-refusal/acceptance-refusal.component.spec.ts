@@ -2,11 +2,15 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
 import { AcceptanceRefusalComponent } from './acceptance-refusal.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import type { TaskInfo } from '../../../../models/task.model';
-import { AcceptanceRefusalStore, type AcceptanceRefusal } from '../../../task-detail/runtime';
+import { AcceptanceRefusalStore, acceptanceRefusalFor, type AcceptanceRefusal } from '../../../task-detail/runtime';
+import { serverAcceptanceRefusal } from '../../../task-detail/state/acceptance-refusal.model';
 
 const JOB = { id: 'AGT-3649', taskKey: 'wp::AGT-3649', state: '5-human-review', watchPath: '/project/tasks' } as TaskInfo;
 const OVERRIDE: AcceptanceRefusal = {
@@ -25,6 +29,8 @@ async function mount(refusal: AcceptanceRefusal, tasks: Partial<Record<'moveJob'
     imports: [AcceptanceRefusalComponent],
     providers: [
       provideZonelessChangeDetection(),
+      provideHttpClient(),
+      provideHttpClientTesting(),
       { provide: TaskService, useValue: { moveJob, retryIntegration, refresh, ...tasks } },
       { provide: NotificationService, useValue: { success, error } },
     ],
@@ -53,6 +59,15 @@ async function mount(refusal: AcceptanceRefusal, tasks: Partial<Record<'moveJob'
 
 describe('AcceptanceRefusalComponent (AGT-3704)', () => {
   afterEach(() => TestBed.resetTestingModule());
+
+  it('opens the round from the toolbar when an override cannot admit the card (AGT-3867)', async () => {
+    const { click, moveJob } = await mount({ reason: 'The required report is missing.', action: 'send-round',
+      actionLabel: 'Send a round…', source: 'hold' });
+    const open = vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'openRound').mockImplementation(() => undefined);
+    await click('acceptance-refusal-action');
+    expect(open).toHaveBeenCalledWith(JOB, 'toolbar');
+    expect(moveJob).not.toHaveBeenCalled();
+  });
 
   it('names the reason next to its one action', async () => {
     const { host } = await mount(OVERRIDE);
@@ -100,5 +115,50 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
     expect(retryIntegration).toHaveBeenCalledWith('AGT-3649', '/project/tasks');
     expect(refresh).toHaveBeenCalledWith(true);
     expect(find('acceptance-refusal-form')).toBeNull();
+  });
+});
+
+describe('AcceptanceRefusalComponent · content verdict (AGT-3874)', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  const SUMMARY = 'The 830-card first-paint target remains unmet and lacks idle-host confirmation';
+  const DELIVERED = {
+    ...JOB,
+    integration: { status: 'integrated', integrationBranch: 'develop' },
+  } as TaskInfo;
+
+  it('offers the override after a completion-content-gap refusal and sends it with the reason', async () => {
+    const server = serverAcceptanceRefusal(DELIVERED, { status: 409, error: {
+      code: 'completion-content-gap', error: `Completion refused: requirement-fit verdict was concerns.` } });
+    const refusal = acceptanceRefusalFor(DELIVERED, server, false)!;
+    expect(refusal).toMatchObject({ source: 'server', action: 'override' });
+
+    const { host, find, click, typeReason, moveJob } = await mount(refusal);
+    expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent)
+      .toContain('Acceptance refused: requirement-fit verdict was concerns.');
+    await click('acceptance-refusal-action');
+    typeReason('Owner accepts: the first-paint target moves to AGT-3900.');
+    await click('acceptance-refusal-submit');
+
+    expect(moveJob).toHaveBeenCalledWith('AGT-3649', '6-completed', '/project/tasks', undefined,
+      'Owner accepts: the first-paint target moves to AGT-3900.', true);
+    expect(find('acceptance-refusal-form')).toBeNull();
+  });
+
+  it('shows the concerns verdict as a hold after a reload, without a prior click', async () => {
+    const reloaded = {
+      ...DELIVERED,
+      reviewProjection: { attempts: [{ aspects: [
+        { aspect: 'requirement-fit', status: 'concerns', classification: 'product', summary: SUMMARY },
+      ] }] },
+    } as unknown as TaskInfo;
+    const refusal = acceptanceRefusalFor(reloaded, null, false)!;
+    expect(refusal.source).toBe('hold');
+
+    const { host } = await mount(refusal);
+    expect(host.querySelector('[data-testid="acceptance-refusal"]')?.getAttribute('data-refusal-action')).toBe('override');
+    expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent).toContain(SUMMARY);
+    expect(host.querySelector('[data-testid="acceptance-refusal-action"]')?.textContent?.trim())
+      .toBe('Accept with override…');
   });
 });

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -11,6 +12,81 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed partial class AcceptanceIntegrationRoundTripTests
 {
+    [Fact]
+    public async Task Acceptance_EarlierCard_AfterGateNotApplicableLaterCard_Succeeds()
+    {
+        var earlier = PublishDelivery("earlier-no-gate.txt", "earlier\n");
+        RunGit(_repo, "push", "-q", "origin", $"{earlier}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(earlier);
+        var earlierCard = deps.Scanner.FindJob(Slug, _watchPath)!;
+        IntegrationVerificationStore.Write(earlierCard.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = earlier,
+            IntegrationBranch = "develop",
+            DeliveryShas = [earlier],
+            Evidence = IntegrationVerificationEvidence.GateNotApplicable,
+            Reason = "No gate applies to the earlier library merge.",
+        });
+        var later = PublishLaterCommit("later-no-gate.txt");
+        RunGit(_repo, "push", "-q", "origin", $"{later}:refs/heads/runner/agent-runner-01/AGT-LATER");
+        var laterDeps = Build(later, taskKey: "AGT-LATER", slug: "later-no-gate");
+        var laterCard = laterDeps.Scanner.FindJob("later-no-gate", _watchPath)!;
+        IntegrationVerificationStore.Write(laterCard.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = later,
+            IntegrationBranch = "develop",
+            DeliveryShas = [later],
+            Evidence = IntegrationVerificationEvidence.GateNotApplicable,
+            Reason = "No gate applies to this library merge.",
+        });
+        var acceptedLater = await laterDeps.Transitions.MoveAsync("later-no-gate", TaskStates.Completed, _watchPath);
+        Assert.True(acceptedLater.Status == MoveJobStatus.Success, acceptedLater.Message);
+        deps.Scanner.InvalidateCache();
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob("later-no-gate", _watchPath)?.State);
+        var service = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "no-gate-batches")), earlier);
+
+        Assert.Equal(IntegrationVerificationStates.Verified,
+            service.BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification?.State);
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+        Assert.True(accepted.Status == MoveJobStatus.Success, accepted.Message);
+    }
+
+    [Theory]
+    [InlineData("other", true)]
+    [InlineData("develop", false)]
+    public void Acceptance_GateNotApplicableRecord_MustMatchBranchAndVerifiedState(
+        string branch, bool verified)
+    {
+        var earlier = PublishDelivery("untrusted-no-gate.txt", "earlier\n");
+        RunGit(_repo, "push", "-q", "origin", $"{earlier}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(earlier);
+        var later = PublishLaterCommit("untrusted-later.txt");
+        var sourceFolder = Path.Combine(_watchPath, TaskStates.Completed, "untrusted-no-gate");
+        Directory.CreateDirectory(sourceFolder);
+        File.WriteAllText(Path.Combine(sourceFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "untrusted-no-gate", key = "AGT-UNTRUSTED", title = "Untrusted record",
+            state = TaskStates.Completed, projectName = Project,
+        }));
+        IntegrationVerificationStore.Write(sourceFolder, new IntegrationVerificationRecord
+        {
+            State = verified ? IntegrationVerificationStates.Verified : IntegrationVerificationStates.Unverified,
+            Sha = later, IntegrationBranch = branch,
+            Evidence = IntegrationVerificationEvidence.GateNotApplicable,
+        });
+        deps.Scanner.InvalidateCache();
+
+        var result = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "untrusted-batches")), earlier)
+            .BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification;
+
+        Assert.Equal(IntegrationVerificationStates.Unverified, result?.State);
+        Assert.Contains(later[..7], result?.UncoveredPublication);
+    }
+
     [Fact]
     public void Projection_OldNetChangeRecordMatchesItsSourceTrailer()
     {
@@ -47,6 +123,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
         RunGit(_repo, "fetch", "-q", "origin", "develop");
         var deps = Build(deliverySha);
+        deps.Settings.SetBatchGate(Project, new BatchGateFormationOptions(
+            Enabled: true, DocumentationOnly: false, Scope: "code"));
         var card = deps.Scanner.FindJob(Slug, _watchPath)!;
         var uncovered = PublishLaterCommit("uncovered-first.txt");
         var covered = PublishLaterCommit("uncovered-second.txt");
@@ -68,6 +146,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         Assert.Contains("a batch base check passed on it but is not counted: its evidence file is missing",
             verification?.Reason);
         Assert.Contains("no batch publication covering it", verification?.Reason);
+        Assert.Contains("Commit author: test", verification?.Reason);
         Assert.DoesNotContain(covered[..7] + " \"", verification?.Reason);
     }
 
@@ -158,14 +237,20 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
             {
                 PassedPublishedGate(later, "AGT-RED") with { GateVerdict = nameof(BuildTestGateVerdict.Fail) },
             }, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
-        var service = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "red-later-gates")), deliverySha);
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "red-later-gates"));
+        batches.RecordBaseVerdict(new BatchGateBaseVerdict(Project, later,
+            BatchGatePilotService.GateProfile(deps.Settings.Get(Project).BuildProfile, _repo),
+            "pass", null, "stale batch check", Path.Combine(_tempDir, "missing-red-base-evidence.json"),
+            DateTimeOffset.UnixEpoch.AddDays(1), BatchGateBaseCheckSources.FullSuite));
+        var service = Service(deps, batches, deliverySha);
 
         var verification = service.BuildForAcceptance(card).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
         Assert.Contains("published gate evidence is not counted: gate "
             + $"{IntegrationGateJournal.PreDevelopBuildGateStep} of AGT-RED returned Fail", verification?.Reason);
-        Assert.Contains("no batch base verdict on it", verification?.Reason);
+        Assert.DoesNotContain("batch", verification?.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Commit author: test", verification?.Reason);
     }
 
     [Fact]

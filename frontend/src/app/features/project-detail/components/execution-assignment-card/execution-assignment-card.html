@@ -88,21 +88,25 @@
     <div class="execution-card__probe-head">
       <div>
         <h5>Try it</h5>
-        <p>Four non-destructive readiness checks before the first no-op task.</p>
+        <p>Check remote delivery, integration branch, detected stack, and host readiness.</p>
       </div>
       <button
         type="button"
         data-testid="project-execution-probe"
-        [disabled]="saving() || probing() || !selectedHost()"
+        [disabled]="saving() || probing() || selectedHost()?.role !== 'remote'"
         (click)="runProbe()">
         {{ probing() ? 'Checking…' : probePassed() ? 'Run again' : 'Start probe' }}
       </button>
     </div>
 
+    @if (selectedHost()?.role === 'local') {
+      <small>Select a remote runner to check delivery readiness.</small>
+    }
+
     <ol class="execution-card__checks" data-testid="project-execution-checklist">
       @for (check of checks(); track check.key) {
         <li class="execution-card__check" [attr.data-state]="check.state" [attr.data-testid]="'project-execution-check-' + check.key">
-          <app-status-indicator [tone]="probeTone(check.state)" [label]="check.label" />
+          <app-status-indicator [tone]="probeTone(check.state)" [label]="check.label" [wrap]="true" />
           <small>{{ check.detail }}</small>
         </li>
       }

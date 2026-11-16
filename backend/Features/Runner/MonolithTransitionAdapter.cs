@@ -52,6 +52,12 @@ public static class MonolithTransitionAdapter
     public static TransitionDecision StageCoding(string taskId, string attemptId, string? targetState)
         => StageDecisionPolicy.Coding(taskId, attemptId, targetState);
 
+    public static bool ReportReviewHostRuns(bool reportOnly, bool monolithOwnsAutoReview)
+        => ReportReviewPolicy.HostRunsReportReview(reportOnly, monolithOwnsAutoReview);
+
+    public static ReportReviewDecision ReportReviewSettle(ReportReviewOutcomeFacts facts)
+        => ReportReviewPolicy.Settle(facts);
+
     public static StagePolicyDecision StageGateTransition(string taskId, string attemptId,
         int failed, int roundsUsed, int roundsAllowed,
         bool infrastructureFailure = false, bool interventionRequired = false)
@@ -309,8 +315,12 @@ public static class MonolithTransitionAdapter
         => BatchFlightClaimPolicy.DeadlineMinutes(stage, reservationDeadlineMinutes, gateTimeoutMinutes);
 
     public static string BatchFlightExpiryReason(BatchFlightStage stage, BatchFlightClaimExpiry expiry,
-        BatchFlightExpiryOutcome outcome, int deadlineMinutes)
-        => BatchFlightClaimPolicy.ExpiryReason(stage, expiry, outcome, deadlineMinutes);
+        BatchFlightExpiryOutcome outcome, int deadlineMinutes, string? heldBy = null)
+        => BatchFlightClaimPolicy.ExpiryReason(stage, expiry, outcome, deadlineMinutes, heldBy);
+
+    public static BatchFlightClaimExpiry BatchFlightClaimExpiryClassified(BatchFlightStage stage,
+        BatchFlightClaimExpiry expiry, bool perTaskJobHoldsReservation)
+        => BatchFlightClaimPolicy.Classify(stage, expiry, perTaskJobHoldsReservation);
 
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
 

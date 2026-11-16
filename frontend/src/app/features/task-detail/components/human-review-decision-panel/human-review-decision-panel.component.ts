@@ -5,6 +5,7 @@ import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import { ReviewerSession } from '../../../../services/reviewer-session.service';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { DecisionFocusDirective } from '../../../../components/decision-focus/decision-focus.directive';
 import { serverErrorMessage } from '../../../../utils/server-error-message';
 
 /** Mirrors `HumanReviewDecisionEndpoints.MaxNoteLength`. */
@@ -23,7 +24,7 @@ type Pending = 'accept' | 'send-back' | null;
   selector: 'app-human-review-decision-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PendingButtonDirective],
+  imports: [PendingButtonDirective, DecisionFocusDirective],
   templateUrl: './human-review-decision-panel.component.html',
   styleUrl: './human-review-decision-panel.component.scss',
 })
