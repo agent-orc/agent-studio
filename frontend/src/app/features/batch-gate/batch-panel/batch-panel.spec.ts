@@ -383,4 +383,33 @@ describe('BatchPanelComponent', () => {
       .toEqual(['flight queue position 2 of 2', 'flight queue position 1 of 2']);
     http.verify();
   });
+  it('names the current lane idle cause and the idle minutes per cause', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({
+      ...redHalvingState,
+      laneIdle: {
+        current: { cause: 'per-task-holder', detail: 'a direct per-task integration holds the project reservation',
+          batchId: 'batch-old', sinceUtc: '2026-11-16T04:00:00Z', minutes: 12 },
+        last24Hours: { perTaskHolderMinutes: 12, restartRecoveryMinutes: 3, plannerMinutes: 0 },
+        last7Days: { perTaskHolderMinutes: 40, restartRecoveryMinutes: 9, plannerMinutes: 1 },
+        intervals: [],
+      },
+    });
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const text = (selector: string) => (fixture.nativeElement.querySelector(selector) as HTMLElement | null)
+      ?.textContent?.replace(/\s+/g, ' ').trim();
+    expect(text('[data-testid="batch-lane-idle-current"]')).toContain('Per-task holder');
+    expect(text('[data-testid="batch-lane-idle-current"]')).toContain('a direct per-task integration holds the project reservation');
+    expect(text('[data-testid="batch-lane-idle-totals"]')).toContain('per-task holder 12 min');
+    expect(text('[data-testid="batch-lane-idle-totals"]')).toContain('restart recovery 3 min');
+    http.verify();
+  });
 });

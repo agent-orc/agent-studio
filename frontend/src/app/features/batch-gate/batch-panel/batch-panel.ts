@@ -4,7 +4,7 @@ import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
 import { batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine } from '../../../models/batch-gate.model';
 import { formatDurationMinutes } from '../../../models/duration-format';
-import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
+import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState, BatchLaneIdleCause } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
 import { PendingButtonDirective } from '../../../components/async-feedback';
@@ -65,6 +65,13 @@ export class BatchPanelComponent implements OnDestroy {
       ? `Moved to per-task gates after pause: ${reason.slice(pause.length)}` : reason;
   }
   readonly formatDurationMinutes = formatDurationMinutes;
+  laneIdleCause(cause: BatchLaneIdleCause): string {
+    switch (cause) {
+      case 'per-task-holder': return 'Per-task holder';
+      case 'restart-recovery': return 'Restart recovery';
+      default: return 'Planner';
+    }
+  }
   runDuration(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): string {
     if (batchRunIsRunning(batch, run)) return 'Running';
     const detached = this.state()?.detachedFlights?.find(flight => flight.batchId === batch.batchId);

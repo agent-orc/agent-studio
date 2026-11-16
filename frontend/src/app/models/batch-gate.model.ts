@@ -35,7 +35,26 @@ export interface BatchGateConfiguration {
   limits: { hardMaximumSize: number };
 }
 
+/** AGT-3857: why a formed batch waits while the project runs no batch gate. */
+export type BatchLaneIdleCause = 'per-task-holder' | 'restart-recovery' | 'planner';
+
+export interface BatchLaneIdleTotals {
+  perTaskHolderMinutes: number;
+  restartRecoveryMinutes: number;
+  plannerMinutes: number;
+}
+
+export interface BatchLaneIdle {
+  current?: { cause: BatchLaneIdleCause; detail: string; batchId?: string | null;
+    sinceUtc: string; minutes: number } | null;
+  last24Hours: BatchLaneIdleTotals;
+  last7Days: BatchLaneIdleTotals;
+  intervals: { cause: BatchLaneIdleCause; detail: string; batchId?: string | null;
+    startedAtUtc: string; endedAtUtc?: string | null; minutes: number }[];
+}
+
 export interface BatchGateState {
+  laneIdle?: BatchLaneIdle | null;
   oldestFormed?: { batchId: string; formedAtUtc: string; ageMinutes: number } | null;
   flightClaim?: { batchId: string; stage: string; stageDeadlineUtc: string; end?: unknown | null } | null;
   ejectRequests?: { project: string; taskKey: string; actor: string; reason: string;

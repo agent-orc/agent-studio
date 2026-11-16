@@ -33,7 +33,8 @@ public static class BatchGateStateSnapshotReader
         IReadOnlySet<string>? activePerTaskFlights = null,
         BatchGateInvariantReport? invariants = null,
         string? diskPauseReason = null,
-        int? configuredGateSlots = null)
+        int? configuredGateSlots = null,
+        BatchLaneIdleSummary? laneIdle = null)
     {
         // AGT-3569: the durable claim on the project's flight slot, live or last ended.
         var flightClaim = store.ReadFlightClaim(project);
@@ -453,6 +454,8 @@ public static class BatchGateStateSnapshotReader
                 formedAtUtc = BatchGateFlightQueue.QueuedSince(store, oldestFormed),
                 ageMinutes = Math.Max(0, (at - BatchGateFlightQueue.QueuedSince(store, oldestFormed)).TotalMinutes),
             },
+            // AGT-3857: time a formed batch waited with no batch gate running, by cause.
+            laneIdle,
             perTaskGates,
             flightQueue = flightQueue.Select(manifest => new
             {

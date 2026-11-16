@@ -150,6 +150,12 @@
         @if (data.oldestFormed; as oldest) {
           <p data-testid="batch-oldest-formed">Oldest formed: <a [href]="'#batch-' + oldest.batchId" (click)="$event.preventDefault(); openBatch(oldest.batchId)">{{ oldest.batchId }}</a> · {{ formatDurationMinutes(oldest.ageMinutes) }} · formed {{ date(oldest.formedAtUtc) }}</p>
         }
+        @if (data.laneIdle; as idle) {
+          @if (idle.current; as current) {
+            <p data-testid="batch-lane-idle-current">No batch gate runs while a formed batch waits: <strong>{{ laneIdleCause(current.cause) }}</strong> · {{ formatDurationMinutes(current.minutes) }} · since {{ date(current.sinceUtc) }}. {{ current.detail }}</p>
+          }
+          <p class="batch-panel__time" data-testid="batch-lane-idle-totals">Idle with a formed batch, last 24 hours: per-task holder {{ formatDurationMinutes(idle.last24Hours.perTaskHolderMinutes) }} · restart recovery {{ formatDurationMinutes(idle.last24Hours.restartRecoveryMinutes) }} · planner {{ formatDurationMinutes(idle.last24Hours.plannerMinutes) }}</p>
+        }
         @if (data.flightQueue?.length) {
           <p>Formed batches start one at a time, oldest first.</p>
           <ol>@for (entry of data.flightQueue; track entry.batchId) {
