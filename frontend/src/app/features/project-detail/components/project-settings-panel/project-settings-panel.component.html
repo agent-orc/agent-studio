@@ -9,6 +9,7 @@
       the workspace defaults it inherits.
     </p>
     <app-settings-jump-links [links]="[{ target: 'batch-settings', label: 'Batch verification', testId: 'project-settings-jump-batch' }]" />
+    <button type="button" class="ps-settings__link" data-testid="project-settings-review-aspects" (click)="openReviewAspects()">Review aspects in Deploy / Run steps</button>
   </header>
   <section class="ps-settings__section" aria-label="Project basics">
     <app-project-basics-card [projectName]="projectName()" />

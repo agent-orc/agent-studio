@@ -5,6 +5,7 @@ import { laneSentence } from '../../../../models/lane-presentation';
 import type { PipelineCatalogueStep, PipelineStepSetting } from '../../../../features/task-pipeline';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import {
   SORTABLE_LANES,
   USER_VISIBLE_LANE_SORT_STRATEGIES,
@@ -64,6 +65,12 @@ interface TransitionRow {
   styleUrl: './project-workflow-section.scss',
 })
 export class ProjectWorkflowSectionComponent implements OnInit {
+  private readonly tabs = inject(StudioTabStateService);
+
+  openConfiguration(section: string): void {
+    this.tabs.open({ kind: 'hub', projectName: this.projectName(),
+      section: section === 'Pipeline' ? 'pipeline' : 'settings' });
+  }
   readonly projectName = input.required<string>();
 
   private readonly jobService = inject(TaskService);
