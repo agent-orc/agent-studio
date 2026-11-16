@@ -477,6 +477,7 @@
 /api/workspace/screenshots	free	-	-	-
 /api/workspace/summary	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/workspace/tokens/analysis	free	-	-	-
+/api/workspace/tokens/cli-window	free	-	-	-
 /api/workspace/tokens/expensive-jobs	free	-	-	-
 /api/workspace/tokens/expensive-jobs/cached	free	-	-	-
 /api/workspace/tokens/timeline	free	-	-	-

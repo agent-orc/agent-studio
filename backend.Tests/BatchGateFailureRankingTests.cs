@@ -150,6 +150,37 @@ public sealed class BatchGateFailureRankingTests
     }
 
     [Fact]
+    public void A_red_no_isolation_child_reproduced_marks_its_failed_tests_as_flaky_suspects()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var store = new BatchGateStore(root, fact =>
+                [new BatchTestFailure("Product.Tests.Unstable", fact.BatchId!, fact.BatchRunId!,
+                    fact.MemberKeys ?? [], fact.CompletedAtUtc, "", false)]);
+            store.RecordExecution(new BatchGateExecutionFact("Project", "cohort", "red-run", "sha", "fail",
+                "host", Now, Now, 0, 0, "evidence", MemberKeys: ["AGT-1", "AGT-2"], EvidenceGateRunId: "red-run"));
+            Assert.False(Assert.Single(store.FailedTestRanking("Project", Now).Tests).FlakySuspect);
+
+            Assert.True(store.RecordFlakySuspect(new BatchFlakySuspect("Project", "cohort", "red-run",
+                "base", ["AGT-1", "AGT-2"], ["Product.Tests.Unstable"], Now)));
+            Assert.False(store.RecordFlakySuspect(new BatchFlakySuspect("Project", "cohort", "red-run",
+                "base", ["AGT-1", "AGT-2"], ["Product.Tests.Unstable"], Now)));
+            var suspect = Assert.Single(store.FailedTestRanking("Project", Now).Tests);
+            Assert.True(suspect.FlakySuspect);
+            Assert.Equal(1, suspect.FlakySuspectRuns);
+            Assert.True(Assert.Single(suspect.Failures).FlakySuspectRun);
+
+            store.RecordFlakySuspectRegate("Project", new BatchFlakySuspectRegate("cohort", "regate",
+                ["AGT-2"], "reproduced", 3, Now));
+            Assert.False(Assert.Single(store.FailedTestRanking("Project", Now).Tests).FlakySuspect);
+            Assert.False(Assert.Single(store.ListFlakySuspects("Project")).Active);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task Concurrent_initialization_and_recording_project_each_execution_once()
     {
         var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));

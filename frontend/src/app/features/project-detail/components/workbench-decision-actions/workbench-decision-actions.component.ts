@@ -24,17 +24,22 @@ import {
 } from '../../state/workbench-decision-draft.store';
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
 import {
+  AgentChoice,
   actionErrorMessage,
   answeredDecisionCount,
   bounded,
   cardPrompt,
   createOperationId,
+  defaultAgent,
+  featureJobRequest,
   featureTaskDraft,
   laneLabel,
   readDefaultCli,
   readDefaultModel,
   readDefaultThinkingLevel,
   reworkPrompt,
+  reworkRouteChange,
+  revisionCardRoute,
   selectedDecisionText,
   taskKeyTail,
   unlinkedCardFailure,
@@ -102,6 +107,11 @@ export class WorkbenchDecisionActionsComponent {
   readonly revisionCard = computed(() => this.document().revisionCard ?? null);
   readonly revisionCardLane = computed(() => laneLabel(this.revisionCard()?.lane ?? null));
   readonly reworkAvailable = computed(() => this.revisionCard()?.available === true);
+  /** The revision card's route; a rework starts on it so it never reroutes the card unasked (AGT-3838). */
+  readonly revisionRoute = computed(() => revisionCardRoute(this.revisionCard()));
+  readonly routeChange = computed(() =>
+    this.mode() === 'rework' ? reworkRouteChange(this.revisionRoute(), this.agent()) : null);
+  private readonly keepsRevisionRoute = computed(() => this.mode() === 'rework' && this.revisionRoute() !== null);
   readonly reworkDisabledReason = computed(() => this.reworkAvailable()
     ? null
     : this.revisionCard()?.reason
@@ -173,7 +183,7 @@ export class WorkbenchDecisionActionsComponent {
     this.drafts.updateAction(this.projectName(), this.document().workbench.id, { request });
   }
 
-  updateAgent(change: { cliType: CliType; model: string; thinkingLevel: string | null }): void {
+  updateAgent(change: AgentChoice): void {
     this.cliType.set(change.cliType);
     this.model.set(change.model);
     this.thinkingLevel.set(change.thinkingLevel);
@@ -203,9 +213,9 @@ export class WorkbenchDecisionActionsComponent {
     this.resetFeedback();
     const operationId = createOperationId();
     const draft = this.drafts.beginRework(this.projectName(), this.document().workbench.id, {
-      actor: this.actor(), operationId, cliType: this.cliType(), model: this.model(),
-      thinkingLevel: this.thinkingLevel(),
+      actor: this.actor(), operationId, ...(this.revisionRoute() ?? this.agent()),
     }, this.responses());
+    this.restoreAgent(draft);
     this.operationId.set(draft.operationId ?? operationId);
     this.request.set(draft.request ?? '');
     this.mode.set('rework');
@@ -217,9 +227,12 @@ export class WorkbenchDecisionActionsComponent {
     event?.preventDefault();
     event?.stopPropagation();
     if (this.pending()) return;
+    const leavingRework = this.keepsRevisionRoute();
     this.drafts.closeAction(this.projectName(), this.document().workbench.id);
     this.mode.set(null);
     this.operationId.set('');
+    // The card's route was a rework preselection; a combined task starts on the browser default again.
+    if (leavingRework) { this.restoreAgent(defaultAgent()); this.preselectDefaultModel(); }
     this.focusAfterRender(this.opener);
   }
 
@@ -275,21 +288,9 @@ export class WorkbenchDecisionActionsComponent {
         if (!path) throw new Error(`Could not resolve the task path for ${this.projectName()}.`);
         return path;
       }),
-      switchMap(watchPath => this.tasks.createJob({
-        title: draft.title,
-        agent: this.cliType(),
-        watchPath,
-        promptMarkdown: cardPrompt(this.document(), draft, this.decisionPoints(), this.responses()),
-        targetState: draft.initialLane,
-        cliType: this.cliType(),
-        model: this.model().trim() || undefined,
-        thinkingLevel: this.thinkingLevel() || undefined,
-        modelExplicit: true,
-        thinkingLevelExplicit: true,
-        taskType: draft.taskType,
-        mode: draft.mode,
-        dossier: { path: this.document().workbench.entryPath },
-      }).pipe(switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName()).pipe(
+      switchMap(watchPath => this.tasks.createJob(featureJobRequest(
+        this.document(), draft, this.decisionPoints(), this.responses(), this.agent(), watchPath,
+      )).pipe(switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName()).pipe(
         map(detail => ({ detail, id: created.id, watchPath })),
         catchError(() => this.tasks.deleteJob(created.id, watchPath).pipe(
           catchError(() => throwError(() => new Error(
@@ -387,7 +388,7 @@ export class WorkbenchDecisionActionsComponent {
       this.goal(), this.selectedSummary());
   }
 
-  private agent(): { cliType: CliType; model: string; thinkingLevel: string | null } {
+  private agent(): AgentChoice {
     return { cliType: this.cliType(), model: this.model().trim(), thinkingLevel: this.thinkingLevel() };
   }
 
@@ -398,15 +399,15 @@ export class WorkbenchDecisionActionsComponent {
     if (draft.thinkingLevel !== undefined) this.thinkingLevel.set(draft.thinkingLevel);
   }
 
-  /** Preselect the picker default once per Dossier, preserving later explicit choices. */
+  /** Preselect the picker default once per Dossier, preserving explicit choices and a rework's card route. */
   private preselectDefaultModel(): void {
-    if (this.model().trim()) return;
+    if (this.model().trim() || this.keepsRevisionRoute()) return;
     const cli = this.cliType();
     const project = this.projectName();
     const id = this.document().workbench.id;
     this.catalog.ensure(cli).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: models => {
-        if (this.model().trim() || this.cliType() !== cli
+        if (this.model().trim() || this.cliType() !== cli || this.keepsRevisionRoute()
           || this.projectName() !== project || this.document().workbench.id !== id) return;
         const preferred = models.find(model => model.available !== false && model.isDefault);
         if (!preferred) return;

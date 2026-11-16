@@ -42,6 +42,15 @@ describe('WorkspaceQuotaComponent', () => {
   }
   const text = (root: HTMLElement, testId: string) => root.querySelector(`[data-testid="${testId}"]`)?.textContent?.trim() ?? null;
 
+  it('marks the priced subtotal and links to unpriced model details', async () => {
+    const { fixture, root } = await render();
+    http.expectOne('/api/workspaces/ws-a/quota').flush(snapshot({ usage: { ...usage(40), modelCostUsd: 3.5, unpricedRuns: 2 } }));
+    await fixture.whenStable();
+    expect(text(root, 'workspace-quota-cost')).toContain('priced subtotal');
+    expect(text(root, 'workspace-quota-cost')).toContain('2 runs without price');
+    expect(root.querySelector('[data-testid="workspace-quota-cost"] a')?.getAttribute('href')).toBe('#/workspace/settings/tokens');
+  });
+
   it('dates every trend row from the UTC week start', async () => {
     const { fixture, root } = await render();
     http.expectOne('/api/workspaces/ws-a/quota').flush(snapshot());

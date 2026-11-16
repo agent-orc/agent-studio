@@ -63,6 +63,10 @@ into `server-checkout-missing`. The same action is available for any project
 from the first-run checklist, whose project selector also verifies
 repository access for a project other than the first one.
 
+Until the checkout exists, the Settings verify notice links to the repository
+checkout path in Project basics. Stack detection and verify-command discovery
+run only after the repository can be read.
+
 The dialog closes after the server confirms creation, or after **Done** when
 it created a server checkout. The project is immediately present on the
 board. No settings file edit or backend restart is needed.

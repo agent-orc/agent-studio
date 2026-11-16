@@ -329,6 +329,61 @@ describe('WorkbenchViewerComponent', () => {
     http.verify();
   });
 
+  it('keeps Mark documented closed and names the open slice while a promoted slice is open', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchViewerComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), getCliModelCatalog: () => of({ models: [], source: 'test' }), refresh: vi.fn() } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchViewerComponent);
+    fixture.componentRef.setInput('projectName', 'Demo');
+    fixture.componentRef.setInput('workbenchId', 'boundary');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const blocked: WorkbenchDocument = {
+      ...DOCUMENT,
+      workbench: {
+        ...DOCUMENT.workbench,
+        status: 'decided',
+        documentation: {
+          eligible: false,
+          totalCount: 3,
+          terminalCount: 2,
+          openCount: 1,
+          missingCount: 0,
+          references: [
+            { key: 'AGT-1', exists: true, terminal: true, lane: '6-completed' },
+            { key: 'AGT-2', exists: true, terminal: true, lane: '6-completed' },
+            { key: 'AGT-3', exists: true, terminal: false, lane: '2-ready' },
+          ],
+          blockedReason: 'Mark documented waits until every assigned card is completed or archived. '
+            + 'Still open: AGT-3 (2-ready).',
+        },
+      },
+    };
+    http.expectOne('/api/projects/Demo/workbenches/boundary').flush(blocked);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Demo/workbenches/DEM-W4/references').flush({
+      projectName: 'Demo',
+      workbenchKey: 'DEM-W4',
+      workbenchId: 'boundary',
+      legacyTaskKeys: [],
+      items: [],
+    });
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-documentation-ready"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-documentation-confirm"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-documentation-blocked"]')?.textContent)
+      .toContain('Still open: AGT-3');
+    http.verify();
+  });
+
   it('starts at the heading and moves Tab past the frame to an enabled control (AGT-3829)', async () => {
     await TestBed.configureTestingModule({
       imports: [WorkbenchViewerComponent],
