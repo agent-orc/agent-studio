@@ -249,6 +249,18 @@ public static class BatchGateStateSnapshotReader
                 successorBatchId = phase.SuccessorBatchId,
                 baseMoveMemberReasons = phase.BaseMoveMemberReasons,
                 manifest.FormationReason,
+                // AGT-3858: a red no isolation child reproduced, and its one same-code re-gate.
+                flakySuspect = store.ReadFlakySuspect(project, manifest.BatchId) is { } suspect
+                    ? new
+                    {
+                        suspect.Mark.RedRunId,
+                        suspect.Mark.FailedTests,
+                        suspect.Mark.MarkedAtUtc,
+                        suspect.Active,
+                        regate = suspect.Regate,
+                    }
+                    : null,
+                manifest.SameCodeRerunOfRunId,
                 exclusions = manifest.Exclusions,
                 manifest.BaseSha,
                 baseVerdict = store.ReadBaseVerdict(project, manifest.BaseSha,

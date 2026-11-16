@@ -45,6 +45,18 @@ export class ModalFocusDirective implements AfterViewInit, OnDestroy {
   }
 }
 
+/** The opener a closing surface last refocused, until it loses that focus. */
+let returnedFocus: HTMLElement | null = null;
+
+/**
+ * True while `element` holds focus that a closing surface handed back to its
+ * opener and the user has not moved since. A follow-up surface, such as the
+ * card a create dialog just made, may take that focus over (AGT-3834).
+ */
+export function holdsReturnedFocus(element: Element | null): boolean {
+  return element !== null && element === returnedFocus && document.activeElement === element;
+}
+
 /** The focused element, or null when nothing outside `surface` has focus. */
 export function focusedElementOutside(surface: HTMLElement): HTMLElement | null {
   if (typeof document === 'undefined') return null;
@@ -63,4 +75,7 @@ export function returnFocusToOpener(opener: HTMLElement | null, surface: HTMLEle
   if (active === opener) return;
   if (active && active !== document.body && active.isConnected && !surface.contains(active)) return;
   opener.focus({ preventScroll: true });
+  if (document.activeElement !== opener) return;
+  returnedFocus = opener;
+  opener.addEventListener('blur', () => { if (returnedFocus === opener) returnedFocus = null; }, { once: true });
 }

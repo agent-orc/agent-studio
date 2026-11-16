@@ -258,6 +258,13 @@ export class WorkbenchViewerComponent {
     return workbench?.status === 'decided' && workbench.documentation?.eligible === true;
   }
 
+  /** Why a decided item cannot be marked documented yet, for example open implementation slices. */
+  documentationBlockedReason(): string | null {
+    const workbench = this.document()?.workbench;
+    if (workbench?.status !== 'decided' || workbench.documentation?.eligible !== false) return null;
+    return workbench.documentation.blockedReason || null;
+  }
+
   documentCurrent(): void {
     if (this.readOnly()) return;
     const document = this.document();

@@ -319,6 +319,48 @@ describe('BatchPanelComponent', () => {
     expect(fixture.componentInstance['createForm'].newPrompt).toContain('run one-run');
   });
 
+  it('marks a red no isolation child reproduced on the batch and in the ranking', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    const state = {
+      ...redHalvingState,
+      dailySummary: { phaseMinutes: {}, sameCodeRerunMinutesByPurpose: { 'flaky-suspect-regate': 12.4, 'flaky-test-rerun': 1.5 } },
+      batches: [{
+        ...redHalvingState.batches[0],
+        flakySuspect: { redRunId: 'run-7', failedTests: ['Product.Tests.Unstable'], markedAtUtc: '2026-11-16T03:00:00Z',
+          active: true, regate: { regateBatchId: 'batch-9', memberKeys: ['AGT-2'], outcome: 'passed', minutes: 12.4,
+            recordedAtUtc: '2026-11-16T03:13:00Z' } },
+      }, { ...redHalvingState.batches[1], batchId: 'batch-9', sameCodeRerunOfRunId: 'run-7', phase: 'published' }],
+    };
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(state);
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [{
+      testName: 'Product.Tests.Unstable', batches: 1, runs: 1, distinctMemberSets: 1,
+      firstFailureUtc: '2026-11-16T03:00:00Z', lastFailureUtc: '2026-11-16T03:00:00Z',
+      latestErrorExcerpt: '', flakyRerunPassed: false, flakySuspect: true, flakySuspectRuns: 1, batchIds: ['batch-7'],
+      failures: [{ testName: 'Product.Tests.Unstable', batchId: 'batch-7', runId: 'run-7', members: ['AGT-2'],
+        atUtc: '2026-11-16T03:00:00Z', errorExcerpt: '', flakyRerunPassed: false, flakySuspectRun: true }],
+    }] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const element: HTMLElement = fixture.nativeElement;
+    const mark = element.querySelector('#batch-batch-7 [data-testid="batch-flaky-suspect"]')!.textContent!;
+    expect(mark).toContain('Flaky suspect');
+    expect(mark).toContain('the same-code re-gate passed (12.4 min). No per-card suite ran.');
+    expect(mark).toContain('Failing tests: Product.Tests.Unstable.');
+    expect(element.querySelector('#batch-batch-9 [data-testid="batch-same-code-rerun"]')!.textContent)
+      .toContain('Same-code re-gate of red run run-7');
+    const ranking = element.querySelector('[data-testid="batch-failed-tests"]')!.textContent!;
+    expect(ranking).toContain('1 run not reproduced on the same code');
+    expect(ranking).toContain('Flaky suspect');
+    expect(element.querySelector('[data-testid="batch-same-code-reruns"]')!.textContent)
+      .toContain('Same-code reruns: 12.4 min flaky suspect re-gates · 1.5 min failed-test reruns.');
+  });
+
   it('shows missing evidence as an incomplete ranking instead of an empty history', async () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
     const fixture = TestBed.createComponent(BatchPanelComponent);

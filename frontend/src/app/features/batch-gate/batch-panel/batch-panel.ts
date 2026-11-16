@@ -2,9 +2,9 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, O
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
-import { batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine } from '../../../models/batch-gate.model';
+import { batchFlakySuspectLabel, batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine } from '../../../models/batch-gate.model';
 import { formatDurationMinutes } from '../../../models/duration-format';
-import type { BatchGateBatch, BatchNextAction, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
+import type { BatchFlakySuspect, BatchGateBatch, BatchNextAction, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
 import { PendingButtonDirective } from '../../../components/async-feedback';
@@ -170,6 +170,7 @@ export class BatchPanelComponent implements OnDestroy {
   }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }
   isolationState(batch: BatchGateBatch) { return batchIsolationState(batch); }
+  flakySuspectLabel(suspect: BatchFlakySuspect): string { return batchFlakySuspectLabel(suspect); }
   /** The members a failed run proved red, joined for display, or null. */
   provenBy(failure: { batchId: string; runId: string }): string | null {
     const culprits = (this.state()?.isolationFindings ?? []).filter(finding => finding.status === 'proven-red'
@@ -219,6 +220,7 @@ export class BatchPanelComponent implements OnDestroy {
       `Observed in ${test.batches} batches and ${test.runs} runs over 7 days, with ${test.distinctMemberSets} distinct member sets.`,
       `First failure: ${test.firstFailureUtc}. Last failure: ${test.lastFailureUtc}.`,
       `Flaky rerun passed: ${test.flakyRerunPassed ? 'yes' : 'no'}.`,
+      ...(test.flakySuspectRuns ? [`Red runs no isolation child or same-code re-gate reproduced: ${test.flakySuspectRuns}.`] : []),
       `Batches: ${test.batchIds.join(', ')}.`,
       '',
       'Failure evidence:',

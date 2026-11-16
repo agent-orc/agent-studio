@@ -445,6 +445,7 @@ public static class CliOneShotCompatibility
                 cache_creation_input_tokens = result.Usage.CacheCreationTokens,
             },
             model = result.EffectiveModel ?? result.Usage?.Model ?? configuredModel,
+            cliType = result.EffectiveCliType ?? result.Usage?.CliType,
             quotaDeferred = result.QuotaDeferred,
             hostWaiting = result.Error?.StartsWith("waiting for a host with ", StringComparison.Ordinal) == true,
             error = result.Error,

@@ -122,13 +122,26 @@ describe('GlobalSearchComponent', () => {
     expect(badge?.dataset['laneTone']).toBe('human-review');
   });
 
-  it('opens with Ctrl+K and closes with Escape', async () => {
+  // AGT-3833: the shell owns Ctrl+K, because this palette loads on first use.
+  it('closes with Escape and leaves Ctrl+K to the shell', async () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }));
-    expect(component.open()).toBe(true);
+    expect(component.open()).toBe(false);
+    component.open.set(true);
     fixture.detectChanges();
     await fixture.whenStable();
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(component.open()).toBe(false);
+  });
+
+  it('clears the query when the shell closes the palette from outside', async () => {
+    component.open.set(true);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    component.query.set('AGT-77');
+    component.open.set(false);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(component.query()).toBe('');
   });
 
   it('ranks an exact task key before a title match from in-memory board state', () => {

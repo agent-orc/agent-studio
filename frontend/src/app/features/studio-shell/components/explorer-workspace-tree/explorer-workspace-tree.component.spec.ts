@@ -273,7 +273,9 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     const progress = root.querySelector<HTMLElement>('[data-testid="studio-explorer-project-board-count-progress-Alpha"]');
     const review = root.querySelector<HTMLElement>('[data-testid="studio-explorer-project-board-count-human-review-Alpha"]');
 
-    expect(board?.getAttribute('aria-label')).toBe('Board, Active work: 3 ready, 2 in progress, 5 human review');
+    // AGT-3835: the name starts with the row's visible text, counters included.
+    expect(board?.getAttribute('aria-label'))
+      .toBe('Board · active work 3 2 5, Board, Active work: 3 ready, 2 in progress, 5 human review');
     expect(fixture.componentInstance.boardActiveWorkTooltip).toContain('Excludes Backlog, Preparation');
     expect(counts?.getAttribute('aria-label')).toBe('Active work: 3 ready, 2 in progress, 5 human review');
     expect(ready?.textContent?.trim()).toBe('3');

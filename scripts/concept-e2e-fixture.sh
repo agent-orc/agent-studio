@@ -39,17 +39,21 @@ VERIFY_CODE
     commit --quiet -m 'test: define disposable Dossier verification'
   /usr/bin/git -C "${seed}" push --quiet origin main
   cp "${REPO_ROOT}/scripts/concept-e2e-cli.mjs" "${PW_E2E_WORKSPACE}/concept-e2e-cli.mjs"
-  cat > "${PW_E2E_WORKSPACE}/bin/concept-codex" <<'CODEX'
+  # AGT-3839: the runner names a CLI's provider after its file name, so the
+  # wrapper must be called codex for `codex login status` to prove the session.
+  # Its own directory keeps it away from the review host, which uses bin/review.
+  mkdir -p "${PW_E2E_WORKSPACE}/bin/concept"
+  cat > "${PW_E2E_WORKSPACE}/bin/concept/codex" <<'CODEX'
 #!/usr/bin/env bash
 set -euo pipefail
-fixture_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fixture_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [[ "${1:-}" == --version ]]; then printf 'codex 1.0.0\n'; exit 0; fi
-if [[ "${1:-}" == login || "${RUNNER_ROLE:-}" == review || "$PWD" != "${fixture_root}/coding-work/"* ]]; then
+if [[ "${1:-}" == login || "$PWD" != "${fixture_root}/coding-work/"* ]]; then
   exec "${fixture_root}/bin/codex" "$@"
 fi
 node "${fixture_root}/concept-e2e-cli.mjs"
 CODEX
-  chmod 700 "${PW_E2E_WORKSPACE}/bin/concept-codex"
+  chmod 700 "${PW_E2E_WORKSPACE}/bin/concept/codex"
   cat > "${PW_E2E_WORKSPACE}/concept-summary.md" <<'SUMMARY'
 # Status
 
@@ -95,7 +99,7 @@ else
 fi
 HOST_CLAUDE
   chmod 700 "${PW_E2E_WORKSPACE}/bin/concept-host-claude"
-  export FIRST_RUN_CODING_CLI_BIN="${PW_E2E_WORKSPACE}/bin/concept-codex"
+  export FIRST_RUN_CODING_CLI_BIN="${PW_E2E_WORKSPACE}/bin/concept/codex"
   export CodexCli__Path="${PW_E2E_WORKSPACE}/bin/concept-host-codex"
   export ClaudeCli__Path="${PW_E2E_WORKSPACE}/bin/concept-host-claude"
   export ReviewDecisionOrchestrator__BootDelaySeconds=1
