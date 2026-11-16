@@ -12,6 +12,7 @@
        [attr.aria-label]="title()"
        [attr.data-testid]="testid()"
        tabindex="-1"
+       appModalFocus
        (click)="$event.stopPropagation()" (keydown.enter)="$event.stopPropagation()" (keydown.space)="$event.stopPropagation(); $event.preventDefault()">
     <header class="dialog__header">
       <div class="dialog__title-block">
