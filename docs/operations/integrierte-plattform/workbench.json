@@ -7,7 +7,7 @@
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "architecture",
-  "updatedAt": "2026-10-16T20:30:00Z",
+  "updatedAt": "2026-11-16T09:00:00Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "AGT-3171",
@@ -105,6 +105,11 @@
       "id": "IP-16",
       "title": "Operations views: monitoring, usage, load and log search per environment with deploy markers and DORA metrics",
       "promptMarkdown": "# Operations views: monitoring, usage, load and log search per environment with deploy markers and DORA metrics\n\nSource: docs/operations/integrierte-plattform/index.html section 8 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 8.1 and 8.2 in Studio: per app and environment the response time, error rate, restarts, requests and active users without personal data, CPU, memory and disk against the reservation, log search by time, level, release and text, deploy and rollback markers linking to release and cards, and DORA metrics per project. Tests for the views and the metric calculations.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-17",
+      "title": "Managed database for hosted apps",
+      "promptMarkdown": "# Managed database for hosted apps\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions; the owner answered IP-D5 with B on 16 November 2026. Read AGENTS.md first.\n\nImplement IP-D5 option B: a hosted app declares managed PostgreSQL databases per environment in project.yml schema 2 (`databases`: name, engine, version, size); the run zone provisions each on deploy as a container with its own named volume, reachable only from that environment's app containers, with resource limits from the declared size; Studio generates the credentials, stores them through the secret provider as secret:// references bound to the environment, and the app receives its connection string through its environment without a plain value in logs, project.yml or the UI. The Bereitstellung area shows each database (engine, version, size, state, volume usage); removing a database from project.yml keeps its data until an owner deletes it with confirmation. Minor upgrades are a deploy step; a major version change is refused. Backups, restore and health follow in MD-2. Delivered by AGT-3877.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
     }
   ],
   "key": "AGT-W81"
