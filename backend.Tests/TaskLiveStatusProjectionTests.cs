@@ -267,7 +267,10 @@ public sealed class TaskLiveStatusProjectionTests
         Assert.Equal("infrastructureFailure", queue.Outcome);
         Assert.Equal(TaskLiveReviewLossCauses.Infrastructure, queue.Lost!.Cause);
         Assert.Equal("SnapshotUnavailable", queue.Lost.Classification);
-        Assert.Equal(new TaskLiveReviewRetry { Number = 2, Budget = 2, DueAt = due }, queue.Retry);
+        Assert.Equal(new TaskLiveReviewRetry
+        {
+            Number = 2, Budget = 2, DueAt = due, ParkAt = new DateTime(2026, 7, 24, 20, 9, 0, DateTimeKind.Utc),
+        }, queue.Retry);
         Assert.Equal(
             $"Review lost: review infrastructure failed (SnapshotUnavailable) (agent-runner-01, {Utc(Now.AddMinutes(-1))}). "
             + $"Automatic retry 2 of 2 at {Utc(due)}.",
@@ -304,10 +307,40 @@ public sealed class TaskLiveStatusProjectionTests
                 At = lostAt,
             },
             queue.Lost);
-        Assert.Equal(new TaskLiveReviewRetry { Number = 1, Budget = 2, DueAt = due }, queue.Retry);
+        // Due 01:28:16, plus the 5 minute overdue limit and one 30 second watchdog tick, rounded up.
+        Assert.Equal(new TaskLiveReviewRetry
+        {
+            Number = 1, Budget = 2, DueAt = due, ParkAt = new DateTime(2026, 11, 10, 1, 34, 0, DateTimeKind.Utc),
+        }, queue.Retry);
         Assert.Equal(
             "Review lost: review host restarted (lab-review-host, 2026-11-10 01:27:16Z). "
             + "Automatic retry 1 of 2 at 2026-11-10 01:28:16Z.",
+            queue.Reason);
+    }
+
+    // AGT-3848 (S6-F2): the authority keeps the retry scheduled after its due
+    // time when no scheduler tick starts it; the reason no longer promises it.
+    [Fact]
+    public void ReviewQueue_RetryPastItsDueTime_ReadsOverdueAndNamesThePark()
+    {
+        var lostAt = new DateTime(2026, 11, 15, 23, 36, 0, DateTimeKind.Utc);
+        var due = lostAt.AddMinutes(1);
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Failed, null, CreatedAt: lostAt.AddMinutes(-1), AttemptId: "review_s6",
+            ExecutorId: "first-run-review", Outcome: ReviewTerminalOutcome.InfrastructureFailure,
+            PendingInfrastructureRetryAt: due, FailureClassification: "ExecutorRestarted",
+            HostId: "lab-review-host", TerminalAt: lostAt, PendingInfrastructureRetryNumber: 1);
+
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", null), null, null, due.AddSeconds(67),
+            retryOverdueLimit: TimeSpan.FromMinutes(2))!;
+
+        Assert.Equal(TaskLiveQueueStates.RetryScheduled, queue.State);
+        Assert.Equal(new DateTime(2026, 11, 15, 23, 40, 0, DateTimeKind.Utc), queue.Retry!.ParkAt);
+        Assert.Equal(
+            "Review lost: review host restarted (lab-review-host, 2026-11-15 23:36:00Z). "
+            + "Automatic retry 1 of 2 overdue since 2026-11-15 23:37:00Z; "
+            + "parks for an operator decision by 2026-11-15 23:40:00Z.",
             queue.Reason);
     }
 
