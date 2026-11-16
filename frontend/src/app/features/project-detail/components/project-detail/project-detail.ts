@@ -119,6 +119,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   private readonly cliCatalog = inject(CliCatalogStore);
 
   readonly settings = signal<ProjectSettingsRow | null>(null);
+  readonly integrationBranch = signal<string | null>(null);
   readonly runnerStatus = signal<RunnerStatus | null>(null);
   readonly recentEntries = signal<OrchestratorLogEntry[]>([]);
   readonly orchSession = signal<OrchestratorSession | null>(null);
@@ -359,6 +360,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     // other consumers (CLI usage sheet, board, etc.).
     this.jobService.getProjectSnapshot(this.projectName()).subscribe({
       next: (snap) => {
+        this.integrationBranch.set(snap.settings.integrationBranch?.trim() || null);
         const row = {
           autoCommit: snap.settings.autoCommit,
           crashRecoveryEnabled: snap.settings.crashRecoveryEnabled,

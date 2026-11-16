@@ -217,6 +217,46 @@ describe('StudioShellComponent global search', () => {
 
     expect(root.querySelector('[data-testid="global-search-input"]')).not.toBeNull();
   });
+
+  // AGT-3833: the palette is deferred until first use, so the shortcut has to
+  // work before anything has opened it.
+  for (const chord of [{ ctrlKey: true }, { metaKey: true }]) {
+    it(`opens search with ${chord.ctrlKey ? 'Ctrl' : 'Cmd'}+K before search was ever opened`, async () => {
+      TestBed.configureTestingModule({
+        imports: [StudioShellComponent],
+        providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+      });
+      const fixture = TestBed.createComponent(StudioShellComponent);
+      fixture.detectChanges();
+      const root: HTMLElement = fixture.nativeElement;
+      expect(root.querySelector('[data-testid="global-search-input"]')).toBeNull();
+
+      const event = new KeyboardEvent('keydown', { key: 'k', bubbles: true, cancelable: true, ...chord });
+      document.body.dispatchEvent(event);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(fixture.componentInstance.globalSearchOpen()).toBe(true);
+      expect(root.querySelector('[data-testid="global-search-input"]')).not.toBeNull();
+    });
+  }
+
+  it('starts with a skip link to the main content', () => {
+    TestBed.configureTestingModule({
+      imports: [StudioShellComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    const fixture = TestBed.createComponent(StudioShellComponent);
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    const first = root.querySelector<HTMLElement>('a[href], button, [tabindex="0"]');
+    expect(first?.dataset['testid']).toBe('studio-skip-to-main');
+
+    first!.click();
+    expect(document.activeElement).toBe(root.querySelector('[data-testid="studio-main"]'));
+  });
 });
 
 describe('StudioShellComponent project lane counts', () => {
@@ -619,6 +659,38 @@ describe('StudioShellComponent tab closing', () => {
     tab?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
 
     expect(tabState.tabs().some(item => item.kind === 'board' && item.projectName === 'Project A')).toBe(false);
+  });
+
+  it('keeps close buttons outside the tablist and names each tab by its visible text first (AGT-3835)', () => {
+    localStorage.removeItem('atp.studio.tabs.v1');
+    TestBed.configureTestingModule({
+      imports: [StudioShellComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([]),
+      ],
+    });
+    const fixture = TestBed.createComponent(StudioShellComponent);
+    const tabState = TestBed.inject(StudioTabStateService);
+    tabState.closeAll();
+    fixture.componentInstance.openBoard('__all__');
+    fixture.componentInstance.openBoard('Project A');
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const tablist = root.querySelector<HTMLElement>('[role="tablist"][data-testid="studio-tablist"]')!;
+    expect(tablist).not.toBeNull();
+    expect(tablist.querySelectorAll('button')).toHaveLength(0);
+    const owned = (tablist.getAttribute('aria-owns') ?? '').split(' ').map(id => root.querySelector<HTMLElement>(`#${id}`));
+    expect(owned.map(tab => tab?.getAttribute('role'))).toEqual(['tab', 'tab']);
+    expect(root.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    for (const tab of owned) {
+      const visible = (tab!.textContent ?? '').replace(/\s+/g, ' ').trim();
+      expect(tab!.getAttribute('aria-label')!.replace(/ · /g, ' ').startsWith(visible)).toBe(true);
+      const close = tab!.parentElement!.querySelector('.studio-tab__close')!;
+      expect(close.closest('[role="tablist"]')).toBeNull();
+    }
+    expect(owned[0]!.getAttribute('aria-label')).toBe('All Board, All projects · Board');
   });
 
   it('maps Alt+Left to the active Wiki tab history', () => {

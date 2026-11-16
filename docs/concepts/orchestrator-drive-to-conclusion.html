@@ -3276,6 +3276,13 @@
           <td>The gate-environment ladder's predicate excluded transport failures so that the timed ladder would not replay them, and the operator retry shared that predicate. The refusal came before the review lookup, hence the empty attempt. The pre-main suite recorded an environment failure as <code>Error</code> with the code only, and a batch isolation flight parked transport failures as <code>gate-infrastructure</code>.</td>
           <td>Observed terminal: <span class="lane">5e-escalated</span> for both cards. A transport failure is now a gate environment failure on every gate path; the policy's <code>TransportFailure</code> fact keeps it out of the timed ladder only (<code>gate-transport-awaits-gate-host</code>). Retry integration replays it with the passed review and returns a transport escalation to its lane, as the automatic return after the host answers does for both shapes.</td>
         </tr>
+        <tr id="case-research-create-review-no-owner">
+          <td>2026-11-15</td>
+          <td><code>AGT-3797</code><br><span class="small">research-create-review-no-owner</span></td>
+          <td>No CLI crashed. Every research delivery took <code>engine-decision 3-progress -&gt; 4-auto-review (delivered, CreateReview)</code>, no review attempt was created, and the AI Operator recorded "Started the missing review step" without effect. After 30 to 61 minutes the stranding watchdog escalated the card (<code>auto-review-stranded</code>, "No review attempt was recorded"); AGT-3561, AGT-3711, AGT-3506 and ten more research rounds.</td>
+          <td><code>StageDecisionPolicy.Coding</code> answers every settled delivery bound for Auto Review with <code>CreateReview</code>, while <code>TransitionDecisionPolicy.CreateReview</code> mints no ReviewAttempt for a report card. With the engine owning Auto Review the lightweight report pipeline and the post-processing queue return early, so the watchdog's requeue was accepted and dropped.</td>
+          <td>The observed terminal was <span class="lane">5e-escalated</span>, then Human Review by hand with a hand-started Review results. The applier now starts <code>EngineReportReviewService</code> for <code>CreateReview</code> on a report card: the requirement-fit review runs on the control plane, and <code>ReportReviewPolicy.Settle</code> moves the card to Human Review with the verdict, keeps it in Auto Review while the review waits for a model, or parks it with the reason. The watchdog's missing step starts the same review and records a step that cannot start as not started. Stranded cards and unchanged <code>auto-review-stranded</code> parks take it once per run attempt.</td>
+        </tr>
       </tbody>
     </table>
 

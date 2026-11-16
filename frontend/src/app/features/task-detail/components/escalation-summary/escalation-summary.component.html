@@ -101,7 +101,7 @@
 
     @if (!collapsed()) {
       <div class="escalation__body" id="escalation-body" data-testid="escalation-body">
-        @if (serverCheckoutMissing()) { <app-server-checkout-remedy [projectName]="detail().info.projectName" /> }
+        @if (serverCheckoutMissing()) { <app-server-checkout-remedy [info]="detail().info" [mutationsBlocked]="mutationsBlocked()" /> }
         <app-gate-queue-release [info]="detail().info" />
         @if (detail().info.needsInput; as needsInput) {
           <section class="escalation__needs-input" data-testid="needs-input-question" aria-label="Agent question">

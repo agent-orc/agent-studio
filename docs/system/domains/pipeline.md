@@ -116,7 +116,12 @@ window. An execution without its gate run ID is permanently unattributed.
 
 Rows carry request, slot, lease, command start and finish times, process and
 shard evidence (including class names and measured class durations), rerun cost,
-host load, and trigger. A base run names the red
+host load, and trigger. `sameCodeRerunMs` (AGT-3858) splits the time a row spent
+on code that was already gated by purpose: `flaky-test-rerun` (the targeted
+rerun of failed tests inside the run), `infrastructure-retry` (the same
+candidate after an infrastructure red) and `flaky-suspect-regate`; an
+isolation subset is new code and records none. The daily summary sums them as
+`sameCodeRerunMinutesByPurpose`, and the batch panel shows the line. A base run names the red
 candidate or fallback that requested it. A cache hit executes no host gate and
 does not add a row. The batch gate state includes a UTC `dailySummary` with
 minutes by type, batch and fallback published cards per hour (the UTC day's
@@ -597,7 +602,10 @@ record remains pending because a nearby completion time cannot prove ownership.
 When several records match one execution, a completed record takes precedence
 over later partial snapshots.
 Error excerpts come only from the named test's output block. A test is a flaky suspect
-only when it failed in three batches with pairwise disjoint member sets. The
+when it failed in three batches with pairwise disjoint member sets, or when it
+failed in a flaky suspect run (AGT-3858) whose same-code re-gate did not
+reproduce the red: the failure carries `flakySuspectRun` and the test counts
+`flakySuspectRuns`. The
 operator can open a prefilled bug card for any ranked test, flaky suspect or
 deterministic failure, in the normal creation dialog. The dialog
 applies central model routing and requires submission to create it.
@@ -648,6 +656,24 @@ Green findings remain reusable on the tested base. Interruption recovery reads
 the child verdicts and findings before planning the remaining members. The
 batch state and pilot report expose proven-red, proven-green, and superseded
 findings.
+
+Flaky suspects (AGT-3858, `BatchFlakySuspectPolicy`). Ordered halving deduces
+the last untested member red once every tested subset passed, so a flaky
+cohort red used to send an innocent member to a per-card suite. When isolation
+ran at least one child, every child passed, and every child tested the
+cohort's own code (the same member result SHAs, on the cohort's base or on a
+tip this isolation published from the cohort's green members; a superseded or
+stale-base child does not count), the red run is marked a flaky suspect with
+its failing test names. The members the existing path would send to per-card
+suites are gated once more together as a child batch on the cohort's code
+(`sameCodeRerunOfRunId` names the red run; trigger
+`flaky-suspect-regate:<batch>`). A green re-gate publishes them and no
+per-card suite starts. A second red on the same code, or any other result,
+takes the existing per-card path; that re-gate records no proven-red finding.
+The mark is written once before the re-gate, so a restart or an isolation
+retry never re-gates the same red again. The batch state shows
+`flakySuspect` (red run, failing tests, `active`, and the re-gate's outcome
+`passed`, `reproduced` or `inconclusive` with its minutes) on the red batch.
 
 Assembly sorts a replay that is not a conflict into three outcomes
 (`BatchGatePolicy.ReplayDisposition`): a mapped success is admitted; a member
@@ -3372,7 +3398,8 @@ whose `task.integration` said `integrated`. Two defects met.
   the published branch's first-parent line. One bounded first-parent range from
   that tree to the current tip identifies the later publication commits. Each
   must be covered by its own passed per-task gate, by a passed batch gate
-  spanning those commits, or by a later exact full-suite gate on a containing
+  spanning those commits, by the publishing card's exact verified
+  `gate-not-applicable` merge record, or by a later exact full-suite gate on a containing
   first-parent publication. The latter names its covering publication in the
   acceptance reason. Batch evidence cannot substitute for the original
   tree's first-parent ancestry. A branch rewrite or an uncovered later

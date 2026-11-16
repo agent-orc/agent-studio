@@ -227,13 +227,61 @@ public sealed class WorkspaceEvidenceBatcher
         foreach (var kv in buckets)
         {
             var repo = kv.Value;
-            var result = _commit.TryCommitEvidence(
-                kv.Key, repo.WatchPaths.ToList(), ExcludeGlobs, BuildMessage(repo.Count, repo.Items));
-            MaybeEnqueuePush(kv.Key, result, "evidence");
+            var result = CommitSplittingOnFailure(
+                kv.Key, repo.WatchPaths.ToList(), BuildMessage(repo.Count, repo.Items), "evidence");
             results.Add(new WorkspaceEvidenceFlushResult(kv.Key, repo.Count, result));
         }
         return results;
     }
+
+    /// <summary>
+    /// Commits the bucket in one go and, when that fails, once per watch path,
+    /// so one failing path cannot hold back the evidence of the others
+    /// (AGT-3865). The bucket has already left the pending set, so watch paths
+    /// that still fail on their own are dropped with one warning that names
+    /// the count, the first paths and the first error; a later transition on
+    /// the same path enqueues it again. The result stays a failure while any
+    /// path was dropped, so the stall alarm still sees a repo that keeps
+    /// failing.
+    /// </summary>
+    private WorkspaceArtifactCommitResult CommitSplittingOnFailure(
+        string gitRoot, IReadOnlyList<string> watchPaths, string message, string label)
+    {
+        var excludes = ExcludeGlobs;
+        var whole = CommitEvidence(gitRoot, watchPaths, excludes, message);
+        MaybeEnqueuePush(gitRoot, whole, label);
+        if (whole.Success || watchPaths.Count < 2) return whole;
+
+        WorkspaceArtifactCommitResult? committed = null;
+        var dropped = new List<(string Path, string? Error)>();
+        foreach (var watchPath in watchPaths.OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+        {
+            var single = CommitEvidence(gitRoot, [watchPath], excludes, message);
+            MaybeEnqueuePush(gitRoot, single, label);
+            if (single.DidCommit) committed = single;
+            if (!single.Success) dropped.Add((watchPath, single.Error));
+        }
+        if (dropped.Count == 0)
+            return committed ?? WorkspaceArtifactCommitResult.Skipped("nothing-to-commit");
+
+        var first = string.Join(",", dropped.Take(3).Select(d => d.Path));
+        _logger.LogWarning(
+            "workspace-evidence-paths-dropped repo={Repo} count={Count} of={Total} first={First} reason={Reason}",
+            gitRoot, dropped.Count, watchPaths.Count, first, dropped[0].Error);
+        return WorkspaceArtifactCommitResult.Failed(
+            "split",
+            $"dropped {dropped.Count} of {watchPaths.Count} watch paths ({first}): {dropped[0].Error}");
+    }
+
+    // Seam for the split tests; production always commits through the shared
+    // WorkspaceArtifactCommitService.
+    internal Func<string, IReadOnlyList<string>, IReadOnlyList<string>, string, WorkspaceArtifactCommitResult> CommitEvidence
+    {
+        get => _commitEvidence ??= _commit.TryCommitEvidence;
+        init => _commitEvidence = value;
+    }
+
+    private Func<string, IReadOnlyList<string>, IReadOnlyList<string>, string, WorkspaceArtifactCommitResult>? _commitEvidence;
 
     /// <summary>
     /// Boot catch-up: commit any drift that accumulated while the backend was
@@ -265,9 +313,8 @@ public sealed class WorkspaceEvidenceBatcher
         var results = new List<WorkspaceEvidenceFlushResult>(byRoot.Count);
         foreach (var kv in byRoot)
         {
-            var result = _commit.TryCommitEvidence(
-                kv.Key, kv.Value, ExcludeGlobs, "evidence: catch-up nach neustart\n");
-            MaybeEnqueuePush(kv.Key, result, "evidence-catchup");
+            var result = CommitSplittingOnFailure(
+                kv.Key, kv.Value, "evidence: catch-up nach neustart\n", "evidence-catchup");
             results.Add(new WorkspaceEvidenceFlushResult(kv.Key, 0, result));
         }
         return results;

@@ -12,7 +12,7 @@
     <div class="workspace-quota__metrics">
       <div><strong>{{ quota.usage.modelTokens | number }}</strong> tokens used
         @if (quota.limits?.modelTokensPerWeek !== null && quota.limits?.modelTokensPerWeek !== undefined) { / {{ quota.limits?.modelTokensPerWeek | number }} limit, {{ quota.remaining.modelTokens | number }} left }
-        <small>{{ quota.usage.modelCostUsd | currency:'USD' }} at catalogue prices</small></div>
+        <small data-testid="workspace-quota-cost">{{ quota.usage.modelCostUsd | currency:'USD' }} @if (quota.usage.unpricedRuns) { priced subtotal + <a href="#/workspace/settings/tokens">{{ quota.usage.unpricedRuns }} {{ quota.usage.unpricedRuns === 1 ? 'run' : 'runs' }} without price</a> } @else { at catalogue prices }</small></div>
       <div><strong>{{ quota.usage.computeCoreHours | number:'1.0-2' }}</strong> core hours used
         @if (quota.limits?.computeCoreHoursPerWeek !== null && quota.limits?.computeCoreHoursPerWeek !== undefined) { / {{ quota.limits?.computeCoreHoursPerWeek }} limit, {{ quota.remaining.computeCoreHours | number:'1.0-2' }} left }</div>
       <div><strong>{{ quota.usage.hostingSlots }}</strong> running environments

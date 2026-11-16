@@ -27,8 +27,8 @@ public sealed record TokenPriceCalculationResult(
     bool? RecordedModelPriced);
 
 /// <summary>
-/// One model id that is active in recorded usage but absent from the pinned
-/// TokenEconomy catalog. Diagnostic row for <c>GET /api/token-pricing/unpriced-models</c>.
+/// One model id that is active in recorded usage without a historical price.
+/// Diagnostic row for <c>GET /api/token-pricing/unpriced-models</c>.
 /// </summary>
 public sealed record UnpricedModelRow(string Model, int Calls, long TotalTokens, decimal RecordedCostUsd);
 
@@ -48,10 +48,8 @@ public static class TokenPricingEndpoints
             return Results.Ok(new { items = rows, provider = "TokenEconomy" });
         });
 
-        // Diagnostic: every model id active in recorded workspace usage that
-        // the pinned TokenEconomy catalog does not recognize at all, so a
-        // catalog gap is visible in an endpoint instead of a silent "Unknown"
-        // cost on every surface that renders the model.
+        // Diagnostic: every model id active in recorded workspace usage with
+        // at least one call lacking a historical price.
         app.MapGet("/api/token-pricing/unpriced-models",
             (HttpContext context, TaskScannerService scanner, ITokenAggregator tokens,
                 AgentStudio.Registry.ProjectRegistry registry) =>
@@ -90,7 +88,7 @@ public static class TokenPricingEndpoints
     /// <summary>Pure projection so the selection rule is unit-testable without standing up the endpoint.</summary>
     internal static IReadOnlyList<UnpricedModelRow> SelectUnpricedModels(TokenSummaryAggregate aggregate)
         => aggregate.ByModel
-            .Where(m => !m.ModelInCatalog)
+            .Where(m => !m.ModelPriced)
             .Select(m => new UnpricedModelRow(
                 m.ModelId,
                 m.Calls,

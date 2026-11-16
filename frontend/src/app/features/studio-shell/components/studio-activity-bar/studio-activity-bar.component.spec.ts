@@ -113,6 +113,19 @@ describe('StudioActivityBarComponent destinations', () => {
     expect(host.querySelector('[data-testid="studio-ab-workbenches"]')?.getAttribute('aria-label'))
       .toBe('Dossiers');
   });
+
+  it('names a badged button with the visible badge number too (AGT-3835)', () => {
+    const fixture = mount('explorer');
+    fixture.componentRef.setInput('badgeCounts', { activity: 3, filters: 120 });
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    const activity = host.querySelector<HTMLElement>('[data-testid="studio-ab-activity"]')!;
+    const filters = host.querySelector<HTMLElement>('[data-testid="studio-ab-filters"]')!;
+    expect(activity.textContent!.trim()).toBe('3');
+    expect(activity.getAttribute('aria-label')).toBe('Activity, 3 fresh alerts');
+    expect(filters.textContent!.trim()).toBe('99+');
+    expect(filters.getAttribute('aria-label')).toBe('Filters, More than 99 filters active');
+  });
 });
 
 /**
