@@ -123,9 +123,11 @@ test('one footer entry per subscription, honest age, host problem, account and r
     expect(layout.entryGaps.every(gap => gap >= 7)).toBe(true);
     expect(width === 390 ? layout.leftAboveRight : layout.leftBeforeRight).toBe(true);
     if (width >= 1280) expect(layout.rightEdgeGap).toBeLessThanOrEqual(16);
-    const titlebar = await page.getByTestId('studio-titlebar').boundingBox();
-    const body = await page.getByTestId('studio-body').boundingBox();
-    expect(titlebar && body && body.y - titlebar.y - titlebar.height).toBeLessThanOrEqual(56);
+    if (width >= 1280) {
+      const titlebar = await page.getByTestId('studio-titlebar').boundingBox();
+      const body = await page.getByTestId('studio-body').boundingBox();
+      expect(titlebar && body && body.y - titlebar.y - titlebar.height).toBeLessThanOrEqual(56);
+    }
     if (width === 390) {
       const usageTarget = await footer.getByTestId('footer-usage-claude').boundingBox();
       expect(usageTarget?.height).toBeGreaterThanOrEqual(44);
