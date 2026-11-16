@@ -55,4 +55,8 @@ public interface ITokenAggregator
 
     /// <summary>Workspace-wide ad-hoc one-shot call rollup (TitleGen, SummaryGen, ...).</summary>
     AdHocUsageAggregate AdHocAggregate(DateTime? since = null);
+
+    /// <summary>Stored CLI receipts in an exact provider quota interval.</summary>
+    CliWindowAttribution CliWindowAttribution(IEnumerable<(string Name, string WatchPath)> projects,
+        string cliType, DateTime fromUtc, DateTime toUtc, WorkspaceBusUsage? workspaceUsage = null);
 }
