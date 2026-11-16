@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 
 namespace AgentRunner.RunTargets;
@@ -29,6 +30,45 @@ public sealed class FileRunTargetSecretSource(string root) : IRunTargetSecretSou
 }
 
 /// <summary>
+/// Reads a credential Studio generated, such as a managed database password
+/// (AGT-3877), by its <c>secret://</c> reference for one environment placed on this host.
+/// </summary>
+public interface IRunTargetCredentialSource
+{
+    /// <returns>The value, or null when Studio does not issue it to this host.</returns>
+    /// <exception cref="HttpRequestException">Studio cannot be reached.</exception>
+    Task<string?> ReadAsync(string project, string environmentId, string reference, CancellationToken ct);
+}
+
+/// <summary>
+/// Keeps issued credentials in the agent's memory only, so a database or app
+/// that crashes while Studio is unreachable can still be restarted. A refusal
+/// from Studio drops the value. After an agent restart the cache is empty and
+/// the first restart waits for Studio.
+/// </summary>
+public sealed class CachedRunTargetCredentials(IRunTargetCredentialSource inner, Action<string> log) : IRunTargetCredentialSource
+{
+    private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.Ordinal);
+
+    public async Task<string?> ReadAsync(string project, string environmentId, string reference, CancellationToken ct)
+    {
+        var key = project + "\n" + environmentId + "\n" + reference;
+        try
+        {
+            var value = await inner.ReadAsync(project, environmentId, reference, ct);
+            if (value is null) _values.TryRemove(key, out _);
+            else _values[key] = value;
+            return value;
+        }
+        catch (HttpRequestException ex) when (_values.TryGetValue(key, out var cached))
+        {
+            log($"run-target: Studio is unreachable ({ex.Message}); using the credential issued earlier for {reference}");
+            return cached;
+        }
+    }
+}
+
+/// <summary>
 /// Resolved secret values of one convergence step, keyed by reference. They
 /// live in this object's memory until <see cref="RunTargetSecretFiles"/>
 /// writes them to tmpfs; every diagnostic goes through <see cref="Mask"/>
@@ -39,13 +79,28 @@ public sealed class RunTargetResolvedSecrets
     private const string Redacted = "[redacted]";
     private readonly string[] _values;
 
-    private RunTargetResolvedSecrets(IReadOnlyDictionary<string, string> values, IReadOnlyList<string> missing)
+    private RunTargetResolvedSecrets(IReadOnlyDictionary<string, string> values, IReadOnlyList<string> missing,
+        IEnumerable<string>? masked = null)
     {
         Values = values;
         Missing = missing;
         // Longest first, so a value that contains another is masked whole.
-        _values = values.Values.Where(value => value.Length >= 4).Distinct(StringComparer.Ordinal)
+        _values = values.Values.Concat(masked ?? []).Where(value => value.Length >= 4).Distinct(StringComparer.Ordinal)
             .OrderByDescending(value => value.Length).ToArray();
+    }
+
+    /// <summary>Values that are not secret references, such as a database's password file.</summary>
+    public static RunTargetResolvedSecrets FromValues(IReadOnlyDictionary<string, string> values) => new(values, []);
+
+    /// <summary>
+    /// These secrets plus more files, such as connection strings. <paramref name="masked"/>
+    /// are values that appear inside them, like a password, and are masked as well.
+    /// </summary>
+    public RunTargetResolvedSecrets With(IReadOnlyDictionary<string, string> files, IEnumerable<string> masked)
+    {
+        var values = new Dictionary<string, string>(Values, StringComparer.Ordinal);
+        foreach (var (name, value) in files) values[name] = value;
+        return new(values, Missing, _values.Concat(masked));
     }
 
     public IReadOnlyDictionary<string, string> Values { get; }

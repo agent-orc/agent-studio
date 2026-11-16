@@ -93,6 +93,32 @@ test counts under `--- test-shards.json ---`. The
 [pipeline domain map](../system/domains/pipeline.md#sharded-test-suites-in-the-gate-agt-3232)
 describes the planning and verdict rules.
 
+### Gate host disk: cache pruning and disk pressure (AGT-3866)
+
+The gate worker prunes the gate host's own caches before a run, at most once an
+hour per host. It removes Node compile cache files (`NODE_COMPILE_CACHE`, or
+`<tmp>/node-compile-cache` when unset) and gate workspaces below
+`<tmp>/agentstudio-review-gates` that have not changed for
+`RemoteGate:CachePruneAgeHours` (default 24, never less than 13 so a running
+gate keeps its workspace). Each prune writes one line per target:
+
+```text
+remote_gate_cache_pruned target=node-compile-cache path=/tmp/node-compile-cache entries=81234 freed_bytes=54760833024 max_age_hours=24
+```
+
+Angular CLI, Vite, ESLint and TypeScript enable Node's compile cache. Node keys
+each entry by the module file name and never evicts one, and every gate run
+loads `node_modules` from a fresh workspace path, so without the prune the
+cache grows by every run (51 GB on kori-gate on 16 November 2026).
+
+A gate run that fails while the gate host's run directory or workspace root is
+below the critical disk threshold (8 GiB or 5 % free) reports
+`FailureKind=DiskFull`. Its reason starts with `Gate host disk pressure:` and
+names the path, free bytes and free percent; the batch verdict is
+`disk-pressure` and a parked card says the gate failed under disk pressure. The
+same applies when the API host's own disk admission turns critical during a
+gate run, and a paused batch gate reports `Batch gate paused by disk pressure:`.
+
 ## Prelaunch infrastructure failures
 
 The Task Server counts consecutive infrastructure failures per card and failure

@@ -2459,6 +2459,7 @@ export interface ProjectSnapshot {
     maxDeliveredReviewRounds?: number;
     maxAutoReissueAttempts?: number;
     autoPushStrategy: 'never' | 'on-completed' | 'always-immediate';
+    integrationBranch?: string | null;
     runnerMode: string | null;
     orchestratorModel: string | null;
     /** AGT-2839: project override for integration-gate review reuse; null inherits. */
@@ -2485,7 +2486,7 @@ export interface ProjectSnapshot {
 
 /**
  * PUB-1 - a derived publish target for a project, rendered as a Hub badge like
- * "NuGet 0.3.1 -> 4 tasks pending". Repo-fact-derived and read-only. A package
+ * "NuGet 0.3.1 -> 4 commits pending". Repo-fact-derived and read-only. A package
  * that has never been released carries `firstPublishPending` (no version, no
  * count); `pendingCount === 0` is a quiet state (no badge). `pendingCount` is
  * null when no baseline could be derived from git (see `referenceKind === 'none'`).

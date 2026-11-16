@@ -367,6 +367,7 @@ export function buildCostChipView(
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
   const dayStart = formatLocalWithUtc(cost.calendar?.dayStartUtc, zone);
   const updated = formatLocalWithUtc(coverage?.observedAt, zone);
+  const latestReceipt = formatLocalWithUtc(cost.latestReceiptAt, zone);
   const missing = cost.unpricedTodayRuns ?? 0;
   const missingText = missing > 0 ? ` priced subtotal + ${missing} ${missing === 1 ? 'run' : 'runs'} without price` : '';
   const spokenValue = unknown ? 'unavailable' : `${exact} USD ledger estimate${missingText}`;
@@ -382,6 +383,7 @@ export function buildCostChipView(
       ...alarms.map(a => a.label),
       dayStart ? `Day starts ${dayStart}` : null,
       updated ? `Updated ${updated}` : null,
+      latestReceipt ? `Latest receipt ${latestReceipt}` : null,
       stateClause || null,
       budget || null,
     ].filter(Boolean).join('\n'),

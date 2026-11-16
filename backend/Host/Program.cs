@@ -514,6 +514,10 @@ builder.Services.AddSingleton<CodexSignInCoordinator>();
 builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
+// AGT-3866: every disk-pressure consumer measures through this probe. The
+// process default is the real file system; test projects pin it at module load.
+builder.Services.AddSingleton<AgentStudio.TaskServer.Contracts.IHostFilesystemProbe>(
+    _ => AgentStudio.TaskServer.Contracts.HostFilesystemProbes.Default);
 builder.Services.AddSingleton<ApiHostDiskService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiHostDiskService>());
 builder.Services.AddSingleton<EnvironmentFlowService>();
@@ -708,6 +712,7 @@ builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
             sp.GetRequiredService<TimeProvider>())
         : new UnboundHostedVolumeBackupEngine());
 builder.Services.AddSingleton<HostedVolumeBackupService>();
+builder.Services.AddSingleton<ManagedDatabaseCredentials>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<HostedVolumeBackupWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
@@ -1589,6 +1594,7 @@ builder.Services.AddSingleton<WorkbenchChangeNotifier>();
 builder.Services.AddSingleton<IWorkbenchSpawnedCardCleanup, WorkbenchSpawnedCardCleanup>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();
 builder.Services.AddSingleton<WorkbenchRevisionRoundService>();
+builder.Services.AddSingleton<WorkbenchPromotionService>();
 builder.Services.AddSingleton<WorkbenchReviewService>();
 // AGT-2803: the classification vocabulary. The areas registry merges the
 // product defaults with the project additions from the workspace project

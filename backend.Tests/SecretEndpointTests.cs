@@ -486,5 +486,11 @@ public sealed class SecretEndpointTests : IDisposable
             => leaseToken == "lease-token" && Jobs.TryGetValue(jobId, out var job) && job.Project == project ? job : null;
 
         public TaskRunLease? FindLiveTaskRun(string taskKey) => Runs.GetValueOrDefault(taskKey);
+
+        /// <summary>Keyed by <c>project/environment</c>.</summary>
+        public Dictionary<string, RunTargetCredentialLease> RunTargets { get; } = new(StringComparer.Ordinal);
+
+        public RunTargetCredentialLease? FindRunTargetCredentials(string project, string environmentId)
+            => RunTargets.GetValueOrDefault(project + "/" + environmentId);
     }
 }

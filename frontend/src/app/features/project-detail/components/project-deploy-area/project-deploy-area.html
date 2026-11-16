@@ -42,6 +42,8 @@
           <app-environment-health-panel [projectName]="projectName()" />
           @defer { <app-project-operations [projectName]="projectName()" (openRelease)="openRelease($event)" (openCard)="openCard($event)" /> }
           @placeholder { <p>Loading operations…</p> }
+          @defer (on idle) { <app-managed-databases-panel [projectName]="projectName()" /> }
+          @placeholder { <p>Loading managed databases…</p> }
           @defer (on idle) { <app-hosted-data-panel [projectName]="projectName()" /> }
           @placeholder { <p>Loading hosted data…</p> }
         }

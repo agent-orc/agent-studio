@@ -500,9 +500,9 @@ public static class TaskCrudEndpoints
             if (!TaskModes.IsConcept(info.Mode))
                 return Results.BadRequest(new { error = "Only concept tasks have implementation-card proposals." });
 
-            var plan = scanner.BuildPromoteConceptPlan(info.Id, info.WatchPath);
-            return plan is null
-                ? Results.Conflict(new { error = "The concept Dossier is missing or did not pass concept review." })
+            var read = scanner.ReadPromoteConceptPlan(info.Id, info.WatchPath);
+            return read.Plan is not { } plan
+                ? Results.Conflict(new { error = read.Refusal, code = read.RefusalCode })
                 : Results.Ok(promotion.WithPromotedSlices(info, plan) with
                 {
                     Recovery = AgentStudio.Pipeline.ConceptPromotionRecoveryStore.Read(info.FolderPath) is null
@@ -527,9 +527,15 @@ public static class TaskCrudEndpoints
             if (info.State is not (TaskStates.HumanReview or TaskStates.Completed))
                 return Results.Conflict(new { error = "Complete sight review before promoting implementation cards." });
 
-            var plan = scanner.BuildPromoteConceptPlan(info.Id, info.WatchPath);
-            if (plan is null)
-                return Results.Conflict(new { error = "The concept Dossier is missing or did not pass concept review." });
+            var read = scanner.ReadPromoteConceptPlan(info.Id, info.WatchPath);
+            if (read.Plan is not { } plan)
+                return Results.Conflict(new { error = read.Refusal, code = read.RefusalCode });
+            if (plan.Items.Count == 0)
+                return Results.Conflict(new
+                {
+                    error = $"The concept Dossier of {info.Key ?? info.Id} proposes no validated implementation cards.",
+                    code = ConceptPromotionRefusals.NoProposals,
+                });
 
             try
             {

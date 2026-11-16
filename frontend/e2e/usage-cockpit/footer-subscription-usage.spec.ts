@@ -44,6 +44,40 @@ function cockpit() {
   return snapshot;
 }
 
+test('idle ledger remains current while partial coverage names missing prices and sources', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.clock.setFixedTime(FIXTURE_NOW);
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ json: {
+    profile: 'networked', bootstrapRequired: false, authenticated: true,
+    user: { id: 'owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
+  } }));
+  await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({ json: hosts(false) }));
+  await page.route('**/api/v1/management/links', route => route.fulfill({ json: [] }));
+  await page.route('**/api/usage/cockpit**', route => {
+    const snapshot = cockpit();
+    const ledger = snapshot.cost!;
+    ledger.coverage = {
+      status: 'partial', observedAt, ttlSeconds: 60,
+      reason: 'Demo Platform: unknown-model has no historical USD price. Missing Source: The project ledger could not be read.',
+    };
+    ledger.latestReceiptAt = new Date(FIXTURE_NOW - 5 * 3_600_000).toISOString();
+    return route.fulfill({ json: snapshot });
+  });
+  await page.goto('/');
+  await dismissDevErrorDialog(page);
+  const cost = page.getByTestId('footer-usage-cost');
+  await expect(cost).toHaveAttribute('data-state', 'partial');
+  await expect(cost).toContainText('Partial');
+  await expect(cost).not.toContainText('old');
+  await expect(cost).toHaveAttribute('title', /Demo Platform: unknown-model.*Missing Source/);
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(shots, `partial-ledger-${theme}.png`), animations: 'disabled' });
+  }
+  await cost.click();
+  await expect(page.getByTestId('usage-detail-cost')).toContainText('Latest receipt');
+});
+
 test('one footer entry per subscription, honest age, host problem, account and responsive bars', async ({ page }) => {
   test.setTimeout(240_000);
   page.setDefaultNavigationTimeout(60_000);

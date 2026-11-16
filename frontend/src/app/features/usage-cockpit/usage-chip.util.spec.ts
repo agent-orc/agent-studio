@@ -199,6 +199,27 @@ describe('cost chip view', () => {
     expect(buildCostChipView(cost({ coverage: { status: 'complete', observedAt: '2026-09-25T14:00:00Z', ttlSeconds: 60 } }), NOW).state).toBe('stale');
   });
 
+  it('shows partial coverage and latest receipt separately when the ledger read is current', () => {
+    const view = buildCostChipView(cost({
+      coverage: { status: 'partial', observedAt: '2026-09-25T14:57:40Z', ttlSeconds: 60,
+        reason: 'Demo Platform: unknown-model has no historical USD price.' },
+      latestReceiptAt: '2026-09-25T09:58:00Z',
+    }), NOW);
+    expect(view.state).toBe('partial');
+    expect(view.detail).toContain('Latest receipt');
+    expect(view.detail).toContain('unknown-model');
+    expect(view.ariaLabel).toContain('unknown-model');
+  });
+
+  it('marks a failed ledger refresh stale even when the last good read was partial', () => {
+    const view = buildCostChipView(cost({
+      coverage: { status: 'partial', observedAt: '2026-09-25T14:57:40Z', ttlSeconds: 60,
+        reason: 'Demo Platform: unknown-model has no price.' },
+    }), NOW, [], true);
+    expect(view.state).toBe('stale');
+    expect(view.detail).toContain('The latest refresh failed');
+  });
+
   it('exposes only the fields the cost chip template renders', () => {
     expect(Object.keys(buildCostChipView(cost(), NOW)).sort()).toEqual(['alarm', 'ariaLabel', 'detail', 'exact', 'state', 'value']);
     expect(Object.keys(buildCostChipView(null, NOW)).sort()).toEqual(['alarm', 'ariaLabel', 'detail', 'exact', 'state', 'value']);

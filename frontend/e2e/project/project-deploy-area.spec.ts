@@ -103,6 +103,7 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route(`**/api/projects/${PROJECT}/environments/*/volumes`, route => route.fulfill(json({
     database: null, volumes: [], schedules: [], audit: [], adapterReady: false,
   })));
+  await page.route(`**/api/projects/${PROJECT}/environments/*/databases`, route => route.fulfill(json({ databases: [] })));
   await page.route(`**/api/projects/${PROJECT}/environments/health`, route => answer(route, deploy.health ?? {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));

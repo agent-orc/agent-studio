@@ -1,6 +1,7 @@
 :host { display: contents; }
 
-.studio-skip-links { position: fixed; inset: 0 auto auto 0; }
+// Keep the first keyboard stops out of the studio shell's grid tracks.
+.studio-skip-links { position: absolute; }
 
 // Off screen until focused, then painted over the titlebar's top-left corner.
 .studio-skip-link {
