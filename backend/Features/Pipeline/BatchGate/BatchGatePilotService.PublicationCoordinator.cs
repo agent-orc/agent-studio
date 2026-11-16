@@ -653,7 +653,7 @@ public sealed partial class BatchGatePilotService
                 }
                 var attributed = RemoteCommitAttributionGuard.Attribute(subject.TaskKey,
                     deliveryRef, range.Commits,
-                    envelope.Repository);
+                    envelope.Repository, RemoteCommitAttributionGuard.CardReferencedKeys(task));
                 var rewritten = replay.Strategy == BatchReplayStrategies.Merge ? []
                     : replay.Replacements.Where(item => !string.Equals(item.OriginalSha,
                         item.RebasedSha, StringComparison.OrdinalIgnoreCase)).ToArray();
