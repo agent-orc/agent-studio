@@ -23,6 +23,11 @@ public sealed record EnvironmentDeclaration(
 
     /// <summary>Managed databases project.yml schema 2 declares for this environment (AGT-3877); only run-zone environments have any.</summary>
     public IReadOnlyList<ProjectDatabaseDefinition> Databases { get; init; } = [];
+
+    /// <summary>The declared <c>managedDatabases</c> backup and alert policy (AGT-3878); null keeps the defaults for <see cref="Kind"/>.</summary>
+    public ManagedDatabaseEnvironmentPolicy? DatabasePolicy { get; init; }
+
+    public ManagedDatabaseEnvironmentPolicy EffectiveDatabasePolicy => DatabasePolicy ?? ManagedDatabaseEnvironmentPolicy.For(Kind);
     public bool? Protected { get; init; }
     public bool? Automatic { get; init; }
     public string? Requires { get; init; }
@@ -614,7 +619,13 @@ public sealed partial class ProjectEnvironmentService
             HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)),
             guidedFailure, timeout,
             edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null)
-        { TenantTargets = targets, Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)), Order = order };
+        {
+            TenantTargets = targets, Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)), Order = order,
+            DatabasePolicy = edgeHosted ? ManagedDatabaseEnvironmentPolicy.Parse(value, kind, Path.GetFileName(file))
+                : value.TryGetProperty("managedDatabases", out _)
+                    ? throw new JsonException("managedDatabases applies only to environments hosted in the run zone (destination \"edge\").")
+                    : null,
+        };
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -1820,6 +1831,7 @@ public sealed partial class ProjectEnvironmentService
         public List<RunTargetPlacement> Placements { get; set; } = [];
         public List<RunTargetRemovalRecord> RunTargetRemovals { get; set; } = [];
         public List<ManagedDatabaseRecord> Databases { get; set; } = [];
+        public List<ManagedDatabaseOperationRecord> DatabaseOperations { get; set; } = [];
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
     public sealed record RunTargetObservedRow(string EnvironmentId, RunTargetObservation Observation);

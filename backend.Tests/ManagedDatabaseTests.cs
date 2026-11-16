@@ -212,7 +212,7 @@ public sealed class ManagedDatabaseTests : IDisposable
 
         var database = Assert.Single(Assert.Single(desired.Environments).Databases!);
         Assert.Equal(new RunTargetDatabaseSpec("orders", "postgres", "16.4", "small", new RunTargetResources(0.5, 512, 256),
-            "DATABASE_URL", Reference), database);
+            "DATABASE_URL", Reference, new RunTargetBackupPolicy(24, 7, 3)), database);
         var binding = Assert.Single(bindings.List("demo", "stage"));
         Assert.Equal((Reference, ProjectSecretBindings.ManagedDatabaseActor), (binding.Reference, binding.ApprovedBy));
         Assert.Single((await provider.ListAsync(SecretScope.ForEnvironment("demo", "stage"))).Records);
