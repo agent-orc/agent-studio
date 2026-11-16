@@ -1140,7 +1140,8 @@ credential and starts the release-pinned backend binary with
 `--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
 on that host. Pull gate mutations authenticate this service bearer directly;
 they do not require a browser `X-Client-Id` header. The worker registers,
-claims from `/api/pull-gates`, downloads
+claims from `/api/pull-gates` (an empty claim answers `204 No Content`, which
+the worker treats as no work and polls again after 2 s; AGT-3649-D12), downloads
 the exact source bundle, heartbeats its lease, streams progress through those
 heartbeats, and uploads the result and files from its `artifacts/` run folder.
 The server refuses uploads after lease expiry or replacement. Completed
