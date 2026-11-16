@@ -472,7 +472,7 @@ public sealed class TaskIntegrationStatusService
                     IntegrationBranch = ConfiguredIntegrationBranch(job),
                     Detail = "The delivery contract expects no repository change.",
                 }
-                : ClassifyRepositories(job, card, reaches);
+                : WithServerCheckoutReplay(job, ClassifyRepositories(job, card, reaches));
             var fingerprint = string.Join("|", card.Groups.Select(group => group.Key)
                 .Append(card.PrimaryKey)
                 .Where(key => key is not null)
@@ -502,6 +502,59 @@ public sealed class TaskIntegrationStatusService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// AGT-3810: integration verdicts of delivered cards whose project names no
+    /// server checkout. The Git state index never runs for such a project, so
+    /// every cache-only card read carries no verdict, and the card lost the
+    /// recorded failure code (for example <c>server-checkout-missing</c>) that
+    /// selects its remedy. The failed merge step is a local file, so this reads
+    /// it without starting Git. Cards with a checkout, outside the delivered
+    /// lanes, or without a recorded failure are absent from the result.
+    /// </summary>
+    public Dictionary<string, TaskIntegrationStatus> BuildRecordedFailuresWithoutCheckout(
+        IEnumerable<TaskInfo> jobs)
+    {
+        var result = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
+        var checkout = new Dictionary<string, bool>(FileSystemPathComparer.Instance);
+        foreach (var job in jobs)
+        {
+            if (!DeliveredLanes.Contains(job.State)) continue;
+            var watchPath = job.WatchPath ?? string.Empty;
+            if (!checkout.TryGetValue(watchPath, out var configured))
+                checkout[watchPath] = configured = _git.HasConfiguredRepository(job.WatchPath);
+            if (configured || ReadIntegrationFailure(job) is null) continue;
+            var status = ClassifyNotIntegrated(job,
+                TaskIntegrationBranch.Resolve(job, ConfiguredIntegrationBranch(job)));
+            if (status.Failure is not null) result[job.TaskKey] = status;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// AGT-3810: once the missing server checkout exists, the reviewed delivery
+    /// itself can be merged again, so Retry integration may replay it. Runs
+    /// only on the Git-derived lookup; the cache-only card reads stay free of
+    /// Git processes.
+    /// </summary>
+    private TaskIntegrationStatus WithServerCheckoutReplay(TaskInfo job, TaskIntegrationStatus status)
+        => status.Failure is { Code: AcceptedIntegrationFailureCodes.ServerCheckoutMissing, ReplayAvailable: false } failure
+           && HasServerCheckout(job)
+            ? status with { Failure = failure with { ReplayAvailable = true } }
+            : status;
+
+    /// <summary>
+    /// The same probe the integration worktree provider makes before it refuses
+    /// with <c>server-checkout-missing</c>: a resolvable repository root that is
+    /// a Git checkout.
+    /// </summary>
+    private bool HasServerCheckout(TaskInfo job)
+    {
+        if (!_git.HasConfiguredRepository(job.WatchPath)) return false;
+        var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
+        return !string.IsNullOrWhiteSpace(root) && Directory.Exists(root)
+            && (Directory.Exists(Path.Combine(root, ".git")) || File.Exists(Path.Combine(root, ".git")));
     }
 
     /// <summary>

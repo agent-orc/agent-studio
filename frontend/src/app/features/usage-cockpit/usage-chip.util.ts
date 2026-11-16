@@ -365,16 +365,18 @@ export function buildCostChipView(
   const dayStart = formatLocalWithUtc(cost.calendar?.dayStartUtc, zone);
   const updated = formatLocalWithUtc(coverage?.observedAt, zone);
   const latestReceipt = formatLocalWithUtc(cost.latestReceiptAt, zone);
-  const spokenValue = unknown ? 'unavailable' : `${exact} USD ledger estimate`;
+  const missing = cost.unpricedTodayRuns ?? 0;
+  const missingText = missing > 0 ? ` priced subtotal + ${missing} ${missing === 1 ? 'run' : 'runs'} without price` : '';
+  const spokenValue = unknown ? 'unavailable' : `${exact} USD ledger estimate${missingText}`;
   const budget = budgetClause(cost, state, alarms, now);
   return {
     state,
     alarm,
-    value: unknown ? NOT_AVAILABLE : formatUsdCompact(cost.todayUsd) ?? NOT_AVAILABLE,
+    value: unknown ? NOT_AVAILABLE : `${formatUsdCompact(cost.todayUsd) ?? NOT_AVAILABLE}${missing > 0 ? '*' : ''}`,
     exact: unknown ? null : exact,
     ariaLabel: join(`Today's cost, ${spokenValue}.`, alarmText, stateClause, budget, 'Open cost detail.'),
     detail: [
-      unknown ? "Today's cost: unavailable" : `Today's cost: ${exact} USD, token-ledger estimate`,
+      unknown ? "Today's cost: unavailable" : `Today's cost: ${exact} USD, token-ledger estimate${missingText}`,
       ...alarms.map(a => a.label),
       dayStart ? `Day starts ${dayStart}` : null,
       updated ? `Updated ${updated}` : null,

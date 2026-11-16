@@ -11,13 +11,14 @@ public sealed record UsageCalendar(
 public sealed record UsageSourceState(string Status, DateTime? ObservedAt, int? TtlSeconds, string? Reason = null);
 
 public sealed record UsageProjectCost(string? ProjectId, string Name, decimal? TodayUsd, decimal? WeekUsd,
-    UsageSourceState Coverage, DateTime? LatestReceiptAt = null);
+    UsageSourceState Coverage, DateTime? LatestReceiptAt = null, int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0);
 
 public sealed record UsageCostProjection(
     string Currency, UsageCalendar Calendar, decimal? TodayUsd, decimal? WeekUsd,
     IReadOnlyList<UsageProjectCost> Projects, UsageSourceState Coverage,
     string PricingVersion, string NormalizationVersion, string LedgerEndpointTemplate,
-    DateTime? LatestReceiptAt = null, decimal? DailyBudgetUsd = null, decimal? WeeklyBudgetUsd = null);
+    DateTime? LatestReceiptAt = null, decimal? DailyBudgetUsd = null, decimal? WeeklyBudgetUsd = null,
+    int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0);
 
 public sealed record UsageCostInput(string? ProjectId, string Name,
     IReadOnlyList<OrchestratorLogEntry> Entries, ProjectTokenDataFreshness Freshness,
@@ -104,6 +105,10 @@ public static class UsageCockpitProjection
             decimal today = 0, week = 0;
             var unpriced = false;
             var unpricedModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var unpricedTodayRuns = 0;
+            var unpricedWeekRuns = 0;
+            var unpricedWeekIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var unpricedTodayIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var legacyUnknown = false;
             foreach (var entry in source.Entries)
             {
@@ -119,8 +124,22 @@ public static class UsageCockpitProjection
                     estimate = pricing.Estimate(usage.Model, usage.InputTokens,
                         usage.OutputTokens, usage.CacheReadTokens, usage.CacheCreationTokens, at);
                 }
-                catch (Exception) { unpriced = true; unpricedModels.Add(usage.Model ?? "Unknown model"); continue; }
-                if (!estimate.ModelKnown) { unpriced = true; unpricedModels.Add(usage.Model ?? "Unknown model"); continue; }
+                catch (Exception) {
+                    unpriced = true;
+                    unpricedModels.Add(usage.Model ?? "Unknown model");
+                    var runId = entry.JobId ?? $"receipt:{at.Ticks}";
+                    if (unpricedWeekIds.Add(runId)) unpricedWeekRuns++;
+                    if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;
+                    continue;
+                }
+                if (!estimate.ModelKnown) {
+                    unpriced = true;
+                    unpricedModels.Add(usage.Model ?? "Unknown model");
+                    var runId = entry.JobId ?? $"receipt:{at.Ticks}";
+                    if (unpricedWeekIds.Add(runId)) unpricedWeekRuns++;
+                    if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;
+                    continue;
+                }
                 if (ProviderUsageNormalization.IsOpenAiModel(usage.Model)
                     && usage.CacheReadTokens > 0 && usage.InputIncludesCached is null)
                     legacyUnknown = true;
@@ -138,7 +157,8 @@ public static class UsageCockpitProjection
                 available ? today : null, available ? week : null,
                 new UsageSourceState(status, readAt, ProjectTokenLedger.SnapshotTtlSeconds,
                     reason.Length == 0 ? null : reason),
-                source.LatestReceiptAt is { } receiptAt ? AsUtc(receiptAt) : null));
+                source.LatestReceiptAt is { } receiptAt ? AsUtc(receiptAt) : null,
+                unpricedTodayRuns, unpricedWeekRuns));
         }
         var known = children.Where(child => child.TodayUsd is not null || child.WeekUsd is not null).ToList();
         var overall = known.Count == 0 ? "unavailable"
@@ -155,6 +175,8 @@ public static class UsageCockpitProjection
             TokenEconomyPriceProvider.Version,
             ProviderUsageNormalization.OpenAiInputIncludesCachedV1,
             "/api/projects/{project}/token-usage/summary",
-            LatestReceiptAt: children.Select(child => child.LatestReceiptAt).Max());
+            LatestReceiptAt: children.Select(child => child.LatestReceiptAt).Max(),
+            UnpricedTodayRuns: children.Sum(child => child.UnpricedTodayRuns),
+            UnpricedWeekRuns: children.Sum(child => child.UnpricedWeekRuns));
     }
 }

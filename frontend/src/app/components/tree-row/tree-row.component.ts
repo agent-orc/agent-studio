@@ -1,7 +1,10 @@
-import { ChangeDetectionStrategy, Component, ViewEncapsulation, input, output } from '@angular/core';
+import {
+  ChangeDetectionStrategy, Component, ElementRef, ViewEncapsulation, afterEveryRender, computed, input, output, signal, viewChild,
+} from '@angular/core';
 import { StudioIconComponent, StudioIconName } from '../studio-icon/studio-icon.component';
 import { CountBadgeComponent } from '../count-badge/count-badge.component';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { nameWithVisibleText } from '../../utils/accessible-name';
 
 /**
  * Reusable tree row used in the studio shell sidebar (Explorer
@@ -60,6 +63,31 @@ export class TreeRowComponent {
   readonly disabled = input(false);
   /** Reserve an independent trailing action beside the row button. */
   readonly hasActions = input(false);
+
+  /**
+   * Visible text the accessible name must start with (WCAG 2.5.3). Defaults
+   * to the rendered row text; set it when projected content is row metadata
+   * (dates, status chips) that the `ariaLabel` deliberately leaves out.
+   */
+  readonly visibleName = input<string | null>(null);
+
+  private readonly row = viewChild.required<ElementRef<HTMLButtonElement>>('row');
+  /** Rendered text of the row button, projected content included. */
+  private readonly renderedText = signal('');
+  /** `ariaLabel` as detail after the row's visible text (WCAG 2.5.3). */
+  readonly accessibleName = computed(() => {
+    const detail = this.ariaLabel();
+    if (!detail) return null;
+    return nameWithVisibleText(this.visibleName() ?? (this.renderedText() || this.label()), detail);
+  });
+
+  constructor() {
+    afterEveryRender({
+      read: () => {
+        if (this.ariaLabel() && this.visibleName() === null) this.renderedText.set(this.row().nativeElement.textContent ?? '');
+      },
+    });
+  }
 
   readonly chevronClick = output<Event>();
   readonly selectRequest = output<Event>();

@@ -28,7 +28,30 @@ public static class WorkbenchDocumentationPolicy
             terminal,
             open,
             missing,
-            normalized);
+            normalized)
+        {
+            BlockedReason = status != "decided" || eligible ? null : BlockedReason(normalized),
+        };
+    }
+
+    /// <summary>Names every card that still keeps a decided item current.</summary>
+    private static string BlockedReason(IReadOnlyList<WorkbenchDocumentationReference> references)
+    {
+        if (references.Count == 0)
+            return "No card is assigned to this item yet, so nothing confirms the implementation.";
+        var parts = new List<string>();
+        var open = references.Where(reference => reference.Exists && !reference.Terminal)
+            .Select(reference => $"{reference.Key} ({reference.Lane ?? "unknown lane"})")
+            .ToArray();
+        if (open.Length > 0)
+            parts.Add($"Still open: {string.Join(", ", open)}.");
+        var missing = references.Where(reference => !reference.Exists)
+            .Select(reference => reference.Key)
+            .ToArray();
+        if (missing.Length > 0)
+            parts.Add($"Not found: {string.Join(", ", missing)}.");
+        return "Mark documented waits until every assigned card is completed or archived. "
+            + string.Join(" ", parts);
     }
 }
 
@@ -44,4 +67,8 @@ public sealed record WorkbenchDocumentationProjection(
     int TerminalCount,
     int OpenCount,
     int MissingCount,
-    IReadOnlyList<WorkbenchDocumentationReference> References);
+    IReadOnlyList<WorkbenchDocumentationReference> References)
+{
+    /// <summary>Why a decided item cannot be marked documented yet; null when it can.</summary>
+    public string? BlockedReason { get; init; }
+}

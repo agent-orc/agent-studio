@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using AgentStudio.Cli;
 
 namespace AgentStudio.Shared;
 
@@ -15,6 +16,8 @@ public record QuotaWindow
 {
     /// <summary>"Premium requests" / "5-hour" / "Weekly" / etc.</summary>
     public string Label { get; init; } = "";
+    /// <summary>Duration inferred by the shared backend quota policy; null for unknown labels.</summary>
+    public double? WindowHours => SelectionQuotaMath.InferWindowLength(Label)?.TotalHours;
     /// <summary>Percentage used, 0..100+. May exceed 100 when over-quota.</summary>
     public double? UsedPct { get; init; }
     /// <summary>Absolute used count when known.</summary>

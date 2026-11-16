@@ -49,8 +49,16 @@ test('owner-day token usage reconciles across workspace, projects, and visible c
   await expect(page.getByTestId('token-analysis-row-DEMO-6')).toBeVisible();
   await expect(page.getByTestId('token-analysis-row-DEMO-24')).toContainText('*');
   await expect(page.getByTestId('token-analysis-unpriced')).toContainText('demo-unpriced-model');
+  await expect(page.getByTestId('token-analysis-distribution-model')).toContainText('no price data');
   await expect(page.getByTestId('token-analysis-cost')).toContainText('*');
   await expect(page.getByTestId('token-analysis-table-total')).not.toHaveText('0');
+  await page.getByTestId('token-analysis-unpriced').getByRole('link', { name: 'View unpriced models' }).click();
+  const diagnostic = page.getByTestId('unpriced-models');
+  await expect(diagnostic).toBeVisible();
+  await diagnostic.getByRole('button', { name: 'Show unpriced models' }).click();
+  await expect(diagnostic).toContainText('demo-unpriced-model');
+  await expect(diagnostic.locator('table')).toContainText('Calls');
+  await expect(diagnostic.locator('table')).toContainText('Tokens');
   const results = join(process.env.JOB_RESULTS_DIR ?? 'test-results', 'owner-day-token-usage');
   mkdirSync(results, { recursive: true });
   await page.screenshot({ path: join(results, 'workspace--real.png'), fullPage: false });

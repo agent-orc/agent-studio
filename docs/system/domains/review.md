@@ -465,7 +465,12 @@ queue carries `retry.parkAt`, the latest minute the watchdog parks such a
 card; past `dueAt` the card reads "Automatic retry 1 of 2 overdue since ... ·
 parks in Escalated by ..." instead of repeating the past due time. A
 card with none gets a durable intervention receipt in the existing stall-intervention feed and
-its timeline. Report-only cards restart post-processing; coding cards with a
+its timeline. Report-only cards restart post-processing; while the engine owns
+Auto Review that is the report review of `EngineReportReviewService`, and a
+report review that cannot start is recorded as not started (AGT-3797). Report
+cards stranded before AGT-3797, in Auto Review past the threshold or parked
+`auto-review-stranded` with an unchanged park, take the same report review once
+per run attempt (receipt kind `report-review-recovery`). Coding cards with a
 completed run request a fresh ReviewAttempt; a passed review resumes delivery
 integration or re-enters the batch gate only when its source RunAttempt and
 result SHA match the current completed delivery and the completed review tested

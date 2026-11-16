@@ -87,7 +87,8 @@ public sealed class WorkbenchLifecycleService
             return Failure(id, "invalid-transition", "Only a decided item can be marked as documented.");
         if (snapshot.Item.Documentation is not { Eligible: true })
             return Failure(id, "references-not-terminal",
-                "Every referenced card must exist and be completed or archived.");
+                snapshot.Item.Documentation?.BlockedReason
+                ?? "Every referenced card must exist and be completed or archived.");
         if (snapshot.Dirty)
             return Failure(id, "dirty-descriptor",
                 "Commit the descriptor and artifact before changing the lifecycle.");

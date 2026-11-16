@@ -420,6 +420,35 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
     }
 
     [Fact]
+    public void RunBoundaryCommit_IgnoredLogsAndOversizedResults_DoNotFailTheAdd()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["WorkspaceArtifacts:MaximumFileBytes"] = "1024",
+            })
+            .Build();
+        var service = new WorkspaceArtifactCommitService(
+            config, NullLogger<WorkspaceArtifactCommitService>.Instance);
+        File.WriteAllText(Path.Combine(_root, ".gitignore"), "results/\nlogs/\n");
+        var job = JobFolder("ASS-IGNORED");
+        Directory.CreateDirectory(Path.Combine(job, "results"));
+        Directory.CreateDirectory(Path.Combine(job, "logs"));
+        File.WriteAllText(Path.Combine(job, "status.md"), "status\n");
+        using (var stream = File.Create(Path.Combine(job, "results", "trace.zip"))) stream.SetLength(4096);
+        File.WriteAllText(Path.Combine(job, "logs", "cli-output.log.1"), "rotated\n");
+
+        var result = service.TryCommitRunBoundary(_root, "ASS-IGNORED", null, job, ReviewDecisionKind.Reissue);
+
+        Assert.True(result.DidCommit, result.Error);
+        var committed = RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD");
+        Assert.Contains("status.md", committed);
+        Assert.DoesNotContain("trace.zip", committed);
+        Assert.DoesNotContain("cli-output.log.1", committed);
+    }
+
+    [Fact]
     public void ArtifactCommit_DefaultLimitRefusesSixMegabytes()
     {
         var logger = new RefusalLogger();

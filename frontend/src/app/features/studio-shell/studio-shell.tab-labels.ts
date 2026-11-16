@@ -4,6 +4,7 @@
  * its baseline budget, same reason as studio-shell.menu-builders.ts.
  */
 import type { StudioTab } from './studio-shell.types';
+import { nameWithVisibleText } from '../../utils/accessible-name';
 
 /** Keep compact tab titles readable by cutting at a word boundary. */
 export function truncateTabTitle(title: string, maxCharacters = 38): string {
@@ -15,6 +16,14 @@ export function truncateTabTitle(title: string, maxCharacters = 38): string {
     ? candidate.slice(0, boundary)
     : candidate;
   return `${visible.trimEnd()}…`;
+}
+
+/** A task key is persisted as `<watchPath>::<jobId>`. During shell restore
+ * the tab can render before board data resolves, so its safe fallback must
+ * be the user-facing job id rather than the filesystem-bearing key. */
+export function taskIdFromKey(taskKey: string): string {
+  const separator = taskKey.lastIndexOf('::');
+  return separator >= 0 ? taskKey.slice(separator + 2) : taskKey;
 }
 
 /** Human-readable fallback used only while document metadata is unavailable. */
@@ -66,4 +75,12 @@ export function compactTabLabel(tab: StudioTab, input: CompactTabLabelInputs): s
       return separator > 0 ? input.fullLabel.slice(0, separator) : input.fullLabel;
     }
   }
+}
+
+/**
+ * Accessible name of a strip tab: its visible prefix chip and title first
+ * (WCAG 2.5.3), then the full label when it says more (AGT-3835).
+ */
+export function tabAccessibleName(prefix: string | null, title: string, fullLabel: string): string {
+  return nameWithVisibleText(prefix ? `${prefix} ${title}` : title, fullLabel);
 }

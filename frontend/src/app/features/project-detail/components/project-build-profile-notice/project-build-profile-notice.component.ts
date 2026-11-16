@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DOCUMENT, inject, input } from '@angular/core';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 /** One command list where the central BuildProfile disagrees with the repository's own `.agent-studio/project.yml`. */
@@ -18,7 +18,7 @@ export interface BuildProfileGateSummary {
   contradictions?: readonly BuildProfileContradiction[];
   /** AGT-3428: whether the repository defines its verify commands, with a minimal example when it does not. */
   verifyDefinition?: {
-    state: 'derived' | 'declared-empty' | 'missing';
+    state: 'derived' | 'declared-empty' | 'missing' | 'checkout-missing';
     path: string;
     message: string | null;
     exampleStack: string | null;
@@ -37,4 +37,13 @@ export interface BuildProfileGateSummary {
 })
 export class ProjectBuildProfileNoticeComponent {
   readonly summary = input.required<BuildProfileGateSummary>();
+  private readonly document = inject(DOCUMENT);
+
+  jumpToCheckout(event: Event): void {
+    event.preventDefault();
+    const target = this.document.getElementById('project-basics-repository-path');
+    if (!target) return;
+    target.scrollIntoView?.({ block: 'center' });
+    target.focus({ preventScroll: true });
+  }
 }

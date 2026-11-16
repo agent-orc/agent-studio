@@ -1,9 +1,10 @@
-import { HttpClient } from '@angular/common/http';
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
 import type { HostReleaseDriftSnapshot } from '../../models/host-release-drift';
-import { reviewHeartbeatProvesUpdate, reviewQuietPoint,
+import { reviewHeartbeatProvesUpdate, reviewUpdateStepFromStatus,
   type ReviewDrainStatus, type ReviewUpdateTarget } from '../../models/review-host-update';
 
 type Stage = 'ready' | 'draining' | 'blocked' | 'quiet' | 'switching' | 'verifying' | 'aborting'
@@ -13,7 +14,7 @@ type Stage = 'ready' | 'draining' | 'blocked' | 'quiet' | 'switching' | 'verifyi
 @Component({
   selector: 'app-review-host-update',
   standalone: true,
-  imports: [PendingButtonDirective],
+  imports: [DatePipe, PendingButtonDirective],
   templateUrl: './review-host-update.html',
   styleUrl: './review-host-update.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -28,7 +29,11 @@ export class ReviewHostUpdateComponent {
   readonly switchStartedAt = signal<string | null>(null);
   readonly proofVerified = signal(false);
   readonly drainRequested = signal(false);
-  readonly active = computed(() => this.captured() ?? this.target());
+  readonly drainedSince = signal<string | null>(null);
+  readonly active = computed(() => {
+    const target = this.target();
+    return this.captured() ?? (target?.updatePending === false ? null : target);
+  });
   readonly progressIndex = computed(() => {
     switch (this.stage()) {
       case 'ready': case 'draining': case 'aborting': return 0;
@@ -52,9 +57,36 @@ export class ReviewHostUpdateComponent {
     const captured = this.captured();
     if (incoming && captured && incoming.clientId !== captured.clientId) this.reset();
   });
+  private restoredFor: string | null = null;
+  /**
+   * AGT-3852: a reload or a second operator resumes at the step the server
+   * drain status and recorded switch start imply, not at step 1.
+   */
+  private readonly restoreFromServer = effect(() => {
+    const target = this.target();
+    if (!target || target.clientId === this.restoredFor) return;
+    this.restoredFor = target.clientId;
+    untracked(() => void this.restore(target));
+  });
 
   private url(target: ReviewUpdateTarget): string {
     return `/api/clients/${encodeURIComponent(target.clientId)}`;
+  }
+
+  private async restore(target: ReviewUpdateTarget): Promise<void> {
+    if (this.busy() || this.stage() !== 'ready') return;
+    this.busy.set(true);
+    try {
+      const status = await firstValueFrom(this.http.get<ReviewDrainStatus>(this.url(target) + '/drain-status'));
+      if (this.target()?.clientId !== target.clientId || this.stage() !== 'ready') return;
+      if (!status.draining || (target.updatePending === false && !status.switchStartedAt)) return;
+      this.captured.set(target);
+      this.applyStatus(status);
+    } catch {
+      // The panel stays at step 1; the first action reads the status again.
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   async start(): Promise<void> {
@@ -90,10 +122,18 @@ export class ReviewHostUpdateComponent {
 
   private async readQuietPoint(target: ReviewUpdateTarget): Promise<boolean> {
     const status = await firstValueFrom(this.http.get<ReviewDrainStatus>(this.url(target) + '/drain-status'));
-    const point = reviewQuietPoint(status);
-    this.stage.set(point.quiet ? 'quiet' : 'blocked');
-    this.message.set(point.reason);
-    return point.quiet;
+    return this.applyStatus(status) === 'quiet';
+  }
+
+  /** Mirrors the server drain status; a switch another operator started wins. */
+  private applyStatus(status: ReviewDrainStatus): string {
+    const { step, reason } = reviewUpdateStepFromStatus(status);
+    if (status.draining) this.drainRequested.set(true);
+    this.drainedSince.set(status.draining ? status.drainRequestedAt ?? null : null);
+    this.switchStartedAt.set(status.switchStartedAt ?? null);
+    this.stage.set(step === 'ready' ? 'blocked' : step);
+    this.message.set(step === 'ready' ? 'The review host is not drained.' : reason);
+    return step;
   }
 
   async beginSwitch(): Promise<void> {
@@ -101,11 +141,17 @@ export class ReviewHostUpdateComponent {
     if (!target || this.busy()) return;
     this.busy.set(true);
     try {
-      if (!await this.readQuietPoint(target)) return;
-      this.switchStartedAt.set(new Date().toISOString());
-      this.stage.set('switching');
+      // The server records the start only at its quiet point, so every
+      // operator and a reload read the same verification baseline.
+      const status = await firstValueFrom(this.http.post<ReviewDrainStatus>(this.url(target) + '/deploy-switch', {}));
+      if (this.applyStatus(status) !== 'switching') return;
       this.message.set('Run the review host steps in the deploy procedure, then check for a new heartbeat.');
-    } catch { this.fail('Could not confirm the quiet point. The host switch is refused.'); }
+    } catch (error) {
+      const refused = error instanceof HttpErrorResponse && error.status === 409
+        ? (error.error as { status?: ReviewDrainStatus } | null)?.status : undefined;
+      if (refused) this.applyStatus(refused);
+      else this.fail('Could not confirm the quiet point. The host switch is refused.');
+    }
     finally { this.busy.set(false); }
   }
 
@@ -175,6 +221,7 @@ export class ReviewHostUpdateComponent {
     this.switchStartedAt.set(null);
     this.proofVerified.set(false);
     this.drainRequested.set(false);
+    this.drainedSince.set(null);
     this.message.set(null);
     this.stage.set('ready');
   }

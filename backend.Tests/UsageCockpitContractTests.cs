@@ -85,6 +85,8 @@ public sealed class UsageCockpitContractTests
         Assert.Contains("One", cost.Coverage.Reason);
         Assert.Contains("Two", cost.Coverage.Reason);
         Assert.Contains("unknown-model", cost.Coverage.Reason);
+        Assert.Equal(1, cost.UnpricedTodayRuns);
+        Assert.Equal(1, cost.UnpricedWeekRuns);
     }
 
     [Fact]
