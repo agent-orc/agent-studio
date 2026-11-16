@@ -245,7 +245,7 @@ export class WorkbenchDecisionPanelComponent {
   }
 
   outcomeTone(decision: WorkbenchDecisionProjection): StatusTone {
-    return decisionOutcomeTone(decision.outcome);
+    return decisionOutcomeTone(decision.outcome, decision.state);
   }
 
   stageTone(): StatusTone {

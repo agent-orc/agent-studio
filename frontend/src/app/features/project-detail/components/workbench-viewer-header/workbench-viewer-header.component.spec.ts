@@ -7,10 +7,8 @@ import type { TaskReferenceStatus } from '../../../../components/task-reference-
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { TaskService } from '../../../../services/task.service';
 import type { WorkbenchDocument } from '../../../../models/project-docs.model';
-import {
-  implementationStatusFor,
-  WorkbenchViewerHeaderComponent,
-} from './workbench-viewer-header.component';
+import { WorkbenchViewerHeaderComponent } from './workbench-viewer-header.component';
+import { conceptCardKeys, implementationStatusFor } from './workbench-viewer-header.util';
 
 const DOCUMENT: WorkbenchDocument = {
   workbench: {
@@ -35,7 +33,7 @@ const DOCUMENT: WorkbenchDocument = {
 };
 
 describe('WorkbenchViewerHeaderComponent', () => {
-  it('shows accepted concepts as in implementation with no open decisions', async () => {
+  it('does not call an accepted concept in implementation before a slice card started', async () => {
     await TestBed.configureTestingModule({
       imports: [WorkbenchViewerHeaderComponent],
       providers: [
@@ -65,7 +63,8 @@ describe('WorkbenchViewerHeaderComponent', () => {
 
     const header = fixture.nativeElement as HTMLElement;
     expect(header.querySelector('[data-testid="workbench-viewer-status"]')?.getAttribute('aria-label'))
-      .toBe('Status: In implementation');
+      .toBe('Status: Decided');
+    expect(header.querySelector('[data-testid="workbench-viewer-implementation-status"]')).toBeNull();
     expect(header.querySelector('[data-testid="workbench-viewer-open-decisions"]')?.textContent)
       .toContain('0 open');
   });
@@ -96,6 +95,20 @@ describe('WorkbenchViewerHeaderComponent', () => {
     ])).toBe('In implementation');
     expect(implementationStatusFor('documented', [status('AGT-1', '3-progress')]))
       .toBeNull();
+    // The concept card in Human Review is linked but is not an implementation slice.
+    expect(implementationStatusFor('decided', [status('AGT-7', '5-human-review')], new Set(['AGT-7'])))
+      .toBeNull();
+    expect(implementationStatusFor('decided', [
+      status('agt-7', '5-human-review'),
+      status('AGT-8', '3-progress'),
+    ], new Set(['AGT-7']))).toBe('In implementation');
+  });
+
+  it('names the source and revision cards as the concept card', () => {
+    expect([...conceptCardKeys({
+      ...DOCUMENT,
+      revisionCard: { available: true, key: 'agt-20', jobId: 'j', title: null, lane: null, mode: 'concept', reason: null },
+    })]).toEqual(['AGT-10', 'AGT-20']);
   });
 
   it('keeps the head compact and shows manual refresh only while live updates are disconnected', async () => {

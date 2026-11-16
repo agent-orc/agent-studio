@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PromoteConceptResponse, PromoteConceptTasksResponse } from '../../models/task.model';
 import { TaskService } from '../../services/task.service';
 import { ConceptPromotionComponent } from './concept-promotion.component';
-import { decisionLabel, promotionSlices } from './concept-promotion.util';
+import { decisionLabel, promotionProgressLabel, promotionSlices } from './concept-promotion.util';
 
 const PLAN: PromoteConceptResponse = {
   source: {
@@ -49,6 +49,18 @@ describe('promotionSlices', () => {
       operatorSelected: true, isWorkingAssumption: true }])).toBe('Mode: B (operator choice)');
     expect(decisionLabel('missing', [])).toBe('missing');
   });
+
+  it('does not repeat a recommendation the authored option label already states', () => {
+    expect(decisionLabel('mode', [{ id: 'mode', label: 'Mode', optionId: 'a', optionLabel: 'A: queued (recommended)',
+      operatorSelected: false, isWorkingAssumption: true }])).toBe('Mode: A: queued (recommended)');
+    expect(decisionLabel('mode', [{ id: 'mode', label: 'Mode', optionId: 'a', optionLabel: 'A (Recommended)',
+      operatorSelected: true, isWorkingAssumption: true }])).toBe('Mode: A (operator choice)');
+  });
+
+  it('counts the slices that already have cards', () => {
+    expect(promotionProgressLabel(promotionSlices(PLAN))).toBe('1 of 3 slices have cards');
+    expect(promotionProgressLabel([])).toBeNull();
+  });
 });
 
 describe('ConceptPromotionComponent', () => {
@@ -77,6 +89,13 @@ describe('ConceptPromotionComponent', () => {
     fixture.componentRef.setInput('taskRef', 'DEM-7');
     fixture.componentRef.setInput('projectName', 'Demo');
     render();
+  });
+
+  it('says on the collapsed bar how many slices already have cards', async () => {
+    await fixture.whenStable();
+    render();
+    expect(byTestId('concept-promotion-panel')).toBeNull();
+    expect(byTestId('concept-promotion-progress')?.textContent).toContain('1 of 3 slices have cards');
   });
 
   it('opens the slice list and preselects every slice without a card', () => {
