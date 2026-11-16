@@ -133,6 +133,7 @@ builder.Services.AddSingleton<AgentStudio.Review.ReviewPackageFormationService>(
 builder.Services.AddSingleton<AgentStudio.Review.ReviewPackageShadowReportService>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
+builder.Services.AddSingleton<AgentStudio.Registry.ProjectServerCheckoutService>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
 builder.Services.AddSingleton<EngineBatchAdmission>();
 builder.Services.AddSingleton<OrchestrationRolloutStore>();

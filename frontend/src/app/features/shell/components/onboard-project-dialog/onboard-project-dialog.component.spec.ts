@@ -10,14 +10,16 @@ import { NotificationService } from '../../../../services/notification.service';
 import { CliCatalogStore } from '../../../cli';
 import { RemoteHostsService, seedRemoteHosts, type RemoteHost } from '../../../remote-hosts';
 import type { CreateRegistryProjectRequest } from '../../../../models/task.model';
+import { ServerCheckoutStore } from '../../../server-checkout';
 
 describe('OnboardProjectDialogComponent', () => {
   async function setup() {
     let submitted: CreateRegistryProjectRequest | undefined;
     const manager = {
       onboardProjectOpen: signal(false), onboardWorkspaceId: signal<string | null>(null),
-      closeProjectOnboard: vi.fn(), refreshAfterProjectCreate: vi.fn(),
+      closeProjectOnboard: vi.fn(), refreshAfterProjectCreate: vi.fn(), notifyRegistryChanged: vi.fn(),
     };
+    const serverCheckout = { enabled: signal(false), startForNewProject: vi.fn() };
     const hosts = signal<RemoteHost[]>([]);
     const ensureLoaded = vi.fn(() => hosts.set([...hosts()]));
     const getCapability = vi.fn(() => of({ localCodingAdmitted: true }));
@@ -29,7 +31,7 @@ describe('OnboardProjectDialogComponent', () => {
         { provide: TaskService, useValue: {
           createRegistryProject: (body: CreateRegistryProjectRequest) => {
             submitted = body;
-            return of({ displayName: body.displayName });
+            return of({ id: 'PROJ-2', displayName: body.displayName, repositoryPath: body.repositoryPath ?? null });
           },
           getRegistryWorkspaces: () => of([]),
         } },
@@ -37,6 +39,7 @@ describe('OnboardProjectDialogComponent', () => {
         { provide: CliCatalogStore, useValue: { ensure: () => of(null), modelsFor: () => [] } },
         { provide: RemoteHostsService, useValue: { ensureLoaded, hosts } },
         { provide: HttpClient, useValue: { get: getCapability } },
+        { provide: ServerCheckoutStore, useValue: serverCheckout },
       ],
     }).overrideComponent(OnboardProjectDialogComponent, { set: { template: '' } }).compileComponents();
     const fixture = TestBed.createComponent(OnboardProjectDialogComponent);
@@ -50,7 +53,7 @@ describe('OnboardProjectDialogComponent', () => {
     component.executionCapabilityLoaded.set(true);
     component.localCodingAdmitted.set(true);
     component.executionRunner.set('local');
-    return { component, fixture, manager, hosts, ensureLoaded, getCapability, submitted: () => submitted };
+    return { component, fixture, manager, hosts, ensureLoaded, getCapability, serverCheckout, submitted: () => submitted };
   }
 
   it('submits an existing repository without provisioning', async () => {
@@ -64,6 +67,35 @@ describe('OnboardProjectDialogComponent', () => {
       repositoryUrl: 'https://github.com/example/fresh-site',
     });
     expect(submitted()?.createRepository).toBeUndefined();
+  });
+
+  it('creates the server checkout of a local URL project in the create flow (AGT-3809)', async () => {
+    const { component, manager, serverCheckout, submitted } = await setup();
+    serverCheckout.enabled.set(true);
+    component.repositoryUrl.set('https://github.com/example/library.git');
+    expect(component.offerCheckout()).toBe(true);
+    expect(component.createCheckout()).toBe(true);
+    component.onSubmit();
+    expect(submitted()?.repositoryUrl).toBe('https://github.com/example/library.git');
+    expect(serverCheckout.startForNewProject).toHaveBeenCalledWith('PROJ-2');
+    expect(component.createdProject()).toEqual({ id: 'PROJ-2', displayName: 'Fresh Site' });
+    expect(manager.refreshAfterProjectCreate).not.toHaveBeenCalled();
+    component.finish();
+    expect(manager.refreshAfterProjectCreate).toHaveBeenCalledTimes(1);
+    expect(component.createdProject()).toBeNull();
+  });
+
+  it('skips the checkout when the owner opts out or supplies a checkout path', async () => {
+    const { component, manager, serverCheckout } = await setup();
+    serverCheckout.enabled.set(true);
+    component.repositoryUrl.set('https://github.com/example/library.git');
+    component.repositoryPath.set('/work/library');
+    expect(component.offerCheckout()).toBe(false);
+    component.repositoryPath.set('');
+    component.createCheckout.set(false);
+    component.onSubmit();
+    expect(serverCheckout.startForNewProject).not.toHaveBeenCalled();
+    expect(manager.refreshAfterProjectCreate).toHaveBeenCalledTimes(1);
   });
 
   it('submits a template repository without user supplied paths', async () => {
