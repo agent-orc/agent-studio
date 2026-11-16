@@ -394,7 +394,7 @@
     .convo-tools__chip[data-kind='command'] { color: var(--severity-warn); border-color: color-mix(in srgb, var(--severity-warn) 28%, transparent); background: color-mix(in srgb, var(--severity-warn) 8%, transparent); }
     .convo-tools__chip[data-kind='edit']    { color: var(--severity-pass); border-color: color-mix(in srgb, var(--severity-pass) 28%, transparent); background: color-mix(in srgb, var(--severity-pass) 8%, transparent); }
     .convo-tools__chip[data-kind='task']    { color: var(--studio-accent-4); border-color: color-mix(in srgb, var(--studio-accent-4) 28%, transparent); background: color-mix(in srgb, var(--studio-accent-4) 8%, transparent); }
-    .convo-tools__chip[data-kind='todo']    { color: var(--studio-accent); border-color: color-mix(in srgb, var(--studio-accent) 28%, transparent); background: color-mix(in srgb, var(--studio-accent) 8%, transparent); }
+    .convo-tools__chip[data-kind='todo']    { color: var(--studio-accent-strong); border-color: color-mix(in srgb, var(--studio-accent) 28%, transparent); background: color-mix(in srgb, var(--studio-accent) 8%, transparent); }
     .convo-tools__chip-label {
       font-weight: 600;
       letter-spacing: 0.02em;

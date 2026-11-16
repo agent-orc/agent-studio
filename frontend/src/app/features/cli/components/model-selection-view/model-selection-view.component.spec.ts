@@ -33,6 +33,15 @@ describe('ModelSelectionViewComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelectorAll('.selection-view__actions button').length).toBe(2);
   });
 
+  it('formats event times in the shared usage format with an explicit zone', () => {
+    // AGT-3794-F14: not `11/15/2026, 10:33:07 PM`.
+    const fixture = TestBed.createComponent(ModelSelectionViewComponent);
+    const text = fixture.componentInstance.formatTime('2026-11-15T22:33:07Z');
+    expect(text).toMatch(/^[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2,3}, \d{2}:\d{2} \S+/);
+    expect(text).not.toMatch(/AM|PM|\d+\/\d+\/\d{4}/);
+    expect(fixture.componentInstance.formatTime(null)).toBe('Not known');
+  });
+
   it('writes filter state to the URL and sends it to the API', () => {
     const fixture = TestBed.createComponent(ModelSelectionViewComponent);
     fixture.detectChanges();

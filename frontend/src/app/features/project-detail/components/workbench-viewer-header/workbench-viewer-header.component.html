@@ -12,6 +12,7 @@
 
   <span
     class="viewer-head__status"
+    role="img"
     [attr.data-status]="document().workbench.status"
     [attr.aria-label]="'Status: ' + statusLabel()"
     [appTooltip]="statusLabel()"
@@ -71,7 +72,7 @@
       data-testid="workbench-viewer-tasks"
     >
       @if (taskStatusesLoading() && taskStatuses().length === 0) {
-        <i class="viewer-head__task-loading" aria-label="Loading linked cards"></i>
+        <i class="viewer-head__task-loading" role="img" aria-label="Loading linked cards"></i>
       } @else {
         @for (status of inlineTaskStatuses(); track status.key) {
           <app-task-reference-microcard
