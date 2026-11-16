@@ -19,27 +19,13 @@
     </div>
     <h3 class="create-dialog__section-title">Task details</h3>
     <div class="field">
-      <span class="field__label">Title</span>
-      <div class="create-dialog__title-row">
-        <input class="field__input create-dialog__title-input"
-               data-testid="create-title"
-               [(ngModel)]="newTitle"
-               placeholder="Task title, or leave blank and click Enhance to auto-fill" />
-        <button type="button"
-                class="create-dialog__generate-btn"
-                data-testid="create-generate-title"
-                [disabled]="!canGenerateTitle()"
-                (click)="generateTitle()"
-                [cacTooltip]="'Generate a title from the prompt below (Haiku)'">
-          @if (titleGenerating()) {
-            <span class="create-dialog__generate-spinner" aria-hidden="true"></span>
-            <span>Generating…</span>
-          } @else {
-            <span aria-hidden="true">✨</span>
-            <span>Generate</span>
-          }
-        </button>
-      </div>
+      <label class="field__label" for="create-task-title">Title</label>
+      <input #titleInput
+             id="create-task-title"
+             class="field__input create-dialog__title-input"
+             data-testid="create-title"
+             [(ngModel)]="newTitle"
+             placeholder="Task title, or leave blank and click Enhance to auto-fill" />
       @if (titleGenerateError(); as err) {
         <div class="create-dialog__error" data-testid="create-generate-title-error"><app-status-indicator tone="danger" [label]="err" [detail]="err" testId="create-generate-title-error-status" /></div>
       }
@@ -92,11 +78,13 @@
     @if (availableTags().length > 0) {
       <div class="field">
         <span class="field__label">Tags</span>
-        <div class="create-tag-picker" data-testid="create-tags">
+        <div class="create-tag-picker" data-testid="create-tags" role="group" aria-label="Tags" appRovingFocus>
           @for (t of availableTags(); track t.id) {
             <button type="button"
                     class="create-tag-picker__chip"
+                    data-roving-item
                     [class.create-tag-picker__chip--active]="newTags().includes(t.id)"
+                    [attr.aria-pressed]="newTags().includes(t.id)"
                     [attr.data-testid]="'create-tag-' + t.id"
                     [style.--tag-color]="t.color"
                     [cacTooltip]="t.description ? t.label + ': ' + t.description : t.label"
@@ -109,10 +97,12 @@
     <div class="field create-dialog__prompt-field">
       <div class="create-dialog__prompt-label">
         <span class="field__label">Prompt</span>
-        <div class="create-dialog__prompt-actions">
+        <!-- One Tab stop for the prompt actions; arrow keys move between them (AGT-3834). -->
+        <div class="create-dialog__prompt-actions" role="toolbar" aria-label="Prompt actions" data-testid="create-prompt-actions" appRovingFocus>
           <button type="button"
                   class="create-dialog__enhance-btn"
                   data-testid="create-enhance-prompt"
+                  data-roving-item
                   [disabled]="!canEnhance()"
                   (click)="enhancePrompt()"
                   [cacTooltip]="'Refine the prompt, auto-generate the title, and pre-fill tags + lane (Haiku)'">
@@ -125,14 +115,30 @@
             }
           </button>
           <button type="button"
+                  class="create-dialog__generate-btn"
+                  data-testid="create-generate-title"
+                  data-roving-item
+                  [disabled]="!canGenerateTitle()"
+                  (click)="generateTitle()"
+                  [cacTooltip]="'Generate a title from the prompt (Haiku)'">
+            @if (titleGenerating()) {
+              <span class="create-dialog__generate-spinner" aria-hidden="true"></span>
+              <span>Generating…</span>
+            } @else {
+              <span>Generate title</span>
+            }
+          </button>
+          <button type="button"
                   class="create-dialog__attach-btn"
                   data-testid="create-attach-image"
+                  data-roving-item
                   (click)="triggerFilePicker()"
                   [cacTooltip]="'Attach image (paste or drop also works)'">📎 Image</button>
         </div>
       </div>
       <textarea #promptArea
                 class="field__input field__textarea"
+                aria-label="Prompt"
                 data-testid="create-prompt"
                 [(ngModel)]="newPrompt"
                 rows="7"
@@ -140,7 +146,7 @@
       <div class="create-dialog__dropzone"
            data-testid="create-dropzone"
            [class.create-dialog__dropzone--drag]="isDragging()"
-           (click)="triggerFilePicker()" tabindex="0" (keydown.enter)="triggerFilePicker()" (keydown.space)="triggerFilePicker(); $event.preventDefault()">
+           (click)="triggerFilePicker()" tabindex="-1" (keydown.enter)="triggerFilePicker()" (keydown.space)="triggerFilePicker(); $event.preventDefault()">
         <span class="create-dialog__dropzone-icon" aria-hidden="true">🖼️</span>
         <span class="create-dialog__dropzone-text">
           Drag &amp; drop a screenshot, paste with <kbd>Ctrl</kbd>+<kbd>V</kbd>, or
