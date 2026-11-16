@@ -13,6 +13,7 @@ const DECISION_TYPES = {
   'decision-card.opened': EXIT.EVENT_DECISION_CARD,
   'backend.stalled': EXIT.EVENT_STALL,
   'progress.idle-with-ready': EXIT.EVENT_STALL,
+  'gate-host.unreachable': EXIT.EVENT_STALL,
   'batch.red': EXIT.EVENT_BATCH,
   'batch.isolating': EXIT.EVENT_BATCH,
   'batch.running-without-gate': EXIT.EVENT_BATCH,

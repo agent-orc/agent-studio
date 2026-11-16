@@ -39,6 +39,14 @@ red batch are labelled simulated card evidence in the card results; they do
 not start a live batch gate. Re-seeding replaces this variant with the chosen
 variant. Use the default pinned variant for repeatable presentation captures.
 
+Cards with pipeline history also carry `task.json` token receipts derived from
+the same step models, timestamps, and four token counters as
+`pipeline-execution.json`. The project and workspace Token usage views read
+those durable receipts for the current day in the owner-day variant. DEMO-24
+includes an invented model without a list price; its tokens remain visible and
+the cost view marks the estimate incomplete. The workspace-root
+`adhoc-usage.jsonl` remains a separate historical input.
+
 Owner-day also creates a disposable local Git origin for Demo App. DEMO-5,
 DEMO-6, and DEMO-14 have published delivery commits, simulated passing gate
 receipts, and current-brief content passes, so the real acceptance dry run

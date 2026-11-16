@@ -54,11 +54,14 @@ internal static class ProjectWikiSourceResolver
         var repoRoot = git?.ResolveRepoRootForProject(projectName) ?? checkout;
         if (string.IsNullOrWhiteSpace(configured))
         {
-            var status = git?.GetStatusForRepoRoot(repoRoot);
+            // AGT-3793: only the branch name and the HEAD commit, both read
+            // from the ref files. A full working-tree status here cost four
+            // Git processes on every Wiki fill and every Dossier list.
+            var branch = git?.ReadBranchAt(repoRoot);
             var sha = git?.GetHeadShaCached(repoRoot);
             return new WikiSourceContext(checkout, new WikiSourceInfo(
                 "checkout",
-                status?.Branch ?? "checkout",
+                string.IsNullOrWhiteSpace(branch) ? "checkout" : branch,
                 sha,
                 ShortSha(sha),
                 true,

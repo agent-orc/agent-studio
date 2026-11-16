@@ -146,6 +146,31 @@ public static class MonolithTransitionAdapter
         int failedProbes, DateTimeOffset nowUtc)
         => GateHostOutagePolicy.MayStartRun(outageSinceUtc, lastAttemptUtc, failedProbes, nowUtc);
 
+    public static bool GateHostMayStartRun(DateTimeOffset? outageSinceUtc, DateTimeOffset lastAttemptUtc,
+        int failedProbes, DateTimeOffset nowUtc, bool transportProbe)
+        => GateHostOutagePolicy.MayStartRun(outageSinceUtc, lastAttemptUtc, failedProbes, nowUtc, transportProbe);
+
+    public static bool GateHostProbeDue(DateTimeOffset? outageSinceUtc, DateTimeOffset lastAttemptUtc,
+        int failedProbes, DateTimeOffset nowUtc)
+        => GateHostOutagePolicy.ProbeDue(outageSinceUtc, lastAttemptUtc, failedProbes, nowUtc);
+
+    public static string? GateTransportFailureKind(string? evidence)
+        => GateHostOutagePolicy.TransportFailureKind(evidence);
+
+    public static bool GateHostMarksUnreachable(int sameKindFailures, int threshold)
+        => GateHostOutagePolicy.MarksUnreachable(sameKindFailures, threshold);
+
+    public static bool GateTransportEscalationReturns(bool escalatedByTransport, DateTimeOffset escalatedAtUtc,
+        DateTimeOffset? hostReachedAtUtc, bool outageOpen)
+        => GateHostOutagePolicy.ReturnsTransportEscalation(escalatedByTransport, escalatedAtUtc,
+            hostReachedAtUtc, outageOpen);
+
+    public static bool GateHostHoldsReplay(bool outageOpen) => GateHostOutagePolicy.HoldsGateReplay(outageOpen);
+
+    public static string GateHostOwnerAdvice(string? host) => GateHostOutagePolicy.OwnerAdvice(host);
+
+    public static string GateTransportFailureKindText(string? kind) => GateHostOutagePolicy.DescribeKind(kind);
+
     public static bool GateHostOutageEscalates(DateTimeOffset outageSinceUtc, DateTimeOffset nowUtc,
         TimeSpan escalateAfter, bool alreadyEscalated)
         => GateHostOutagePolicy.EscalatesGate(outageSinceUtc, nowUtc, escalateAfter, alreadyEscalated);

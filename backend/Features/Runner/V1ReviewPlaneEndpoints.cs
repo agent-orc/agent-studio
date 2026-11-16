@@ -2273,9 +2273,8 @@ public static class V1ReviewPlaneEndpoints
                         ct,
                         cause: $"remote-review:{attemptId}",
                         reason: integrationParkReason
-                            ?? (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
-                                ? RemoteDeliveryParkReason.CompletedReviewPark
-                                : RemoteDeliveryParkReason.ReviewDecisionPark),
+                            ?? RemoteDeliveryParkReason.ForReview(
+                                settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass, request),
                         authorityWrite: new AttemptWriteReference(
                             attemptId,
                             request.Fence,

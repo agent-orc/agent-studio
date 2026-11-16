@@ -259,6 +259,25 @@ public static class VerifyCommandPlanner
             .Any(command => !string.IsNullOrWhiteSpace(command));
 
     /// <summary>
+    /// AGT-3811: true when <see cref="Plan"/> for <paramref name="repositoryPath"/>
+    /// yields at least one build or test command, whatever its source:
+    /// <c>.agent-studio/project.yml</c>, the central profile, or discovery
+    /// (for example a root <c>package.json</c>). A present but invalid
+    /// project.yml counts as well, so the gate runs and reports the definition
+    /// failure instead of the merge going ungated. Lint alone does not count.
+    /// </summary>
+    public static bool HasRepositoryBuildOrTestCommands(string? repositoryPath, BuildProfile? profile)
+    {
+        if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
+            return false;
+        var definition = ProjectDefinitionReader.ReadWorkspace(repositoryPath);
+        if (!definition.IsValid && definition.Issues.Any(issue => issue.Code != "definition-missing"))
+            return true;
+        return Plan(repositoryPath, profile).Commands
+            .Any(command => command.Kind is VerifyCommandKind.Build or VerifyCommandKind.Test);
+    }
+
+    /// <summary>
     /// The explicit override: the profile's build commands then its test commands,
     /// verbatim, in declared order. Empty when the profile declares neither (a
     /// profile with only install/lockfile metadata falls through to discovery).

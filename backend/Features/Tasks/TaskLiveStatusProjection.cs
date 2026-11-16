@@ -21,7 +21,9 @@ public sealed class TaskLiveStatusProjection(
     TaskRunnerService runners,
     AutoReviewPostProcessingQueue reviewQueue,
     AttemptAuthorityService attemptAuthority,
-    V1ReviewExecutorRegistry reviewExecutors)
+    V1ReviewExecutorRegistry reviewExecutors,
+    IConfiguration? configuration = null,
+    TimeProvider? time = null)
 {
     private static readonly HashSet<string> VisibleStates = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -47,11 +49,12 @@ public sealed class TaskLiveStatusProjection(
             authority = attemptAuthority.ReadBoardAuthoritySnapshot();
             reviewQueueEntries = attemptAuthority.ReadReviewQueue();
         }
-        var reviewHost = authority is null ? null : reviewExecutors.LatestReviewHostTelemetry(DateTime.UtcNow);
+        var nowUtc = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+        var reviewHost = authority is null ? null : reviewExecutors.LatestReviewHostTelemetry(nowUtc);
 
         foreach (var job in jobList)
         {
-            var queue = ResolveQueue(job, runnerStatus, authority, reviewQueueEntries, reviewHost);
+            var queue = ResolveQueue(job, runnerStatus, authority, reviewQueueEntries, reviewHost, nowUtc);
             var execution = pipelineLog.Read(job.FolderPath);
             var settings = PipelineTypeSettings.ForTask(projectSettings.Get(job.ProjectName), job)!;
             var pipeline = ProjectPipelineOrder.Apply(
@@ -161,7 +164,8 @@ public sealed class TaskLiveStatusProjection(
         IReadOnlyDictionary<string, ProjectRunnerStatus> runnerStatus,
         BoardAuthoritySnapshot? authority,
         IReadOnlyDictionary<string, ReviewQueueEntry>? reviewQueueEntries,
-        AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto? reviewHost)
+        AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto? reviewHost,
+        DateTime nowUtc)
     {
         if (job.State == TaskStates.Ready
             && runnerStatus.TryGetValue(job.ProjectName, out var project))
@@ -186,8 +190,9 @@ public sealed class TaskLiveStatusProjection(
                 queued,
                 reviewQueue.PositionOf(job.ProjectName, job.Id),
                 reviewQueue.WaitStateOf(job.ProjectName, job.Id),
-                DateTime.UtcNow,
-                reviewHost);
+                nowUtc,
+                reviewHost,
+                configuration is null ? null : AutoReviewStrandingWatchdog.RetryOverdueLimit(configuration));
         }
 
         return null;
@@ -263,7 +268,8 @@ public sealed class TaskLiveStatusProjection(
         int? localPosition,
         AutoReviewQueueWaitState? localWait,
         DateTime nowUtc,
-        AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto? host = null)
+        AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto? host = null,
+        TimeSpan? retryOverdueLimit = null)
     {
         if (!canonical)
         {
@@ -339,6 +345,9 @@ public sealed class TaskLiveStatusProjection(
                 Number = review.PendingInfrastructureRetryNumber,
                 Budget = AttemptAuthorityService.ReviewInfrastructureRetryBudget,
                 DueAt = retryAt,
+                // AGT-3848: the stranding watchdog parks a retry that never starts.
+                ParkAt = AutoReviewStrandingWatchdog.ParkOverdueRetryBy(retryAt, retryOverdueLimit
+                    ?? TimeSpan.FromMinutes(AutoReviewStrandingWatchdog.DefaultRetryOverdueMinutes)),
             };
             return new TaskLiveQueue
             {
@@ -347,7 +356,7 @@ public sealed class TaskLiveStatusProjection(
                 Outcome = outcome,
                 Lost = lost,
                 Retry = retry,
-                Reason = $"{LossSentence(lost)} {RetrySentence(retry)}",
+                Reason = $"{LossSentence(lost)} {RetrySentence(retry, nowUtc)}",
             };
         }
 
@@ -410,10 +419,19 @@ public sealed class TaskLiveStatusProjection(
         return where.Length == 0 ? $"Review lost: {cause}." : $"Review lost: {cause} ({where}).";
     }
 
-    private static string RetrySentence(TaskLiveReviewRetry retry)
-        => retry.Number is { } number
-            ? $"Automatic retry {number} of {retry.Budget} at {Utc(retry.DueAt)}."
-            : $"Automatic retry at {Utc(retry.DueAt)}.";
+    private static readonly TimeSpan RetryStartGrace =
+        TimeSpan.FromSeconds(2 * ReviewInfrastructureRetryScheduler.DefaultIntervalSeconds);
+
+    private static string RetrySentence(TaskLiveReviewRetry retry, DateTime nowUtc)
+    {
+        var name = retry.Number is { } number ? $"Automatic retry {number} of {retry.Budget}" : "Automatic retry";
+        // AGT-3848: past its due time the retry is no longer a promise. Two
+        // scheduler ticks pass first, so a retry that starts normally never reads overdue.
+        if (nowUtc <= retry.DueAt + RetryStartGrace) return $"{name} at {Utc(retry.DueAt)}.";
+        return retry.ParkAt is { } parkAt
+            ? $"{name} overdue since {Utc(retry.DueAt)}; parks for an operator decision by {Utc(parkAt)}."
+            : $"{name} overdue since {Utc(retry.DueAt)}.";
+    }
 
     private static TaskLiveQueue? LocalReviewQueue(int? localPosition, AutoReviewQueueWaitState? localWait,
         bool postReview = false)

@@ -83,6 +83,11 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route('**/api/usage/cockpit**', route => route.fulfill(json({}, 503)));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({ ttlSeconds: 600, snapshots: [] })));
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ sessions: [] })));
+  await page.route(url => url.pathname === '/api/v1/operations/structure', route => route.fulfill(json({ nodes: [], links: [] })));
+  await page.route(url => url.pathname === '/api/v1/operations/structure/library', route => route.fulfill(json({ registries: [], consumers: [] })));
+  await page.route('**/api/diagnostics/api-stalls**', route => route.fulfill(json({
+    status: 'ok', intervalMs: 1000, maxDelayMs: 0, alarmThresholdMs: 1000, alarmWindowMinutes: 5, recent: [],
+  })));
   await page.route('**/api/security/posture', route => route.fulfill(json({ error: 'permission-denied' }, 403)));
   await page.route('**/api/workspaces/*/quota/admission', route => route.fulfill(json({ error: 'unavailable' }, 503)));
   const project = {

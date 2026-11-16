@@ -1,0 +1,7 @@
+@if (projects().length) {
+  <section class="board-checkout" data-testid="server-checkout-board-notice" aria-label="Server checkouts">
+    @for (project of projects(); track project.id) {
+      <app-server-checkout-notice [projectId]="project.id" />
+    }
+  </section>
+}

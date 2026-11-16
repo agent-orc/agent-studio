@@ -136,6 +136,10 @@ public class TaskFolderAccessIsolationTest
                 "Deletes only its GUID-named agent-studio-git-proof clone under OS temp, never task storage.",
             ["backend/Features/Registry/LocalFirstRunGitSetup.cs"] =
                 "Deletes only a failed fresh clone under the AgentStudio first-run-git checkouts root, never task storage.",
+            // AGT-3809: the server checkout of a URL project removes only the
+            // clone it just failed to finish under repository-checkouts.
+            ["backend/Features/Registry/ProjectServerCheckout.cs"] =
+                "Deletes only its own failed fresh clone under repository-checkouts, never task storage.",
             ["backend/Features/Pipeline/BatchGate/GateRunLedger.cs"] =
                 "Prunes expired instance-local gate ledger day folders outside the task repository.",
 

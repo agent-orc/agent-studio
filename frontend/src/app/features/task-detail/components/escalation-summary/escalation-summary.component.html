@@ -192,9 +192,9 @@
   @if (decisionDialog(); as mode) {
     <div class="escalation-confirm__backdrop" data-testid="escalation-confirm-backdrop">
       <section class="escalation-confirm" role="dialog" aria-modal="true"
-        cdkTrapFocus [cdkTrapFocusAutoCapture]="true"
+        appModalFocus
         [attr.aria-label]="mode === 'reissue' ? 'Continue reissue' : 'Accept with reason'"
-        data-testid="escalation-confirm" (keydown.escape)="decisionDialog.set(null)">
+        data-testid="escalation-confirm">
         <h2>{{ mode === 'reissue' ? 'Continue with these instructions?' : 'Accept with a written reason?' }}</h2>
         @if (mode === 'reissue') {
           <p>Choose up to 12 findings for the next run. The agent will receive the preview below with the original task.</p>

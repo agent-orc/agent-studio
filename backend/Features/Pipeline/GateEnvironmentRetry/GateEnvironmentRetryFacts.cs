@@ -139,7 +139,8 @@ public static class GateEnvironmentRetryFactsReader
             options.Backoff,
             lastAttemptAt,
             failedAt,
-            now);
+            now,
+            IsTransportFailure(integration));
     }
 
     /// <summary>
@@ -156,14 +157,15 @@ public static class GateEnvironmentRetryFactsReader
 
     /// <summary>
     /// The failures "Retry integration" may replay against the same reviewed
-    /// delivery: every gate-environment fault the ladder replays, plus a missing
-    /// server checkout once the checkout exists (AGT-3810). The checkout case
-    /// stays off the automatic ladder; only an owner who configured the
-    /// checkout knows when a replay can succeed. The sweep therefore selects
-    /// its candidates with <see cref="IsGateEnvironmentFailure"/>.
+    /// delivery: every gate-environment fault the ladder replays, the gate
+    /// transport (AGT-3792), plus a missing server checkout once the checkout
+    /// exists (AGT-3810). The checkout case stays off the automatic ladder; only
+    /// an owner who configured the checkout knows when a replay can succeed. The
+    /// sweep therefore selects its candidates with <see cref="IsGateEnvironmentFailure"/>.
     /// </summary>
     public static bool IsOperatorReplayable(TaskIntegrationStatus? integration)
         => IsGateEnvironmentFailure(integration)
+           || IsTransportFailure(integration)
            || integration?.Failure is { Code: AcceptedIntegrationFailureCodes.ServerCheckoutMissing, ReplayAvailable: true };
 
     /// <summary>
@@ -177,13 +179,27 @@ public static class GateEnvironmentRetryFactsReader
     /// 403 reads like a transport fault but is retried like the rest.
     /// AGT-3695: a publication the integration line lost (the approved merge
     /// is not on the lane) is replayed too; the reviewed delivery is unchanged.
+    /// A transport failure is not a ladder trigger (<see cref="IsTransportFailure"/>).
     /// </summary>
     public static bool IsGateEnvironmentFailure(TaskIntegrationStatus? integration)
         => integration?.Failure is { Code: AcceptedIntegrationFailureCodes.IntegrationPushBlocked, ReplayAvailable: true }
            || integration?.Failure?.Code == AcceptedIntegrationFailureCodes.GitCredentialUnavailable
-           || (integration?.Failure?.Code is
-                   AcceptedIntegrationFailureCodes.GateEnvironmentFailure
-                   or AcceptedIntegrationFailureCodes.GateInterrupted
-               && !GateFailureTriagePolicy.ContainsTransportMarker(
-                   integration.Failure.Reason + "\n" + integration.Failure.EvidenceExcerpt));
+           || (IsGateHostFailure(integration) && !IsTransportFailure(integration));
+
+    /// <summary>
+    /// AGT-3792: the gate environment failure is the gate transport: the gate
+    /// host did not answer, and the gate runner already retried the same exact
+    /// subject. It is still a gate environment failure with a reusable passed
+    /// review, so the operator's Retry integration and the replay after the
+    /// host answers again (<see cref="GateEnvironmentRetryService.ReturnTransportEscalationsAsync"/>)
+    /// accept it; only the timed ladder leaves it alone.
+    /// </summary>
+    public static bool IsTransportFailure(TaskIntegrationStatus? integration)
+        => IsGateHostFailure(integration)
+           && GateFailureTriagePolicy.ContainsTransportMarker(
+               integration!.Failure!.Reason + "\n" + integration.Failure.EvidenceExcerpt);
+
+    private static bool IsGateHostFailure(TaskIntegrationStatus? integration)
+        => integration?.Failure?.Code is AcceptedIntegrationFailureCodes.GateEnvironmentFailure
+            or AcceptedIntegrationFailureCodes.GateInterrupted;
 }

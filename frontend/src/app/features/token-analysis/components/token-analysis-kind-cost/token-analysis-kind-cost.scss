@@ -1,0 +1,71 @@
+@use '../../token-analysis' as ta;
+
+:host { display: block; min-width: 0; }
+.kc { @include ta.panel; }
+.kc__head { @include ta.panel-head; }
+.kc__scroll { overflow-x: auto; }
+.kc__swatch { @include ta.swatch; }
+
+.kc__table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--studio-fg);
+  font-size: 0.74rem;
+
+  th,
+  td {
+    padding: var(--studio-spacing-1) var(--studio-spacing-2);
+    border-bottom: 1px solid var(--studio-border-muted);
+    white-space: nowrap;
+  }
+
+  thead th {
+    color: var(--studio-fg-muted);
+    font-weight: 600;
+    text-align: left;
+  }
+
+  tbody th {
+    font-weight: 400;
+    text-align: left;
+  }
+
+  tfoot th,
+  tfoot td {
+    border-top: 1px solid var(--studio-border);
+    border-bottom: 0;
+    color: var(--studio-fg-dim);
+    font-weight: 600;
+    text-align: left;
+  }
+}
+
+.kc__num { @include ta.numeric; text-align: right !important; }
+.kc__strong { color: var(--studio-fg-strong); font-weight: 600; }
+.kc__dim { color: var(--studio-fg-dim); }
+.kc__project { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+
+.kc__kind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+}
+
+.kc__share {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--studio-spacing-1);
+}
+
+.kc__bar {
+  display: block;
+  width: 64px;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- bar thickness */
+  height: 6px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--studio-border-muted);
+
+  span { display: block; height: 100%; border-radius: 4px; }
+}

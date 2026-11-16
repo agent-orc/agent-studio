@@ -20,6 +20,13 @@ public static class GateEnvironmentRetryReasons
     public const string AlreadyParked = "gate-environment-retry-already-parked";
 
     /// <summary>
+    /// AGT-3792: a transport failure is replayable, but not by the timed
+    /// ladder. The gate runner already retried the same exact subject; the
+    /// outage probe returns the card once the gate host answers again.
+    /// </summary>
+    public const string TransportAwaitsGateHost = "gate-transport-awaits-gate-host";
+
+    /// <summary>
     /// Not a policy verdict: the service refuses a second concurrent replay of
     /// the same card. It shares the vocabulary so callers switch on one set.
     /// </summary>
@@ -82,8 +89,9 @@ public sealed record GateEnvironmentRetryDecision(
 /// outside Auto Review is integrating the card.
 /// </param>
 /// <param name="IsGateEnvironmentFailure">
-/// The latest integration failed on the gate environment, or on a missing
-/// server checkout that now exists (AGT-3810, operator replay only).
+/// The latest integration failed on the gate environment, the gate transport
+/// included, or on a missing server checkout that now exists (AGT-3810,
+/// operator replay only).
 /// </param>
 /// <param name="ReviewPassed">The latest review for the delivery SHA ended in Pass.</param>
 /// <param name="AttemptsSpent">Automatic rungs already spent on this delivery SHA.</param>
@@ -91,6 +99,11 @@ public sealed record GateEnvironmentRetryDecision(
 /// <param name="LastAttemptAt">Instant of the last retry, or null.</param>
 /// <param name="FailedAt">Instant the gate-environment failure was recorded, or null.</param>
 /// <param name="Now">Evaluation instant.</param>
+/// <param name="TransportFailure">
+/// AGT-3792: the gate-environment failure is the gate transport (the gate host
+/// did not answer). An operator or recovery replay may repeat it; the timed
+/// ladder leaves it to the outage probe.
+/// </param>
 public sealed record GateEnvironmentRetryFacts(
     bool Enabled,
     bool InRetryLane,
@@ -102,7 +115,8 @@ public sealed record GateEnvironmentRetryFacts(
     IReadOnlyList<TimeSpan> Backoff,
     DateTimeOffset? LastAttemptAt,
     DateTimeOffset? FailedAt,
-    DateTimeOffset Now);
+    DateTimeOffset Now,
+    bool TransportFailure = false);
 
 /// <summary>The AI Operator facts: the ladder plus the one continuation after parking.</summary>
 public sealed record GateEnvironmentRetryOperatorFacts(
@@ -132,6 +146,10 @@ public static class GateEnvironmentRetryPolicy
         var spent = Math.Clamp(facts.AttemptsSpent, 0, maximum);
         if (OperatorReplayRefusal(facts) is { } refused)
             return Ignore(refused, spent, maximum);
+        // The gate runner already retried the transport against the same
+        // subject. Another timed rung would only meet the same unreachable host.
+        if (facts.TransportFailure)
+            return Ignore(GateEnvironmentRetryReasons.TransportAwaitsGateHost, spent, maximum);
 
         if (spent >= maximum)
             return new(GateEnvironmentRetryAction.Park, GateEnvironmentRetryReasons.BudgetExhausted,

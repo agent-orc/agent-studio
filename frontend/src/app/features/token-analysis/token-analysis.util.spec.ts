@@ -12,6 +12,9 @@ import {
   filterOptions,
   filterRemainders,
   kindColor,
+  kindCostBreakdown,
+  kindTotals,
+  OTHER_PROJECTS,
   outcomeGroup,
   parseCardId,
   quotaLines,
@@ -111,7 +114,7 @@ describe('token analysis filters', () => {
 
 describe('token analysis aggregations', () => {
   it('stacks the usage kinds of the top cards with fixed kind colours', () => {
-    const rows = topCardStacks(filterCards(cards, EMPTY_FILTERS), 1);
+    const rows = topCardStacks(filterCards(cards, EMPTY_FILTERS), 1, 'tokens');
     expect(rows).toHaveLength(1);
     expect(rows[0].segments.map(s => [s.key, s.value])).toEqual([['coding', 4200], ['review-aspect', 330]]);
     expect(rows[0].segments.reduce((sum, s) => sum + s.value, 0)).toBe(rows[0].total);
@@ -179,6 +182,65 @@ describe('token analysis aggregations', () => {
     expect(lines.map(l => l.label)).toEqual(['claude 5h', 'codex Weekly']);
     expect(lines[1].points).toEqual([{ x: 0.5, y: 10, at: '2026-10-19T12:00:00Z' }]);
     expect(quotaLines([], [], 'codex')).toEqual([]);
+  });
+});
+
+describe('token analysis cost ranking (AGT-3805)', () => {
+  // Card "cache" spends most tokens, almost all cheap cache reads; card "pricey" spends fewer tokens at a higher cost.
+  const ranked: TokenAnalysisCard[] = [
+    card('cache', [slice({ kind: 'coding', input: 100, output: 10, cacheRead: 90_000, costUsd: 0.4 })]),
+    card('pricey', [
+      slice({ kind: 'coding', input: 5000, output: 2000, costUsd: 1.5 }),
+      slice({ kind: 'gate', input: 1000, output: 100, costUsd: 0.3 }),
+    ], { project: 'Other' }),
+  ];
+
+  it('ranks the cards by cost by default and by tokens on request', () => {
+    expect(EMPTY_FILTERS.sort).toBe('cost');
+    expect(filterCards(ranked, EMPTY_FILTERS).map(c => c.jobId)).toEqual(['pricey', 'cache']);
+    expect(filterCards(ranked, { ...EMPTY_FILTERS, sort: 'tokens' }).map(c => c.jobId)).toEqual(['cache', 'pricey']);
+  });
+
+  it('round-trips a tokens ranking through the hash and omits the cost default', () => {
+    expect(encodeAnalysisFilters({ ...EMPTY_FILTERS, sort: 'cost' })).toBeNull();
+    const encoded = encodeAnalysisFilters({ ...EMPTY_FILTERS, sort: 'tokens' })!;
+    expect(decodeURIComponent(encoded)).toBe('sort=tokens');
+    expect(decodeAnalysisFilters(encoded).sort).toBe('tokens');
+    expect(decodeAnalysisFilters(encodeURIComponent('sort=bogus')).sort).toBe('cost');
+  });
+
+  it('sizes the top-card bars by the measure they state', () => {
+    const rows = topCardStacks(filterCards(ranked, EMPTY_FILTERS), 2);
+    expect(rows.map(r => [r.label, r.measure, r.total])).toEqual([['PRICEY', 'cost', 1.8], ['CACHE', 'cost', 0.4]]);
+    expect(rows[0].segments.map(s => [s.key, s.value])).toEqual([['coding', 1.5], ['gate', 0.3]]);
+    const byTokens = topCardStacks(filterCards(ranked, { ...EMPTY_FILTERS, sort: 'tokens' }), 1, 'tokens');
+    expect(byTokens[0]).toMatchObject({ label: 'CACHE', measure: 'tokens', total: 90_110 });
+  });
+
+  it('totals each usage kind in USD', () => {
+    expect([...kindTotals(ranked[1], 'cost')]).toEqual([['coding', 1.5], ['gate', 0.3]]);
+  });
+
+  it('splits cost per usage kind workspace-wide and per project, summing to the visible total', () => {
+    const rest = [{ project: 'Studio', slices: [slice({ kind: 'chat', costUsd: 0.1, priced: false })] }];
+    const breakdown = kindCostBreakdown(ranked, rest);
+    expect(breakdown.projects).toEqual(['Other', 'Studio']);
+    expect(breakdown.rows.map(r => [r.kind, r.costUsd, r.perProject])).toEqual([
+      ['coding', 1.9, [1.5, 0.4]],
+      ['gate', 0.3, [0.3, 0]],
+      ['chat', 0.1, [0, 0.1]],
+    ]);
+    expect(breakdown.rows.find(r => r.kind === 'chat')!.costComplete).toBe(false);
+    expect(breakdown.totals.costUsd).toBeCloseTo(2.3);
+    expect(breakdown.totals.perProject[0] + breakdown.totals.perProject[1]).toBeCloseTo(breakdown.totals.costUsd);
+    expect(breakdown.rows.reduce((sum, r) => sum + r.share, 0)).toBeCloseTo(1);
+  });
+
+  it('folds projects beyond the limit into one column without losing cost', () => {
+    const many = Array.from({ length: 4 }, (_, i) => card(`p${i}`, [slice({ costUsd: i + 1 })], { project: `P${i}` }));
+    const breakdown = kindCostBreakdown(many, [], 3);
+    expect(breakdown.projects).toEqual(['P3', 'P2', OTHER_PROJECTS]);
+    expect(breakdown.totals.perProject).toEqual([4, 3, 3]);
   });
 });
 

@@ -40,10 +40,11 @@ export class CardTokenDrilldownComponent {
   readonly kinds = computed(() => {
     const card = this.detail()?.card;
     if (!card) return [];
+    const cost = kindTotals(card, 'cost');
     return [...kindTotals(card).entries()]
-      .sort((a, b) => b[1] - a[1])
+      .sort((a, b) => (cost.get(b[0]) ?? 0) - (cost.get(a[0]) ?? 0) || b[1] - a[1])
       .map(([kind, total]) => ({
-        kind, total, color: kindColor(kind),
+        kind, total, costUsd: cost.get(kind) ?? 0, color: kindColor(kind),
         share: card.totalTokens > 0 ? Math.round((total / card.totalTokens) * 100) : 0,
       }));
   });

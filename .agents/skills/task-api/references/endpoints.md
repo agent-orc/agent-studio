@@ -383,6 +383,7 @@ Event types, the fact each one publishes, and the suggested operations:
 | `push.blocked` | A Post Processing card merged locally but its publication to origin was refused | `card.inspect`, `push.inspect` |
 | `quota.exhausted` | A card waits for a quota reset, or a CLI hit its provider limit (installation-wide) | `capacity.read`, `routing.change` |
 | `quota.fallback-active` | A running card uses a quota fallback | `capacity.read`, `routing.change` |
+| `gate-host.unreachable` | Consecutive transport failures of one kind marked the gate host unreachable (installation-wide). The reason names the host, the first failure, the last error, the waiting batch members and the owner's options | `stalls.inspect`, `batch.triage` |
 | `watcher.heartbeat` | The watcher lease was granted, taken over, renewed, or released | `watcher.status` |
 
 Each occurrence is published once. A fact that ends and returns later (a
