@@ -107,6 +107,50 @@ test('the analysis stays legible at 390 px in both themes', async ({ page }) => 
   }
 });
 
+/** AGT-3805: the cost-first ranking and a table that fits the 1280 px settings page. */
+test('at 1280 px the cards rank by cost and card, rounds, tokens and cost fit without horizontal scroll', async ({ page }) => {
+  mkdirSync(RESULT_DIR, { recursive: true });
+  const analysis = fixtureResponse();
+  const long = 'A long card title that names the whole change so the column would grow past the panel edge';
+  analysis.cards = analysis.cards.map(c => ({ ...c, title: long }));
+  // Most tokens, least cost: cache reads.
+  analysis.cards.push({ ...analysis.cards[1], jobId: 'job-3', key: 'AGT-3', inFlight: false, totalTokens: 90_000,
+    costUsd: 0.02, slices: [{ ...analysis.cards[1].slices[0], input: 0, output: 0, cacheRead: 90_000, costUsd: 0.02 }] });
+  const detail = fixtureDetail();
+  detail.events = detail.events.map(e => ({ ...e, label: 'aspect-review-architecture-and-boundaries', host: 'agent-runner-01' }));
+  await page.route('**/api/workspace/tokens/analysis**', route => route.fulfill({ json: analysis }));
+  await page.route('**/api/projects/*/token-usage/analysis/cards/**', route => route.fulfill({ json: detail }));
+  await page.setViewportSize({ width: 1280, height: 2600 });
+  await open(page, `${ROUTE}&ta=${encodeURIComponent('card=Studio%2Fjob-1')}`);
+
+  await expect(page.getByTestId('token-analysis-kind-bars-measure')).toContainText('by theoretical cost');
+  await expect(page.getByTestId('token-analysis-kind-cost')).toContainText('Coding run');
+  const table = page.getByTestId('token-analysis-card-table');
+  await expect(table.locator('tbody tr').first()).toHaveAttribute('data-testid', 'token-analysis-row-AGT-1');
+
+  const scroll = table.locator('.tt__scroll');
+  const fit = await scroll.evaluate(el => el.scrollWidth - el.clientWidth);
+  expect(fit).toBeLessThanOrEqual(1);
+  const box = (await scroll.boundingBox())!;
+  for (const name of ['Card', 'Rounds', 'Tokens', 'Cost']) {
+    const header = (await table.getByRole('columnheader', { name, exact: false }).first().boundingBox())!;
+    expect(header.x + header.width, `${name} column inside the panel`).toBeLessThanOrEqual(box.x + box.width + 1);
+  }
+
+  // The event text keeps a readable line instead of one word per line.
+  const what = page.getByTestId('card-token-drilldown-event-what').first();
+  expect((await what.boundingBox())!.width).toBeGreaterThan(260);
+  await setTheme(page, 'dark');
+  await shoot(page, 'token-analysis-view', 'token-analysis-cost-1280-dark.png');
+
+  await page.getByTestId('token-analysis-sort-tokens').click();
+  await expect(table.locator('tbody tr').first()).toHaveAttribute('data-testid', 'token-analysis-row-AGT-3');
+  await expect(page.getByTestId('token-analysis-kind-bars-measure')).toContainText('by tokens');
+  expect(decodeURIComponent(page.url())).toContain('sort=tokens');
+  await setTheme(page, 'light');
+  await shoot(page, 'token-analysis-card-table', 'token-analysis-table-tokens-1280-light.png');
+});
+
 test('empty and error states explain what to do', async ({ page }) => {
   mkdirSync(RESULT_DIR, { recursive: true });
   let fail = true;

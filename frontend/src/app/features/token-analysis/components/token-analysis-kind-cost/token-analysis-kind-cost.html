@@ -1,0 +1,50 @@
+<section class="kc" data-testid="token-analysis-kind-cost" aria-labelledby="kc-title">
+  <header class="kc__head">
+    <h3 id="kc-title">Cost by usage kind</h3>
+    <p>{{ period() }} · theoretical cost at list prices</p>
+  </header>
+  <div class="kc__scroll">
+    <table class="kc__table">
+      <thead>
+        <tr>
+          <th scope="col">Usage kind</th>
+          <th scope="col" class="kc__num">Cost</th>
+          <th scope="col" class="kc__num">Share</th>
+          <th scope="col" class="kc__num">Tokens</th>
+          @for (project of projects(); track project) {
+            <th scope="col" class="kc__num kc__project" [attr.data-testid]="'token-analysis-kind-cost-project-' + project">{{ project }}</th>
+          }
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of breakdown().rows; track row.kind) {
+          <tr [attr.data-testid]="'token-analysis-kind-cost-' + row.kind">
+            <th scope="row"><span class="kc__kind"><span class="kc__swatch" [style.background]="row.color"></span>{{ row.label }}</span></th>
+            <td class="kc__num kc__strong">{{ usd(row.costUsd) }}@if (!row.costComplete) {<span [appTooltip]="'Some models have no list price'">*</span>}</td>
+            <td class="kc__num">
+              <span class="kc__share">
+                <span class="kc__bar" aria-hidden="true"><span [style.width.%]="row.share * 100" [style.background]="row.color"></span></span>
+                {{ percent(row.share) }}
+              </span>
+            </td>
+            <td class="kc__num kc__dim">{{ fmt(row.tokens) }}</td>
+            @if (projects().length > 0) {
+              @for (value of row.perProject; track $index) { <td class="kc__num">{{ value > 0 ? usd(value) : '' }}</td> }
+            }
+          </tr>
+        }
+      </tbody>
+      <tfoot>
+        <tr>
+          <th scope="row">All usage kinds</th>
+          <td class="kc__num kc__strong" data-testid="token-analysis-kind-cost-total">{{ usd(breakdown().totals.costUsd) }}</td>
+          <td class="kc__num"></td>
+          <td class="kc__num">{{ fmt(breakdown().totals.tokens) }}</td>
+          @if (projects().length > 0) {
+            @for (value of breakdown().totals.perProject; track $index) { <td class="kc__num">{{ usd(value) }}</td> }
+          }
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</section>

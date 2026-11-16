@@ -6,7 +6,7 @@ import type {
   TokenAnalysisSlice,
 } from './models/token-analysis.model';
 import { TOKEN_USAGE_KINDS } from './models/token-analysis.model';
-import type { TokenAnalysisFilters } from './token-analysis-filters.util';
+import type { AnalysisMeasure, TokenAnalysisFilters } from './token-analysis-filters.util';
 import { cardId } from './token-analysis-filters.util';
 
 /**
@@ -22,10 +22,10 @@ export const DEFAULT_TOP_N = 12;
 export const SERIES_SLOTS = 8;
 
 export {
-  ANALYSIS_DAY_OPTIONS, ANALYSIS_HASH_KEY, ANALYSIS_ROUND_OPTIONS, DEFAULT_ANALYSIS_DAYS, EMPTY_FILTERS,
-  cardId, decodeAnalysisFilters, encodeAnalysisFilters, parseCardId,
+  ANALYSIS_DAY_OPTIONS, ANALYSIS_HASH_KEY, ANALYSIS_MEASURES, ANALYSIS_ROUND_OPTIONS, DEFAULT_ANALYSIS_DAYS,
+  DEFAULT_ANALYSIS_MEASURE, EMPTY_FILTERS, cardId, decodeAnalysisFilters, encodeAnalysisFilters, parseCardId,
 } from './token-analysis-filters.util';
-export type { TokenAnalysisFilters } from './token-analysis-filters.util';
+export type { AnalysisMeasure, TokenAnalysisFilters } from './token-analysis-filters.util';
 export function sliceTotal(slice: Pick<TokenAnalysisSlice, 'input' | 'output' | 'cacheRead' | 'cacheWrite'>): number {
   return slice.input + slice.output + slice.cacheRead + slice.cacheWrite;
 }
@@ -47,10 +47,24 @@ function cardMatches(card: TokenAnalysisCard, f: TokenAnalysisFilters): boolean 
     && (!f.minRounds || card.rounds >= f.minRounds);
 }
 
+/** The value of a card or slice under the ranking measure. */
+export function measureOf(item: { totalTokens: number; costUsd: number }, measure: AnalysisMeasure): number {
+  return measure === 'cost' ? item.costUsd : item.totalTokens;
+}
+
+/** Cards ordered by the measure, largest first; ties fall back to the other measure, then the job id. */
+export function sortCards(cards: readonly TokenAnalysisCard[], measure: AnalysisMeasure): TokenAnalysisCard[] {
+  const other: AnalysisMeasure = measure === 'cost' ? 'tokens' : 'cost';
+  return [...cards].sort((a, b) => measureOf(b, measure) - measureOf(a, measure)
+    || measureOf(b, other) - measureOf(a, other)
+    || a.jobId.localeCompare(b.jobId));
+}
+
 /**
  * Cards that pass the card filters, each reduced to the slices that pass
  * the slice filters, with totals re-summed. A card left with no tokens is
- * dropped. Sorted by tokens, most expensive first.
+ * dropped. Sorted by the filter's measure (cost unless the owner picked
+ * tokens), largest first.
  */
 export function filterCards(cards: readonly TokenAnalysisCard[], f: TokenAnalysisFilters): TokenAnalysisCard[] {
   const result: TokenAnalysisCard[] = [];
@@ -67,7 +81,7 @@ export function filterCards(cards: readonly TokenAnalysisCard[], f: TokenAnalysi
       costComplete: slices.every(slice => slice.priced),
     });
   }
-  return result.sort((a, b) => b.totalTokens - a.totalTokens || a.jobId.localeCompare(b.jobId));
+  return sortCards(result, f.sort);
 }
 
 /**
@@ -135,7 +149,7 @@ export const KIND_LABELS: Record<string, string> = {
   'gate': 'Gate',
   'orchestrator-decision': 'Decision',
   'chat': 'Chat',
-  'enrichment': 'Enrichment',
+  'enrichment': 'Enrichment and one-shot',
   'other': 'Other',
 };
 
@@ -154,9 +168,12 @@ export function seriesColor(index: number): string {
   return index >= 0 && index < SERIES_SLOTS ? `var(--studio-series-${index + 1})` : 'var(--studio-series-other)';
 }
 
-export function kindTotals(card: Pick<TokenAnalysisCard, 'slices'>): Map<string, number> {
+export function kindTotals(card: Pick<TokenAnalysisCard, 'slices'>, measure: AnalysisMeasure = 'tokens'): Map<string, number> {
   const totals = new Map<string, number>();
-  for (const slice of card.slices) totals.set(slice.kind, (totals.get(slice.kind) ?? 0) + sliceTotal(slice));
+  for (const slice of card.slices) {
+    const value = measure === 'cost' ? slice.costUsd : sliceTotal(slice);
+    totals.set(slice.kind, (totals.get(slice.kind) ?? 0) + value);
+  }
   return totals;
 }
 
@@ -183,22 +200,101 @@ export function dominant(card: Pick<TokenAnalysisCard, 'slices'>, dimension: 'mo
 }
 
 export interface StackSegment { key: string; label: string; value: number; color: string; }
-export interface StackRow { id: string; label: string; title: string; total: number; segments: StackSegment[]; }
+export interface StackRow {
+  id: string; label: string; title: string; measure: AnalysisMeasure; total: number; segments: StackSegment[];
+}
 
-/** Stacked usage kinds of the top `n` cards. */
-export function topCardStacks(cards: readonly TokenAnalysisCard[], n: number): StackRow[] {
+/** Stacked usage kinds of the top `n` cards under the measure; the cards must already be sorted by it. */
+export function topCardStacks(cards: readonly TokenAnalysisCard[], n: number, measure: AnalysisMeasure = 'cost'): StackRow[] {
   return cards.slice(0, n).map(card => {
-    const totals = kindTotals(card);
+    const totals = kindTotals(card, measure);
     return {
       id: cardId(card),
       label: card.key ?? card.jobId,
       title: card.title,
-      total: card.totalTokens,
+      measure,
+      total: measureOf(card, measure),
       segments: TOKEN_USAGE_KINDS
         .filter(kind => (totals.get(kind) ?? 0) > 0)
         .map(kind => ({ key: kind, label: kindLabel(kind), value: totals.get(kind)!, color: kindColor(kind) })),
     };
   });
+}
+
+export interface KindCostRow {
+  kind: string; label: string; color: string;
+  costUsd: number; tokens: number;
+  /** Share of the visible cost, 0..1. */
+  share: number;
+  /** Cost per column of {@link KindCostBreakdown.projects}, same order. */
+  perProject: number[];
+  /** False when a slice of this kind has a model without a list price. */
+  costComplete: boolean;
+}
+
+export interface KindCostBreakdown {
+  rows: KindCostRow[];
+  /** Project columns, most expensive first; beyond `maxProjects` they fold into one "Other projects" column. */
+  projects: string[];
+  totals: { costUsd: number; tokens: number; perProject: number[] };
+}
+
+export const OTHER_PROJECTS = 'Other projects';
+
+/**
+ * Cost and tokens per usage kind over the visible cards and the project
+ * usage outside cards, workspace-wide and per project. Every column sums
+ * the visible slices, so the row totals equal the card table's cost (R3).
+ */
+export function kindCostBreakdown(
+  cards: readonly Pick<TokenAnalysisCard, 'project' | 'slices'>[],
+  remainders: readonly Pick<TokenAnalysisProjectRemainder, 'project' | 'slices'>[] = [],
+  maxProjects = 5,
+): KindCostBreakdown {
+  const sources = [...cards, ...remainders];
+  const projectCost = new Map<string, number>();
+  for (const source of sources) for (const slice of source.slices) {
+    projectCost.set(source.project, (projectCost.get(source.project) ?? 0) + slice.costUsd);
+  }
+  const ranked = [...projectCost.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([p]) => p);
+  const kept = ranked.length <= maxProjects ? ranked : ranked.slice(0, maxProjects - 1);
+  const projects = kept.length < ranked.length ? [...kept, OTHER_PROJECTS] : kept;
+  const column = (project: string) => {
+    const at = kept.indexOf(project);
+    return at >= 0 ? at : kept.length;
+  };
+
+  const perKind = new Map<string, { cost: number; tokens: number; perProject: number[]; complete: boolean }>();
+  for (const source of sources) {
+    const col = column(source.project);
+    for (const slice of source.slices) {
+      const entry = perKind.get(slice.kind) ?? { cost: 0, tokens: 0, perProject: projects.map(() => 0), complete: true };
+      entry.cost += slice.costUsd;
+      entry.tokens += sliceTotal(slice);
+      entry.perProject[col] += slice.costUsd;
+      entry.complete &&= slice.priced;
+      perKind.set(slice.kind, entry);
+    }
+  }
+  const totalCost = [...perKind.values()].reduce((sum, e) => sum + e.cost, 0);
+  const rows = activeKinds(sources)
+    .map(kind => {
+      const e = perKind.get(kind)!;
+      return {
+        kind, label: kindLabel(kind), color: kindColor(kind), costUsd: e.cost, tokens: e.tokens,
+        share: totalCost > 0 ? e.cost / totalCost : 0, perProject: e.perProject, costComplete: e.complete,
+      };
+    })
+    .sort((a, b) => b.costUsd - a.costUsd || a.label.localeCompare(b.label));
+  return {
+    rows,
+    projects,
+    totals: {
+      costUsd: totalCost,
+      tokens: rows.reduce((sum, row) => sum + row.tokens, 0),
+      perProject: projects.map((_, i) => rows.reduce((sum, row) => sum + row.perProject[i], 0)),
+    },
+  };
 }
 
 /** UTC days from `from` to `to`, inclusive, as `yyyy-MM-dd`. */
