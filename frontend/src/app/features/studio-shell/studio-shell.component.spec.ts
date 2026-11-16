@@ -60,6 +60,19 @@ describe('StudioShellComponent (smoke)', () => {
 });
 
 describe('StudioShellComponent titlebar breadcrumb', () => {
+  it('keeps the current project section when the picker changes project', () => {
+    TestBed.configureTestingModule({
+      imports: [StudioShellComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([])],
+    });
+    const fixture = TestBed.createComponent(StudioShellComponent);
+    const tabs = TestBed.inject(StudioTabStateService);
+    tabs.open({ kind: 'hub', projectName: 'Alpha', section: 'settings' });
+    fixture.componentInstance.pickProject('Beta');
+    expect(tabs.activeTab()).toEqual({ kind: 'hub', projectName: 'Beta', section: 'settings' });
+  });
+
   function project(id: string): RegistryProjectSummary {
     return {
       id,

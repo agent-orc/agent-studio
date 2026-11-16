@@ -61,6 +61,12 @@ test('Project Settings no longer hosts the relocated sections', async ({ page })
   await expect(page.getByTestId('project-detail-cli-modes')).toHaveCount(0);
 
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, '01-settings-shrunk.png'), fullPage: true });
+
+  await page.getByTestId('project-settings-review-aspects').click();
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible();
+  await expect(page.getByTestId('review-aspect-applicability')).toContainText('library runs');
+
+  await page.screenshot({ path: path.join(SCREENSHOT_DIR, '01-review-aspects.png'), fullPage: true });
 });
 
 test('Workflow rail hosts the per-lane sort order', async ({ page }) => {

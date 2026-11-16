@@ -171,5 +171,13 @@ describe('ProjectBasicsCardComponent (smoke)', () => {
     ) as HTMLElement;
     expect(warning.textContent).toContain('Remote execution is not claimable');
     expect(warning.textContent).toContain('repositoryUrl is missing');
+
+    fixture.componentInstance.repositoryPath.set('/new-checkout');
+    fixture.componentInstance.saving.set(true);
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).textContent).not.toContain('Resolve the highlighted fields');
+    const beforeUnload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+    fixture.componentInstance.warnBeforeUnload(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
   });
 });

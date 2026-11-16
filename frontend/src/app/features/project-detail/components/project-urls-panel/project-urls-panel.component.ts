@@ -122,7 +122,7 @@ export class ProjectUrlsPanelComponent {
 
   private applyProject(project: RegistryProjectSummary | null): void {
     this.projectId.set(project?.id ?? null);
-    this.urls.set([...(project?.urls ?? [])].sort((a, b) => a.sortOrder - b.sortOrder));
+    this.urls.set([...(project?.urls ?? [])].filter(url => url.id !== 'repo').sort((a, b) => a.sortOrder - b.sortOrder));
     const requested = this.quickSetup() ? this.recovery.takeQuickSetupRequest() : null;
     const requestedUrl = requested && project?.urls.find(url => url.id === requested.urlId);
     if (requestedUrl) {

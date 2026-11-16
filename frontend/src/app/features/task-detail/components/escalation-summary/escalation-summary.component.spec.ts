@@ -548,6 +548,29 @@ describe('EscalationSummaryComponent', () => {
     expect(el.querySelector<HTMLInputElement>('.escalation-confirm__findings input')?.checked).toBe(true);
   });
 
+  it('requires and explains an owner note when no findings are available', () => {
+    const fixture = mount({ reviews: [] });
+    const emitted: unknown[] = [];
+    fixture.componentInstance.triageAction.subscribe(action => emitted.push(action));
+    fixture.componentInstance.openDecision('reissue-escalated');
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="reissue-no-findings"]')?.textContent).toContain('original task');
+    expect(el.querySelector('.escalation-confirm__note')?.textContent).toContain('required without selected findings');
+    const submit = el.querySelector<HTMLButtonElement>('[data-testid="escalation-confirm-submit"]')!;
+    expect(submit.disabled).toBe(true);
+    const note = el.querySelector<HTMLTextAreaElement>('[data-testid="escalation-owner-note"]')!;
+    note.value = 'Recheck the library API contract.';
+    note.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(submit.disabled).toBe(false);
+    submit.click();
+    expect(emitted).toEqual([expect.objectContaining({
+      id: 'reissue-escalated',
+      reissueInstructions: { findings: [], note: 'Recheck the library API contract.' },
+    })]);
+  });
+
   it('replaces three empty context columns with one compact message', () => {
     const base = detail();
     const empty = {
