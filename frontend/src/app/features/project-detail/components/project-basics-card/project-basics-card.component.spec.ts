@@ -13,8 +13,32 @@ import { TaskService } from '../../../../services/task.service';
 import { WorkspaceManagerService } from '../../../shell';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 import { ProjectBasicsCardComponent } from './project-basics-card.component';
+import { urlProject } from '../../../server-checkout/testing/server-checkout.fixtures';
 
 describe('ProjectBasicsCardComponent (smoke)', () => {
+  it('does not ask for checkout lag for a URL project without a checkout', async () => {
+    const project = urlProject({ id: 'PROJ-001', displayName: 'Demo' });
+    const workspaces = [{ id: 'ws-1', displayName: 'Workspace', sortOrder: 0, isDefault: true,
+      color: null, createdAt: '2026-01-01T00:00:00Z', projects: [project] }] satisfies RegistryWorkspaceListItem[];
+    await TestBed.configureTestingModule({
+      imports: [ProjectBasicsCardComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([]),
+        { provide: TaskService, useValue: { getRegistryWorkspaces: () => of(workspaces), getAllProjectSettings: () => of({}) } },
+        { provide: CliCatalogStore, useValue: { ensure: () => of([]), modelsFor: () => [] } },
+        { provide: NotificationService, useValue: { success: vi.fn() } },
+        { provide: ProjectLookupService, useValue: { setWorkspaces: vi.fn(), allProjects: () => [project],
+          getProjectDisplay: () => ({ id: project.id }) } },
+        { provide: WorkspaceManagerService, useValue: { notifyRegistryChanged: vi.fn() } },
+        { provide: ProjectOverlaysService, useValue: {} },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectBasicsCardComponent);
+    fixture.componentRef.setInput('projectName', 'Demo');
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectNone('/api/projects/Demo/checkout/status');
+  });
+
   it('compiles and instantiates', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectBasicsCardComponent],

@@ -17,6 +17,8 @@ import { FlowHealthPageComponent, type FlowDetailTarget } from '../../../flow-he
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
 import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../services/project-deploy-data.service';
+import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
+import { serverCheckoutMissing } from '../../../server-checkout/server-checkout.model';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import {
   DEPLOY_CLOCK,
@@ -55,6 +57,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
 })
 export class ProjectDeployAreaComponent {
   private readonly data = inject(ProjectDeployDataService);
+  private readonly serverCheckout = inject(ServerCheckoutStore);
   private readonly cardLookup = inject(OperationsCardLookupService);
   private readonly clock = inject(DEPLOY_CLOCK);
   private subscriptions = new Subscription();
@@ -73,6 +76,12 @@ export class ProjectDeployAreaComponent {
   private openedTarget: { project: string; id: string } | null = null;
 
   readonly projectName = input.required<string>();
+  readonly checkoutMissing = computed(() => {
+    const project = this.serverCheckout.projectFor({ name: this.projectName() });
+    if (!project || !serverCheckoutMissing(project)) return false;
+    const state = this.serverCheckout.statusFor(project.id)?.state;
+    return state !== 'present' && state !== 'ready';
+  });
   readonly releaseTarget = input<{ project: string; id: string } | null>(null);
   readonly initialView = input<DeployView>('overview');
   readonly focusStepId = input<string | undefined>();
@@ -179,7 +188,8 @@ export class ProjectDeployAreaComponent {
     effect(() => this.view.set(this.initialView()));
     effect(onCleanup => {
       const project = this.projectName();
-      untracked(() => this.load(project, true));
+      const missingCheckout = this.checkoutMissing();
+      if (!missingCheckout) untracked(() => this.load(project, true));
       onCleanup(() => {
         this.subscriptions.unsubscribe();
         this.runReads.unsubscribe();
@@ -220,7 +230,7 @@ export class ProjectDeployAreaComponent {
   }
 
   show(view: DeployView): void {
-    if (view !== 'history' && this.historyFilter() !== ALL_DEPLOY_RUNS) {
+    if (!this.checkoutMissing() && view !== 'history' && this.historyFilter() !== ALL_DEPLOY_RUNS) {
       this.historyFilter.set(ALL_DEPLOY_RUNS);
       this.historyOffset.set(0);
       this.reloadRuns(this.projectName(), false);
@@ -229,7 +239,7 @@ export class ProjectDeployAreaComponent {
     this.viewChange.emit(view);
   }
 
-  refresh(): void { this.load(this.projectName(), false); }
+  refresh(): void { if (!this.checkoutMissing()) this.load(this.projectName(), false); }
 
   openFlowDetail(target: FlowDetailTarget): void {
     if (target === 'steps') this.show('steps');

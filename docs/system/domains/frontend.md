@@ -244,6 +244,11 @@ and labels its values as sample data. The `Environment`, `Release`, `Deployment`
 The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
 `/releases`, and `/deployments` when configured. Its Pipeline view reads the
 parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
+For a registered URL project without a server checkout, Deploy shows one checkout
+state across its views and skips repository-backed reads. The explorer also
+skips its Dossier catalogue refresh until the checkout is available. Both
+resume when the shared checkout state reports a usable checkout. Project
+Settings also skips the developer checkout lag request until a checkout exists.
 The release view loads
 `/releases/{releaseId}/notes` from the included cards.
 The release response also projects current Quality verdicts from the included
