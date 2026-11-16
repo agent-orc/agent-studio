@@ -64,6 +64,18 @@ describe('TaskLiveStatusComponent', () => {
     batchState.set(null);
   });
 
+  it('shows the operator decision on an Escalated card with stale integration status', () => {
+    fixture.componentRef.setInput('task', task({
+      state: '5e-escalated', phase: 'integrating',
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [],
+        queue: { kind: 'review', state: 'integration' } },
+    }));
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[data-testid="task-live-current"]')?.textContent).toContain('Operator decision needed');
+    expect(root.querySelector('[data-testid="task-live-next"]')?.textContent).toContain('Operator decision');
+  });
+
   it('shows the queued and running state of a paused batch member', () => {
     const liveStatus = { attempt: 1, activeStep: null, nextSteps: [], queue: { kind: 'review' } };
     fixture.componentRef.setInput('task', task({ liveStatus }));
