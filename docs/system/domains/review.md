@@ -496,6 +496,22 @@ its own receipt. After a successful intervention, the watchdog waits another
 threshold interval before intervening again. It can advance from review recovery
 to batch recovery in the same visit. If the same recovery leaves the card
 ownerless again, it escalates the card with the reason.
+
+When the Orchestrator Engine owns delivery, the monolith resume answers
+`engine-owned`, so the watchdog asks the engine instead (AGT-3883,
+`EngineDeliveryIntegrationService`, `EngineDeliveryIntegrationPolicy`). It reads
+the engine's state for the passed review: running (an open engine decision,
+the gate journal, a per-task gate, or a pending push), published at a SHA,
+failed with a reason, or not started. A running integration owns the card. A
+published delivery, an unstarted one, or a gate environment failure gets one
+fresh `ReviewReport` decision on the same passed review per lane visit; a
+retry first reopens the delivery settlement so the engine integrates again.
+Any other failure escalates with the engine's reason, and the receipt always
+names the engine's state. The stage-complete endpoint applies an engine
+decision under the host lifetime, not the engine's 60-second request, so a
+long per-task gate still ends in its lane move. A delivery the integration
+branch already carries as a net-change publication of its result reads
+`integrated`, also after the branch moved on, and is never integrated twice.
 The threshold starts at the latest ownership change, including a review terminal,
 a batch state event, or a recovery intervention, rather than at lane entry. A
 current-delivery infrastructure failure with no scheduled retry gets one through
