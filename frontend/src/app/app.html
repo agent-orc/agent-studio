@@ -132,6 +132,7 @@
                 <app-loading-surface kind="board" label="Loading board…" />
               } @else {
               <app-active-board-filters [resultCount]="filteredTaskCount()" /><app-tag-filters [projectName]="boardProjectScope()" />
+              <app-server-checkout-board-notice [projectScope]="boardProjectScope()" />
               @if (groupByDossier()) {
                 <main class="dashboard dashboard--studio dashboard--dossier-board"
                       data-testid="studio-board">

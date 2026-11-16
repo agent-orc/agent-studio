@@ -1,5 +1,6 @@
 import { Injectable, inject } from '@angular/core';
-import { REMEDY_ROUTES, type RemedyAction } from '../models/remedy-action.model';
+import { REMEDY_ROUTES, executionHostRoute, type RemedyAction } from '../models/remedy-action.model';
+import { withRouteSegment } from './url-hash.util';
 import { FeatureFlagsService } from './feature-flags.service';
 import { TaskReferenceNavigationService } from './task-reference-navigation.service';
 // Concrete module paths, not the feature barrels: a barrel would pull the
@@ -42,6 +43,13 @@ export class RemedyNavigationService {
       case REMEDY_ROUTES.task:
         return this.references.openReferenceOrNotify(action.taskKey!);
       case REMEDY_ROUTES.executionHosts:
+        // AGT-3840: a way out that names a host opens its row and capability,
+        // not a list that shows the host Online without the held key.
+        if (action.hostId) {
+          window.location.hash = withRouteSegment(window.location.hash,
+            executionHostRoute(action.hostId, action.capability));
+          return true;
+        }
         this.openWorkspaceSection('remote-hosts');
         return true;
       case REMEDY_ROUTES.gitHubSettings:

@@ -38,12 +38,26 @@ public static class ResultsInventory
         ".md", ".txt", ".json", ".log", ".csv", ".yaml", ".yml", ".html", ".svg", ".xml", ".diff", ".patch",
     };
 
+    private const int ReviewMaximumFolders = 20;
+
     /// <summary>
     /// Bounded evidence frozen into a remote review plan. The digest includes
     /// every eligible file, including files whose names or contents exceed the
     /// prompt budget. History and links are excluded from both views.
+    ///
+    /// <para>
+    /// The default lists files in ordinal path order. The report review
+    /// (AGT-3853) passes <paramref name="newestFirst"/>: a report card collects
+    /// later rounds in subfolders such as <c>watchdog-live/</c>, so the list then
+    /// starts with the newest files, names every subfolder with its file count,
+    /// and excerpts newest first. <paramref name="excerptExclusions"/> names
+    /// results-relative files the caller already shows in full elsewhere.
+    /// </para>
     /// </summary>
-    public static string RenderForReview(string jobFolderPath)
+    public static string RenderForReview(
+        string jobFolderPath,
+        bool newestFirst = false,
+        IReadOnlySet<string>? excerptExclusions = null)
     {
         if (string.IsNullOrWhiteSpace(jobFolderPath))
             return "No results/ folder (job folder path unavailable).";
@@ -58,27 +72,41 @@ public static class ResultsInventory
 
             using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             var lines = new StringBuilder();
-            lines.AppendLf($"results/ folder contains {files.Length} file(s):");
-            for (var i = 0; i < files.Length; i++)
+            foreach (var file in files)
             {
-                var relative = Path.GetRelativePath(root, files[i]).Replace('\\', '/');
-                var size = new FileInfo(files[i]).Length;
-                using var stream = File.OpenRead(files[i]);
+                var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+                var size = new FileInfo(file).Length;
+                using var stream = File.OpenRead(file);
                 var fileHash = SHA256.HashData(stream);
                 digest.AppendData(Encoding.UTF8.GetBytes(relative + "\0" + size + "\0"));
                 digest.AppendData(fileHash);
-                if (i < ReviewMaximumFiles)
-                    lines.AppendLf($"- results/{CredentialRedactor.Redact(relative)} ({size} bytes)");
+            }
+            // The digest stays in ordinal order; only the listed order changes.
+            var listed = newestFirst
+                ? files.OrderByDescending(File.GetLastWriteTimeUtc).ThenBy(path => path, StringComparer.Ordinal).ToArray()
+                : files;
+            lines.AppendLf(newestFirst
+                ? $"results/ folder contains {files.Length} file(s), newest first:"
+                : $"results/ folder contains {files.Length} file(s):");
+            for (var i = 0; i < listed.Length && i < ReviewMaximumFiles; i++)
+            {
+                var relative = Path.GetRelativePath(root, listed[i]).Replace('\\', '/');
+                lines.AppendLf($"- results/{CredentialRedactor.Redact(relative)} ({new FileInfo(listed[i]).Length} bytes)");
             }
             if (files.Length > ReviewMaximumFiles)
-                lines.AppendLf($"- ... and {files.Length - ReviewMaximumFiles} more file(s).");
+                lines.AppendLf(newestFirst
+                    ? $"- ... and {files.Length - ReviewMaximumFiles} older file(s) not listed."
+                    : $"- ... and {files.Length - ReviewMaximumFiles} more file(s).");
+            if (newestFirst) AppendFolders(lines, root, listed);
             lines.AppendLf($"results/ content SHA-256: {Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant()}");
 
             var remaining = ReviewMaximumTextChars;
             var excerpted = 0;
-            foreach (var file in files)
+            foreach (var file in listed)
             {
                 if (excerpted == ReviewMaximumExcerpts || remaining == 0) break;
+                if (excerptExclusions is not null
+                    && excerptExclusions.Contains(Path.GetRelativePath(root, file).Replace('\\', '/'))) continue;
                 var extension = Path.GetExtension(file);
                 if (!TextExtensions.Contains(extension) || extension.Equals(".svg", StringComparison.OrdinalIgnoreCase)
                     || extension.Equals(".html", StringComparison.OrdinalIgnoreCase)) continue;
@@ -107,6 +135,26 @@ public static class ResultsInventory
         {
             return "results/ folder present but could not be read.";
         }
+    }
+
+    /// <summary>
+    /// One line per subfolder of results/ with its file count, in the order of
+    /// its newest file, so a folder of later captures stays visible when the
+    /// file list is cut.
+    /// </summary>
+    private static void AppendFolders(StringBuilder lines, string root, IReadOnlyList<string> newestFirst)
+    {
+        var folders = newestFirst
+            .Select(file => Path.GetDirectoryName(Path.GetRelativePath(root, file))?.Replace('\\', '/'))
+            .Where(folder => !string.IsNullOrEmpty(folder))
+            .GroupBy(folder => folder!, StringComparer.Ordinal)
+            .Select(group => $"results/{CredentialRedactor.Redact(group.Key)}/ ({group.Count()} file(s))")
+            .ToArray();
+        if (folders.Length == 0) return;
+        lines.AppendLf($"Subfolders of results/, newest first: {string.Join(", ", folders.Take(ReviewMaximumFolders))}"
+            + (folders.Length > ReviewMaximumFolders
+                ? $", and {folders.Length - ReviewMaximumFolders} more folder(s) not listed."
+                : "."));
     }
 
     private static IEnumerable<string> SafeFiles(string root)

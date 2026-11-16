@@ -7,6 +7,11 @@ namespace AgentStudio.Runner;
 /// <summary>Recovers cards that have no owner left in Auto Review.</summary>
 public sealed class AutoReviewStrandingWatchdog : BackgroundService
 {
+    /// <summary>The watchdog decides once per tick, so a park lands up to one interval after it is due.</summary>
+    public static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
+    public const int DefaultThresholdMinutes = 30;
+    public const int DefaultRetryOverdueMinutes = 5;
+
     private readonly TaskScannerService _scanner;
     private readonly AttemptAuthorityService _authority;
     private readonly ReviewAttemptTaskLifecycleService _reviews;
@@ -61,8 +66,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         // The liveness floor applies in both modes. Record the active review
         // profile so the intervention names the owner that lost the card.
         var reviewMode = MonolithTransitionSwitch.For(_configuration, "ReviewReport");
-        var threshold = TimeSpan.FromMinutes(Math.Clamp(
-            _configuration.GetValue<int?>("AutoReviewStranding:ThresholdMinutes") ?? 30, 1, 1440));
+        var threshold = Threshold(_configuration);
         var now = _time.GetUtcNow().UtcDateTime;
         var reviewHostHold = TaskLiveStatusProjection.ReviewHostHold(
             _reviewExecutors?.LatestReviewHostTelemetry(now));
@@ -146,7 +150,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     infraFailure && _authority.HasScheduledReviewInfrastructureRetry(currentReview!.AttemptId),
                     hostCapacityHeld,
                     waitingCapability is not null,
-                    waitingHostAvailable);
+                    waitingHostAvailable,
+                    RetryOverdueLimit(_configuration));
                 var action = MonolithTransitionAdapter.AutoReviewStranding(facts);
                 var route = new AutoReviewBatchRouteFacts(
                     currentReview?.Subject.Plan?.BuildTestDeferredToBatch == true,
@@ -192,6 +197,36 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             }
         }
         return count;
+    }
+
+    public static TimeSpan Threshold(IConfiguration configuration)
+        => TimeSpan.FromMinutes(Math.Clamp(
+            configuration.GetValue<int?>("AutoReviewStranding:ThresholdMinutes") ?? DefaultThresholdMinutes, 1, 1440));
+
+    /// <summary>
+    /// AGT-3848: how long a scheduled review retry that no scheduler tick fired
+    /// still owns its card. The scheduler ticks every 15 seconds, so an overdue
+    /// retry is ownerless long before the stranding threshold; never above it.
+    /// </summary>
+    public static TimeSpan RetryOverdueLimit(IConfiguration configuration)
+    {
+        var limit = TimeSpan.FromMinutes(Math.Clamp(
+            configuration.GetValue<int?>("AutoReviewStranding:RetryOverdueMinutes") ?? DefaultRetryOverdueMinutes,
+            1, 1440));
+        var threshold = Threshold(configuration);
+        return limit < threshold ? limit : threshold;
+    }
+
+    /// <summary>
+    /// AGT-3848: the latest instant the watchdog parks a card whose scheduled
+    /// retry came due at <paramref name="dueAt"/> and never started: one tick
+    /// after the overdue limit, rounded up to the minute the card names.
+    /// </summary>
+    public static DateTime ParkOverdueRetryBy(DateTime dueAt, TimeSpan retryOverdueLimit)
+    {
+        var parkAt = dueAt + retryOverdueLimit + Interval;
+        var minute = TimeSpan.TicksPerMinute;
+        return new DateTime((parkAt.Ticks + minute - 1) / minute * minute, parkAt.Kind);
     }
 
     /// <summary>Integrates the current run before exposing it to Remote Review.</summary>
@@ -314,7 +349,11 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             }
             return (false, false, "The passed review has no resumable integration or batch entry.");
         }
-        return (false, false, review is { Outcome: ReviewTerminalOutcome.InfrastructureFailure }
+        // AGT-3848: a retry that came due and never started is not a spent budget.
+        var overdue = review is null ? null : _authority.ScheduledReviewInfrastructureRetryOverdue(review.AttemptId);
+        return (false, false, overdue is { } late && late > TimeSpan.Zero
+            ? $"The scheduled infrastructure retry is {late.TotalMinutes:0} minutes overdue and never started. {ReviewFailureDetail(review!)}"
+            : review is { Outcome: ReviewTerminalOutcome.InfrastructureFailure }
             ? $"Infrastructure retry limit reached. {ReviewFailureDetail(review)}"
             : TaskModes.IsReportOnly(card.Mode)
                 ? "Concept post-processing has no active owner. Requeue the report step or move this card to Human Review for a decision."
@@ -551,7 +590,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await _scanner.WaitForFirstPublicationAsync(stoppingToken);
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        using var timer = new PeriodicTimer(Interval);
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await RunOnceAsync(stoppingToken); }

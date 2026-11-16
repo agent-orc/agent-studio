@@ -326,6 +326,24 @@ export interface TaskServerRunnerCapabilitySnapshot {
   cliUpdate?: HostCliUpdate | null;
   /** Comparable deployment identity (AGT-2826); absent from pre-2826 daemons. */
   release?: HostReleaseIdentity | null;
+  /** AGT-3840: keys claims withhold from this role, with the probe detail. */
+  heldCapabilities?: readonly HeldCapability[] | null;
+}
+
+/**
+ * AGT-3840: a capability key a role cannot claim with right now. A role can
+ * read Online while one is held: an indeterminate probe or a key the role
+ * never registered keeps work off it without degrading its status.
+ */
+export interface HeldCapability {
+  key: string;
+  state: 'held' | 'indeterminate' | string;
+  /** Backend `HeldCapabilityCauses`, e.g. `probe-indeterminate`, `not-registered`. */
+  cause: string;
+  detail?: string | null;
+  observedAt?: string | null;
+  /** Pending work that needs the key, when a refused claim named it. */
+  waitingTaskKeys?: readonly string[] | null;
 }
 
 export interface InstalledCli {
@@ -475,6 +493,8 @@ export interface RemoteHost {
   availableSlots?: number;
   retireRequestedAt?: string | null;
   capabilityHealth?: readonly RemoteHostCapabilityHealth[];
+  /** AGT-3840: held or indeterminate capabilities of this role. */
+  heldCapabilities?: readonly HeldCapability[];
   hostAdmission?: RemoteHostAdmission | null;
   /** Task Server host key and its centrally managed runtime slot policy. */
   capacityHostId?: string | null;

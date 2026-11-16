@@ -79,4 +79,38 @@ describe('CapabilityHealthComponent', () => {
     const state = capability.querySelector<HTMLElement>('[data-testid="remote-host-capability-state-provider-auth:claude"]')!;
     expect([state.dataset['tone'], state.dataset['icon']]).toEqual(['danger', 'close']);
   });
+
+  // AGT-3840: held keys show the probe detail and a per-key re-probe action.
+  it('lists held capabilities with probe detail and emits a re-probe for one key', () => {
+    TestBed.configureTestingModule({ imports: [CapabilityHealthComponent] });
+    const fixture = TestBed.createComponent(CapabilityHealthComponent);
+    fixture.componentRef.setInput('host', {
+      id: 'review', name: 'kori-review-01', role: 'remote', address: null, clientId: 'kori-review-01-runner',
+      status: 'online', os: 'Linux', lastHeartbeatAt: new Date().toISOString(),
+      uptimeLabel: null, capabilities: [], cliQuotas: [], stats: null,
+      heldCapabilities: [
+        { key: 'provider-auth:codex', state: 'indeterminate', cause: 'probe-indeterminate',
+          detail: 'codex login status timed out after 30s', observedAt: '2026-11-15T14:00:00Z',
+          waitingTaskKeys: ['AGT-3649'] },
+        { key: 'git:read:acme', state: 'held', cause: 'not-registered', detail: null },
+      ],
+    } satisfies RemoteHost);
+    fixture.componentRef.setInput('focusCapability', 'provider-auth:codex');
+    const requested: string[] = [];
+    fixture.componentInstance.reprobe.subscribe(key => requested.push(key));
+    fixture.detectChanges();
+
+    const root: HTMLElement = fixture.nativeElement;
+    const codex = root.querySelector('[data-testid="remote-host-held-provider-auth:codex"]') as HTMLElement;
+    expect(codex.dataset['state']).toBe('indeterminate');
+    expect(codex.dataset['focused']).toBe('true');
+    expect(codex.textContent).toContain('probe indeterminate');
+    expect(codex.textContent).toContain('codex login status timed out after 30s');
+    expect(codex.textContent).toContain('AGT-3649');
+    expect(root.querySelector('[data-testid="remote-host-held-detail-git:read:acme"]')?.textContent)
+      .toContain('No probe detail reported');
+
+    (root.querySelector('[data-testid="remote-host-held-reprobe-provider-auth:codex"]') as HTMLButtonElement).click();
+    expect(requested).toEqual(['provider-auth:codex']);
+  });
 });

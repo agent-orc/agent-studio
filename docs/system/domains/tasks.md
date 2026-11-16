@@ -34,6 +34,15 @@ attributable commits are only task-side integration merges. The sweep
 reattributes the stored review subject through the corrected range, verifies
 that the current run gained attribution, and restores the card to Auto Review
 with a timeline entry. It starts no coding round.
+The foreign subject guard (AGT-3854) reads a subject as another card's work
+only when it names no key of this card and at least one key that this card
+does not reference in its relations, title, or brief (`prompt.md` and its
+extensions). A key directly followed by `-` and letters or digits, such as the
+finding id `AGT-3794-F13`, is not a task key.
+Startup's `commit-subject-key-attribution-v1` repair restores recent escalated
+cards with a passing review whose completion warning named a foreign task and
+whose range the current guard now attributes. A range that still names an
+unreferenced foreign key stays escalated.
 An available fenced base that is not in the result remains a recoverable
 salvage refusal and requests a merge round.
 

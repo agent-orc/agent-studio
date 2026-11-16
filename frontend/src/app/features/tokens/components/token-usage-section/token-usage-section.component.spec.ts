@@ -40,6 +40,29 @@ describe('TokenUsageSectionComponent (smoke)', () => {
       .toContain('workspace ws-2');
     fixture.destroy();
   });
+  it('highlights the page actually shown: a ledger scope on a CLI route marks the workspace page', async () => {
+    // AGT-3794-F14: the rail must not mark Claude while the workspace ledger is shown.
+    TestBed.overrideComponent(TokenUsageSectionComponent, {
+      set: { imports: [WorkspaceTokenTimelineComponent], schemas: [NO_ERRORS_SCHEMA] },
+    });
+    await TestBed.configureTestingModule({
+      imports: [TokenUsageSectionComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TokenUsageSectionComponent);
+    const active = () => [...fixture.nativeElement.querySelectorAll('[aria-current="page"]')]
+      .map((el: Element) => el.getAttribute('data-testid'));
+    fixture.componentRef.setInput('page', 'claude');
+    fixture.detectChanges();
+    expect(active()).toEqual(['token-usage-nav-claude']);
+
+    fixture.componentRef.setInput('ledgerScope', {
+      workspaceId: 'ws-2', range: 'week', fromUtc: '2026-09-20T22:00:00Z', toUtc: '2026-09-27T22:00:00Z',
+    } satisfies UsageLedgerScope);
+    fixture.detectChanges();
+    expect(active()).toEqual(['token-usage-nav-workspace']);
+    fixture.destroy();
+  });
   it('compiles + instantiates without throwing', async () => {
     try {
       await TestBed.configureTestingModule({

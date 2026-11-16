@@ -13,7 +13,7 @@
         <app-status-indicator tone="success" label="Coverage complete" testId="usage-detail-cost-complete" />
       }
       @if (c.latestReceipt; as r) {
-        <span>Latest receipt <time [attr.datetime]="r.iso">{{ r.local }}</time> <span class="usage-detail__utc">({{ r.utc }})</span></span>
+        <span>Latest receipt <time [attr.datetime]="r.iso">{{ r.text }}</time></span>
       }
     </p>
 
@@ -22,7 +22,7 @@
         <dt>Today</dt>
         <dd class="usage-detail__num" data-testid="usage-detail-today">{{ c.today }}</dd>
         @if (c.dayStart; as s) {
-          <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time> {{ c.timeZone }}</dd>
+          <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time></dd>
           <dd class="usage-detail__utc" data-testid="usage-detail-day-utc">{{ s.utc }} to {{ c.dayEnd?.utc }}</dd>
         }
         @if (c.budgetDaily) { <dd class="usage-detail__muted">Budget {{ c.budgetDaily }}, {{ c.budgetDailyRemaining }}</dd> }
@@ -31,7 +31,7 @@
         <dt>This week</dt>
         <dd class="usage-detail__num" data-testid="usage-detail-week">{{ c.week }}</dd>
         @if (c.weekStart; as s) {
-          <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time> {{ c.timeZone }}</dd>
+          <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time></dd>
           <dd class="usage-detail__utc" data-testid="usage-detail-week-utc">{{ s.utc }} to {{ c.weekEnd?.utc }}</dd>
         }
         @if (c.budgetWeekly) { <dd class="usage-detail__muted">Budget {{ c.budgetWeekly }}, {{ c.budgetWeeklyRemaining }}</dd> }
@@ -96,7 +96,7 @@
               <td [class.usage-detail__muted]="r.cliName === 'Unknown'">{{ r.cliName }}</td>
               <td>
                 @if (r.started; as s) {
-                  <time [attr.datetime]="s.iso">{{ s.local }}</time> <span class="usage-detail__utc">({{ s.utc }})</span>
+                  <time [attr.datetime]="s.iso">{{ s.text }}</time>
                 } @else { <span class="usage-detail__muted">Not reported</span> }
               </td>
               <td class="usage-detail__num" [class.usage-detail__muted]="r.pending">{{ r.spend }}</td>

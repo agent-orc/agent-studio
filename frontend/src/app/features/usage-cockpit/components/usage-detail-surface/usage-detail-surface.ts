@@ -14,8 +14,8 @@ import {
 } from '@angular/core';
 
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { ModalStackService } from '../../../../services/modal-stack.service';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
-import { cliDisplayName } from '../../usage-chip.util';
 import type { UsageDetailFocus } from '../../usage-detail.util';
 import { UsageDetailPanelComponent } from '../usage-detail-panel/usage-detail-panel';
 
@@ -45,6 +45,9 @@ function visible(el: HTMLElement): boolean {
  * - phone (`USAGE_PHONE_QUERY`): `showModal()`, a bottom sheet. The browser
  *   makes the rest of the page inert; Tab wraps inside the sheet.
  *
+ * While open it is on the modal stack, so Escape closes it even above the
+ * task detail, which is on the stack too.
+ *
  * Triggers are found by `data-usage-trigger` instead of a stored element, so
  * a breakpoint change that swaps the visible chip still anchors and returns
  * focus correctly. A CLI chip hidden at the current width falls back to the
@@ -61,6 +64,7 @@ function visible(el: HTMLElement): boolean {
   host: {
     '(keydown)': 'onKeydown($event)',
     '(focusout)': 'onFocusOut($event)',
+    '(click)': 'onClick($event)',
     '(document:pointerdown)': 'onDocumentPointerDown($event)',
     '(window:resize)': 'reposition()',
   },
@@ -83,14 +87,17 @@ export class UsageDetailSurfaceComponent {
 
   readonly phone = signal(false);
   readonly mode = computed(() => (this.phone() ? 'sheet' : 'popover'));
-  readonly title = computed(() => {
-    const focus = this.focus();
-    return focus?.kind === 'cli' ? `${cliDisplayName(focus.cliId)} usage` : 'Cost and usage';
-  });
+  /**
+   * The panel always holds every CLI, capacity and cost section; the focus only
+   * picks the section it opens at. One title names that content (AGT-3794-F14).
+   */
+  readonly title = signal('Cost and usage').asReadonly();
 
   /** Last focus that was open, for restoring focus after the dialog closes. */
   private lastFocus: UsageDetailFocus | null = null;
   private openedIn: 'sheet' | 'popover' | null = null;
+  private readonly modalStack = inject(ModalStackService);
+  private releaseModal: (() => void) | null = null;
 
   constructor() {
     const media = typeof matchMedia === 'function' ? matchMedia(USAGE_PHONE_QUERY) : null;
@@ -100,6 +107,7 @@ export class UsageDetailSurfaceComponent {
       media.addEventListener('change', onChange);
       inject(DestroyRef).onDestroy(() => media.removeEventListener('change', onChange));
     }
+    inject(DestroyRef).onDestroy(() => this.releaseModal?.());
 
     afterRenderEffect(() => {
       const focus = this.focus();
@@ -133,6 +141,7 @@ export class UsageDetailSurfaceComponent {
     this.lastFocus = focus;
     this.openedIn = mode;
     if (mode === 'sheet') dialog.showModal(); else dialog.show();
+    this.releaseModal ??= this.modalStack.push('usage-detail', () => this.requestClose());
     this.reposition();
     if (inside && dialog.contains(inside)) inside.focus({ preventScroll: true });
     else this.panelRef()?.focusSelected();
@@ -223,6 +232,18 @@ export class UsageDetailSurfaceComponent {
     this.closeDialog(false);
   }
 
+  /**
+   * A followed link leaves the panel's context: close it so it does not stay
+   * open over the destination (AGT-3794-F14). In-panel jump links cancel their
+   * own default and keep the panel open.
+   */
+  onClick(event: MouseEvent): void {
+    if (event.defaultPrevented) return;
+    const link = (event.target as Element | null)?.closest('a[href]');
+    if (!link || !this.dialogRef().nativeElement.contains(link)) return;
+    this.closeDialog(false);
+  }
+
   onDocumentPointerDown(event: PointerEvent): void {
     if (this.openedIn !== 'popover') return;
     const dialog = this.dialogRef().nativeElement;
@@ -252,6 +273,8 @@ export class UsageDetailSurfaceComponent {
     const dialog = this.dialogRef().nativeElement;
     const focus = this.lastFocus;
     if (dialog.open) dialog.close();
+    this.releaseModal?.();
+    this.releaseModal = null;
     this.openedIn = null;
     this.lastFocus = null;
     if (restoreFocus) this.trigger(focus)?.focus();

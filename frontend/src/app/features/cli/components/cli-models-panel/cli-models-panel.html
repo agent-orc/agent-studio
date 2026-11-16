@@ -7,7 +7,7 @@
           {{ item.from.cliType }}/{{ item.from.model ?? 'default' }} →
           {{ item.to.cliType }}/{{ item.to.model ?? 'default' }}
           <span class="cli-models__source">{{ item.rule }}</span>
-          @if (item.returnToPrimaryAt) { · returns after {{ item.returnToPrimaryAt | date:'medium' }} }
+          @if (item.returnToPrimaryAt) { · returns after {{ shortDate(item.returnToPrimaryAt) }} }
         </span>
       }
     </div>

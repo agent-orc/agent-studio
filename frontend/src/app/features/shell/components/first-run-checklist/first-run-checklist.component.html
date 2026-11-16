@@ -20,6 +20,17 @@
     </p>
   }
 
+  @if (activeProjects().length > 1) {
+    <label class="first-run__project" data-testid="first-run-project-select-label">Project to set up
+      <select data-testid="first-run-project-select" [value]="selectedProject()?.id ?? ''"
+        (change)="selectProject($any($event.target).value)">
+        @for (project of activeProjects(); track project.id) {
+          <option [value]="project.id">{{ project.displayName }}</option>
+        }
+      </select>
+    </label>
+  }
+
   <ol class="first-run__steps">
     <li data-testid="first-run-owner" [attr.data-state]="ownerReady() ? 'ready' : 'pending'">
       <span class="first-run__number">1</span>
@@ -122,10 +133,13 @@
     </li>
     <li data-testid="first-run-project" [attr.data-state]="repositoryReady() ? 'ready' : 'pending'">
       <span class="first-run__number">4</span>
-      <div><h3>First project</h3>
-        <p>{{ repositoryReady() ? firstProject()?.displayName + ' has a registered checkout.' : projects().error ? 'Project registry is unavailable. Refresh after reconnecting.' : 'Create a project, register its credential-free repository origin, then configure GitHub access to clone and verify the checkout.' }}</p>
-        <button type="button" (click)="openProject()">{{ firstProject() ? 'Review project setup' : 'Create project' }}</button>
-        @if (firstProject() && !repository().value) {
+      <div><h3>{{ activeProjects().length > 1 ? 'Project repository' : 'First project' }}</h3>
+        <p>{{ repositoryReady() ? selectedProject()?.displayName + ' has a registered checkout.' : projects().error ? 'Project registry is unavailable. Refresh after reconnecting.' : 'Create a project, register its credential-free repository origin, then configure GitHub access to clone and verify the checkout.' }}</p>
+        <button type="button" (click)="openProject()">{{ selectedProject() ? 'Review project setup' : 'Create project' }}</button>
+        @if (localProfile() && selectedProject(); as project) {
+          <app-server-checkout-notice class="first-run__checkout" [projectId]="project.id" />
+        }
+        @if (selectedProject() && !repository().value) {
           <div class="first-run__form">
             <label>Repository clone URL
               <input data-testid="first-run-repository-url" type="text" inputmode="url" autocomplete="off" [value]="repositoryUrl()"

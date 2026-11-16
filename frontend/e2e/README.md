@@ -65,10 +65,23 @@ coding and review host processes as the first-run profile. Its fake coding CLI
 authors a contract-valid Dossier in the claimed worktree. The spec enrolls a
 throwaway pull gate worker against the isolated backend, records the initial
 run and a follow-up, and checks Dossier publication, owner choices, promotion,
-and completion. It then runs one promoted coding slice through a batch gate
-executed by the pull worker.
+Promotion, the first slice start and the concept's acceptance go through the
+Studio controls. Promotion leaves the concept in Human Review; only Accept
+completes it. Before the concept starts, the spec samples both hosts through
+two provider-auth probe cycles (about seven idle minutes) and requires
+`provider-auth:codex` to stay ready. The concept wrapper is installed as
+`bin/concept/codex` for the coding host only, because the runner names the
+provider after the CLI file name. It then runs one promoted coding slice
+through a batch gate executed by the pull worker.
 The profile does not contact an SSH host or use a real provider
 credential. Screenshots go to `JOB_RESULTS_DIR` when set.
+
+Run `npm --prefix frontend run e2e -- e2e/settings/second-project-server-checkout.spec.ts`
+for the AGT-3809 journey on the `first-run` profile. It verifies Git access
+for one URL project in the checklist, adds a second URL project next to it,
+captures the server checkout notice in Settings, above the board, and on its
+Ready card (1280 light and dark, 390 px), creates the checkout from the Ready
+card, and integrates the first card into `develop` on the disposable origin.
 
 ### Product session over HTTPS
 
@@ -567,6 +580,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `empty-state-refresh.spec.ts` | studio-shell · refreshed empty state |
 | `explorer-project-board-and-view-links.spec.ts` | Explorer · project links to Board / Deck / Wiki / Dossiers |
 | `header-toolbar-polish.spec.ts` | Header toolbar polish |
+| `modal-focus-keyboard.spec.ts` | Needs you, Add task, escalation confirmation, project picker, card menu and usage sheet keep keyboard focus at 1280 px (AGT-3831) |
 | `hub-project-wiki-switch.spec.ts` | Project ⇄ Wiki switch with the Hub tab already open (AGT-2023) |
 | `navigation-no-deadend.spec.ts` | studio-shell · navigation has no dead end |
 | `project-hub-git-view.spec.ts` | Project Hub · Git View (mocked) |

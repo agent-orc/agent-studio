@@ -1,3 +1,4 @@
+import { formatZonedWithUtc } from '../../services/usage-time.util';
 import type {
   UsageCli,
   UsageCliWindow,
@@ -72,34 +73,13 @@ export function formatUsdCompact(value: number | null | undefined): string | nul
 
 // ------------------------------------------------------------------ time
 
-function validZone(timeZone: string | null | undefined): string {
-  if (!timeZone) return 'UTC';
-  try {
-    new Intl.DateTimeFormat('en-GB', { timeZone });
-    return timeZone;
-  } catch {
-    return 'UTC';
-  }
-}
-
-function formatInZone(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone, weekday: 'short', day: 'numeric', month: 'short',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).format(date);
-}
-
 /**
  * Workspace-local time with its UTC equivalent (HUC-05):
- * `Mon 29 Sept, 09:00 Europe/Berlin (Mon 29 Sept, 07:00 UTC)`.
+ * `Mon 29 Sept, 09:00 Europe/Berlin (Mon 29 Sept, 07:00 UTC)`. The format is
+ * owned by `usage-time.util` and shared by every usage surface.
  */
 export function formatLocalWithUtc(iso: string | null | undefined, timeZone: string | null | undefined): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  const zone = validZone(timeZone);
-  const local = `${formatInZone(date, zone)} ${zone}`;
-  return zone === 'UTC' ? local : `${local} (${formatInZone(date, 'UTC')} UTC)`;
+  return formatZonedWithUtc(iso, timeZone);
 }
 
 // --------------------------------------------------------------- windows

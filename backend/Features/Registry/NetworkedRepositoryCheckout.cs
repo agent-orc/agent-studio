@@ -61,7 +61,7 @@ public static class NetworkedRepositoryCheckout
         => TryManagedPath(storagePath, projectId)
             ?? throw new ArgumentException("Project storage path has no task repository root.", nameof(storagePath));
 
-    private static string? TryManagedPath(string storagePath, string projectId)
+    internal static string? TryManagedPath(string storagePath, string projectId)
     {
         // Storage lives at <task-repository>/projects/<id>/tasks. Keep Git
         // outside projects, which the task scanner treats as managed storage.
