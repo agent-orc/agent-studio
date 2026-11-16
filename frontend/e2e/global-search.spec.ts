@@ -62,6 +62,9 @@ for (const width of [1280, 390]) {
     await page.route('**/api/v1/studio/runner/status**', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }),
     }));
+    // The catch-all `[]` is not a usage snapshot; the cockpit poll would raise
+    // an application error dialog that takes focus from the opener.
+    await page.route('**/api/usage/cockpit**', route => route.fulfill({ status: 204 }));
     await page.goto('/');
     const opener = page.locator('button:visible').first();
     await opener.focus();

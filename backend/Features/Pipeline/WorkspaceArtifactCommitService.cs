@@ -34,6 +34,8 @@ public sealed class WorkspaceArtifactCommitService
     private readonly ConcurrentDictionary<long, Task> _lockRetries = new();
     private readonly ConcurrentDictionary<string, byte> _refusedFileNotices =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _ignoredPathNotices =
+        new(StringComparer.OrdinalIgnoreCase);
     private long _nextLockRetry;
 
     // Per-repo serialization gate. The punctual job-folder commits and the
@@ -264,20 +266,17 @@ public sealed class WorkspaceArtifactCommitService
             lock (RepositoryGate(gitRoot))
             {
                 _staleLocks.EnsureWritable(gitRoot);
-                var oversized = FindOversizedFiles(gitRoot, pathspecs);
+                var oversized = FindOversizedFiles(gitRoot, pathspecs, out var ignoredOversized);
                 UnstageRefusedFiles(gitRoot, oversized);
-                var refusedSpecs = BuildLiteralExcludePathspecs(oversized);
                 // Raw CLI and session logs stay on disk only; the job commit
                 // carries the reviewed evidence, never the log folder.
-                refusedSpecs.AddRange(BuildLiteralExcludePathspecs(
-                    pathspecs.Select(pathspec => pathspec + "/" + JobLogFolder).ToList()));
+                var excluded = oversized
+                    .Concat(pathspecs.Select(pathspec => pathspec + "/" + JobLogFolder))
+                    .ToList();
+                var refusedSpecs = BuildLiteralExcludePathspecs(excluded);
                 var writeTimeout = AddTimeout(gitRoot, pathspecs, refusedSpecs);
-                var addArgs = new List<string> { "add", "-A", "--" };
-                addArgs.AddRange(pathspecs);
-                addArgs.AddRange(refusedSpecs);
-                var add = RunGitRetryingIndexLock(gitRoot, addArgs, timeout: writeTimeout);
-                if (add.Code != 0)
-                    return WorkspaceArtifactCommitResult.Failed("git-add", add.ErrorText);
+                var staged = StageSkippingIgnored(gitRoot, pathspecs, excluded, ignoredOversized, writeTimeout, "job");
+                if (staged != null) return staged;
 
                 var changed = RunGit(gitRoot, ["diff", "--cached", "--quiet", "--", .. pathspecs, .. refusedSpecs]);
                 if (changed.Code == 0)
@@ -563,19 +562,15 @@ public sealed class WorkspaceArtifactCommitService
             lock (RepositoryGate(gitRoot))
             {
                 _staleLocks.EnsureWritable(gitRoot);
-                var oversized = FindOversizedFiles(gitRoot, pathspecs);
+                var oversized = FindOversizedFiles(gitRoot, pathspecs, out var ignoredOversized);
                 UnstageRefusedFiles(gitRoot, oversized);
                 var refusedSpecs = BuildLiteralExcludePathspecs(oversized);
                 var writeTimeout = AddTimeout(gitRoot, pathspecs, refusedSpecs);
-                // Stage the data paths (git add already honours the workspace
-                // repo's .gitignore), then unstage the exclude globs from the
-                // index.
-                var addArgs = new List<string> { "add", "-A", "--" };
-                addArgs.AddRange(pathspecs);
-                addArgs.AddRange(refusedSpecs);
-                var add = RunGitRetryingIndexLock(gitRoot, addArgs, timeout: writeTimeout);
-                if (add.Code != 0)
-                    return WorkspaceArtifactCommitResult.Failed("git-add", add.ErrorText);
+                // Stage the data paths, leaving out every path the workspace
+                // repo's .gitignore covers (AGT-3865), then unstage the exclude
+                // globs from the index.
+                var staged = StageSkippingIgnored(gitRoot, pathspecs, oversized, ignoredOversized, writeTimeout, "evidence");
+                if (staged != null) return staged;
 
                 if (resetSpecs.Count > 0)
                 {
@@ -609,7 +604,7 @@ public sealed class WorkspaceArtifactCommitService
                 {
                     if (commit.ErrorText.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase))
                         return WorkspaceArtifactCommitResult.Skipped("nothing-to-commit");
-                    return WorkspaceArtifactCommitResult.Failed("git-commit", commit.ErrorText);
+                    return WorkspaceArtifactCommitResult.Failed("git-commit", SummarizeGitError(commit.ErrorText));
                 }
 
                 var sha = RunGit(gitRoot, ["rev-parse", "--short", "HEAD"]);
@@ -659,7 +654,7 @@ public sealed class WorkspaceArtifactCommitService
                         && !AgentStudio.Magazine.MagazineStorePathPolicy.IsMagazineStorePath(path))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
-                var oversized = FindOversizedFiles(gitRoot, candidates);
+                var oversized = FindOversizedFiles(gitRoot, candidates, out _);
                 UnstageRefusedFiles(gitRoot, oversized);
                 var writeTimeout = WorkspaceAddTimeoutPolicy.For(
                     SumFileBytes(gitRoot, candidates.Except(oversized, StringComparer.OrdinalIgnoreCase)),
@@ -671,8 +666,8 @@ public sealed class WorkspaceArtifactCommitService
                     addArgs.AddRange(candidates);
                     addArgs.AddRange(BuildLiteralExcludePathspecs(oversized));
                     var add = RunGitRetryingIndexLock(gitRoot, addArgs, timeout: writeTimeout);
-                    if (add.Code != 0)
-                        return WorkspaceArtifactCommitResult.Failed("git-add", add.ErrorText);
+                        if (add.Code != 0)
+                        return WorkspaceArtifactCommitResult.Failed("git-add", SummarizeGitError(add.ErrorText));
                 }
 
                 // The sweep commits the whole index, so .security/ content
@@ -715,9 +710,16 @@ public sealed class WorkspaceArtifactCommitService
         }
     }
 
-    private List<string> FindOversizedFiles(string gitRoot, IReadOnlyList<string> pathspecs)
+    /// <summary>
+    /// Files under <paramref name="pathspecs"/> above the size limit, which the
+    /// caller keeps out of the commit. Files the repository ignores are left
+    /// out and returned in <paramref name="ignored"/>: git never stages them,
+    /// and naming one as an exclude pathspec makes git refuse the whole add
+    /// (AGT-3865).
+    /// </summary>
+    private List<string> FindOversizedFiles(string gitRoot, IReadOnlyList<string> pathspecs, out List<string> ignored)
     {
-        var refused = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var candidates = new Dictionary<string, (string File, long Size, long Limit)>(StringComparer.OrdinalIgnoreCase);
         foreach (var pathspec in pathspecs)
         {
             if (string.IsNullOrWhiteSpace(pathspec) || pathspec.StartsWith(':')) continue;
@@ -738,11 +740,7 @@ public sealed class WorkspaceArtifactCommitService
                     var relative = Path.GetRelativePath(gitRoot, file).Replace('\\', '/');
                     var limit = IsSettlementJournal(relative) ? 5L * 1024 * 1024 : _maximumFileBytes;
                     if (size <= limit) continue;
-                    if (!refused.Add(relative)) continue;
-                    if (_refusedFileNotices.TryAdd(file, 0))
-                        _logger.LogWarning(
-                            "workspace-artifact-file-refused path={Path} bytes={Bytes} maximumBytes={MaximumBytes}",
-                            relative, size, limit);
+                    candidates.TryAdd(relative, (file, size, limit));
                 }
                 catch (IOException ex)
                 {
@@ -750,7 +748,20 @@ public sealed class WorkspaceArtifactCommitService
                 }
             }
         }
-        return refused.ToList();
+
+        var ignoredSet = CheckIgnored(gitRoot, candidates.Keys.ToList());
+        ignored = ignoredSet.ToList();
+        var refused = new List<string>();
+        foreach (var (relative, entry) in candidates)
+        {
+            if (ignoredSet.Contains(relative)) continue;
+            refused.Add(relative);
+            if (_refusedFileNotices.TryAdd(entry.File, 0))
+                _logger.LogWarning(
+                    "workspace-artifact-file-refused path={Path} bytes={Bytes} maximumBytes={MaximumBytes}",
+                    relative, entry.Size, entry.Limit);
+        }
+        return refused;
     }
 
     internal static bool IsSettlementJournal(string path)
@@ -765,6 +776,157 @@ public sealed class WorkspaceArtifactCommitService
         var reset = RunGit(gitRoot, resetArgs);
         if (reset.Code != 0)
             _logger.LogWarning("workspace-artifact refused-file reset failed root={Root} error={Error}", gitRoot, reset.ErrorText);
+    }
+
+    /// <summary>
+    /// Runs <c>git add -A</c> for <paramref name="pathspecs"/> minus the
+    /// <paramref name="excluded"/> paths without naming any path the repository
+    /// ignores (AGT-3865). Git refuses the whole add when an explicit pathspec,
+    /// an exclude pathspec included, names an ignored path, so one ignored
+    /// <c>results/</c> folder or rotated log used to fail the entire flush on
+    /// every tick. Ignored data paths are removed from
+    /// <paramref name="pathspecs"/> in place; ignored excluded paths stay out of
+    /// the add and are unstaged after it, so the caller's diff and commit specs
+    /// keep excluding them. When git still reports ignored paths, those are
+    /// dropped and the add runs once more. Returns null when the index is
+    /// staged, otherwise the result the caller returns.
+    /// </summary>
+    private WorkspaceArtifactCommitResult? StageSkippingIgnored(
+        string gitRoot, List<string> pathspecs, IReadOnlyList<string> excluded,
+        IReadOnlyList<string> ignoredOversized, TimeSpan timeout, string scope)
+    {
+        var ignored = CheckIgnored(gitRoot, pathspecs.Concat(excluded).ToList());
+        var addFree = new HashSet<string>(excluded.Where(ignored.Contains), StringComparer.Ordinal);
+        var dropped = pathspecs.RemoveAll(ignored.Contains);
+        NoteIgnoredPaths(gitRoot, scope, ignored.Concat(ignoredOversized).Distinct(StringComparer.Ordinal).ToList());
+        if (pathspecs.Count == 0)
+            return WorkspaceArtifactCommitResult.Skipped(dropped > 0 ? "all-paths-ignored" : "no-data-paths");
+
+        var add = RunAdd(gitRoot, pathspecs, excluded, addFree, timeout);
+        if (add.Code != 0 && IsIgnoredPathsError(add.ErrorText))
+        {
+            var reported = ParseIgnoredPaths(add.ErrorText);
+            bool Covered(string path) => reported.Any(ig =>
+                path.Equals(ig, StringComparison.Ordinal)
+                || path.StartsWith(ig.TrimEnd('/') + "/", StringComparison.Ordinal));
+            pathspecs.RemoveAll(Covered);
+            foreach (var path in excluded.Where(Covered)) addFree.Add(path);
+            _logger.LogWarning(
+                "workspace-artifact-ignored-paths-dropped root={Root} scope={Scope} count={Count} first={First} reason=git-add-refused",
+                gitRoot, scope, reported.Count, string.Join(",", reported.Take(IgnoredPathSample)));
+            if (pathspecs.Count == 0)
+            {
+                ResetPaths(gitRoot, addFree);
+                return WorkspaceArtifactCommitResult.Skipped("all-paths-ignored");
+            }
+            add = RunAdd(gitRoot, pathspecs, excluded, addFree, timeout);
+        }
+        ResetPaths(gitRoot, addFree);
+        return add.Code == 0
+            ? null
+            : WorkspaceArtifactCommitResult.Failed("git-add", SummarizeGitError(add.ErrorText));
+    }
+
+    private GitProcessResult RunAdd(
+        string gitRoot, IReadOnlyList<string> pathspecs, IReadOnlyList<string> excluded,
+        IReadOnlySet<string> addFree, TimeSpan timeout)
+    {
+        var addArgs = new List<string> { "add", "-A", "--" };
+        addArgs.AddRange(pathspecs);
+        addArgs.AddRange(BuildLiteralExcludePathspecs(excluded.Where(path => !addFree.Contains(path)).ToList()));
+        return RunGitRetryingIndexLock(gitRoot, addArgs, timeout: timeout);
+    }
+
+    // A tracked file below an ignored excluded folder is still staged by the
+    // folder's `add -A`; unstaging keeps it out of the index as the exclude did.
+    private void ResetPaths(string gitRoot, IReadOnlyCollection<string> paths)
+    {
+        if (paths.Count == 0) return;
+        var reset = RunGit(gitRoot, ["reset", "-q", "--", .. BuildLiteralPathspecs(paths)]);
+        if (reset.Code != 0)
+            _logger.LogDebug("workspace-artifact ignored-path reset non-zero root={Root} error={Error}", gitRoot, reset.ErrorText);
+    }
+
+    /// <summary>The subset of <paramref name="paths"/> the repository ignores,
+    /// from <c>git check-ignore --stdin</c>. Tracked files never count as
+    /// ignored. A failing check returns an empty set, leaving the add-time
+    /// fallback in <see cref="StageSkippingIgnored"/> to recover.</summary>
+    private HashSet<string> CheckIgnored(string gitRoot, IReadOnlyList<string> paths)
+    {
+        var ignored = new HashSet<string>(StringComparer.Ordinal);
+        if (paths.Count == 0) return ignored;
+        var check = RunGit(gitRoot, ["check-ignore", "-z", "--stdin"],
+            string.Concat(paths.Distinct(StringComparer.Ordinal).Select(path => path + "\0")));
+        if (check.Code == 0)
+            ignored.UnionWith(check.Out.Split('\0', StringSplitOptions.RemoveEmptyEntries));
+        else if (check.Code != 1)
+            _logger.LogDebug("workspace-artifact check-ignore failed root={Root} error={Error}", gitRoot, check.ErrorText);
+        return ignored;
+    }
+
+    // One line per change of the ignored count per repo: the same ignored
+    // folders come back on every flush and would otherwise flood the log.
+    private void NoteIgnoredPaths(string gitRoot, string scope, IReadOnlyCollection<string> ignored)
+    {
+        var key = gitRoot + "|" + scope;
+        var previous = _ignoredPathNotices.TryGetValue(key, out var count) ? count : 0;
+        _ignoredPathNotices[key] = ignored.Count;
+        if (ignored.Count == 0 || ignored.Count == previous) return;
+        _logger.LogInformation(
+            "workspace-artifact-ignored-paths-dropped root={Root} scope={Scope} count={Count} first={First}",
+            gitRoot, scope, ignored.Count, string.Join(",", ignored.Order(StringComparer.Ordinal).Take(IgnoredPathSample)));
+    }
+
+    private const int IgnoredPathSample = 3;
+    private const string IgnoredPathsHeader = "paths are ignored by one of your .gitignore files";
+
+    internal static bool IsIgnoredPathsError(string errorText)
+        => errorText.Contains(IgnoredPathsHeader, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The paths listed after git's "The following paths are ignored"
+    /// header, up to the first <c>hint:</c> line.</summary>
+    internal static List<string> ParseIgnoredPaths(string errorText)
+    {
+        var paths = new List<string>();
+        var inList = false;
+        foreach (var raw in errorText.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (!inList)
+            {
+                inList = line.Contains(IgnoredPathsHeader, StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
+            if (line.Length == 0) continue;
+            if (line.StartsWith("hint:", StringComparison.OrdinalIgnoreCase)
+                || line.StartsWith("fatal:", StringComparison.OrdinalIgnoreCase)
+                || line.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+                break;
+            paths.Add(line.Replace('\\', '/'));
+        }
+        return paths;
+    }
+
+    /// <summary>
+    /// Compact git error text for a failure result and its log line: an
+    /// ignored-paths refusal becomes the count and the first few paths, and any
+    /// other error keeps its first lines (AGT-3865).
+    /// </summary>
+    internal static string SummarizeGitError(string errorText, int maximumLines = 3)
+    {
+        if (string.IsNullOrWhiteSpace(errorText)) return errorText;
+        if (IsIgnoredPathsError(errorText))
+        {
+            var paths = ParseIgnoredPaths(errorText);
+            var shown = string.Join(", ", paths.Take(maximumLines));
+            var more = paths.Count > maximumLines ? $", +{paths.Count - maximumLines} more" : string.Empty;
+            return $"{paths.Count} paths ignored by .gitignore ({shown}{more})";
+        }
+        var lines = errorText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => !line.StartsWith("hint:", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (lines.Count <= maximumLines) return string.Join(" | ", lines);
+        return string.Join(" | ", lines.Take(maximumLines)) + $" | (+{lines.Count - maximumLines} more lines)";
     }
 
     private WorkspaceArtifactCommitResult? UnstageSecurityStoreContent(string gitRoot)

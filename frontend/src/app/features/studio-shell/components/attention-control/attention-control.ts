@@ -117,7 +117,7 @@ export class AttentionControlComponent {
     this.close(false);
     switch (target) {
       case 'card':
-        this.references.openReferenceOrNotify(attentionCard(item)!);
+        this.references.openReferenceOrNotify(attentionCard(item)!, { focusDecision: true });
         return;
       case 'dossiers':
         if (item.project && item.dossierId) {
