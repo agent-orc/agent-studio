@@ -24,12 +24,14 @@ import {
 } from '../../state/workbench-decision-draft.store';
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
 import {
+  AgentChoice,
   actionErrorMessage,
   answeredDecisionCount,
   bounded,
   cardPrompt,
   createOperationId,
   defaultAgent,
+  featureJobRequest,
   featureTaskDraft,
   laneLabel,
   readDefaultCli,
@@ -181,7 +183,7 @@ export class WorkbenchDecisionActionsComponent {
     this.drafts.updateAction(this.projectName(), this.document().workbench.id, { request });
   }
 
-  updateAgent(change: { cliType: CliType; model: string; thinkingLevel: string | null }): void {
+  updateAgent(change: AgentChoice): void {
     this.cliType.set(change.cliType);
     this.model.set(change.model);
     this.thinkingLevel.set(change.thinkingLevel);
@@ -286,21 +288,9 @@ export class WorkbenchDecisionActionsComponent {
         if (!path) throw new Error(`Could not resolve the task path for ${this.projectName()}.`);
         return path;
       }),
-      switchMap(watchPath => this.tasks.createJob({
-        title: draft.title,
-        agent: this.cliType(),
-        watchPath,
-        promptMarkdown: cardPrompt(this.document(), draft, this.decisionPoints(), this.responses()),
-        targetState: draft.initialLane,
-        cliType: this.cliType(),
-        model: this.model().trim() || undefined,
-        thinkingLevel: this.thinkingLevel() || undefined,
-        modelExplicit: true,
-        thinkingLevelExplicit: true,
-        taskType: draft.taskType,
-        mode: draft.mode,
-        dossier: { path: this.document().workbench.entryPath },
-      }).pipe(switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName()).pipe(
+      switchMap(watchPath => this.tasks.createJob(featureJobRequest(
+        this.document(), draft, this.decisionPoints(), this.responses(), this.agent(), watchPath,
+      )).pipe(switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName()).pipe(
         map(detail => ({ detail, id: created.id, watchPath })),
         catchError(() => this.tasks.deleteJob(created.id, watchPath).pipe(
           catchError(() => throwError(() => new Error(
@@ -398,7 +388,7 @@ export class WorkbenchDecisionActionsComponent {
       this.goal(), this.selectedSummary());
   }
 
-  private agent(): { cliType: CliType; model: string; thinkingLevel: string | null } {
+  private agent(): AgentChoice {
     return { cliType: this.cliType(), model: this.model().trim(), thinkingLevel: this.thinkingLevel() };
   }
 

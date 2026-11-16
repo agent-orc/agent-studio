@@ -1,7 +1,7 @@
 import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { laneName } from '../../../../models/lane-presentation';
 import { HttpErrorResponse } from '@angular/common/http';
-import { CLI_TYPES, CliType } from '../../../../models/task.model';
+import { CLI_TYPES, CliType, CreateTaskRequest } from '../../../../models/task.model';
 import {
   WorkbenchAgentRoute,
   WorkbenchDecisionPoint,
@@ -174,6 +174,22 @@ export function revisionCardRoute(card: WorkbenchRevisionCard | null): AgentChoi
   const cli = card?.available ? card.cliType?.trim() : null;
   if (!card || !cli || !(CLI_TYPES as readonly string[]).includes(cli)) return null;
   return { cliType: cli as CliType, model: card.model?.trim() ?? '', thinkingLevel: card.thinkingLevel ?? null };
+}
+
+/** The board card a feature-spawn decision creates, pinned to the confirmed agent route. */
+export function featureJobRequest(
+  document: WorkbenchDocument, draft: WorkbenchTaskDraft, points: readonly WorkbenchDecisionPoint[],
+  responses: readonly WorkbenchDecisionResponse[], agent: AgentChoice, watchPath: string,
+): CreateTaskRequest {
+  return {
+    title: draft.title, agent: agent.cliType, watchPath,
+    promptMarkdown: cardPrompt(document, draft, points, responses),
+    targetState: draft.initialLane, cliType: agent.cliType,
+    model: agent.model || undefined, thinkingLevel: agent.thinkingLevel || undefined,
+    modelExplicit: true, thinkingLevelExplicit: true,
+    taskType: draft.taskType, mode: draft.mode,
+    dossier: { path: document.workbench.entryPath },
+  };
 }
 
 /** The from and to lines of the route change a rework confirmation would make, or null. */
