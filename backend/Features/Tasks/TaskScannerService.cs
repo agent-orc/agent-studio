@@ -1314,13 +1314,29 @@ public class TaskScannerService : ITaskScanner
     /// at the integrated commit is read instead. No git process runs here.
     /// </summary>
     public PromoteConceptResponse? BuildPromoteConceptPlan(string jobId, string? watchPath = null)
+        => ReadPromoteConceptPlan(jobId, watchPath).Plan;
+
+    /// <summary>
+    /// <see cref="BuildPromoteConceptPlan"/> with the reason when no plan can
+    /// be built, so a refusal names the missing piece: no concept card, no
+    /// published Dossier (never concept-reviewed), a failed concept review, or
+    /// no validated implementation proposals (AGT-3875).
+    /// </summary>
+    public ConceptPromotionPlanRead ReadPromoteConceptPlan(string jobId, string? watchPath = null)
     {
         var info = FindJob(jobId, watchPath);
-        if (info == null || !TaskModes.IsConcept(info.Mode)) return null;
+        if (info == null)
+            return ConceptPromotionPlanRead.Refused(ConceptPromotionRefusals.NoConceptCard,
+                $"Card {jobId} was not found, so there is no concept card to promote.");
+        var label = info.Key ?? info.Id;
+        if (!TaskModes.IsConcept(info.Mode))
+            return ConceptPromotionPlanRead.Refused(ConceptPromotionRefusals.NoConceptCard,
+                $"{label} is not a concept card. Only a concept card's reviewed Dossier proposes implementation cards.");
 
         var publication = AgentStudio.Pipeline.ConceptWorkbenchStore.Read(info.FolderPath);
         if (publication == null || string.IsNullOrWhiteSpace(publication.RepoRelativeDirectory))
-            return null;
+            return ConceptPromotionPlanRead.Refused(ConceptPromotionRefusals.NoReview,
+                $"Concept card {label} has not delivered a reviewed Dossier yet. Run the concept card; its delivery runs the concept review.");
 
         var entry = GetWatchPaths().FirstOrDefault(candidate =>
             WatchPathComparison.PathsEqual(candidate.Path, info.WatchPath));
@@ -1328,7 +1344,9 @@ public class TaskScannerService : ITaskScanner
         if (string.IsNullOrWhiteSpace(repositoryRoot))
             repositoryRoot = entry?.RootPath;
         if (string.IsNullOrWhiteSpace(repositoryRoot) || !Directory.Exists(repositoryRoot))
-            return null;
+            return ConceptPromotionPlanRead.Refused(ConceptPromotionRefusals.RepositoryUnavailable,
+                $"The repository of {info.ProjectName ?? "this project"} is not available, so the concept Dossier cannot be read.",
+                publication.RepoRelativeDirectory);
 
         var documentRoot = repositoryRoot;
         var review = AgentStudio.Pipeline.ConceptWorkbenchContract.ReviewDirectory(
@@ -1342,9 +1360,12 @@ public class TaskScannerService : ITaskScanner
                 documentRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id,
                 allowAccepted: true);
         }
-        if (!review.IsComplete || review.Descriptor == null) return null;
+        if (!review.IsComplete || review.Descriptor == null)
+            return ConceptPromotionPlanRead.Refused(ConceptPromotionRefusals.ReviewFailed,
+                $"The concept Dossier of {label} did not pass concept review: {review.Summary}",
+                publication.RepoRelativeDirectory);
 
-        return new PromoteConceptResponse
+        var plan = new PromoteConceptResponse
         {
             Source = new ConceptSourceDocument
             {
@@ -1358,6 +1379,7 @@ public class TaskScannerService : ITaskScanner
             WatchPath = info.WatchPath,
             ProjectName = info.ProjectName,
         };
+        return new ConceptPromotionPlanRead(plan, null, null, publication.RepoRelativeDirectory);
     }
 
     private static readonly HashSet<string> PromotableImageExtensions =

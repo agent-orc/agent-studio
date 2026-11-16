@@ -537,6 +537,24 @@ export interface WorkbenchDocument {
   entryFingerprint?: string | null;
   cards?: DossierCardList | null;
   revisionCard?: WorkbenchRevisionCard | null;
+  /** Whether Create implementation cards can work for this Dossier (AGT-3875). */
+  promotion?: WorkbenchPromotion | null;
+}
+
+/** Why a Dossier cannot promote implementation cards; null reason when it can. */
+export type WorkbenchPromotionReason =
+  | 'no-concept-card' | 'no-review' | 'review-failed' | 'no-proposals'
+  | 'other-dossier' | 'repository-unavailable';
+
+export interface WorkbenchPromotion {
+  available: boolean;
+  reason: WorkbenchPromotionReason | null;
+  message: string | null;
+  sourceTaskKey: string | null;
+  sourceJobId: string | null;
+  sourceTitle: string | null;
+  sourceLane: string | null;
+  proposalCount: number;
 }
 
 export interface DossierCardList {
