@@ -109,36 +109,16 @@ public static class UsageCockpitEndpoints
             {
                 var root = configuration["TaskRepository"];
                 if (string.IsNullOrWhiteSpace(root)) throw new InvalidOperationException();
-                var messages = bus.Query(root, AgentMessageBusPaths.WorkspaceScope,
-                    new AgentMessageQuery(Kind: "token-usage", Since: calendar.WeekStartUtc));
-                var unattributed = new List<OrchestratorLogEntry>();
-                var unassignedCount = 0;
+                var workspaceUsage = WorkspaceBusUsage.Read(bus, root, allProjects, scanner, calendar.WeekStartUtc);
                 var canAssignUnattributed = workspace.IsDefault
                     && (human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
-                var jobOwners = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-                foreach (var message in messages)
+                IReadOnlyList<OrchestratorLogEntry> unattributed = canAssignUnattributed ? workspaceUsage.Unattributed : [];
+                var unassignedCount = canAssignUnattributed ? 0 : workspaceUsage.Unattributed.Count;
+                for (var index = 0; index < costInputs.Count; index++)
                 {
-                    var entry = BusTokenEntryConverter.ToEntry(message);
-                    var attribution = TokenUsageAttribution.Resolve(message.Project, message.Tags, message.JobId,
-                        name => MatchProject(allProjects, name)?.Id,
-                        jobId => JobOwner(scanner, allProjects, jobOwners, jobId));
-                    if (attribution.ProjectId is null)
-                    {
-                        // A row naming a project outside this workspace is not ours.
-                        if (!string.IsNullOrWhiteSpace(message.Project)) continue;
-                        if (canAssignUnattributed) unattributed.Add(entry);
-                        else unassignedCount++;
-                        continue;
-                    }
-                    var project = visibleProjects.FirstOrDefault(project =>
-                        string.Equals(project.Id, attribution.ProjectId, StringComparison.OrdinalIgnoreCase));
-                    if (project is null) continue;
-                    var index = costInputs.FindIndex(input => input.ProjectId == project.Id);
                     var current = costInputs[index];
-                    costInputs[index] = current with
-                    {
-                        Entries = TokenLedgerMerge.WithoutDuplicates(current.Entries, [entry])
-                    };
+                    if (current.ProjectId is null) continue;
+                    costInputs[index] = current with { Entries = workspaceUsage.MergeInto(current.ProjectId, current.Entries) };
                 }
                 costInputs.Add(new UsageCostInput(null, "Unattributed", unattributed,
                     new ProjectTokenDataFreshness

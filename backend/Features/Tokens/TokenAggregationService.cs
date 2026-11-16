@@ -10,7 +10,6 @@ namespace AgentStudio.Tokens;
 public sealed class TokenAggregationService : ITokenAggregator
 {
     private readonly BusAggregationCache _bus;
-    private readonly AgentMessageBusStore _store;
     private readonly IConfiguration _config;
     private readonly ProjectTokenLedger _ledger;
     private readonly JobStatsMetadataCache _jobs;
@@ -21,7 +20,6 @@ public sealed class TokenAggregationService : ITokenAggregator
 
     public TokenAggregationService(
         BusAggregationCache bus,
-        AgentMessageBusStore store,
         IConfiguration config,
         ProjectTokenLedger ledger,
         JobStatsMetadataCache jobs,
@@ -31,7 +29,6 @@ public sealed class TokenAggregationService : ITokenAggregator
         TokenPricingDriftMonitor? pricingDrift = null)
     {
         _bus = bus;
-        _store = store;
         _config = config;
         _ledger = ledger;
         _jobs = jobs;
@@ -145,19 +142,37 @@ public sealed class TokenAggregationService : ITokenAggregator
     }
 
     /// <summary>
-    /// Exact UTC calendar interval. This range view reads the token bus only;
-    /// it does not merge task receipts.
+    /// Exact UTC calendar interval over the merged project ledger (bus rows, task
+    /// receipts, persona and chat fallback receipts), the same snapshot the
+    /// trailing window and the usage cockpit cost read (AGT-3798).
     /// </summary>
-    public TokenTimeline WorkspaceTimelineRange(IEnumerable<(string Name, string WatchPath)> projects, DateTime fromUtc, DateTime toUtc, int bucketMinutes)
+    public TokenTimeline WorkspaceTimelineRange(IEnumerable<(string Name, string WatchPath)> projects, DateTime fromUtc, DateTime toUtc, int bucketMinutes,
+        WorkspaceBusUsage? workspaceUsage = null)
     {
-        var workspaceRoot = _config["TaskRepository"] ?? "(unconfigured)";
-        var perProject = projects
-            .Select(project => (project.Name, _pricing.Price(InWindow(
-                BusTokenEntryConverter.LoadTokenUsageEntries(_store, workspaceRoot, project.Name),
-                fromUtc, toUtc))))
-            .ToList();
-        return WorkspaceTimelineFold.Build(perProject, fromUtc, toUtc, bucketMinutes);
+        var perProject = new List<(string Project, IReadOnlyList<PricedTokenEntry> Ledger)>();
+        var freshness = new List<ProjectTokenDataFreshness>();
+        foreach (var (name, watchPath) in projects)
+        {
+            var snapshot = _ledger.LoadSnapshot(name, watchPath);
+            var entries = workspaceUsage?.MergeInto(name, snapshot.Entries) ?? snapshot.Entries;
+            perProject.Add((name, _pricing.Price(InWindow(entries, fromUtc, toUtc))));
+            freshness.Add(snapshot.Freshness);
+        }
+        if (workspaceUsage is not null)
+        {
+            var unattributed = InWindow(workspaceUsage.Unattributed, fromUtc, toUtc);
+            if (unattributed.Count > 0) perProject.Add((UnattributedProject, _pricing.Price(unattributed)));
+            freshness.Add(new ProjectTokenDataFreshness { Sources = [WorkspaceBusUsage.Source] });
+        }
+
+        return WorkspaceTimelineFold.Build(perProject, fromUtc, toUtc, bucketMinutes) with
+        {
+            Freshness = ProjectTokenDataFreshness.Combine(freshness),
+        };
     }
+
+    /// <summary>Row name of projectless workspace usage, as in the usage cockpit cost.</summary>
+    public const string UnattributedProject = "Unattributed";
 
     public AdHocUsageAggregate AdHocAggregate(DateTime? since = null)
     {
