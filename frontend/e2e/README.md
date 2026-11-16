@@ -65,8 +65,14 @@ coding and review host processes as the first-run profile. Its fake coding CLI
 authors a contract-valid Dossier in the claimed worktree. The spec enrolls a
 throwaway pull gate worker against the isolated backend, records the initial
 run and a follow-up, and checks Dossier publication, owner choices, promotion,
-and completion. It then runs one promoted coding slice through a batch gate
-executed by the pull worker.
+Promotion, the first slice start and the concept's acceptance go through the
+Studio controls. Promotion leaves the concept in Human Review; only Accept
+completes it. Before the concept starts, the spec samples both hosts through
+two provider-auth probe cycles (about seven idle minutes) and requires
+`provider-auth:codex` to stay ready. The concept wrapper is installed as
+`bin/concept/codex` for the coding host only, because the runner names the
+provider after the CLI file name. It then runs one promoted coding slice
+through a batch gate executed by the pull worker.
 The profile does not contact an SSH host or use a real provider
 credential. Screenshots go to `JOB_RESULTS_DIR` when set.
 
