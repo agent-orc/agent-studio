@@ -1151,6 +1151,15 @@ test.describe('Execution Hosts settings section', () => {
         hosts: [entry('agent-runner-01', false), entry('agent-runner-01-review', true)],
       }),
     }));
+    let statusReads = 0;
+    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => {
+      statusReads++;
+      const busy = statusReads === 2;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        draining: statusReads > 1 && statusReads < 5, drained: !busy, running: busy
+          ? [{ kind: 'review', attemptId: 'review-active', taskKey: 'AGT-3648' }] : [],
+      }) });
+    });
     await page.goto('/#/workspace/settings/execution-hosts');
     await dismissDevErrorDialog(page);
 
@@ -1200,21 +1209,12 @@ test.describe('Execution Hosts settings section', () => {
       }
     }
 
-    let statusReads = 0;
     await page.route('**/api/clients/agent-runner-01-review/drain', route => route.fulfill({
       status: 200, contentType: 'application/json', body: '{}',
     }));
     await page.route('**/api/clients/agent-runner-01-review/resume', route => route.fulfill({
       status: 200, contentType: 'application/json', body: '{}',
     }));
-    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => {
-      statusReads++;
-      const busy = statusReads === 1;
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-        draining: statusReads < 4, drained: !busy, running: busy
-          ? [{ kind: 'review', attemptId: 'review-active', taskKey: 'AGT-3648' }] : [],
-      }) });
-    });
     await update.getByTestId('review-host-update-start').click();
     await expect(update).toHaveAttribute('data-stage', 'blocked');
     await expect(update.getByTestId('review-host-update-message')).toContainText('Review AGT-3648 is still active');
@@ -1263,6 +1263,9 @@ test.describe('Execution Hosts settings section', () => {
           heartbeatStale: false, expectedImageRef: expected }],
       }),
     }));
+    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ draining: false, drained: false, running: [] }),
+    }));
     await page.goto('/#/workspace/settings/execution-hosts');
     await dismissDevErrorDialog(page);
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
@@ -1279,6 +1282,19 @@ test.describe('Execution Hosts settings section', () => {
           animations: 'disabled' });
       }
     }
+    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => route.fulfill({
+      status: 404, contentType: 'application/json', body: '{"error":"client-not-found"}',
+    }));
+    await page.reload();
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
+    const unavailable = page.getByTestId('review-host-update');
+    await expect(unavailable).toHaveAttribute('data-stage', 'unavailable');
+    await expect(unavailable.getByTestId('review-host-update-start')).toHaveCount(0);
+    await expect(unavailable.getByTestId('review-host-update-message')).toContainText('no registered client identity');
+    await expect(unavailable.getByTestId('review-host-update-alternative')).toBeVisible();
+    await unavailable.screenshot({ path: join(SHOT_DIR, 'execution-hosts-missing-review-identity-390-dark.png'),
+      animations: 'disabled' });
   });
 
   for (const order of ['drift-first', 'capability-first'] as const) {

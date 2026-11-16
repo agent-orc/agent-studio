@@ -10,6 +10,65 @@ const expectedImageRef = `registry.example/review@sha256:${'b'.repeat(64)}`;
 const target = { clientId: 'review-1', name: 'Review one', expectedCommit, expectedImageRef };
 
 describe('ReviewHostUpdateComponent', () => {
+  it('withholds drain when the first-run review identity has no client record', async () => {
+    TestBed.configureTestingModule({ imports: [ReviewHostUpdateComponent], providers: [
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+    ] });
+    const fixture = TestBed.createComponent(ReviewHostUpdateComponent);
+    fixture.componentRef.setInput('target', { ...target, clientId: 'first-run-review' });
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    expect(fixture.nativeElement.querySelector('[data-testid="review-host-update-start"]')).toBeNull();
+    http.expectOne('/api/clients/first-run-review/drain-status').flush(
+      { error: 'client-not-found' }, { status: 404, statusText: 'Not Found' });
+    await Promise.resolve();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="review-host-update-start"]')).toBeNull();
+    expect(fixture.nativeElement.textContent).toContain('no registered client identity');
+    expect(fixture.nativeElement.querySelector('[data-testid="review-host-update-alternative"]')).not.toBeNull();
+    http.expectNone('/api/clients/first-run-review/drain');
+    const recheck = fixture.componentInstance.checkEligibility();
+    http.expectOne('/api/clients/first-run-review/drain-status').flush({
+      draining: false, drained: false, running: [],
+    });
+    await recheck;
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="review-host-update-start"]')).not.toBeNull();
+    http.verify();
+  });
+
+  it('identifies a missing client when drain or drain-status returns 404 after the precheck', async () => {
+    TestBed.configureTestingModule({ imports: [ReviewHostUpdateComponent], providers: [
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+    ] });
+    const fixture = TestBed.createComponent(ReviewHostUpdateComponent);
+    fixture.componentRef.setInput('target', target);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/clients/review-1/drain-status').flush({ draining: false, drained: false, running: [] });
+    await Promise.resolve();
+    const first = component.start();
+    http.expectOne('/api/clients/review-1/drain').flush(
+      { error: 'client-not-found-or-retired' }, { status: 404, statusText: 'Not Found' });
+    await first;
+    expect(component.stage()).toBe('unavailable');
+    expect(component.message()).toContain('no registered client identity');
+
+    const recheck = component.checkEligibility();
+    http.expectOne('/api/clients/review-1/drain-status').flush({ draining: false, drained: false, running: [] });
+    await recheck;
+    const second = component.start();
+    http.expectOne('/api/clients/review-1/drain').flush({});
+    await Promise.resolve();
+    http.expectOne('/api/clients/review-1/drain-status').flush(
+      { error: 'client-not-found' }, { status: 404, statusText: 'Not Found' });
+    await second;
+    expect(component.stage()).toBe('unavailable');
+    expect(component.message()).toContain('no registered client identity');
+    http.verify();
+  });
+
   it('can cancel a drain before the switch without recording completion', async () => {
     TestBed.configureTestingModule({ imports: [ReviewHostUpdateComponent], providers: [
       provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
@@ -19,6 +78,8 @@ describe('ReviewHostUpdateComponent', () => {
     fixture.detectChanges();
     const component = fixture.componentInstance;
     const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/clients/review-1/drain-status').flush({ draining: false, drained: false, running: [] });
+    await Promise.resolve();
     const start = component.start();
     http.expectOne('/api/clients/review-1/drain').flush({});
     await Promise.resolve();
@@ -44,6 +105,8 @@ describe('ReviewHostUpdateComponent', () => {
     fixture.detectChanges();
     const component = fixture.componentInstance;
     const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/clients/review-1/drain-status').flush({ draining: false, drained: false, running: [] });
+    await Promise.resolve();
     expect(fixture.nativeElement.querySelector('[data-testid="review-host-expected-digest"]')?.textContent)
       .toContain(expectedImageRef);
 

@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
@@ -6,8 +6,8 @@ import type { HostReleaseDriftSnapshot } from '../../models/host-release-drift';
 import { reviewHeartbeatProvesUpdate, reviewQuietPoint,
   type ReviewDrainStatus, type ReviewUpdateTarget } from '../../models/review-host-update';
 
-type Stage = 'ready' | 'draining' | 'blocked' | 'quiet' | 'switching' | 'verifying' | 'aborting'
-  | 'verified' | 'resuming' | 'complete' | 'error';
+type Stage = 'checking' | 'unavailable' | 'ready' | 'draining' | 'blocked' | 'quiet' | 'switching'
+  | 'verifying' | 'aborting' | 'verified' | 'resuming' | 'complete' | 'error';
 
 /** Guided operator handoff to the supported networked deploy procedure. */
 @Component({
@@ -28,10 +28,12 @@ export class ReviewHostUpdateComponent {
   readonly switchStartedAt = signal<string | null>(null);
   readonly proofVerified = signal(false);
   readonly drainRequested = signal(false);
+  private checkedClientId: string | null = null;
+  private eligibilityRequest = 0;
   readonly active = computed(() => this.captured() ?? this.target());
   readonly progressIndex = computed(() => {
     switch (this.stage()) {
-      case 'ready': case 'draining': case 'aborting': return 0;
+      case 'checking': case 'unavailable': case 'ready': case 'draining': case 'aborting': return 0;
       case 'blocked': return 1;
       case 'quiet': case 'switching': return 2;
       case 'verifying': return 3;
@@ -51,15 +53,40 @@ export class ReviewHostUpdateComponent {
     const incoming = this.target();
     const captured = this.captured();
     if (incoming && captured && incoming.clientId !== captured.clientId) this.reset();
+    if (incoming && incoming.clientId !== this.checkedClientId) void this.checkEligibility(incoming);
   });
 
   private url(target: ReviewUpdateTarget): string {
     return `/api/clients/${encodeURIComponent(target.clientId)}`;
   }
 
+  async checkEligibility(target = this.target()): Promise<void> {
+    if (!target) return;
+    this.checkedClientId = target.clientId;
+    const request = ++this.eligibilityRequest;
+    this.stage.set('checking');
+    this.message.set(null);
+    try {
+      await firstValueFrom(this.http.get<ReviewDrainStatus>(this.url(target) + '/drain-status'));
+      if (request === this.eligibilityRequest) this.stage.set('ready');
+    } catch (error) {
+      if (request !== this.eligibilityRequest) return;
+      this.failDrainAccess(error, 'Could not check the review identity. Check its connection and retry.');
+    }
+  }
+
+  private failDrainAccess(error: unknown, fallback: string): void {
+    if (error instanceof HttpErrorResponse && error.status === 404) {
+      this.stage.set('unavailable');
+      this.message.set('This review host has no registered client identity, so Studio cannot drain it here.');
+      return;
+    }
+    this.fail(fallback);
+  }
+
   async start(): Promise<void> {
     const target = this.target();
-    if (!target || this.busy()) return;
+    if (!target || this.busy() || this.stage() !== 'ready') return;
     if (!target.expectedCommit || !target.expectedImageRef?.match(/@sha256:[0-9a-f]{64}$/i)) {
       this.message.set('Expected commit and image digest are required before this update can be verified.');
       return;
@@ -72,8 +99,8 @@ export class ReviewHostUpdateComponent {
       await firstValueFrom(this.http.post(this.url(target) + '/drain', {}));
       this.drainRequested.set(true);
       await this.readQuietPoint(target);
-    } catch {
-      this.fail('Could not drain or read the host. Check its connection and retry.');
+    } catch (error) {
+      this.failDrainAccess(error, 'Could not drain or read the host. Check its connection and retry.');
     } finally {
       this.busy.set(false);
     }
@@ -84,7 +111,7 @@ export class ReviewHostUpdateComponent {
     if (!target || this.busy()) return;
     this.busy.set(true);
     try { await this.readQuietPoint(target); }
-    catch { this.fail('Could not read the host drain status. Retry before switching.'); }
+    catch (error) { this.failDrainAccess(error, 'Could not read the host drain status. Retry before switching.'); }
     finally { this.busy.set(false); }
   }
 
@@ -105,7 +132,7 @@ export class ReviewHostUpdateComponent {
       this.switchStartedAt.set(new Date().toISOString());
       this.stage.set('switching');
       this.message.set('Run the review host steps in the deploy procedure, then check for a new heartbeat.');
-    } catch { this.fail('Could not confirm the quiet point. The host switch is refused.'); }
+    } catch (error) { this.failDrainAccess(error, 'Could not confirm the quiet point. The host switch is refused.'); }
     finally { this.busy.set(false); }
   }
 
