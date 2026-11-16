@@ -26,6 +26,10 @@ interface Fixture {
   gitIntegration: Record<string, unknown> | null;
   /** AGT-3874: the review projection on the board card and the review resource. */
   reviewProjection?: Record<string, unknown> | null;
+  /** AGT-3873: the park marker projection, the status document and the pipeline record. */
+  parkedBlocker?: Record<string, unknown> | null;
+  statusMarkdown?: string;
+  pipelineExecution?: Record<string, unknown> | null;
 }
 
 const CONCEPT: Fixture = {
@@ -89,6 +93,7 @@ function task(f: Fixture) {
     commits: [],
     integration: f.boardIntegration,
     reviewProjection: f.reviewProjection ?? null,
+    parkedBlocker: f.parkedBlocker ?? null,
     requiresIntegration: coded ? null : false,
     estimatedTokens: 0,
   };
@@ -111,7 +116,7 @@ function core(f: Fixture) {
     runtime: { attemptId: null, runnerId: null, runnerName: null, hostname: null,
       executionStatus: null, location: 'none', heartbeatAt: null, leaseState: 'none', leaseId: null },
     runtimeVersion: 'v1',
-    statusSummary: { state: 'ready', text: 'Delivered.', originalBytes: 10, hash: 'status', cursor: null },
+    statusSummary: { state: 'ready', text: f.statusMarkdown ?? 'Delivered.', originalBytes: 10, hash: 'status', cursor: null },
     prompt: { state: 'ready', text: '# Fixture\n\nHuman review.', originalBytes: 25,
       hash: 'prompt', cursor: null, continuationUrl: null },
     timeline: { state: 'ready', events: [], cursor: null, continuationUrl: null },
@@ -191,7 +196,8 @@ async function mockApplication(page: Page, f: Fixture, move: (route: Route) => P
     source: null, snapshotCount: 0, activeItemId: null, items: [], unassignedSubActions: [] }));
   await page.route(`**/api/tasks/${f.id}/pipeline**`, route => json(route, {
     pipeline: { id: 'fixture', displayName: 'Fixture', version: 1, pre: [], core: [], post: [], allSteps: [] },
-    execution: null, executions: [], config: {}, cost: null,
+    execution: f.pipelineExecution ?? null, executions: f.pipelineExecution ? [f.pipelineExecution] : [],
+    config: {}, cost: null,
   }));
   await page.route(`**/api/tasks/${f.id}/provenance**`, route => json(route, {
     branch: null, base: null, transitions: [], merge: null, landedState: 'on-branch-only',
@@ -205,7 +211,7 @@ async function mockApplication(page: Page, f: Fixture, move: (route: Route) => P
   await page.route(`**/api/tasks/${f.id}/details/documents**`, route => {
     const name = new URL(route.request().url()).searchParams.get('name');
     return json(route, resource(f, 'documents', { name,
-      markdown: name === 'prompt' ? '# Fixture\n\nHuman review.' : 'Delivered.', summaryState: null }));
+      markdown: name === 'prompt' ? '# Fixture\n\nHuman review.' : f.statusMarkdown ?? 'Delivered.', summaryState: null }));
   });
   await page.route(`**/api/tasks/${f.id}/details/usage**`, route => json(route, { error: 'usage offline' }, 503));
   await page.route(`**/api/tasks/${f.id}/details/review**`, route =>
@@ -213,7 +219,7 @@ async function mockApplication(page: Page, f: Fixture, move: (route: Route) => P
   await page.route(`**/api/tasks/${f.id}/details/overview**`, route => json(route, resource(f, 'overview', {
     decision: null, planningSpawn: null, conceptDossier: null, olderBriefDelivery: null,
     relatedWikiPages: [], creationSource: 'operator', completionClaim: null,
-    parkedBlocker: null, needsInput: null,
+    parkedBlocker: f.parkedBlocker ?? null, needsInput: null,
     references: { dependsOn: [], relatedTo: [], blockedBy: [], supersedes: [] }, waitsOn: null,
     acceptanceAttemptGap: null,
   })));
@@ -365,7 +371,8 @@ test.describe('Concept and held Accept in Human review (AGT-3704)', () => {
     await expect.poll(() => traffic.moves.length).toBe(1);
 
     const shown = page.getByTestId('acceptance-refusal');
-    await expect(shown).toContainText(refusal, { timeout: 15_000 });
+    // AGT-3867 names the server refusal as an acceptance refusal.
+    await expect(shown).toContainText(refusal.replace(/^Completion/, 'Acceptance'), { timeout: 15_000 });
     await expect(shown).toHaveAttribute('data-refusal-source', 'server');
     const action = page.getByTestId('acceptance-refusal-action');
     await expect(action).toHaveText('Accept with override…');
@@ -375,12 +382,15 @@ test.describe('Concept and held Accept in Human review (AGT-3704)', () => {
       await screenshot(page, `content-gap-refusal-${value}.png`);
     }
 
-    // The refusal toast overlaps the toolbar's right edge; its placement is AGT-3873.
-    const toast = page.getByTestId('notification-warning')
-      .filter({ hasText: 'Acceptance was refused because the delivery or content review' });
+    // AGT-3873: the refusal toast docks below the toolbar, and the refused
+    // Accept already opened the written-reason form with its field focused.
+    const toast = page.getByTestId('notification-stack-below-toolbar')
+      .getByTestId('notification-warning').filter({ hasText: 'Accept refused' });
+    await expect(toast).toBeVisible();
+    await expect(page.getByTestId('acceptance-refusal-form')).toBeVisible();
+    await expect(page.getByTestId('acceptance-refusal-override-reason')).toBeFocused();
     await toast.getByTestId('notification-close').click();
     await expect(toast).toHaveCount(0);
-    await action.click();
     await page.getByTestId('acceptance-refusal-override-reason')
       .fill('Owner accepts: the first-paint target moves to its own card.');
     await page.getByTestId('acceptance-refusal-submit').click();
@@ -438,5 +448,221 @@ test.describe('Concept and held Accept in Human review (AGT-3704)', () => {
     await action.click();
     await expect(page.getByTestId('acceptance-refusal-form')).toBeInViewport();
     if (RESULTS_DIR) await page.screenshot({ path: path.join(RESULTS_DIR, 'held-accept-390-form-light.png') });
+  });
+});
+
+/**
+ * AGT-3873 (owner report, 16 November 2026): Accept on AGT-3534 was refused
+ * for a `concerns` verdict. The toast had no control and covered the toolbar
+ * action that resolved it, the banner named the override without offering it
+ * or the concern, the park read "No reason was recorded", and the Result head
+ * called the merged, reviewed delivery a "Pipeline failure".
+ */
+const CONTENT_GAP = 'Completion refused: requirement-fit verdict was concerns.';
+const OWNER_REASON = 'Owner accepts: the first-paint target moves to its own card.';
+
+const SCAFFOLD_STATUS = `<!-- agent-studio:result-scaffold -->
+# Status
+
+- Result: Success
+- Case: generic
+- Provenance: Synthesized by Agent Studio because no generated status.md was available.
+
+## What Was Done
+- The task reached \`5-human-review\`.
+
+## Open Items
+- None recorded in this synthesized scaffold.
+`;
+
+/** AGT-3534 as the owner saw it: merged, reviewed, parked in Human review with no prose reason. */
+const AGT_3534: Fixture = {
+  ...CONCERNS,
+  parkedBlocker: {
+    blockerType: 'operator-decision', conditionKind: 'manual',
+    conditionDescription: 'Only a person can clear this park; no automatic precondition is recorded.',
+    parkedAt: '2026-11-10T09:00:00Z', reason: 'external-completion: codex-cloud', recallStatus: 'blocked',
+    lastEvaluatedAt: '2026-11-16T09:00:00Z', detail: 'Only a person can clear this park.',
+    lane: '5-human-review', decision: null, needsInputFile: null, evaluationAgeSeconds: 600,
+    evaluationStale: false, requiresDecisionCard: false, cause: 'external-completion', causeDetail: 'codex-cloud',
+  },
+  statusMarkdown: SCAFFOLD_STATUS,
+  pipelineExecution: {
+    pipelineId: 'standard', pipelineVersion: 1, jobId: 'agt-3534-concerns', project: 'fixture',
+    startedAt: '2026-11-09T08:00:00Z', completedAt: '2026-11-09T09:35:00Z',
+    steps: [{ stepId: 'core-agent-run', status: 'completed' }, { stepId: 'post-status-report', status: 'failed' }],
+  },
+};
+
+const VARIANTS = [
+  { width: 1280, theme: 'light' }, { width: 1280, theme: 'dark' },
+  { width: 390, theme: 'light' }, { width: 390, theme: 'dark' },
+] as const;
+
+/** Refuses the first Accept with the concerns verdict and admits the override. */
+function refuseOnce(): (route: Route) => Promise<void> {
+  let refused = false;
+  return route => {
+    if (refused) return json(route, {});
+    refused = true;
+    return json(route, { error: CONTENT_GAP, code: 'completion-content-gap' }, 409);
+  };
+}
+
+async function fullShot(page: Page, name: string): Promise<void> {
+  if (!RESULTS_DIR) return;
+  // Keep the Accept hover tooltip out of the evidence.
+  await page.mouse.move(1, 1);
+  await page.getByTestId('cac-tooltip').first().waitFor({ state: 'hidden', timeout: 3_000 }).catch(() => undefined);
+  const dir = path.join(RESULTS_DIR, 'agt3873');
+  mkdirSync(dir, { recursive: true });
+  await page.screenshot({ path: path.join(dir, name) });
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+const overlaps = (a: Box, b: Box) =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+/** The refusal toast sits below the tab toolbar and never over the open override form. */
+async function expectToastClear(page: Page, toast: ReturnType<Page['getByTestId']>): Promise<void> {
+  await expect.poll(async () => {
+    const [bar, box, formBox] = await Promise.all([page.getByTestId('studio-tabbar').boundingBox(),
+      toast.boundingBox(), page.getByTestId('acceptance-refusal-form').boundingBox()]);
+    return !!bar && !!box && !!formBox && box.y >= bar.y + bar.height && !overlaps(box, formBox);
+  }).toBe(true);
+}
+
+test.describe('Refused Accept offers its next step where it is named (AGT-3873)', () => {
+  test.use({ serviceWorkers: 'block' });
+
+  for (const { width, theme: value } of VARIANTS) {
+    test(`toolbar Accept: the form opens in place, the toast and banner carry the actions (${width} ${value})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
+      const traffic = await mockApplication(page, AGT_3534, refuseOnce());
+      await openCoreFirst(page, AGT_3534);
+      await theme(page, value);
+
+      const accept = page.getByTestId(width < 600 ? 'studio-mobile-triage-action-mark-done' : 'studio-triage-action-mark-done');
+      await expect(accept).toBeEnabled({ timeout: 15_000 });
+      await accept.click();
+      await expect.poll(() => traffic.moves.length).toBe(1);
+
+      // 1. The refused Accept opens the written-reason form in place, focused.
+      const form = page.getByTestId('acceptance-refusal-form');
+      await expect(form).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId('acceptance-refusal-override-reason')).toBeFocused();
+      await expect(form).toContainText(`The review's concern: ${CONCERNS_SUMMARY}`);
+
+      // 2. The toast carries the actions and never covers the toolbar.
+      const toast = page.getByTestId('notification-stack-below-toolbar')
+        .getByTestId('notification-warning').filter({ hasText: 'Accept refused' });
+      await expect(toast).toBeVisible();
+      await expect(toast).toContainText(`The review's concern: ${CONCERNS_SUMMARY}`);
+      await expect(toast.getByTestId('acceptance-refusal-toast-override')).toHaveText('Accept with a written reason');
+      await expect(toast.getByTestId('acceptance-refusal-toast-review')).toHaveText('Review again');
+      await expectToastClear(page, toast);
+      const toastBox = (await toast.boundingBox())!;
+      for (const testId of ['studio-triage-panel', 'acceptance-refusal-action']) {
+        const control = await page.getByTestId(testId).boundingBox();
+        expect(control && overlaps(control, toastBox), `${testId} stays uncovered`).toBeFalsy();
+      }
+      if (width < 600) expect(toastBox.width).toBeGreaterThan(width - 40);
+
+      // 3. The banner names the concern and offers both steps.
+      const banner = page.getByTestId('task-move-refusal');
+      await expect(banner).toContainText('Acceptance refused: requirement-fit verdict was concerns.');
+      await expect(banner.getByTestId('task-move-refusal-concern')).toContainText(CONCERNS_SUMMARY);
+      await expect(banner.getByTestId('task-move-refusal-override')).toBeVisible();
+      await expect(banner.getByTestId('task-move-refusal-review')).toBeVisible();
+      await fullShot(page, `agt3873-refused-accept-${width}-${value}.png`);
+
+      // The toast and the banner open the same form, focused.
+      await page.getByTestId('acceptance-refusal-cancel').click();
+      await expect(form).toHaveCount(0);
+      await toast.getByTestId('acceptance-refusal-toast-override').click();
+      await expect(form).toBeVisible();
+      await expect(page.getByTestId('acceptance-refusal-override-reason')).toBeFocused();
+      await page.getByTestId('acceptance-refusal-cancel').click();
+      await banner.getByTestId('task-move-refusal-override').click();
+      await expect(page.getByTestId('acceptance-refusal-override-reason')).toBeFocused();
+      await fullShot(page, `agt3873-banner-override-${width}-${value}.png`);
+
+      await page.getByTestId('acceptance-refusal-override-reason').fill(OWNER_REASON);
+      await page.getByTestId('acceptance-refusal-submit').click();
+      await expect.poll(() => traffic.moves.length).toBe(2);
+      expect(traffic.moves[1]).toMatchObject({ targetState: '6-completed', operatorOverride: true, reason: OWNER_REASON });
+    });
+
+    test(`board Accept: the refused card opens with the override focused (${width} ${value})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
+      const traffic = await mockApplication(page, AGT_3534, refuseOnce());
+      await page.goto('/#/board', { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await dismissDevErrorDialog(page);
+      await theme(page, value);
+      // The mocked install has no first-run proof, so the shell may open its checklist first.
+      await page.getByRole('tab', { name: /Board/ }).first().click();
+      // A phone shows one lane at a time.
+      if (width < 600) await page.getByLabel('Board lane').selectOption('5-human-review');
+
+      const card = page.getByTestId('task-card').filter({ hasText: AGT_3534.ref });
+      await expect(card).toBeVisible({ timeout: 30_000 });
+      await card.click({ button: 'right' });
+      await page.getByTestId('card-ctx-item-move-card:6-completed').click();
+      await expect.poll(() => traffic.moves.length).toBe(1);
+
+      await expect(page.getByTestId('studio-task')).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId('acceptance-refusal-form')).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId('acceptance-refusal-override-reason')).toBeFocused();
+      await expect(page.getByTestId('error-dialog')).toHaveCount(0);
+      const toast = page.getByTestId('notification-stack-below-toolbar')
+        .getByTestId('notification-warning').filter({ hasText: 'Accept refused' });
+      await expect(toast).toBeVisible();
+      await expectToastClear(page, toast);
+      await fullShot(page, `agt3873-board-accept-${width}-${value}.png`);
+    });
+
+    test(`park and Result read the owner hold and the merged delivery (${width} ${value})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
+      await mockApplication(page, AGT_3534, route => json(route, {}));
+      await openCoreFirst(page, AGT_3534);
+      await theme(page, value);
+
+      // 4. A park without a recorded reason says what it waits for.
+      const park = page.getByTestId('parked-blocker');
+      await expect(park).toBeVisible({ timeout: 15_000 });
+      await expect(park).toContainText("Held for the owner's decision in Human review.");
+      await expect(park).not.toContainText('No reason was recorded');
+      await park.scrollIntoViewIfNeeded();
+      await fullShot(page, `agt3873-park-${width}-${value}.png`);
+
+      // 5. The Result head states the lane and the merged delivery, never "Pipeline failure".
+      if (width < 600) await page.getByTestId('detail-mobile-pane-result').click();
+      const result = page.getByTestId('result-view');
+      await expect(result.getByTestId('result-case-badge')).toContainText('Human review', { timeout: 15_000 });
+      await expect(result.getByTestId('result-case-badge')).not.toContainText('Pipeline failure');
+      await expect(result.getByTestId('result-scaffold-delivery'))
+        .toHaveText('The delivery is merged into develop and its review passed.');
+      await expect(result.getByTestId('result-scaffold-notice')).toContainText('generated automatically from task.json');
+      await result.getByTestId('result-scaffold-notice').scrollIntoViewIfNeeded();
+      await fullShot(page, `agt3873-result-${width}-${value}.png`);
+    });
+  }
+
+  test('Review again in the banner asks for a content review of the current brief', async ({ page }) => {
+    const reviews: string[] = [];
+    await mockApplication(page, AGT_3534, refuseOnce());
+    await page.route(/\/content-review(\?|$)/, route => {
+      reviews.push(route.request().url());
+      return json(route, { reviewAttemptId: 'review-2', briefVersion: 'b2' });
+    });
+    await openCoreFirst(page, AGT_3534);
+    const accept = page.getByTestId('studio-triage-action-mark-done');
+    await expect(accept).toBeEnabled({ timeout: 15_000 });
+    await accept.click();
+    await page.getByTestId('acceptance-refusal-cancel').click();
+    await page.getByTestId('task-move-refusal-review').click();
+    await expect.poll(() => reviews.length).toBe(1);
+    await expect(page.getByTestId('notification-message')
+      .filter({ hasText: 'Content review requested for the current brief.' })).toBeVisible();
   });
 });

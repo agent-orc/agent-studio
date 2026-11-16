@@ -162,3 +162,47 @@ describe('AcceptanceRefusalComponent · content verdict (AGT-3874)', () => {
       .toBe('Accept with override…');
   });
 });
+
+describe('AcceptanceRefusalComponent · override request (AGT-3873)', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  async function settle(fixture: Awaited<ReturnType<typeof mount>>['fixture']): Promise<void> {
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
+
+  it('opens the written-reason form with its field focused when the card asks for it', async () => {
+    const { fixture, find } = await mount({ ...OVERRIDE, source: 'server',
+      reason: 'Acceptance refused: requirement-fit verdict was concerns.',
+      concern: 'The 830-card first-paint target remains unmet and lacks idle-host confirmation' });
+    const store = TestBed.inject(AcceptanceRefusalStore);
+    expect(find('acceptance-refusal-form')).toBeNull();
+
+    store.requestOverride(JOB.taskKey);
+    await settle(fixture);
+
+    expect(find('acceptance-refusal-form')).not.toBeNull();
+    expect(document.activeElement).toBe(find('acceptance-refusal-override-reason'));
+    expect(find('acceptance-refusal-concern')?.textContent)
+      .toContain("The review's concern: The 830-card first-paint target remains unmet");
+    expect(store.overrideRequest()).toBeNull();
+  });
+
+  it('ignores a request for another card and keeps it pending', async () => {
+    const { fixture, find } = await mount(OVERRIDE);
+    const store = TestBed.inject(AcceptanceRefusalStore);
+    store.requestOverride('wp::AGT-9999');
+    await settle(fixture);
+    expect(find('acceptance-refusal-form')).toBeNull();
+    expect(store.overrideRequest()).toBe('wp::AGT-9999');
+  });
+
+  it('opens no form when the refusal is resolved by another action', async () => {
+    const { fixture, find } = await mount({ reason: 'develop moved under the delivery.', action: 'retry-integration',
+      actionLabel: 'Retry integration', source: 'hold' });
+    TestBed.inject(AcceptanceRefusalStore).requestOverride(JOB.taskKey);
+    await settle(fixture);
+    expect(find('acceptance-refusal-form')).toBeNull();
+  });
+});

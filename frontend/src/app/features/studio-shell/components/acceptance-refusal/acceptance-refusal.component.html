@@ -5,7 +5,7 @@
   <app-status-indicator class="acceptance-refusal__reason" tone="warning" [compact]="true"
                         testId="acceptance-refusal-reason"
                         [label]="refusal().reason" [detail]="refusal().reason" />
-  <button type="button"
+  <button #actionButton type="button"
           class="studio-tab-action studio-tab-action--toggle"
           data-testid="acceptance-refusal-action"
           [attr.aria-haspopup]="refusal().action === 'retry-integration' ? null : 'dialog'"
@@ -29,7 +29,10 @@
        (keydown.escape)="cancelOverride()">
     <label class="acceptance-refusal__label" for="acceptance-refusal-reason-{{ job().id }}">Reason for the override</label>
     <p class="acceptance-refusal__hint">{{ refusal().reason }} The reason is recorded on the card.</p>
-    <textarea id="acceptance-refusal-reason-{{ job().id }}"
+    @if (refusal().concern; as concern) {
+      <p class="acceptance-refusal__hint" data-testid="acceptance-refusal-concern">The review's concern: {{ concern }}</p>
+    }
+    <textarea #reasonInput id="acceptance-refusal-reason-{{ job().id }}"
               class="acceptance-refusal__input"
               data-testid="acceptance-refusal-override-reason"
               rows="3"

@@ -234,6 +234,22 @@ describe('ParkedBlockerComponent', () => {
     expect(el.querySelector('[data-testid="parked-blocker-question-id"]')).toBeNull();
   });
 
+  /**
+   * AGT-3873: AGT-3534 waited in Human Review for its owner's acceptance, and
+   * its park read "No reason was recorded for this park." like an error.
+   */
+  it('says what a park without a reason or question waits for, from its lane', () => {
+    const el = render(park({
+      blockerType: 'operator-decision', lane: '5-human-review', reason: 'external-completion: codex-cloud',
+      cause: 'external-completion', causeDetail: 'codex-cloud', decision: null, requiresDecisionCard: false,
+    }), '5-human-review');
+
+    expect(text(el, 'parked-blocker-statement')).toBe("Held for the owner's decision in Human review.");
+    expect(el.querySelector('[data-testid="parked-blocker-question-missing"]')).toBeNull();
+    expect(el.textContent).not.toContain('No reason was recorded');
+    expect(el.textContent).not.toContain('No question was recorded');
+  });
+
   /** AGT-3586: DEMO-6 from walkthrough AGT-3561 (F11). */
   function auditPark(overrides: Partial<ParkedBlockerStatus> = {}): ParkedBlockerStatus {
     return park({

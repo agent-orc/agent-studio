@@ -185,6 +185,9 @@ export class ParkedBlockerComponent {
       };
     }
     if (!view.cause.parkedBy) {
+      // AGT-3873: a park with neither a question nor a reason says what it
+      // waits for, from its lane and blocker type, not that nothing was written.
+      if (!view.reasonRecorded && !view.questionId) return { text: view.reason, missingQuestion: false };
       return { text: `No question was recorded for this park${identifier}.`, missingQuestion: true };
     }
     return { text: `${view.cause.parkedBy} parked this card. ${view.reason}`, missingQuestion: false };

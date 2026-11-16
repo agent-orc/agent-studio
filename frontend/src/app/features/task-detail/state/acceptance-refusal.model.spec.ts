@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { TaskInfo } from '../../../models/task.model';
 import type { TaskIntegrationStatus } from '../../git';
 import {
+  AcceptanceRefusalStore,
+  acceptanceRefusalConcern,
   acceptanceRefusalFor,
+  acceptanceRefusalOverridable,
   acceptanceRefusalTooltip,
   contentVerdictHold,
   serverAcceptanceRefusal,
@@ -122,5 +125,51 @@ describe('acceptance readiness before and after the click (AGT-3867)', () => {
       message: 'Acceptance refused: requirement-fit verdict was concerns.' });
     expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false, concerns))
       .toMatchObject({ reason: 'Acceptance refused: requirement-fit verdict was concerns.', source: 'server', action: 'override' });
+  });
+});
+
+describe('content refusal next steps (AGT-3873)', () => {
+  const SUMMARY = 'The 830-card first-paint target remains unmet and lacks idle-host confirmation';
+  const concerns = card({ status: 'integrated' }, { reviewProjection: { attempts: [{ aspects: [
+    { aspect: 'requirement-fit', status: 'concerns', classification: 'product', summary: SUMMARY },
+  ] }] } } as unknown as Partial<TaskInfo>);
+  const refused = (error: string) => serverAcceptanceRefusal(concerns, { status: 409,
+    error: { code: 'completion-content-gap', error } });
+
+  it('names the concern of a content refusal from the dry run, else from the content verdict', () => {
+    expect(acceptanceRefusalConcern(concerns)).toBe(SUMMARY);
+    expect(acceptanceRefusalConcern(concerns, readinessItem('AGT-1', 'review-concerns', { concern: 'Dry run concern' })))
+      .toBe('Dry run concern');
+    expect(acceptanceRefusalConcern(card({ status: 'integrated' }))).toBeNull();
+    const passed = card({ status: 'integrated' }, { reviewProjection: { attempts: [{ aspects: [
+      { aspect: 'requirement-fit', status: 'pass', summary: 'Fine.' }] }] } } as unknown as Partial<TaskInfo>);
+    expect(acceptanceRefusalConcern(passed)).toBeNull();
+  });
+
+  it('carries the concern on the server refusal the toolbar shows', () => {
+    const refusal = acceptanceRefusalFor(concerns, refused('Completion refused: requirement-fit verdict was concerns.'), false);
+    expect(refusal).toMatchObject({ source: 'server', action: 'override', concern: SUMMARY });
+    const integration = acceptanceRefusalFor(concerns, { taskKey: concerns.taskKey, code: 'integration-dead-end',
+      message: 'Not in develop.' }, false);
+    expect(integration?.concern).toBeNull();
+  });
+
+  it('lets an override admit a content verdict, never a missing report or an integration refusal', () => {
+    expect(acceptanceRefusalOverridable(refused('Completion refused: requirement-fit verdict was concerns.'))).toBe(true);
+    expect(acceptanceRefusalOverridable(refused('Completion refused: the required report is missing (results/report.md).')))
+      .toBe(false);
+    expect(acceptanceRefusalOverridable({ code: 'integration-dead-end', message: 'Not in develop.' })).toBe(false);
+  });
+
+  it('keeps one pending override request per card until that card takes it', () => {
+    const store = new AcceptanceRefusalStore();
+    store.requestOverride('wp::AGT-1');
+    expect(store.takeOverrideRequest('wp::AGT-2')).toBe(false);
+    expect(store.overrideRequest()).toBe('wp::AGT-1');
+    expect(store.takeOverrideRequest('wp::AGT-1')).toBe(true);
+    expect(store.overrideRequest()).toBeNull();
+    store.requestOverride('wp::AGT-1');
+    store.clear('wp::AGT-1');
+    expect(store.overrideRequest()).toBeNull();
   });
 });

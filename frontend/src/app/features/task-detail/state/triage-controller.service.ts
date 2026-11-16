@@ -11,7 +11,8 @@ import { describeMoveRefusal } from '../../../models/lane-move-guard';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
-import { AcceptanceRefusalStore, acceptanceRefusalSentence, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { AcceptanceRefusalStore, acceptanceRefusalOverridable, acceptanceRefusalSentence, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { AcceptanceRefusalActions } from './acceptance-refusal-actions.service';
 import { AcceptanceReadinessStore, acceptanceOverrideAllowed } from '../../acceptance-readiness';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import {
@@ -21,6 +22,17 @@ import {
   laneLabelFor,
   needsPlanningAcceptWarning,
 } from './triage-actions.model';
+
+/**
+ * The banner above a card whose move was refused. `overridable` marks a
+ * content refusal the banner resolves itself, with the written-reason
+ * override and a review against the current brief (AGT-3873).
+ */
+export interface TaskMoveRefusal {
+  taskKey: string;
+  message: string;
+  overridable?: boolean;
+}
 
 /**
  * Cycle 10c job-detail-feature controller: orchestrates the triage
@@ -50,7 +62,8 @@ export class TriageController {
   private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
   private readonly acceptanceReadiness = inject(AcceptanceReadinessStore);
   private readonly studioTabs = inject(StudioTabStateService);
-  readonly moveRefusal = signal<{ taskKey: string; message: string } | null>(null);
+  private readonly refusalActions = inject(AcceptanceRefusalActions);
+  readonly moveRefusal = signal<TaskMoveRefusal | null>(null);
 
   /**
    * Invoked at every triage decision so the TaskDetailComponent's
@@ -271,25 +284,30 @@ export class TriageController {
         this.studioTabs.open({ kind: 'task', taskKey: info.taskKey }, 'replace-current');
         this.clearActing();
         const refusal = typeof err?.error?.error === 'string' ? err.error.error.trim() : '';
-        const message = err?.status === 409 && err?.error?.code === 'completion-content-gap'
+        const contentGap = err?.status === 409 && err?.error?.code === 'completion-content-gap';
+        const message = contentGap
           ? contentGapBanner(refusal)
           : err?.status === 409 && err?.error?.code === 'run-attempt-missing'
             ? 'Acceptance needs an operator override. Add a written reason in the acceptance section below, then accept with override.'
             : err?.status === 409 && err?.error?.code === 'integration-dead-end'
               ? `${refusal || 'Delivery is not integrated.'} Resolve the delivery evidence, then try Accept again.`
               : `The task stayed in ${laneLabelFor(prevState)}. ${refusal || 'The move failed.'} Try the action again.`;
-        this.moveRefusal.set({ taskKey: info.taskKey, message });
+        this.moveRefusal.set({ taskKey: info.taskKey, message,
+          ...(contentGap ? { overridable: acceptanceRefusalOverridable({ code: 'completion-content-gap', message: refusal }) } : {}) });
         if (ev.targetState === '6-completed' && err?.status === 409
             && err?.error?.code === 'run-attempt-missing') {
           // AGT-3096: checked before the integration match below, whose
           // pattern also hits this refusal's "delivery evidence" wording.
           // The reopened core-first detail reads the gap from its overview
           // and offers the override; the toast names the refusal meanwhile.
-          this.notifications.warning(
-            typeof err.error.error === 'string' && err.error.error.trim()
+          this.notifications.notify({
+            kind: 'warning',
+            title: 'Acceptance needs an operator override',
+            message: typeof err.error.error === 'string' && err.error.error.trim()
               ? err.error.error
               : 'No run attempt in the current authority epoch. Accept with an operator override and a written reason.',
-            'Acceptance needs an operator override');
+            position: 'below-toolbar',
+          });
           return;
         }
         if (ev.targetState === '6-completed' && err?.status === 409
@@ -297,9 +315,12 @@ export class TriageController {
           // AGT-3867: the server's own reason, never a guessed brief
           // mismatch. The toolbar keeps it next to Accept with "Accept with
           // override…" (AGT-3874), and the detail offers the next steps the
-          // board offers for the same card.
+          // board offers for the same card. AGT-3873: an overridable refusal
+          // opens that written-reason form in place, focused.
           this.recordAcceptRefusal(info, err);
           void this.acceptanceReadiness.checkCard(info);
+          if (acceptanceRefusalOverridable({ code: 'completion-content-gap', message: refusal }))
+            this.refusalActions.openOverride(info);
           return;
         }
         if (ev.targetState === '6-completed'
@@ -329,13 +350,11 @@ export class TriageController {
 
   /**
    * Keep a refused Accept next to the Accept button with its resolving action
-   * (`acceptanceRefusalFor`), toast the server's refusal, and reload the board.
+   * (`acceptanceRefusalFor`), toast the server's refusal below the toolbar
+   * with the same actions (AGT-3873), and reload the board.
    */
   private recordAcceptRefusal(info: TaskInfo, err: unknown): void {
-    const refusal = serverAcceptanceRefusal(info, err);
-    this.acceptanceRefusals.record(refusal);
-    this.notifications.warning(refusal.message, 'Accept refused');
-    this.jobService.refresh(true);
+    this.refusalActions.report(info, serverAcceptanceRefusal(info, err));
   }
 
   /** Keep the board and open detail on the persisted lane until reissue completes. */
@@ -668,6 +687,6 @@ export class TriageController {
 function contentGapBanner(refusal: string): string {
   const reason = acceptanceRefusalSentence(refusal || 'Completion refused: the current brief has no passing content verdict.');
   return acceptanceOverrideAllowed(refusal)
-    ? `${reason} Send a round to close the gap, review again, or accept with a written reason under Acceptance next steps.`
+    ? `${reason} Accept it with a written reason, review it again against the current brief, or send a round to close the gap under Acceptance next steps.`
     : `${reason} Send a round to close the gap under Acceptance next steps; an override cannot replace the missing report.`;
 }

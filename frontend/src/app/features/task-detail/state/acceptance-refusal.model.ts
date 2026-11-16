@@ -19,6 +19,8 @@ export interface AcceptanceRefusal {
   actionLabel: string;
   /** `hold`: read from the card's facts before any click. `server`: the server refused a click. */
   source: 'hold' | 'server';
+  /** AGT-3873: the content review's own concern, when a content verdict refused the card. */
+  concern?: string | null;
 }
 
 /** A server refusal of the move to Accepted, kept for the card it refused. */
@@ -30,6 +32,7 @@ export interface ServerAcceptanceRefusal {
 
 const OVERRIDE_LABEL = 'Accept with override…';
 const ROUND_LABEL = 'Send a round…';
+const CONTENT_GAP = 'completion-content-gap';
 
 /** The completion's own refusal as an acceptance sentence. */
 export function acceptanceRefusalSentence(text: string): string {
@@ -61,7 +64,10 @@ export function acceptanceRefusalFor(
   // The attempt-gap notice owns the run-attempt refusal and its override.
   if (info.acceptanceAttemptGap) return null;
   if (server && server.taskKey === info.taskKey && server.code !== 'run-attempt-missing')
-    return { reason: server.message, ...nextAction(server.message, readiness), source: 'server' };
+    return {
+      reason: server.message, ...nextAction(server.message, readiness), source: 'server',
+      concern: server.code === CONTENT_GAP ? acceptanceRefusalConcern(info, readiness) : null,
+    };
   if (awaitingGit) return null;
   // AGT-3874: until the dry run answers (after a reload), a content verdict
   // that is not `pass` already says why Accept will be refused.
@@ -130,13 +136,44 @@ function integrationHold(info: TaskInfo): AcceptanceRefusal | null {
  * card with no content verdict yet adds no hold here.
  */
 export function contentVerdictHold(info: TaskInfo): AcceptanceRefusal | null {
+  const verdict = contentVerdict(info);
+  const status = verdict?.status?.trim().toLowerCase();
+  if (!verdict || !status || status === 'pass') return null;
+  const reason = verdict.summary?.trim() || `The ${verdict.aspect} review returned ${status}.`;
+  return { reason, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' };
+}
+
+function contentVerdict(info: TaskInfo) {
   const aspect = info.mode === 'concept' ? 'concept-fit' : 'requirement-fit';
   const verdict = info.reviewProjection?.attempts?.[0]?.aspects
     ?.find(row => row.aspect?.toLowerCase() === aspect);
+  return verdict ? { ...verdict, aspect } : null;
+}
+
+/**
+ * AGT-3873: the concern the content review raised, in its own words: the
+ * dry run's concern, else the summary of the latest content verdict that is
+ * not `pass`. Null when neither names one.
+ */
+export function acceptanceRefusalConcern(
+  info: TaskInfo,
+  readiness: AcceptanceReadinessItem | null = null,
+): string | null {
+  const fromReadiness = readiness?.concern?.trim();
+  if (fromReadiness) return fromReadiness;
+  const verdict = contentVerdict(info);
   const status = verdict?.status?.trim().toLowerCase();
-  if (!verdict || !status || status === 'pass') return null;
-  const reason = verdict.summary?.trim() || `The ${aspect} review returned ${status}.`;
-  return { reason, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' };
+  return status && status !== 'pass' ? verdict?.summary?.trim() || null : null;
+}
+
+/**
+ * AGT-3873: a content refusal the owner may override with a written reason,
+ * and that a content review against the current brief may also resolve. The
+ * completion policy lets an override replace a content verdict, never a
+ * missing research report.
+ */
+export function acceptanceRefusalOverridable(refusal: Pick<ServerAcceptanceRefusal, 'code' | 'message'>): boolean {
+  return refusal.code === CONTENT_GAP && acceptanceOverrideAllowed(refusal.message);
 }
 
 /** The refusal sentence of a failed move to Accepted, in the server's words. */
@@ -158,6 +195,12 @@ export function serverAcceptanceRefusal(info: TaskInfo, error: unknown): ServerA
 @Injectable({ providedIn: 'root' })
 export class AcceptanceRefusalStore {
   private readonly refusals = signal<ReadonlyMap<string, ServerAcceptanceRefusal>>(new Map());
+  /**
+   * AGT-3873: the card whose written-reason override should open, focused,
+   * as soon as its toolbar renders the refusal (a refused board Accept, the
+   * toast or the banner action).
+   */
+  readonly overrideRequest = signal<string | null>(null);
 
   forTask(taskKey: string | null | undefined): ServerAcceptanceRefusal | null {
     return taskKey ? this.refusals().get(taskKey) ?? null : null;
@@ -167,7 +210,19 @@ export class AcceptanceRefusalStore {
     this.refusals.update(current => new Map(current).set(refusal.taskKey, refusal));
   }
 
+  requestOverride(taskKey: string): void {
+    this.overrideRequest.set(taskKey);
+  }
+
+  /** Consumes the pending override request of `taskKey`; true when there was one. */
+  takeOverrideRequest(taskKey: string): boolean {
+    if (this.overrideRequest() !== taskKey) return false;
+    this.overrideRequest.set(null);
+    return true;
+  }
+
   clear(taskKey: string): void {
+    if (this.overrideRequest() === taskKey) this.overrideRequest.set(null);
     if (!this.refusals().has(taskKey)) return;
     this.refusals.update(current => {
       const next = new Map(current);
