@@ -726,6 +726,19 @@
   bottom: 14px;
   flex-direction: column-reverse;
 }
+/* AGT-3830: on a phone the header (tabs, Needs you, the card's action) fills
+   the top edge, so the default pile docks at the bottom too and spans the
+   width instead of covering those controls. */
+@media (max-width: 599px) {
+  .app-notify-stack {
+    top: auto;
+    bottom: 14px;
+    left: 8px;
+    right: 8px;
+    max-width: none;
+    flex-direction: column-reverse;
+  }
+}
 .app-notify {
   pointer-events: auto;
   display: block;

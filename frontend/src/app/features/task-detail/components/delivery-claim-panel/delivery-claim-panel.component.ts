@@ -20,6 +20,7 @@ import { NotificationService } from '../../../../services/notification.service';
 import { IntegrationDeadEndComponent } from '../integration-dead-end/integration-dead-end.component';
 import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-notice/acceptance-attempt-gap-notice.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { AcceptanceRefusalStore } from '../../state/acceptance-refusal.model';
 
 /** Tri-state containment answer. `unknown` is a question, never a negative. */
 export type DeliveryIntegrationState =
@@ -102,6 +103,7 @@ const DELIVERED_LANES: readonly string[] = [
 export class DeliveryClaimPanelComponent {
   private readonly tasks = inject(TaskService);
   private readonly notifications = inject(NotificationService);
+  private readonly refusals = inject(AcceptanceRefusalStore);
 
   readonly job = input.required<TaskInfo>();
   readonly escalated = computed(() => this.job().state === TaskState.Escalated);
@@ -308,6 +310,7 @@ export class DeliveryClaimPanelComponent {
     this.tasks.reviewContentAgainstCurrentBrief(this.job().id, this.job().watchPath).subscribe({
       next: () => {
         this.acceptanceBusy.set(false);
+        this.refusals.clear(this.job().taskKey);
         this.notifications.success('Content review requested for the current brief.');
         this.tasks.refresh(true);
       },
@@ -330,6 +333,7 @@ export class DeliveryClaimPanelComponent {
         this.acceptanceBusy.set(false);
         this.overrideOpen.set(false);
         this.writtenReason.set('');
+        this.refusals.clear(job.taskKey);
         this.notifications.success('Accepted with a written reason.');
         this.tasks.refresh(true);
       },

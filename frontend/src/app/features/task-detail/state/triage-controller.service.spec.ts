@@ -385,10 +385,17 @@ describe('TriageController · optimistic navigation on Accept', () => {
       status: 409, error: { code: 'completion-content-gap', error: 'Completion refused: no content verdict for the current brief.' },
     })));
     const dialog = vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
+    const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
     selection.showTriageToast('Lane cleared.');
 
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
+    // AGT-3830: no sticky notice over the header; the reopened card shows the
+    // refusal with its next step and its reason takes focus.
+    expect(warning).not.toHaveBeenCalled();
+    const refusals = TestBed.inject(AcceptanceRefusalStore);
+    expect(refusals.forTask(taskA.taskKey)).toMatchObject({ code: 'completion-content-gap' });
+    expect(refusals.focusRequest()?.taskKey).toBe(taskA.taskKey);
     expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
     expect(TestBed.inject(LanePagerService).snapshot()?.jobs[0].taskKey).toBe(taskA.taskKey);
     expect(ctrl.moveRefusal()?.message).toContain('Complete the required review for the current brief, or use a written operator override');

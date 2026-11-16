@@ -161,4 +161,23 @@ describe('AcceptanceReadinessStore', () => {
     expect(store.roundDraft()).not.toBeNull();
     expect(store.roundError()).toBe('base-ref-not-on-card: not a result ref of this card.');
   });
+
+  it('checks one open card and merges its answer without touching the lane answers (AGT-3830)', async () => {
+    await check();
+    const lane = store.itemFor(cards[0]);
+    const open = reviewCard('d');
+    const done = store.check(open);
+    void store.check(open);
+    const request = http.expectOne('/api/tasks/acceptance-readiness');
+    expect(request.request.body).toEqual({ items: [{ jobId: 'd', watchPath: '/tmp/watch' }] });
+    request.flush({ checkedAtUtc: '2026-11-16T10:00:00Z', counts: {}, items: [readinessItem('d', 'review-concerns')] });
+    await done;
+    expect(store.itemFor(open)?.readiness).toBe('review-concerns');
+    expect(store.itemFor(cards[0])).toBe(lane);
+  });
+
+  it('does not check a card outside Human Review (AGT-3830)', async () => {
+    await store.check(reviewCard('e', { state: '2-ready' }));
+    http.expectNone('/api/tasks/acceptance-readiness');
+  });
 });

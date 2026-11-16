@@ -33,6 +33,7 @@ export class AcceptanceReadinessStore {
   private readonly tasks = inject(TaskService);
 
   private readonly items = signal<ReadonlyMap<string, AcceptanceReadinessItem>>(new Map());
+  private readonly checking = new Set<string>();
   readonly checkedAt = signal<string | null>(null);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
@@ -57,6 +58,33 @@ export class AcceptanceReadinessStore {
 
   readyAmong(jobs: readonly TaskInfo[]): TaskInfo[] {
     return readyJobs(jobs, this.items());
+  }
+
+  /**
+   * AGT-3830: checks one open Human Review card and merges its answer, so a
+   * card opened without the board (a phone, a deep link, Needs you) reads
+   * the same readiness the lane shows. Concurrent checks of a card coalesce.
+   */
+  async check(job: Pick<TaskInfo, 'id' | 'taskKey' | 'watchPath' | 'state'>): Promise<void> {
+    const key = readinessKey(job);
+    if (job.state !== TaskState.HumanReview || this.checking.has(key)) return;
+    this.checking.add(key);
+    try {
+      const report = await firstValueFrom(this.http.post<AcceptanceReadinessReport>(
+        '/api/tasks/acceptance-readiness', { items: [{ jobId: job.id, watchPath: job.watchPath }] },
+      ));
+      const item = report.items.find(candidate => candidate.taskKey === job.taskKey || candidate.jobId === job.id);
+      this.items.update(current => {
+        const next = new Map(current);
+        if (item) next.set(key, item);
+        else next.delete(key);
+        return next;
+      });
+    } catch {
+      // A failed check leaves the last answer; the lane check reports errors.
+    } finally {
+      this.checking.delete(key);
+    }
   }
 
   /** Runs the completion checks for the lane's cards without moving any of them. */

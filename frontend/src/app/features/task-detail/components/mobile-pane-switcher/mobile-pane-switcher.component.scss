@@ -50,6 +50,8 @@ app-mobile-pane-switcher { display: none; }
   .studio-tabbar:has(.studio-tab-action__pane-toggles) {
     .studio-tab-action__pane-toggles { display: none; }
     .studio-tab-action__triage > .studio-tab-action--primary { display: none; }
+    // AGT-3830: the phone's full-width block above the detail owns the refusal.
+    .studio-tab-action__triage > app-acceptance-refusal { display: none; }
   }
 
   .studio-editor__main:has([data-testid='studio-task'] > app-job-detail) .studio-projected-content {

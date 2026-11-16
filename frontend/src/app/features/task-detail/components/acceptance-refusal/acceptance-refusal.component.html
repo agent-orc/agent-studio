@@ -1,0 +1,73 @@
+<span class="acceptance-refusal" data-testid="acceptance-refusal"
+      [class.acceptance-refusal--stacked]="layout() === 'stacked'"
+      [attr.data-refusal-source]="refusal().source"
+      [attr.data-refusal-action]="refusal().action"
+      [attr.data-replaces-accept]="refusal().replacesAccept ? 'true' : null"
+      role="status">
+  <span #reasonEl class="acceptance-refusal__focus" data-testid="acceptance-refusal-focus" tabindex="-1">
+    @if (layout() === 'stacked') {
+      <app-status-indicator tone="warning" [compact]="true" testId="acceptance-refusal-state"
+                            [label]="refusal().replacesAccept ? 'Acceptance needs a decision' : 'Accept is held'" />
+      <span class="acceptance-refusal__text" data-testid="acceptance-refusal-reason">{{ refusal().reason }}</span>
+    } @else {
+      <app-status-indicator class="acceptance-refusal__reason" tone="warning" [compact]="true"
+                            testId="acceptance-refusal-reason"
+                            [label]="refusal().reason" [detail]="refusal().reason" />
+    }
+  </span>
+  <span class="acceptance-refusal__buttons">
+    <button type="button"
+            [class]="actionClass()"
+            data-testid="acceptance-refusal-action"
+            [attr.aria-haspopup]="refusal().action === 'override' ? 'dialog' : null"
+            [attr.aria-expanded]="refusal().action === 'override' ? overrideOpen() : null"
+            [disabled]="disabled() || busy()"
+            [cacTooltip]="actionTooltip()"
+            (click)="onAction($event)">{{ refusal().actionLabel }}</button>
+    @if (refusal().action === 'review-again') {
+      <button type="button"
+              [class]="secondaryClass()"
+              data-testid="acceptance-refusal-override"
+              aria-haspopup="dialog"
+              [attr.aria-expanded]="overrideOpen()"
+              [disabled]="disabled() || busy()"
+              [cacTooltip]="'Accept now and record a written reason on the card'"
+              (click)="toggleOverride($event)">Accept with a reason…</button>
+    }
+  </span>
+  @if (error() && !overrideOpen()) {
+    <span class="acceptance-refusal__error" data-testid="acceptance-refusal-action-error" role="alert">{{ error() }}</span>
+  }
+</span>
+@if (overrideOpen()) {
+  <div class="acceptance-refusal__form"
+       data-testid="acceptance-refusal-form"
+       role="dialog"
+       aria-label="Accept with owner override"
+       [appConnectedOverlay]="overrideAnchor()"
+       connectedOverlayPlacement="below"
+       connectedOverlayAlignment="end"
+       (keydown.escape)="cancelOverride()">
+    <label class="acceptance-refusal__label" for="acceptance-refusal-reason-{{ job().id }}">Reason for the override</label>
+    <p class="acceptance-refusal__hint">{{ refusal().reason }} The reason is recorded on the card.</p>
+    <textarea id="acceptance-refusal-reason-{{ job().id }}"
+              class="acceptance-refusal__input"
+              data-testid="acceptance-refusal-override-reason"
+              rows="3"
+              placeholder="Why this card is accepted now"
+              [value]="reason()"
+              [disabled]="busy()"
+              (input)="onReasonInput($event)"></textarea>
+    @if (error(); as message) {
+      <p class="acceptance-refusal__error" data-testid="acceptance-refusal-error" role="alert">{{ message }}</p>
+    }
+    <div class="acceptance-refusal__actions">
+      <button type="button" class="acceptance-refusal__button acceptance-refusal__button--primary"
+              data-testid="acceptance-refusal-submit"
+              [disabled]="!canSubmit()" (click)="acceptWithOverride()">Accept with override</button>
+      <button type="button" class="acceptance-refusal__button"
+              data-testid="acceptance-refusal-cancel"
+              [disabled]="busy()" (click)="cancelOverride()">Cancel</button>
+    </div>
+  </div>
+}

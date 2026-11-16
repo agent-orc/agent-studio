@@ -16,6 +16,18 @@
   min-width: 0;
 }
 
+.acceptance-refusal__focus {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--studio-radius-md);
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+}
+.acceptance-refusal__buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+}
 .acceptance-refusal__reason {
   min-width: 0;
   max-width: 280px;
@@ -85,4 +97,41 @@
     border-color: var(--studio-accent);
     color: var(--studio-on-accent);
   }
+}
+
+// AGT-3830: the phone's full-width form. The reason reads in full above the
+// actions; "Review again" (or the hold's one action) spans the width.
+:host:has(.acceptance-refusal--stacked) { display: block; }
+.acceptance-refusal--stacked {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  .acceptance-refusal__focus {
+    display: grid;
+    gap: var(--studio-spacing-1);
+    padding: var(--studio-spacing-2);
+    border: 1px solid var(--notify-warning-border);
+    border-radius: var(--studio-radius-md);
+    background: var(--notify-warning-tint);
+    color: var(--studio-fg);
+  }
+  .acceptance-refusal__text { overflow-wrap: anywhere; line-height: 1.4; }
+  .acceptance-refusal__buttons { display: grid; gap: var(--studio-spacing-2); }
+  .acceptance-refusal__button {
+    min-height: var(--studio-target-coarse-min);
+    width: 100%;
+    font-weight: 600;
+  }
+}
+
+// AGT-3830: the content refusal's primary in the toolbar. The shell's
+// `.studio button` reset (0,1,1) outranks the single-class modifier, so the
+// primary fill is restated at a higher specificity.
+.acceptance-refusal .studio-tab-action--primary {
+  padding: 0 10px;
+  border: 1px solid var(--studio-accent);
+  border-radius: 4px;
+  background: var(--studio-accent);
+  color: var(--studio-on-accent);
+  font-weight: 600;
+  &:hover:not(:disabled) { filter: brightness(1.1); }
 }

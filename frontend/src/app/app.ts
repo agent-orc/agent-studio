@@ -61,6 +61,7 @@ import {
   type MergeAcceptView,
   type TriageButton,
 } from './features/task-detail/runtime';
+import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 import {
   buildComposerLocationContext,
   OrchestratorFeedStore,
@@ -358,6 +359,18 @@ export class App implements OnInit, OnDestroy {
   /** Cycle 10c: triage panel + j/k navigation + auto-advance live here. */
   readonly triage = inject(TriageController);
   private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
+  private readonly acceptanceReadiness = inject(AcceptanceReadinessStore);
+  /**
+   * AGT-3830: the open Human Review card reads the completion dry run the
+   * board and Needs you read, also when no board lane has loaded it.
+   */
+  private readonly checkOpenCardReadiness = effect(() => {
+    const info = this.selectedJob()?.info;
+    const key = info?.taskKey;
+    const state = info?.state;
+    if (!info || !key || state !== TaskState.HumanReview) return;
+    untracked(() => { if (!this.acceptanceReadiness.itemFor(info)) void this.acceptanceReadiness.check(info); });
+  });
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
   /**
@@ -1331,7 +1344,7 @@ export class App implements OnInit, OnDestroy {
     const info = this.selectedJob()?.info;
     if (!info || this.studioTriagePrimary()?.id !== 'mark-done' || this.studioPrimaryDecisionRefusal()) return null;
     return acceptanceRefusalFor(info, this.acceptanceRefusals.forTask(info.taskKey),
-      this.studioPrimaryAwaitingGit());
+      this.studioPrimaryAwaitingGit(), this.acceptanceReadiness.itemFor(info));
   });
   /** AGT-2795: the decision lane guard's refusal for the studio primary move. */
   readonly studioPrimaryDecisionRefusal = computed(() => {
@@ -1430,7 +1443,7 @@ export class App implements OnInit, OnDestroy {
     // Hold git-dependent acceptance until the branch/merge status has loaded, so
     // a click cannot trigger a merge while the label is still a guess (AGT-2006).
     if (this.studioPrimaryAwaitingGit() || this.studioPrimaryBlockedByIntegration()
-      || this.studioPrimaryDecisionRefusal()) return;
+      || this.studioPrimaryDecisionRefusal() || this.studioAcceptanceRefusal()?.replacesAccept) return;
     this.dispatchStudioTriage(sel.info, p);
   }
 

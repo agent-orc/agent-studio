@@ -6,7 +6,7 @@ import { AcceptanceRefusalComponent } from './acceptance-refusal.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import type { TaskInfo } from '../../../../models/task.model';
-import { AcceptanceRefusalStore, type AcceptanceRefusal } from '../../../task-detail/runtime';
+import { AcceptanceRefusalStore, type AcceptanceRefusal } from '../../state/acceptance-refusal.model';
 
 const JOB = { id: 'AGT-3649', taskKey: 'wp::AGT-3649', state: '5-human-review', watchPath: '/project/tasks' } as TaskInfo;
 const OVERRIDE: AcceptanceRefusal = {
@@ -14,9 +14,12 @@ const OVERRIDE: AcceptanceRefusal = {
   actionLabel: 'Accept with override…', source: 'hold',
 };
 
-async function mount(refusal: AcceptanceRefusal, tasks: Partial<Record<'moveJob' | 'retryIntegration', unknown>> = {}) {
+async function mount(refusal: AcceptanceRefusal,
+  tasks: Partial<Record<'moveJob' | 'retryIntegration' | 'reviewContentAgainstCurrentBrief', unknown>> = {},
+  layout: 'inline' | 'stacked' = 'inline') {
   const moveJob = vi.fn(() => of({}));
   const retryIntegration = vi.fn(() => of({}));
+  const reviewContentAgainstCurrentBrief = vi.fn(() => of({ reviewAttemptId: 'r', briefVersion: 'b' }));
   const refresh = vi.fn();
   const success = vi.fn();
   const error = vi.fn();
@@ -25,13 +28,14 @@ async function mount(refusal: AcceptanceRefusal, tasks: Partial<Record<'moveJob'
     imports: [AcceptanceRefusalComponent],
     providers: [
       provideZonelessChangeDetection(),
-      { provide: TaskService, useValue: { moveJob, retryIntegration, refresh, ...tasks } },
+      { provide: TaskService, useValue: { moveJob, retryIntegration, reviewContentAgainstCurrentBrief, refresh, ...tasks } },
       { provide: NotificationService, useValue: { success, error } },
     ],
   }).compileComponents();
   const fixture = TestBed.createComponent(AcceptanceRefusalComponent);
   fixture.componentRef.setInput('refusal', refusal);
   fixture.componentRef.setInput('job', JOB);
+  fixture.componentRef.setInput('layout', layout);
   fixture.detectChanges();
   await fixture.whenStable();
   const host = fixture.nativeElement as HTMLElement;
@@ -48,7 +52,7 @@ async function mount(refusal: AcceptanceRefusal, tasks: Partial<Record<'moveJob'
     input.dispatchEvent(new Event('input'));
     fixture.detectChanges();
   };
-  return { fixture, host, find, click, typeReason, moveJob, retryIntegration, refresh, success, error };
+  return { fixture, host, find, click, typeReason, moveJob, retryIntegration, reviewContentAgainstCurrentBrief, refresh, success, error };
 }
 
 describe('AcceptanceRefusalComponent (AGT-3704)', () => {
@@ -100,5 +104,62 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
     expect(retryIntegration).toHaveBeenCalledWith('AGT-3649', '/project/tasks');
     expect(refresh).toHaveBeenCalledWith(true);
     expect(find('acceptance-refusal-form')).toBeNull();
+  });
+
+  describe('content refusal (AGT-3830)', () => {
+    const CONTENT: AcceptanceRefusal = {
+      reason: 'The requirement-fit review returned concerns: The result SHA is absent from the delivery brief.',
+      action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
+    };
+
+    it('offers Review again as the primary and Accept with a reason beside the reason', async () => {
+      const { host, click, reviewContentAgainstCurrentBrief, refresh } = await mount(CONTENT);
+      const action = host.querySelector<HTMLButtonElement>('[data-testid="acceptance-refusal-action"]')!;
+      expect(action.textContent?.trim()).toBe('Review again');
+      expect(action.classList.contains('studio-tab-action--primary')).toBe(true);
+      expect(host.querySelector('[data-testid="acceptance-refusal-override"]')?.textContent?.trim())
+        .toBe('Accept with a reason…');
+      expect(host.querySelector('[data-testid="acceptance-refusal"]')?.getAttribute('role')).toBe('status');
+      await click('acceptance-refusal-action');
+      expect(reviewContentAgainstCurrentBrief).toHaveBeenCalledWith('AGT-3649', '/project/tasks');
+      expect(refresh).toHaveBeenCalledWith(true);
+    });
+
+    it('opens the written-reason form from Accept with a reason', async () => {
+      const { click, find, typeReason, moveJob } = await mount(CONTENT);
+      await click('acceptance-refusal-override');
+      expect(find('acceptance-refusal-form')).not.toBeNull();
+      typeReason('The SHA is recorded on the batch gate run.');
+      await click('acceptance-refusal-submit');
+      expect(moveJob).toHaveBeenCalledWith('AGT-3649', '6-completed', '/project/tasks', undefined,
+        'The SHA is recorded on the batch gate run.', true);
+    });
+
+    it('names a refused review request in the server words', async () => {
+      const reviewContentAgainstCurrentBrief = vi.fn(() => throwError(() => ({ status: 409,
+        error: { code: 'content-review-delivery', error: 'The current delivery has no completed run to review.' } })));
+      const { click, find } = await mount(CONTENT, { reviewContentAgainstCurrentBrief });
+      await click('acceptance-refusal-action');
+      expect(find('acceptance-refusal-action-error')?.textContent).toContain('no completed run to review');
+    });
+
+    it('renders the full reason in the stacked phone layout', async () => {
+      const { host } = await mount(CONTENT, {}, 'stacked');
+      expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent)
+        .toContain('The result SHA is absent from the delivery brief.');
+      expect(host.querySelector('[data-testid="acceptance-refusal-action"]')?.classList
+        .contains('acceptance-refusal__button--primary')).toBe(true);
+    });
+
+    it('moves focus to the reason when a refused click asks for it', async () => {
+      const { fixture, host } = await mount(CONTENT);
+      document.body.appendChild(host);
+      TestBed.inject(AcceptanceRefusalStore).requestFocus(JOB.taskKey);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(document.activeElement).toBe(host.querySelector('[data-testid="acceptance-refusal-focus"]'));
+      host.remove();
+    });
   });
 });

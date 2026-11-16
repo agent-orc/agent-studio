@@ -18,7 +18,7 @@ import { stateLabel as fmtStateLabel } from '../../../../services/format.util';
 import type { RunActivityBadge } from '../../../../services/run-activity.util';
 import type { TaskDetail, TaskRunActivityKind } from '../../../../models/task.model';
 import type { AcceptanceRefusal } from '../../../task-detail/runtime';
-import { AcceptanceRefusalComponent } from '../acceptance-refusal/acceptance-refusal.component';
+import { AcceptanceRefusalComponent } from '../../../task-detail/components/acceptance-refusal/acceptance-refusal.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 const RUN_ACTIVITY_TONES: Readonly<Record<TaskRunActivityKind, StatusTone>> = {

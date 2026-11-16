@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TaskInfo } from '../../../models/task.model';
 import type { TaskIntegrationStatus } from '../../git';
 import { acceptanceRefusalFor, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { readinessItem } from '../../acceptance-readiness/testing/acceptance-readiness.fixtures';
 
 const card = (integration: Partial<TaskIntegrationStatus> | null, extra: Partial<TaskInfo> = {}): TaskInfo => ({
   id: 'AGT-1', taskKey: 'wp::AGT-1', state: '5-human-review', title: 'Concept',
@@ -53,5 +54,44 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
       error: 'batch-gate-evidence-missing', code: 'batch-gate-evidence-missing', hint: 'Verify its published branch.' } });
     expect(refusal).toEqual({ taskKey: 'wp::AGT-1', code: 'batch-gate-evidence-missing',
       message: 'Verify its published branch.' });
+  });
+
+  describe('content refusals (AGT-3830)', () => {
+    const concerns = readinessItem('AGT-1', 'review-concerns', { taskKey: 'wp::AGT-1',
+      reason: 'The requirement-fit review returned concerns: The result SHA is absent from the delivery brief.' });
+
+    it('replaces Accept with Review again for review concerns, in the readiness words', () => {
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, concerns)).toEqual({
+        reason: 'The requirement-fit review returned concerns: The result SHA is absent from the delivery brief.',
+        action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
+      });
+    });
+
+    it('replaces Accept for a missing content verdict and names what is missing', () => {
+      const none = readinessItem('AGT-1', 'no-content-verdict', { taskKey: 'wp::AGT-1',
+        reason: 'The current run has no requirement-fit verdict: no review aspect ran.', missing: 'a review of the current run' });
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, none)).toMatchObject({
+        action: 'review-again', replacesAccept: true,
+        reason: 'The current run has no requirement-fit verdict: no review aspect ran. Missing: a review of the current run',
+      });
+    });
+
+    it('keeps plain Accept for a ready card and ignores another card\'s answer', () => {
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, readinessItem('AGT-1', 'ready',
+        { taskKey: 'wp::AGT-1' }))).toBeNull();
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false,
+        readinessItem('AGT-9', 'review-concerns', { taskKey: 'wp::AGT-9' }))).toBeNull();
+    });
+
+    it('turns a server content-gap refusal into the same next step', () => {
+      const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap',
+        message: 'Completion refused: requirement-fit verdict was concerns.' };
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false)).toMatchObject({
+        action: 'review-again', source: 'server', replacesAccept: true,
+        reason: 'Completion refused: requirement-fit verdict was concerns.',
+      });
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false, concerns)?.reason)
+        .toContain('The result SHA is absent');
+    });
   });
 });

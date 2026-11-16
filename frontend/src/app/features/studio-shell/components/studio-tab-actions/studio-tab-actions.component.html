@@ -128,7 +128,9 @@
         @if (triageView.refusal; as refusal) {
           <app-acceptance-refusal [refusal]="refusal" [job]="detail.info" [disabled]="mutationsBlocked()" />
         }
-        @if (triageView.primaryId; as primaryId) {
+        @if (triageView.refusal?.replacesAccept) {
+          <!-- AGT-3830: the refusal's actions above are the primary; Accept could only be refused again. -->
+        } @else if (triageView.primaryId; as primaryId) {
           <button type="button"
                   class="studio-tab-action studio-tab-action--primary"
                   [class.studio-tab-action--git-loading]="triageView.awaitingGit"

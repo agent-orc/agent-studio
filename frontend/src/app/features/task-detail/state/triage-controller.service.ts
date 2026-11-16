@@ -12,6 +12,7 @@ import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
 import { AcceptanceRefusalStore, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { AcceptanceReadinessStore } from '../../acceptance-readiness/state/acceptance-readiness.store';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import {
   archiveIntegrationVerdict,
@@ -47,6 +48,7 @@ export class TriageController {
   private readonly prefetch = inject(TaskDetailPrefetchService);
   private readonly undo = inject(UndoController);
   private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
+  private readonly acceptanceReadiness = inject(AcceptanceReadinessStore);
   private readonly studioTabs = inject(StudioTabStateService);
   readonly moveRefusal = signal<{ taskKey: string; message: string } | null>(null);
 
@@ -292,9 +294,12 @@ export class TriageController {
         }
         if (ev.targetState === '6-completed' && err?.status === 409
             && err?.error?.code === 'completion-content-gap') {
-          this.notifications.warning(
-            'Acceptance was refused because the delivery or content review does not match the current brief. See Acceptance grounds for the versions, review again, or accept with a written reason.',
-            'Acceptance needs a decision');
+          // AGT-3830: no sticky toast over the header. The refusal replaces
+          // Accept on the reopened card (toolbar or phone) with its next step,
+          // its reason takes focus, and `task-move-refusal` announces it.
+          this.acceptanceRefusals.record(serverAcceptanceRefusal(info, err));
+          this.acceptanceRefusals.requestFocus(info.taskKey);
+          void this.acceptanceReadiness.check(info);
           this.jobService.refresh(true);
           return;
         }

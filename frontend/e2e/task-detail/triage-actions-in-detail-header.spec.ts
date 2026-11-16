@@ -188,13 +188,19 @@ for (const view of [
       await clickAcceptAndWaitForMove(page, () => moveCount);
 
       await expect(page.getByTestId('task-move-refusal')).toContainText('Complete the required review for the current brief, or use a written operator override');
-      await expect(page.getByTestId('studio-triage-action-mark-done')).toBeVisible();
+      // AGT-3830: the content refusal's next step replaces Accept, and its reason takes focus.
+      await expect(page.locator('[data-testid="acceptance-refusal-action"]:visible')).toHaveText('Review again');
+      await expect(page.locator('[data-testid="acceptance-refusal-override"]:visible')).toBeVisible();
+      await expect(page.locator('[data-testid="acceptance-refusal-focus"]:visible')).toBeFocused();
+      await expect(page.getByTestId('studio-triage-action-mark-done')).toHaveCount(0);
+      await expect(page.getByTestId('notification-warning')).toHaveCount(0);
       await expect(page.getByRole('heading', { name: 'No task selected' })).toBeHidden();
       await expect(page).toHaveURL(originalUrl);
       expect((await getJob(job.id, wp.path)).state).toBe('5-human-review');
       if (view.name === 'light') {
         await page.waitForTimeout(15_000);
         await expect(page.getByTestId('task-move-refusal')).toBeVisible();
+        await expect(page.locator('[data-testid="acceptance-refusal-action"]:visible')).toHaveText('Review again');
       }
       const dir = process.env.JOB_RESULTS_DIR;
       if (dir) {

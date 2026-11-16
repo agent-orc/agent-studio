@@ -1,9 +1,13 @@
 @if (primary(); as action) {
-  @if (action.primaryId; as primaryId) {
+  @if (action.refusal && job(); as refusalJob) {
+    <app-acceptance-refusal class="mobile-lane-primary__refusal" layout="stacked"
+                            [refusal]="action.refusal" [job]="refusalJob" [disabled]="mutationsBlocked()" />
+  }
+  @if (action.primaryId && !action.refusal?.replacesAccept) {
     <button type="button" class="btn btn--primary mobile-lane-primary"
-            [attr.data-testid]="'studio-mobile-triage-action-' + primaryId"
+            [attr.data-testid]="'studio-mobile-triage-action-' + action.primaryId"
             [disabled]="mutationsBlocked() || action.awaitingGit || action.blockedByIntegration || !!action.blockedByDecision || action.actingId !== null"
-            [appPendingButton]="action.actingId === primaryId"
+            [appPendingButton]="action.actingId === action.primaryId"
             [pendingLabel]="action.primaryLabel + '…'"
             [cacTooltip]="action.primaryTooltip"
             (click)="pressed.emit()">

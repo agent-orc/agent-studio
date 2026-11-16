@@ -19,7 +19,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 1 | Tab strip | Open tabs and active task identity | Editor open | One row; `d6b11df5d`, AGT-2963 responsive fix. |
 | Task 2 | Task toolbar | Run activity, execution host, pane toggles, lane pager, paging lane, acceptance refusal, primary action, menu | Task tab active; individual controls follow their capability | One action row; `ccc0039eb` (AGT-2819 extraction). Host belongs here and nowhere in the Overview title. |
 | Task 3 | Global alert banner | Cross-task integration alert | Alert threshold reached | Single alert banner in `app-workspace-banner`; `5d496e73e`. |
-| Task 3a | Phone primary lane action | Current lane decision | Primary action available below 600 px | Full-width shared primary button above task notices. |
+| Task 3a | Phone primary lane action | Current lane decision, or the acceptance refusal that replaces it | Primary action or refusal available below 600 px | Full-width shared primary button above task notices; a content refusal renders as a stacked block (AGT-3830). |
 | Task 4 | `app-task-resource-status` | Resource limitation affecting this task | Resource finding exists | Notice; `2b1436acc`. |
 | Task 5 | `app-detail-header` | Legacy task identity and actions | Legacy focused view; hidden in Studio | Header row; original detail extraction `839f3c9801`. |
 | Task 6 | `app-archived-task-notice` | Archive state and restore | Archived task | Notice; `1bc7b5703`. |
@@ -64,14 +64,21 @@ action: Retry integration for a failed integration, otherwise Accept with
 override, which asks for a written reason. It is omitted during the bounded
 Git wait (the primary's skeleton is that progress) and when the attempt-gap
 notice owns the refusal. The reason truncates first at narrow widths; its
-tooltip keeps the full sentence. The primary action can be Run now
+tooltip keeps the full sentence. AGT-3830: a content refusal (acceptance readiness
+`review-concerns` or `no-content-verdict`, or a server `completion-content-gap`)
+replaces Accept instead of preceding it: Review again is the primary, Accept
+with a reason… sits beside it, and the reason reads the same words as the board
+and Needs you. The open card checks its own readiness through
+`POST /api/tasks/acceptance-readiness`. After a refused click the visible
+refusal takes focus; refusals do not raise a sticky notice over the header. The primary action can be Run now
 or the current lane's decision; its label comes from triage policy. The host
 chip is a factual badge, the pager is a compact action group, and the lane
 select is a navigation control. The menu owns secondary task actions.
 In Human Review, the primary action uses the fresh task-detail integration
 verdict. An integrated or not-applicable delivery offers Accept without waiting
 for optional Git provenance; a held action names its delivery reason on hover.
-Below 600 px, the same primary action renders full width above the task detail;
+Below 600 px, the same primary action renders full width above the task detail,
+or the acceptance refusal in full above its full-width actions;
 the toolbar keeps its secondary menu. The phone pane switcher follows the task
 notices and command deck and chooses one pane; selecting a previously hidden
 pane reveals it in the shared pane visibility state.

@@ -144,9 +144,9 @@
       "kind": "popup-trigger",
       "reason": "Move-to-workspace menu trigger (aria-haspopup=\"menu\")."
     },
-    "src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.html": {
+    "src/app/features/task-detail/components/acceptance-refusal/acceptance-refusal.component.html": {
       "kind": "popup-trigger",
-      "reason": "AGT-3704: Accept with override opens the written-reason form as a connected overlay (aria-haspopup=\"dialog\"), not an in-place body."
+      "reason": "AGT-3704: Accept with override (and AGT-3830 Accept with a reason) opens the written-reason form as a connected overlay (aria-haspopup=\"dialog\"), not an in-place body."
     },
     "src/app/features/studio-shell/components/diff-tab-view/diff-tab-view.component.html": {
       "kind": "staged-adoption",

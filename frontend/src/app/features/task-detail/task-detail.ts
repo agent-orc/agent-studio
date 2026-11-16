@@ -12,6 +12,7 @@ import {
   ViewChild, ViewEncapsulation,
 } from '@angular/core';
 import { ModalStackService } from '../../services/modal-stack.service';
+import { NotificationService } from '../../services/notification.service';
 import { FormsModule } from '@angular/forms';
 import type {
   TaskDetail,
@@ -390,6 +391,7 @@ export class TaskDetailComponent implements OnDestroy {
   // re-opening the detail view (or the 2s board refresh re-emitting the same
   // failed snapshot) does not re-pop the dialog. Keyed by `${taskKey}|${startedAt}`.
   private lastShownFailureKey: string | null = null;
+  private readonly notificationService = inject(NotificationService);
 
   constructor() {
     // Load the initial catalog for whatever CLI the current job uses; the effect below
@@ -411,6 +413,9 @@ export class TaskDetailComponent implements OnDestroy {
         // `(keydown.escape)` on the title input then runs and cancels
         // the edit; closing the whole panel would feel broken.
         if (this.editingTitle() || this.editingPrompt()) return false;
+        // AGT-3830: a sticky notice (a refusal, a warning) sits above the
+        // card; Escape closes it first instead of closing the card under it.
+        if (this.notificationService.dismissNewestPersistent()) return true;
         if (this.showLogOverlay()) {
           this.showLogOverlay.set(false);
           return true;
