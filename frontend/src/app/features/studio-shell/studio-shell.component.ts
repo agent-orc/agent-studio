@@ -20,7 +20,7 @@ import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, Watch
 import type { WorkbenchListItem } from '../../models/project-docs.model';
 import { forkJoin } from 'rxjs';
 import { TaskService } from '../../services/task.service';
-import { StudioIconComponent } from '../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent, type StudioIconName } from '../../components/studio-icon/studio-icon.component';
 import { StudioSidebarHeaderComponent } from '../../components/studio-sidebar-header/studio-sidebar-header.component';
 import { EmptyStateComponent } from '../../components/empty-state/empty-state.component';
 import { StudioWelcomeComponent } from './components/studio-welcome/studio-welcome.component';
@@ -39,7 +39,6 @@ import {
   resolveProjectSection,
   type ProjectRailItem,
 } from '../project-detail/components/project-shell/project-shell.config';
-import type { StudioIconName } from '../../components/studio-icon/studio-icon.component';
 import { BoardFiltersService, flattenGrouped } from '../board';
 import { ConfirmDialogService } from '../../services/confirm-dialog.service';
 import { NotificationService } from '../../services/notification.service';
@@ -70,6 +69,7 @@ import { tabAccessibleName, taskIdFromKey, titleFromDocumentPath, truncateTabTit
 import { requestErrorMessage } from './studio-shell.request-error';
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
+import { StudioKeyboardEntryComponent } from './components/studio-keyboard-entry/studio-keyboard-entry.component';
 import { OrchestratorFeedStore } from '../orchestrator';
 import { ChatSessionsPanelComponent } from '../orchestrator/lazy';
 import { UsageDetailSurfaceComponent } from '../usage-cockpit/lazy';
@@ -98,7 +98,7 @@ import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
+  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioKeyboardEntryComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
