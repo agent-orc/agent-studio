@@ -48,6 +48,9 @@ public sealed partial class BatchGatePilotService
     private readonly PipelineHealthService? _healthAlerts;
     private readonly ConcurrentDictionary<string, string> _activeBatchGates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _runHangs = new(StringComparer.Ordinal);
+    // AGT-3864: per parent, the child phases its isolation findings were last derived from.
+    private readonly ConcurrentDictionary<string, string> _derivedIsolation = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, BatchPhase> _terminalChildPhases = new(StringComparer.Ordinal);
     private readonly IServiceProvider? _services;
     private readonly IConfiguration? _configuration;
     private readonly TimelineLog? _timeline;
@@ -917,11 +920,16 @@ public sealed partial class BatchGatePilotService
     /// </summary>
     private void RecoverInterrupted()
     {
+        // AGT-3864: one listing per tick; each parent takes its children from
+        // the index instead of listing every manifest again.
+        var manifests = _store.ListManifests();
+        var children = manifests.Where(item => item.ParentBatchId is not null)
+            .ToLookup(item => item.ParentBatchId!, StringComparer.Ordinal);
         // AGT-3681: the store quarantines an unreadable record; a batch whose
         // own reads still fail is skipped so every other batch recovers.
-        foreach (var parent in _store.ListManifests().Where(item => item.ParentBatchId is null))
+        foreach (var parent in manifests.Where(item => item.ParentBatchId is null))
         {
-            try { DeriveIsolationFindings(parent); }
+            try { DeriveIsolationFindings(parent, children[parent.BatchId], skipSettled: true); }
             catch (BatchGateRecordUnreadableException ex)
             {
                 _logger.LogWarning(ex, "batch-recovery-skipped-unreadable batch={BatchId}", parent.BatchId);
@@ -935,7 +943,7 @@ public sealed partial class BatchGatePilotService
         // loses the bisection's in-memory frontier, so close the parent and
         // return every unresolved member to planning as one recovery action.
         // An operator eject releases a red batch itself (ReleaseEjectedTerminalBatches).
-        foreach (var parent in _store.ListManifests().Where(item => item.ParentBatchId is null
+        foreach (var parent in manifests.Where(item => item.ParentBatchId is null
                      && _store.LatestState(item.BatchId).Phase == BatchPhase.Red
                      && !item.Members.Any(member => _store.HasEject(item.Scope.Project, member.TaskKey))))
         {
