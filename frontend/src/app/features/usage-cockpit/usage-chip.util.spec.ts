@@ -164,6 +164,11 @@ describe('CLI chip view', () => {
 });
 
 describe('cost chip view', () => {
+  it('marks an unpriced receipt beside the priced subtotal', () => {
+    const view = buildCostChipView(cost({ unpricedTodayRuns: 2 }), NOW);
+    expect(view.value).toBe('$12.48*');
+    expect(view.ariaLabel).toContain('priced subtotal + 2 runs without price');
+  });
   it('shows the ledger estimate and says so in the accessible name', () => {
     const view = buildCostChipView(cost(), NOW);
     expect(view).toMatchObject({ state: 'normal', value: '$12.48', exact: '$12.48' });

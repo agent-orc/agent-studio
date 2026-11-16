@@ -26,7 +26,8 @@ catalog ids, aliases, display labels, and bare `sonnet` / `opus` aliases.
 Per-project, workspace, and ad-hoc `byModel` rows carry `modelId` and `cli`;
 `model` is a display label. Historical receipts that stored labels resolve on
 read, without changing `task.json`. `GET /api/token-pricing/unpriced-models`
-returns model ids. GPT-4.1 and GPT-4o are absent from the curated CLI
+returns ids for models with at least one unpriced historical call, including
+`NoPriceForDate`. GPT-4.1 and GPT-4o are absent from the curated CLI
 registry because the pinned catalog has no listings for them; old usage
 remains explicitly unpriced.
 
@@ -91,6 +92,12 @@ These surfaces may aggregate resolved costs, but an aggregate containing an
 unpriced call remains explicitly marked unavailable or incomplete according to
 its wire contract. A per-model row with a missing price always renders
 `no price data`.
+
+The workspace quota meter and footer cost projection carry unpriced receipt
+counts beside their priced subtotals. The quota token count still includes those
+receipts. Partial markers link to Workspace Settings > Token usage, where owners
+can request the active unpriced-model list with calls and tokens. The Card
+analysis By model row renders `no price data` for an unpriced model.
 
 Prompt-registry cost is a narrower estimate than a completed model call. It
 prices only the rendered prompt input, uses the existing four characters per

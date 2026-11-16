@@ -1,5 +1,6 @@
 using AgentStudio.Registry;
 using AgentStudio.Security;
+using AgentStudio.Cli;
 
 namespace AgentStudio.Projects;
 
@@ -23,6 +24,38 @@ public static class WorkspaceEndpoints
     public static void MapWorkspaceEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/workspace");
+
+        // Account quota rows use the provider's active interval and stored CLI
+        // on each receipt. Workspace one-shot bus rows join the same ledger.
+        group.MapGet("/tokens/cli-window",
+            (HttpContext context, string cliType, string label, DateTime? resetAt,
+                ProjectRegistry registry, TaskScannerService scanner, ITokenAggregator tokens,
+                AgentMessageBusStore bus, IConfiguration configuration) =>
+            {
+                if (cliType is not ("claude" or "codex"))
+                    return Results.BadRequest(new { error = "Unknown CLI." });
+                var length = QuotaWindowProjection.InferWindowLength(label);
+                if (length is null) return Results.BadRequest(new { error = "Unknown quota window length." });
+                var now = DateTime.UtcNow;
+                var reset = resetAt?.ToUniversalTime();
+                var from = (reset ?? now) - length.Value;
+                var to = reset is { } time && time < now ? time : now;
+                var allProjects = registry.List().Where(p => !p.Archived).ToList();
+                var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
+                var visible = allProjects.Where(p => human is null
+                    || ProjectAccessAuthorization.Allows(human.User, p.Id, registry)).ToList();
+                WorkspaceBusUsage? workspaceUsage = null;
+                var root = configuration["TaskRepository"];
+                if (!string.IsNullOrWhiteSpace(root))
+                    workspaceUsage = WorkspaceBusUsage.Read(bus, root, allProjects, scanner, from)
+                        .KeyedByName(visible, human is null
+                            || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
+                var attribution = tokens.CliWindowAttribution(
+                    visible.Select(p => (p.DisplayName, p.StorageLocation)), cliType, from, to, workspaceUsage);
+                return Results.Ok(new { fromUtc = from, toUtc = to, durationHours = length.Value.TotalHours,
+                    attribution.Calls, attribution.InputTokens, attribution.OutputTokens,
+                    attribution.CacheReadTokens, attribution.CacheCreationTokens, attribution.TotalTokens });
+            });
 
         // Workspace token-usage timeline. Returns one cell per
         // (project, time bucket) with input/output/cache/total token

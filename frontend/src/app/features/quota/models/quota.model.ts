@@ -15,6 +15,8 @@ import type { CliType } from '../../../models/task.model';
  */
 export interface QuotaWindow {
   label: string;
+  /** Duration inferred by the shared backend quota policy. */
+  windowHours?: number | null;
   usedPct: number | null;
   used: number | null;
   limit: number | null;
