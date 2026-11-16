@@ -359,23 +359,12 @@
   .viewer-head { position: relative; flex-wrap: wrap; row-gap: var(--studio-spacing-1); padding-inline: var(--studio-spacing-3); }
   .viewer-head > app-copyable-task-key { flex: 0 0 auto; }
   .viewer-head h1 {
-    display: -webkit-box;
-    flex: 1 1 12rem;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow-wrap: anywhere;
-    white-space: normal;
+    display: -webkit-box; flex: 1 1 12rem; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+    overflow-wrap: anywhere; white-space: normal;
   }
   .viewer-head__review-action, .viewer-head__details { position: static; }
   .review-form, .viewer-details { top: calc(100% + var(--studio-spacing-1)); right: var(--studio-spacing-3); left: var(--studio-spacing-3); width: auto; }
-  .viewer-details__meta {
-    grid-template-columns: 1fr;
-  }
-  .viewer-details__live,
-  .viewer-details__live dl {
-    grid-template-columns: 1fr;
-  }
+  .viewer-details__meta, .viewer-details__live, .viewer-details__live dl { grid-template-columns: 1fr; }
   .viewer-details__manual-refresh {
     grid-column: 1;
     grid-row: auto;
