@@ -295,13 +295,11 @@ export class TriageController {
         if (ev.targetState === '6-completed' && err?.status === 409
             && err?.error?.code === 'completion-content-gap') {
           // AGT-3867: the server's own reason, never a guessed brief
-          // mismatch. The toolbar keeps it next to Accept, and the detail
-          // offers the next steps the board offers for the same card.
-          const contentRefusal = serverAcceptanceRefusal(info, err);
-          this.acceptanceRefusals.record(contentRefusal);
-          this.notifications.warning(contentRefusal.message, 'Accept refused');
+          // mismatch. The toolbar keeps it next to Accept with "Accept with
+          // override…" (AGT-3874), and the detail offers the next steps the
+          // board offers for the same card.
+          this.recordAcceptRefusal(info, err);
           void this.acceptanceReadiness.checkCard(info);
-          this.jobService.refresh(true);
           return;
         }
         if (ev.targetState === '6-completed'
@@ -312,10 +310,7 @@ export class TriageController {
                 && /integrat|delivery|containment/i.test(err.error.error)))) {
           // AGT-3704: never a silent refusal. The toolbar shows the reason
           // next to Accept with the action that resolves it.
-          const refusal = serverAcceptanceRefusal(info, err);
-          this.acceptanceRefusals.record(refusal);
-          this.notifications.warning(refusal.message, 'Accept refused');
-          this.jobService.refresh(true);
+          this.recordAcceptRefusal(info, err);
           return;
         }
         if (err?.status === 409 && err?.error?.code === 'completion-content-gap') return;
@@ -330,6 +325,17 @@ export class TriageController {
         });
       },
     });
+  }
+
+  /**
+   * Keep a refused Accept next to the Accept button with its resolving action
+   * (`acceptanceRefusalFor`), toast the server's refusal, and reload the board.
+   */
+  private recordAcceptRefusal(info: TaskInfo, err: unknown): void {
+    const refusal = serverAcceptanceRefusal(info, err);
+    this.acceptanceRefusals.record(refusal);
+    this.notifications.warning(refusal.message, 'Accept refused');
+    this.jobService.refresh(true);
   }
 
   /** Keep the board and open detail on the persisted lane until reissue completes. */
