@@ -36,7 +36,7 @@
             <td class="dist__num">{{ row.cards }}</td>
             <td class="dist__num">{{ fmt(row.medianPerCard) }}</td>
             <td class="dist__num">{{ fmt(row.p90PerCard) }}</td>
-            <td class="dist__num">{{ usd(row.costUsd) }}</td>
+            <td class="dist__num">@if (row.priced) { {{ usd(row.costUsd) }} } @else { <a href="#/workspace/settings/tokens">no price data</a> }</td>
           </tr>
         }
       </tbody>

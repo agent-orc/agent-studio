@@ -50,7 +50,15 @@ public sealed record ReviewUnclaimableObservation(
     string ExecutorId,
     IReadOnlyList<string> MissingCapabilities,
     DateTime ObservedAt,
-    string Reason);
+    string Reason)
+{
+    /// <summary>
+    /// AGT-3840: true when <see cref="MissingCapabilities"/> names capability
+    /// keys. A quota deferral records its sentence there instead.
+    /// </summary>
+    public bool NamesCapabilities => Reason != Contract.ReviewClaimEmptyReasons.QuotaDeferred
+        && MissingCapabilities.Count > 0;
+}
 
 /// <summary>
 /// AGT-2987: remembers why pending attempts could not be claimed and logs each
@@ -135,6 +143,14 @@ public sealed class ReviewClaimUnclaimableLog
         => attemptId is not null && _latest.TryGetValue(attemptId, out var observation)
             ? observation
             : null;
+
+    /// <summary>AGT-3840: the latest refusals one executor reported, oldest attempt first.</summary>
+    public IReadOnlyList<ReviewUnclaimableObservation> ForExecutor(string executorId)
+        => _latest.Values
+            .Where(observation => string.Equals(observation.ExecutorId, executorId, StringComparison.Ordinal))
+            .OrderBy(observation => observation.TaskKey, StringComparer.Ordinal)
+            .ThenBy(observation => observation.AttemptId, StringComparer.Ordinal)
+            .ToArray();
 
     private void Prune(DateTime now)
     {

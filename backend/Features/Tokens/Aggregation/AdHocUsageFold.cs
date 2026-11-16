@@ -7,10 +7,11 @@ namespace AgentStudio.Tokens;
 /// </summary>
 public static class AdHocUsageFold
 {
-    public const string Disclaimer =
-        "Theoretical API cost based on Anthropic's published per-million-token rates. " +
-        "Your actual usage is billed through the Claude CLI subscription you signed in with " +
-        "(Pro / Max / Team / Enterprise), so the dollar number is a comparison, not a bill.";
+    /// <summary>
+    /// Ad-hoc calls run on Claude and Codex alike, so the caveat is the
+    /// provider-neutral one every token cost surface carries (AGT-3794-F14).
+    /// </summary>
+    public const string Disclaimer = TokenCostDisclaimer.Text;
 
     public static AdHocUsageAggregate Aggregate(
         IReadOnlyList<(AdHocUsageRecord Record, TokenCostEstimate Cost)> calls,

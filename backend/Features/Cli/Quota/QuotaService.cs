@@ -29,6 +29,8 @@ public sealed class QuotaService
     private readonly bool _networked;
     private readonly bool _pinnedDemo;
     private readonly bool _emptyFixtureQuota;
+    private readonly DateTime _demoAnchor;
+    private readonly ConcurrentDictionary<string, DateTime> _demoRecordedTicks = new(StringComparer.OrdinalIgnoreCase);
     private readonly TimeProvider _clock;
     private readonly ConcurrentDictionary<string, QuotaSnapshot> _pendingHostDrops = new();
     private readonly Dictionary<string, DateTime> _seenHostObservations = new(StringComparer.Ordinal);
@@ -54,11 +56,13 @@ public sealed class QuotaService
         _clock = clock ?? TimeProvider.System;
         _pinnedDemo = DemoQuotaSnapshots.Enabled(configuration);
         _emptyFixtureQuota = DemoQuotaSnapshots.EmptyFixtureEnabled(configuration);
+        _demoAnchor = DemoQuotaSnapshots.Anchor(configuration);
         if (_pinnedDemo)
         {
             // AGT-3593: a demo or worktree test backend shares the runner host.
             // Never read the host's quota, neither by probing nor from a cache file.
             _logger.LogInformation("Quota probes disabled: serving the pinned demo quota snapshot.");
+            BackfillDemoHistory();
             return;
         }
 
@@ -431,9 +435,37 @@ public sealed class QuotaService
         => _probes.ContainsKey(cliType) ? PinnedFor(cliType, _clock.GetUtcNow().UtcDateTime) : null;
 
     private QuotaSnapshot PinnedFor(string cliType, DateTime nowUtc)
-        => _emptyFixtureQuota
-            ? DemoQuotaSnapshots.EmptyFixtureFor(cliType, nowUtc)
-            : DemoQuotaSnapshots.For(cliType, nowUtc);
+    {
+        if (_emptyFixtureQuota) return DemoQuotaSnapshots.EmptyFixtureFor(cliType, nowUtc);
+        var snapshot = DemoQuotaSnapshots.For(cliType, nowUtc, _demoAnchor);
+        // AGT-3794-F15: append each simulated probe tick once, like a real probe,
+        // so quota history, card analysis and burn forecasts have a series.
+        var recorded = _demoRecordedTicks.GetValueOrDefault(cliType);
+        if (snapshot.Windows.Count > 0 && snapshot.FetchedAt > recorded
+            && _demoRecordedTicks.TryUpdate(cliType, snapshot.FetchedAt, recorded))
+            RecordHistory(snapshot);
+        return snapshot;
+    }
+
+    /// <summary>
+    /// Seed the history of a pinned demo backend with the hourly readings a probe
+    /// would have taken over the last <see cref="DemoQuotaSnapshots.BackfillSpan"/>.
+    /// The store skips readings at or before its latest one, so a restart only
+    /// fills the gap since the previous run.
+    /// </summary>
+    private void BackfillDemoHistory()
+    {
+        if (_emptyFixtureQuota) return;
+        var now = _clock.GetUtcNow().UtcDateTime;
+        foreach (var cli in _probes.Keys)
+        {
+            _demoRecordedTicks[cli] = default;
+            if (_history is null) continue;
+            foreach (var snapshot in DemoQuotaSnapshots.History(
+                         cli, now, _demoAnchor, DemoQuotaSnapshots.BackfillSpan, TimeSpan.FromHours(1)))
+                RecordHistory(snapshot);
+        }
+    }
 
     /// <summary>
     /// Append a trusted snapshot to the quota history (AGT-3001). The store

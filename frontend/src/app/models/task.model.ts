@@ -2236,6 +2236,24 @@ export interface TaskLiveQueue {
   lost?: TaskLiveReviewLoss | null;
   /** AGT-3690: the automatic retry that comes next; set only while `retry-scheduled`. */
   retry?: TaskLiveReviewRetry | null;
+  /**
+   * AGT-3840: the capability keys the review executor refused this attempt
+   * for. Outranks host load: load passes, a missing key does not.
+   */
+  unclaimable?: TaskLiveReviewUnclaimable | null;
+}
+
+/** AGT-3840: why the review executor could not claim the current attempt. */
+export interface TaskLiveReviewUnclaimable {
+  capabilities: readonly string[];
+  /** Runner identity that refused; the Execution Hosts row id. */
+  executorId?: string | null;
+  hostId?: string | null;
+  /** Backend `HeldCapabilityCauses` token for the first key. */
+  cause?: string | null;
+  /** Probe detail behind the first key, when the executor advertised it. */
+  detail?: string | null;
+  observedAt?: string | null;
 }
 
 /**

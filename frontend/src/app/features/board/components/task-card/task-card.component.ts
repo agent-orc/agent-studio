@@ -95,6 +95,7 @@ import { TaskCardQuotaNoticeComponent } from '../../../quota';
 import { DossierSliceLinkComponent } from '../../../../components/dossier-slice-link/dossier-slice-link';
 import { AcceptanceReadinessNoteComponent } from '../../../acceptance-readiness/lazy';
 import { ServerCheckoutNoticeComponent } from '../../../server-checkout';
+import { holdsReturnedFocus } from '../../../../directives/modal-focus.directive';
 // Shared clock keeps relative timestamps in lockstep without NG0100 changes.
 const nowTick = signal(Date.now());
 if (typeof window !== 'undefined') {
@@ -140,11 +141,13 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   /** True when this card should render the just-created highlight. */
   readonly isJustCreated = computed(() => this.highlightJobId() === this.job().id);
 
-  /** Scroll a newly created card into the board viewport. */
+  /** Scroll a newly created card into view; take the focus the closed create dialog dropped or handed back to its opener (AGT-3834). */
   private readonly scrollEffect = effect(() => {
     if (!this.isJustCreated()) return;
     queueMicrotask(() => {
       try {
+        const active = document.activeElement;
+        if (!active || active === document.body || holdsReturnedFocus(active)) ((this.hostRef.nativeElement as HTMLElement).querySelector('.task-card') as HTMLElement | null)?.focus({ preventScroll: true });
         this.hostRef.nativeElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
       } catch { /* SSR / detached DOM — ignore */ }
     });

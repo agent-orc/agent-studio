@@ -64,6 +64,8 @@ describe('WorkbenchViewerHeaderComponent', () => {
     const header = fixture.nativeElement as HTMLElement;
     expect(header.querySelector('[data-testid="workbench-viewer-status"]')?.getAttribute('aria-label'))
       .toBe('Status: Decided');
+    // AGT-3835: aria-label needs a role; the status dot is an image.
+    expect(header.querySelector('[data-testid="workbench-viewer-status"]')?.getAttribute('role')).toBe('img');
     expect(header.querySelector('[data-testid="workbench-viewer-implementation-status"]')).toBeNull();
     expect(header.querySelector('[data-testid="workbench-viewer-open-decisions"]')?.textContent)
       .toContain('0 open');

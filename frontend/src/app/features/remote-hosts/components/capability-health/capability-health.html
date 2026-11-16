@@ -30,6 +30,38 @@
   </section>
 }
 
+@if (held().length) {
+  <section class="held" data-testid="remote-host-held-capabilities" aria-label="Held capabilities">
+    <header>
+      <strong>Held capabilities</strong>
+      <span>Claims skip work that needs these keys on this role, even while the role reads Online.</span>
+    </header>
+    @for (hold of held(); track hold.key) {
+      <article class="held__row" tabindex="-1"
+               [attr.data-capability-key]="hold.key"
+               [attr.data-state]="hold.state"
+               [attr.data-focused]="focusCapability() === hold.key ? 'true' : null"
+               [attr.data-testid]="'remote-host-held-' + hold.key">
+        <div class="capability__head">
+          <strong>{{ hold.key }}</strong>
+          <app-status-indicator [tone]="heldTone(hold)" [label]="heldCauseLabel(hold.cause)" [compact]="true"
+            [testId]="'remote-host-held-state-' + hold.key" />
+          <button type="button" class="held__reprobe" [disabled]="!!h.busyAction"
+                  [attr.data-testid]="'remote-host-held-reprobe-' + hold.key"
+                  (click)="reprobe.emit(hold.key)">
+            {{ h.busyAction === 'reprobe' ? 'Re-probing…' : 'Re-probe' }}
+          </button>
+        </div>
+        <dl>
+          <div><dt>Probe detail</dt><dd [attr.data-testid]="'remote-host-held-detail-' + hold.key">{{ hold.detail || 'No probe detail reported' }}</dd></div>
+          @if (hold.observedAt) { <div><dt>Observed</dt><dd>{{ hold.observedAt | date:'short' }}</dd></div> }
+          @if (hold.waitingTaskKeys?.length) { <div><dt>Waiting work</dt><dd>{{ hold.waitingTaskKeys!.join(', ') }}</dd></div> }
+        </dl>
+      </article>
+    }
+  </section>
+}
+
 @if (h.capabilityHealth?.length) {
   <section class="health" data-testid="remote-host-capability-health" aria-label="Capability health">
     <header>
