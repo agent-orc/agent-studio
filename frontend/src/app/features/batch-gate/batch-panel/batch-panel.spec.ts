@@ -65,7 +65,9 @@ describe('BatchPanelComponent', () => {
     expect(rows[0].textContent).toContain('Queued');
     expect(rows[0].textContent).toContain('3 per-task slots');
     expect(rows[0].textContent).toContain('Start estimate unavailable: Full-suite duration is unknown.');
-    expect(rows[0].textContent).toContain('Last progress');
+    expect(rows[0].textContent).toContain('Last progress 10 Nov 2026, 12:00');
+    expect(rows[1].textContent).toContain('since 10 Nov 2026, 12:00');
+    expect(document.body.querySelector('[data-testid="batch-time-zone"]')?.textContent).toBe('Times in UTC');
     expect(rows[0].textContent).toContain('Red escalates the card; green integrates it.');
     expect(rows[1].textContent).toContain('Running on gate-01 since');
     expect(fixture.nativeElement.querySelector('[data-testid="batch-per-task-gates"]').textContent)

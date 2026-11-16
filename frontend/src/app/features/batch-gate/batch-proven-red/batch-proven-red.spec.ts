@@ -22,7 +22,8 @@ describe('BatchProvenRedComponent', () => {
     expect(host.querySelectorAll('[data-testid="batch-proven-red-excerpt"]')).toHaveLength(1);
     expect(host.querySelector('[data-testid="batch-proven-red-evidence"]')!.getAttribute('href'))
       .toBe('/api/projects/Demo/batch-gate/isolation-evidence?parentBatchId=batch-14&taskKey=AGT-2');
-    expect(host.querySelector('[data-testid="batch-proven-red-evidence-path"]')!.textContent).toBe(culprit.evidencePath);
+    expect(host.querySelector('[data-testid="batch-proven-red-evidence-label"]')!.textContent).toBe('gate-evidence.jsonl');
+    expect(host.textContent).not.toContain(culprit.evidencePath);
   });
 
   it('says so when the run recorded no test names or its evidence is gone', async () => {

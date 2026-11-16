@@ -236,7 +236,8 @@ test('stale running batch from the real backend shows timing and attention', asy
           .selectOption('4-auto-review');
       await page.getByTestId('batch-lane-indicator').filter({ visible: true }).first().click();
       const panel = page.getByTestId('batch-panel');
-      await expect(panel.getByTestId('batch-phase-time').first()).toContainText(/running since \d{2}:\d{2} UTC, 3 h \d+ min/);
+      await expect(panel.getByTestId('batch-phase-time').first()).toContainText(/running since \d{2}:\d{2}, 3 h \d+ min/);
+      await expect(panel.getByTestId('batch-time-zone')).toHaveText('Times in UTC');
       await expect(panel).toContainText('gate-host-01 · running · since');
       await panel.getByTestId('batch-panel-body').evaluate(element => { element.scrollTop = element.scrollHeight; });
       if (process.env.JOB_RESULTS_DIR) await panel.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `stale-batch-panel-${theme}-${width}.png`) });
@@ -770,9 +771,9 @@ test('red, abandoned and running batches show truthful status and evidence at de
   await expect(panel.locator('#batch-batch-7').getByRole('link', { name: 'Run log' }))
     .toHaveAttribute('href', /run-log\?batchId=batch-7&runId=run-7/);
   await expect(panel.locator('#batch-batch-7').getByText('Phase history')).toBeVisible();
-  await expect(panel.locator('#batch-batch-7').getByText('Oct 11, 2026', { exact: false }).first()).toBeHidden();
+  await expect(panel.locator('#batch-batch-7').getByText('11 Oct 2026', { exact: false }).first()).toBeHidden();
   await panel.locator('#batch-batch-7 summary').click();
-  await expect(panel.locator('#batch-batch-7').getByText('Oct 11, 2026', { exact: false }).first()).toBeVisible();
+  await expect(panel.locator('#batch-batch-7').getByText('11 Oct 2026', { exact: false }).first()).toBeVisible();
   if (!evidence) return;
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });

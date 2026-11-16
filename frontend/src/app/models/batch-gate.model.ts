@@ -119,6 +119,20 @@ export interface BatchQuarantinedRecord {
 
 export type BatchGateBatch = BatchGateState['batches'][number];
 
+/**
+ * Batch views read every time in one zone, UTC, the zone of the gate hosts and
+ * their evidence. A view names the zone once with {@link BATCH_TIME_ZONE_NOTE};
+ * the individual time lines do not repeat it.
+ */
+export const BATCH_TIME_ZONE_NOTE = 'Times in UTC';
+
+/** Date and time of a batch event in UTC, without a zone suffix. */
+export function batchDateTime(value?: string | null): string {
+  const stamp = value ? Date.parse(value) : NaN;
+  if (!Number.isFinite(stamp)) return 'Unknown';
+  return new Date(stamp).toLocaleString('en-GB', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' });
+}
+
 /** UTC phase start and elapsed time, shared by the panel and card. */
 export function batchTimeLine(start?: string | null, end?: string | null, now = Date.now()): string {
   if (!start || !Number.isFinite(Date.parse(start))) return 'Start time unknown';
@@ -126,7 +140,7 @@ export function batchTimeLine(start?: string | null, end?: string | null, now = 
   const minutes = Math.max(0, Math.floor(((end ? Date.parse(end) : now) - started) / 60_000));
   const elapsed = minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
   const clock = new Date(started).toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' });
-  return `since ${clock} UTC, ${elapsed}`;
+  return `since ${clock}, ${elapsed}`;
 }
 
 const ACTIVE_BATCH_PHASES = new Set(['formed', 'assembling', 'assembled', 'running']);
@@ -464,6 +478,15 @@ export function batchProvenRedFor(state: BatchGateState | null, member: BatchMem
     .sort((a, b) => Date.parse(a.recordedAtUtc) - Date.parse(b.recordedAtUtc));
   const latest = current[current.length - 1];
   return latest?.status === 'proven-red' ? latest : null;
+}
+
+/**
+ * Short label of an isolation evidence file: its file name. The recorded path
+ * is a host path inside the instance directory and stays out of the UI.
+ */
+export function batchEvidenceLabel(finding: Pick<BatchIsolationFinding, 'evidencePath'>): string | null {
+  const name = finding.evidencePath?.split(/[\\/]/).filter(Boolean).at(-1);
+  return name || null;
 }
 
 export function batchIsolationEvidenceUrl(project: string, finding: BatchIsolationFinding): string {

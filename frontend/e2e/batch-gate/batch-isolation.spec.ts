@@ -185,7 +185,8 @@ test('lane indicator and batch panel name the proven-red member, its failing tes
   const red = isolation.locator('[data-testid="batch-isolation-member"][data-task-key="AGT-2"]');
   await expect(red.getByTestId('batch-proven-red-test')).toHaveText(failingTests.map(test => test.testName));
   await expect(red.getByTestId('batch-proven-red-excerpt')).toContainText('Expected: 12.50');
-  await expect(red.getByTestId('batch-proven-red-evidence-path')).toHaveText(evidence('batch-17'));
+  await expect(red.getByTestId('batch-proven-red-evidence-label')).toHaveText('gate-evidence.jsonl');
+  await expect(panel).not.toContainText('/var/lib/agentstudio');
   await expect(red).toContainText('Proved by batch batch-17, run run-17');
   const link = red.getByTestId('batch-proven-red-evidence');
   await expect(link).toHaveAttribute('href',

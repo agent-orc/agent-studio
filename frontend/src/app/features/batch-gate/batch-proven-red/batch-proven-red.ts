@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
-import { batchIsolationEvidenceUrl, type BatchIsolationFinding } from '../../../models/batch-gate.model';
+import { batchEvidenceLabel, batchIsolationEvidenceUrl, type BatchIsolationFinding } from '../../../models/batch-gate.model';
 
 /**
  * AGT-3577: why the bisection proved a member red: the failing tests and
@@ -17,4 +17,6 @@ export class BatchProvenRedComponent {
   readonly finding = input.required<BatchIsolationFinding>();
   readonly failures = computed(() => this.finding().failures ?? []);
   readonly evidenceUrl = computed(() => batchIsolationEvidenceUrl(this.project(), this.finding()));
+  /** AGT-3872: the file name only; the recorded host path stays out of the UI. */
+  readonly evidenceLabel = computed(() => batchEvidenceLabel(this.finding()));
 }
