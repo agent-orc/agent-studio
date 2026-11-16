@@ -19,6 +19,7 @@ import {
   deploymentLogFixture,
   pipelineDefinitionFixture,
 } from '../../testing/deploy-fixtures';
+import { instanceDeployFixture } from '../../testing/instance-deploy-fixtures';
 
 class FakeDeployData {
   readonly environmentsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
@@ -27,6 +28,7 @@ class FakeDeployData {
   readonly deploymentsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
   readonly pipelinePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
   readonly healthPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
+  readonly instancePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
   readonly requests: string[] = [];
   readonly actions: string[] = [];
   actionResult = new Subject<unknown>();
@@ -48,6 +50,7 @@ class FakeDeployData {
     this.statusReads.push(read);
     return read;
   }
+  instance(): Observable<DeployPanel<unknown>> { return this.instancePanel; }
   releases(): Observable<DeployPanel<unknown>> { return this.releasesPanel; }
   releaseNotes(_project: string, id: string): Observable<DeployPanel<unknown>> {
     const release = deployReleasesFixture().find(item => item.id === id);
@@ -208,6 +211,17 @@ describe('ProjectDeployAreaComponent', () => {
     expect(host().querySelectorAll('[data-testid^="deploy-run-row-"]')).toHaveLength(7);
     await click('deploy-tab-pipeline');
     expect(byTestId('pipeline-node-production')).not.toBeNull();
+  });
+
+  it('shows the running Studio instance above the environments only for its source project', async () => {
+    data.serveEverything();
+    await settle();
+    expect(byTestId('instance-deploy')).toBeNull();
+    data.instancePanel.next({ status: 'ready', value: instanceDeployFixture() });
+    await settle();
+    expect(text('instance-deploy')).toContain('Production · this Studio');
+    expect(text('instance-deploy-pending')).toContain('AGT-3879');
+    expect(byTestId('deploy-environments')).not.toBeNull();
   });
 
   it('keeps the other panels and shows the error when a deploy route fails', async () => {

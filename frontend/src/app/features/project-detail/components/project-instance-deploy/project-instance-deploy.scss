@@ -1,0 +1,96 @@
+@use '../project-deploy-area/deploy-shared' as deploy;
+
+:host { display: block; min-width: 0; }
+
+.instance-deploy {
+  @include deploy.panel;
+  display: grid;
+  gap: var(--studio-spacing-4);
+}
+
+.instance-deploy__head {
+  @include deploy.panel-head;
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+
+.instance-deploy__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--studio-spacing-4);
+}
+
+.instance-deploy__block {
+  display: grid;
+  align-content: start;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+
+  h3 {
+    display: flex;
+    align-items: baseline;
+    gap: var(--studio-spacing-2);
+    margin: 0;
+    font-size: var(--studio-font-size-lg);
+    font-weight: 600;
+  }
+
+  p { margin: 0; }
+}
+
+.instance-deploy__facts { @include deploy.fact-list; }
+
+.instance-deploy__numeric,
+.instance-deploy__count { @include deploy.numeric; }
+
+.instance-deploy__count {
+  padding: 0 var(--studio-spacing-2);
+  border-radius: 999px;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-dim);
+  font-weight: 500;
+}
+
+.instance-deploy__muted { @include deploy.muted; }
+
+.instance-deploy__steps,
+.instance-deploy__cards {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.instance-deploy__steps { grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); }
+
+.instance-deploy__steps > li,
+.instance-deploy__cards > li { min-width: 0; }
+
+.instance-deploy__head > div { min-width: 0; }
+
+.instance-deploy__card {
+  display: flex;
+  gap: var(--studio-spacing-2);
+  width: 100%;
+  min-width: 0;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--studio-fg);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+
+  span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  &:hover { background: var(--studio-bg-hover); }
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+}
+
+.instance-deploy__key {
+  @include deploy.numeric;
+  flex: none;
+  color: var(--studio-fg-dim);
+}

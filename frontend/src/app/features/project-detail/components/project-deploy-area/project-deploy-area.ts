@@ -2,6 +2,8 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, ou
 import { Subscription } from 'rxjs';
 import { ProjectDeploymentPanelComponent } from '../project-deployment-panel/project-deployment-panel.component';
 import { ProjectDeployOverviewComponent } from '../project-deploy-overview/project-deploy-overview';
+import { ProjectInstanceDeployComponent } from '../project-instance-deploy/project-instance-deploy';
+import type { InstanceDeployView } from '../../state/instance-deploy.model';
 import { ProjectDeployReleasesComponent } from '../project-deploy-releases/project-deploy-releases';
 import { ProjectDeployPipelineComponent } from '../project-deploy-pipeline/project-deploy-pipeline';
 import { ProjectDeployHistoryComponent } from '../project-deploy-history/project-deploy-history';
@@ -48,6 +50,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ProjectSecretsPageComponent, FlowHealthPageComponent,
+    ProjectInstanceDeployComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -85,6 +88,8 @@ export class ProjectDeployAreaComponent {
   readonly now = signal(this.clock());
   readonly environmentPanel = signal<DeployPanel<ProjectEnvironments>>({ status: 'loading' });
   readonly statusPanel = signal<DeployPanel<EnvironmentStatus[]>>({ status: 'loading' });
+  /** The running Studio instance, only for its source project (AGT-3879). */
+  readonly instancePanel = signal<DeployPanel<InstanceDeployView>>({ status: 'loading' });
   readonly releasePanel = signal<DeployPanel<Release[]>>({ status: 'loading' });
   readonly deploymentPanel = signal<DeployPanel<Deployment[]>>({ status: 'loading' });
   readonly historyPanel = signal<DeployPanel<Deployment[]>>({ status: 'loading' });
@@ -168,7 +173,8 @@ export class ProjectDeployAreaComponent {
     const notice = (name: string, panel: DeployPanel<unknown>) => panel.status === 'error' ? [`${name}: ${panel.message}`] : [];
     return [
       ...notice('Environments', this.environmentPanel()),
-      ...notice('Environment status', this.statusPanel()), ...notice('Releases', this.releasePanel()),
+      ...notice('Environment status', this.statusPanel()), ...notice('This Studio', this.instancePanel()),
+      ...notice('Releases', this.releasePanel()),
       ...notice('Deploy runs', this.deploymentPanel()), ...notice('Health', this.healthPanel()),
       ...[...this.artifactReleases().values()].flatMap(panel => notice('Release lookup', panel)),
       ...(this.fetchedRun() ? notice('Deploy run', this.fetchedRun()!) : []),
@@ -307,7 +313,7 @@ export class ProjectDeployAreaComponent {
       this.releaseOffset.set(0);
       this.releaseTotal.set(0);
       this.artifactReleases.set(new Map());
-      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel] as const)
+      for (const target of [this.environmentPanel, this.statusPanel, this.instancePanel, this.releasePanel, this.deploymentPanel, this.historyPanel] as const)
         (target as WritableSignal<DeployPanel<unknown>>).set({ status: 'loading' });
     } else {
       // Refresh retries failed lookups; resolved release records do not change.
@@ -330,6 +336,9 @@ export class ProjectDeployAreaComponent {
     const generation = ++this.readGeneration;
     this.runReads.add(this.data.statuses(projectName).subscribe(panel => {
       if (generation === this.readGeneration) this.into(this.statusPanel, keepShown)(panel);
+    }));
+    this.runReads.add(this.data.instance(projectName).subscribe(panel => {
+      if (generation === this.readGeneration) this.into(this.instancePanel, keepShown)(panel);
     }));
     this.runReads.add(this.data.deploymentPage(projectName, 0).subscribe(panel => {
       if (generation !== this.readGeneration) return;

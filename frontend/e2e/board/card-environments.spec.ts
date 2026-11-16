@@ -42,7 +42,7 @@ test('card environments and Staging-only board filter show the same deployment s
   const board = page.getByTestId('studio-board');
   await expect(board).toBeVisible();
   const selectedCard = board.getByTestId('task-card').filter({ hasText: selected.title }).first();
-  await expect(selectedCard.getByTestId('card-environment-staging')).toContainText('Staging · live · 1.0');
+  await expect(selectedCard.getByTestId('card-environment-staging')).toContainText('Staging · live since 2026-10-16 10:00 UTC · 1.0');
   await expect(selectedCard.getByTestId('card-environment-production')).toContainText('Not yet in Production');
 
   await page.getByTestId('studio-ab-filters').click();
@@ -56,5 +56,5 @@ test('card environments and Staging-only board filter show the same deployment s
   await page.getByTestId('board-environment-filter').selectOption('all');
   productionLive = true;
   await page.clock.fastForward(30_000);
-  await expect(selectedCard.getByTestId('card-environment-production')).toContainText('Production · live · 2.0');
+  await expect(selectedCard.getByTestId('card-environment-production')).toContainText('Production · live since 2026-10-16 11:00 UTC · 2.0');
 });

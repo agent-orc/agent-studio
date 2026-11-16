@@ -274,12 +274,18 @@ public static class RoutePermissionCatalog
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
             IamEnvironments.Production);
         Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix", "/api/deploy/cards");
+        // Instance deploy records (AGT-3879): the report routes check their own
+        // deploy reporter token; issuing or revoking one is an Owner action.
+        Add("POST", IamPermissions.Anonymous, "/api/instance/deploy/runs", "/api/instance/deploy/runs/{}/finish");
+        Add("PUT", IamPermissions.Anonymous, "/api/instance/deploy/runs/{}/steps/{}");
+        Add("*", IamPermissions.WorkspaceAdminister, "/api/instance/deploy/reporter-tokens",
+            "/api/instance/deploy/reporter-tokens/{}");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/stop", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/run-target-removal/confirm", null, "environmentId");
         Add("R", IamPermissions.ProjectRead,
-            "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status",
+            "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status", "/api/projects/{}/deploy/instance",
             "/api/projects/{}/deploy/releases", "/api/projects/{}/deploy/releases/page",
             "/api/projects/{}/deploy/releases/{}",
             "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",

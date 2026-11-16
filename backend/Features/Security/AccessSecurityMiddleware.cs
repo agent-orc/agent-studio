@@ -286,6 +286,14 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        // The instance deploy record API authenticates its own deploy reporter
+        // token (AGT-3879); no session or other credential reaches it.
+        if (AgentStudio.Deploy.InstanceDeployEndpoints.IsReportRoute(context.Request.Method, path))
+        {
+            await _next(context);
+            return;
+        }
+
         if (path.Equals("/api/clients/register", StringComparison.OrdinalIgnoreCase))
         {
             await Reject(context, 404, "registration-disabled", "Open client registration is disabled in the networked profile.");

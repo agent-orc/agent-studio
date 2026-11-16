@@ -58,6 +58,7 @@ public sealed class DeployService
     private readonly DeliveryVerificationIndex _deliveryVerifications;
     private readonly Action<TimeSpan>? _deliveryLockHoldObserved;
     private readonly Action? _deliveryVerificationCaptured;
+    private readonly InstanceDeployService? _instance;
 
     /// <summary>
     /// Ancestry answers between release commits. Commits are immutable, so a
@@ -83,8 +84,10 @@ public sealed class DeployService
         Func<IReadOnlyList<TaskInfo>>? qualityTaskScan = null,
         Func<string, IntegrationVerificationRecord?>? deliveryVerificationRead = null,
         Action<TimeSpan>? deliveryLockHoldObserved = null,
-        Action? deliveryVerificationCaptured = null)
+        Action? deliveryVerificationCaptured = null,
+        InstanceDeployService? instance = null)
     {
+        _instance = instance;
         _environments = environments;
         _store = store;
         _git = git;
@@ -126,8 +129,13 @@ public sealed class DeployService
             .ToArray();
 
     public IReadOnlyList<DeployEnvironment>? Environments(string project)
-        => _environments.Declarations(project) is { } declarations
-            ? MapEnvironments(project, declarations).Concat(PreviewEnvironments(project)).ToArray() : null;
+    {
+        if (_environments.Declarations(project) is not { } declarations) return null;
+        var mapped = MapEnvironments(project, declarations);
+        var instance = _instance?.Overlay(project)?.Environment;
+        return mapped.Concat(instance is null ? [] : [instance with { Order = mapped.Count }])
+            .Concat(PreviewEnvironments(project)).ToArray();
+    }
 
     private IReadOnlyList<DeployEnvironment> PreviewEnvironments(string project)
         => _scanner.ScanAllJobs().Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)
@@ -322,7 +330,7 @@ public sealed class DeployService
         IReadOnlyList<Release>? releases;
         lock (_gate)
         {
-            releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
+            releases = ReadLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
                 .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
         }
         return releases is null ? null : WithQuality(project, releases);
@@ -341,7 +349,7 @@ public sealed class DeployService
         lock (_gate)
         {
             var digest = artifact is null ? null : DigestOf(artifact);
-            allReleases = SyncLocked(project)?.Releases;
+            allReleases = ReadLocked(project)?.Releases;
             var releases = allReleases?
                 .Where(item => digest is null || item.ArtifactDigests.Any(value => DigestOf(value) == digest))
                 .Where(item => notAfterUtc is null || item.CreatedAtUtc <= notAfterUtc)
@@ -359,7 +367,7 @@ public sealed class DeployService
         DeployPage<Release>? page;
         lock (_gate)
         {
-            releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
+            releases = ReadLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
                 .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
             if (releases is null) return null;
             var index = Array.FindIndex(releases, item => item.Id == releaseId);
@@ -432,7 +440,7 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            var snapshot = SyncLocked(project);
+            var snapshot = ReadLocked(project);
             var release = snapshot?.Releases.FirstOrDefault(item => item.Id == releaseId);
             return release is null ? null : new(release, snapshot!.Deployments(project)
                 .Where(item => item.ReleaseId == releaseId).ToArray());
@@ -443,7 +451,7 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            return SyncLocked(project)?.Deployments(project)
+            return ReadLocked(project)?.Deployments(project)
                 .Where(item => (environmentId is null || item.EnvironmentId == environmentId)
                     && (tenant is null || item.Tenant == tenant))
                 .OrderByDescending(item => item.CreatedAtUtc).ThenByDescending(item => item.Id, StringComparer.Ordinal)
@@ -456,7 +464,7 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            var snapshot = SyncLocked(project);
+            var snapshot = ReadLocked(project);
             if (snapshot is null) return null;
             var runs = snapshot.Deployments(project)
                 .Where(item => environmentId is null || item.EnvironmentId == environmentId)
@@ -480,7 +488,7 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            return SyncLocked(project)?.Deployments(project).FirstOrDefault(item => item.Id == deploymentId);
+            return ReadLocked(project)?.Deployments(project).FirstOrDefault(item => item.Id == deploymentId);
         }
     }
 
@@ -488,8 +496,13 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            var snapshot = SyncLocked(project);
+            var snapshot = ReadLocked(project);
             if (snapshot is null || snapshot.Runs.All(item => item.Id != deploymentId)) return null;
+            if (snapshot.Instance?.Steps.TryGetValue(deploymentId, out var instanceSteps) == true)
+                return new DeploymentLogResponse(deploymentId, instanceSteps
+                    .Where(item => step is null || item.Name == step)
+                    .Select(item => new DeploymentLogLine(item.Name, item.FinishedAtUtc ?? item.StartedAtUtc ?? item.ReportedAtUtc,
+                        item.Message is null ? item.State : item.State + ": " + item.Message)).ToArray());
             return new DeploymentLogResponse(deploymentId, _store.ReadLog(project, deploymentId)
                 .Where(item => step is null || item.Step == step).ToArray())
             { Tenant = snapshot.Runs.First(item => item.Id == deploymentId).Tenant };
@@ -543,7 +556,7 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            var snapshot = SyncLocked(project);
+            var snapshot = ReadLocked(project);
             var previews = _scanner.ScanAllJobs().Where(task =>
                     string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)
                     && task.Preview is { Status: not ("removing" or "expired" or "removed") })
@@ -577,8 +590,10 @@ public sealed class DeployService
             var releases = tenant is null ? snapshot.Releases : snapshot.Records.Values
                 .Where(record => record.Tenants.Any(item => item.Name == tenant))
                 .Select(record => record.Release).ToArray();
+            if (snapshot.Instance is { } instance) hostHealth[instance.Environment.Id] = instance.Health;
             return EnvironmentStatusProjection.Project(selected, releases,
                 snapshot.Deployments(project).Where(item => item.Tenant == tenant).ToArray(), hostHealth)
+                .Select(item => WithInstance(item, snapshot.Instance))
                 .Select(item => item with { Tenant = tenant })
                 .Concat(tenant is null ? previews : []).ToArray();
         }
@@ -593,12 +608,14 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            var snapshot = SyncLocked(project);
+            var snapshot = ReadLocked(project);
             if (snapshot is null) return null;
             var repo = _git.ResolveRepoRootForProject(project);
-            return CardDeploymentProjection.Project(project, snapshot.Environments,
+            var views = CardDeploymentProjection.Project(project, snapshot.Environments,
                 snapshot.Releases, snapshot.Deployments(project), cardKeys,
-                (origin, target) => repo is not null && Contains(repo, origin.CommitSha, target.CommitSha));
+                (origin, target) => repo is not null && !IsInstanceRelease(origin) && !IsInstanceRelease(target)
+                    && Contains(repo, origin.CommitSha, target.CommitSha));
+            return snapshot.Instance is { } instance ? views.Select(view => WithInstance(view, instance, snapshot)).ToArray() : views;
         }
     }
 
@@ -612,7 +629,7 @@ public sealed class DeployService
         {
             try
             {
-                if (_environments.Declarations(project) is not { Count: > 0 }) continue;
+                if (_environments.Declarations(project) is not { Count: > 0 } && _instance?.IsSource(project) != true) continue;
                 if (Cards(project, byProject[project].Select(item => string.IsNullOrWhiteSpace(item.Key)
                         ? item.Id : item.Key!)) is { } projected) cards.AddRange(projected);
             }
@@ -628,7 +645,7 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            var snapshot = SyncLocked(project);
+            var snapshot = ReadLocked(project);
             var record = snapshot?.Records.GetValueOrDefault(releaseId);
             var release = record?.Release;
             if (release is null) return null;
@@ -658,7 +675,7 @@ public sealed class DeployService
             lock (_gate)
             {
                 if (!_deliveryVerifications.IsCurrent(project, verification)) continue;
-                var snapshot = SyncLocked(project);
+                var snapshot = ReadLocked(project);
                 if (snapshot is null) return null;
                 var runs = snapshot.Deployments(project);
                 var (signature, integrated) = DeliveryInputs(snapshot, runs, verification);
@@ -688,20 +705,21 @@ public sealed class DeployService
                 try
                 {
                     if (!_deliveryVerifications.IsCurrent(project, verification)) continue;
-                    var snapshot = ReadOnlySnapshot(project);
+                    var snapshot = WithInstance(project, ReadOnlySnapshot(project));
                     if (snapshot is null) return null;
                     var runs = snapshot.Deployments(project).Where(item => item.Tenant is null).ToArray();
                     var health = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
                         StringComparer.Ordinal);
+                    if (snapshot.Instance is { } instance) health[instance.Environment.Id] = instance.Health;
                     var (inputs, integrated) = DeliveryInputs(snapshot, runs, verification);
                     var signature = inputs + "|" + releaseDepth + "|" + string.Join('|', health.Select(item => item.Key + ':' + item.Value));
                     if (_deliveryColumnCache.TryGetValue(project, out var cached) && cached.Signature == signature)
-                        return cached.Value;
+                        return WithInstance(cached.Value, snapshot.Instance);
                     var value = DeliveryColumnProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, health,
                         snapshot.Records.ToDictionary(item => item.Key, item => item.Value.Lifecycle, StringComparer.Ordinal),
                         integrated().Keys, releaseDepth);
                     _deliveryColumnCache[project] = (signature, value);
-                    return value;
+                    return WithInstance(value, snapshot.Instance);
                 }
                 finally
                 {
@@ -748,7 +766,7 @@ public sealed class DeployService
             {
                 // Reading the queue persists its state, so skip projects
                 // without environment declarations.
-                if (_environments.Declarations(project) is not { Count: > 0 }) continue;
+                if (_environments.Declarations(project) is not { Count: > 0 } && _instance?.IsSource(project) != true) continue;
                 var statuses = Status(project)?.Where(item => item.Environment.Kind is
                     EnvironmentKinds.Staging or EnvironmentKinds.Production).ToArray();
                 if (statuses is { Length: > 0 })
@@ -1411,6 +1429,82 @@ public sealed class DeployService
         return run with { Steps = DeploymentStepPlan.Build(run) };
     }
 
+    /// <summary>
+    /// A read snapshot: <see cref="SyncLocked"/> plus the running Studio
+    /// instance for its source project. Mutations keep using
+    /// <see cref="SyncLocked"/>, so they never see, start, or persist an
+    /// instance run; the operator scripts own those (AGT-3879).
+    /// </summary>
+    private Snapshot? ReadLocked(string project) => WithInstance(project, SyncLocked(project));
+
+    private Snapshot? WithInstance(string project, Snapshot? snapshot)
+    {
+        if (snapshot is null || _instance?.Overlay(project) is not { } overlay) return snapshot;
+        var environments = snapshot.Environments
+            .Append(overlay.Environment with { Order = snapshot.Environments.Count }).ToArray();
+        return new Snapshot(environments, snapshot.RecordList.Concat(overlay.Records).ToArray(),
+            snapshot.Runs.Concat(overlay.Runs).ToArray(), snapshot.View) { Instance = overlay };
+    }
+
+    private static bool IsInstanceRelease(Release release)
+        => release.Id.StartsWith(InstanceDeployService.ReleaseIdPrefix, StringComparison.Ordinal);
+
+    /// <summary>The live release is the one whose server switch went through; waiting are the cards integrated after it.</summary>
+    private static EnvironmentStatus WithInstance(EnvironmentStatus status, InstanceDeployOverlay? instance)
+        => instance is null || status.Environment.Id != instance.Environment.Id ? status : status with
+        {
+            CurrentRelease = instance.LiveRelease ?? status.CurrentRelease,
+            NewerRelease = status.NewerRelease is { } newer && instance.LiveRelease is { } live
+                && !EnvironmentStatusProjection.IsNewer(newer, live) ? null : status.NewerRelease,
+            CardsSinceLastDeploy = instance.NotLiveYet?.Select(item => item.Key).ToArray() ?? status.CardsSinceLastDeploy,
+        };
+
+    /// <summary>A card is live once the live release contains one of its commits; it is live since that release went live.</summary>
+    private static CardDeploymentView WithInstance(CardDeploymentView view, InstanceDeployOverlay instance, Snapshot snapshot)
+        => view with
+        {
+            Environments = view.Environments.Select(badge =>
+            {
+                if (badge.EnvironmentId != instance.Environment.Id) return badge;
+                if (!instance.LiveCardReleases.TryGetValue(view.CardKey, out var releaseId)
+                    || !snapshot.ReleaseById.TryGetValue(releaseId, out var release))
+                    return badge with { State = CardDeploymentProjection.NotDeployed, ReleaseId = null, ReleaseVersion = null, AtUtc = null };
+                return badge with
+                {
+                    State = DeploymentStates.Succeeded, ReleaseId = release.Id, ReleaseVersion = release.Version,
+                    AtUtc = instance.LiveSince.GetValueOrDefault(release.Id, release.CreatedAtUtc),
+                };
+            }).ToArray(),
+        };
+
+    /// <summary>
+    /// The integrated column of the source project lists the cards on the
+    /// integration branch after the live commit, in landing order ("integrated,
+    /// not live yet"); the instance column waits for the same cards.
+    /// </summary>
+    private static DeliveryColumnsResponse WithInstance(DeliveryColumnsResponse value, InstanceDeployOverlay? instance)
+    {
+        if (instance?.LiveRelease is null || instance.NotLiveYet is null) return value;
+        var waiting = instance.NotLiveYet.Select(item => new DeliveryColumnCard(item.Key, null, null, false)).ToArray();
+        var live = instance.LiveRelease;
+        return value with
+        {
+            Columns = value.Columns.Select(column => column.Id == DeliveryColumnProjection.IntegratedColumnId
+                ? column with { Landed = waiting }
+                : column.EnvironmentId == instance.Environment.Id
+                    ? column with
+                    {
+                        CurrentRelease = new(live.Id, live.Version, live.Channel, live.CreatedAtUtc),
+                        Landed = instance.LiveReleases.Reverse().Take(value.ReleaseDepth)
+                            .SelectMany(release => release.CardKeys
+                                .Select(key => new DeliveryColumnCard(key, release.Id, release.Version, false)))
+                            .DistinctBy(item => item.Key, StringComparer.OrdinalIgnoreCase).ToArray(),
+                        Waiting = waiting,
+                    }
+                    : column).ToArray(),
+        };
+    }
+
     // Delivery reads project current files in memory. Reconciliation writes and
     // failure-card creation belong to the background/mutation paths, never GET.
     private Snapshot? ReadOnlySnapshot(string project)
@@ -1551,6 +1645,9 @@ public sealed class DeployService
             records.ToDictionary(item => item.Release.Id, item => item.Release, StringComparer.Ordinal);
         public IReadOnlyList<DeploymentRecord> Runs { get; } = runs;
         public ProjectEnvironmentsResponse View { get; } = view;
+        /// <summary>The running Studio instance when this is its source project (AGT-3879); read paths only.</summary>
+        public InstanceDeployOverlay? Instance { get; init; }
+        public IReadOnlyList<ReleaseRecord> RecordList { get; } = records;
         public IReadOnlyList<Deployment> Deployments(string project) => Runs.Select(item => ToContract(project, item)).ToArray();
     }
 

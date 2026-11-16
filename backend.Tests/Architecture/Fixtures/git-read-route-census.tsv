@@ -124,6 +124,7 @@
 /api/git/summary	reachable	measured-zero	-	-
 /api/host/filesystems	free	-	-	-
 /api/hosts/{id}/operations/{attemptId}	free	-	-	-
+/api/instance/deploy/reporter-tokens/	free	-	-	-
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
@@ -205,6 +206,7 @@
 /api/projects/{projectName}/deploy/deployments/{deploymentId}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/deployments/{deploymentId}/log	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/deploy/instance	free	-	-	-
 /api/projects/{projectName}/deploy/lanes	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/operations	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/operations/logs	reachable	gap	Deploy and environments	Environment declarations from the Git fact store

@@ -13,6 +13,7 @@ import {
   deploymentLogFixture,
   pipelineDefinitionFixture,
 } from '../../src/app/features/project-detail/testing/deploy-fixtures';
+import { instanceDeployFixture } from '../../src/app/features/project-detail/testing/instance-deploy-fixtures';
 
 /**
  * Project Deploy area on a fully mocked backend (AGT-3226).
@@ -39,6 +40,8 @@ interface DeployMocks {
   deployments: Answer;
   pipelineDefinition: Answer;
   health?: Answer;
+  /** AGT-3879 running Studio instance; other projects answer 404 with an error body. */
+  instance?: Answer;
   /** POST approve, reject, or cancel; records each call. */
   act?: (action: string, deploymentId: string, body?: unknown) => Answer;
 }
@@ -107,6 +110,8 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
+  await page.route(`**${DEPLOY}/instance`, route => answer(route, deploy.instance
+    ?? { status: 404, body: { error: `'${PROJECT}' is not the source project of this Studio instance.` } }));
   // A predicate, not a glob: the artifact query value contains "/", which a glob "*" does not match.
   await page.route(url => url.pathname === `${DEPLOY}/releases/page`, route => {
     if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
@@ -193,6 +198,61 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('shows the running Studio instance, its live release, and what the next deploy brings (AGT-3879)', async ({ page }) => {
+    // The Studio's own project declares no environments; the instance is its Production.
+    const empty = { project: PROJECT, environments: [], promotions: [], jobs: [], hosts: [] };
+    await openDeploy(page, fullMocks({ environments: empty, status: [], releases: [], deployments: [],
+      instance: instanceDeployFixture() }));
+    const panel = page.getByTestId('instance-deploy');
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId('instance-deploy-version')).toHaveText('0.9.5-5faca674a');
+    await expect(page.getByTestId('instance-deploy-live-since')).toContainText('2026-11-16 03:35 UTC');
+    await expect(page.getByTestId('instance-deploy-brought')).toContainText('AGT-3839');
+    await expect(page.getByTestId('instance-deploy-pending').locator('li')).toHaveText([
+      /AGT-3861/, /AGT-3870/, /AGT-3879/,
+    ]);
+    for (const width of [1280, 390] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        const overflow = await panel.evaluate(element => {
+          const box = element.getBoundingClientRect();
+          return [...element.querySelectorAll('*')].filter(child => child.getBoundingClientRect().right > box.right + 1)
+            .map(child => `${child.tagName.toLowerCase()}.${child.className}`).slice(0, 3);
+        });
+        expect(overflow).toEqual([]);
+        fs.mkdirSync(results, { recursive: true });
+        await panel.screenshot({ path: path.join(results, `agt-3879-instance-deploy-${width}-${theme}.png`) });
+      }
+    }
+  });
+
+  test('names the step a failed or stalled Studio deploy stopped at (AGT-3879)', async ({ page }) => {
+    let run: 'failed' | 'stalled' = 'failed';
+    await openDeploy(page, fullMocks({ instance: undefined }));
+    await page.unroute(`**${DEPLOY}/instance`);
+    await page.route(`**${DEPLOY}/instance`, route => answer(route, instanceDeployFixture(run)));
+    await page.getByTestId('deploy-refresh').click();
+    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy failed at host:runner-1');
+    for (const width of [1280, 390] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, `agt-3879-instance-deploy-failed-${width}-${theme}.png`) });
+      }
+    }
+    run = 'stalled';
+    await page.getByTestId('deploy-refresh').click();
+    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy stalled after host:runner-1 · no report for 30 min');
+    await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, 'agt-3879-instance-deploy-stalled-390-dark.png') });
+  });
+
+  test('shows no Studio instance panel for another project (AGT-3879)', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    await expect(page.getByTestId('deploy-environments')).toBeVisible();
+    await expect(page.getByTestId('instance-deploy')).toHaveCount(0);
+  });
+
   test('shows release card verdicts and opens the stored release range in both themes', async ({ page }) => {
     const releases = deployReleasesFixture();
     const release = releases[0];

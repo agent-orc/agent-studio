@@ -28,6 +28,22 @@ describe('CardEnvironmentBadgesComponent', () => {
     expect(host.querySelector<HTMLElement>('[data-testid="card-environment-production"]')?.dataset['tone']).toBe('neutral');
   });
 
+  it('says since when a card is live in the Studio instance release', async () => {
+    await TestBed.configureTestingModule({ imports: [CardEnvironmentBadgesComponent], providers: [
+      provideZonelessChangeDetection(),
+      { provide: CardDeploymentService, useValue: { observe: () => undefined, badges: () => [
+        { environmentId: 'studio-instance', environmentName: 'Production', kind: 'production', state: 'succeeded',
+          releaseId: 'instance-1', releaseVersion: '0.9.5-5faca674a', atUtc: '2026-11-16T03:35:00Z' },
+      ] } },
+    ] }).compileComponents();
+    const fixture = TestBed.createComponent(CardEnvironmentBadgesComponent);
+    fixture.componentRef.setInput('task', { id: 'agt-1', key: 'AGT-1', projectName: 'Agent Studio' } as TaskInfo);
+    fixture.detectChanges();
+    const badge = (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>('[data-testid="card-environment-production"]');
+    expect(badge?.textContent?.replace(/\s+/g, ' ')).toContain('Production · live since 2026-11-16 03:35 UTC · 0.9.5-5faca674a');
+    expect(badge?.dataset['tone']).toBe('success');
+  });
+
   it('maps every card environment state onto a tone', () => {
     const matrix: Record<string, string> = {
       succeeded: 'success', failed: 'danger', 'rolled-back': 'warning', 'awaiting-approval': 'warning',

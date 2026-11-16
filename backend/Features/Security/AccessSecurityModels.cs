@@ -197,6 +197,8 @@ public sealed record SecurityState
     /// </summary>
     public List<StudioApiToken> ApiTokens { get; init; } = [];
     public List<TelemetryIngestToken> TelemetryIngestTokens { get; init; } = [];
+    /// <summary>Deploy reporter tokens of the instance deploy record API (AGT-3879).</summary>
+    public List<DeployReporterToken> DeployReporterTokens { get; init; } = [];
     /// <summary>Operator agents' T1 authority (security model SM-4); only the Owner changes it.</summary>
     public List<StandingGrant> StandingGrants { get; init; } = [];
     /// <summary>Owner approvals of T2 operator requests (security model SM-5).</summary>
@@ -263,6 +265,31 @@ public static class TelemetrySignals
     public const string Logs = "logs";
     public static readonly string[] All = [Metrics, Logs];
 }
+
+/// <summary>
+/// Credential of the operator deploy scripts (AGT-3879). Its only scope,
+/// <see cref="DeployReporterScopes.Report"/>, records instance deploy runs and
+/// steps; it reads nothing and grants no Studio session or workspace write.
+/// Only the hash is stored; the plaintext is returned once.
+/// </summary>
+public sealed record DeployReporterToken
+{
+    public required string Id { get; init; }
+    public required string Name { get; init; }
+    public required string SecretHash { get; init; }
+    public required DateTime CreatedAt { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ExpiresAt { get; init; }
+    public DateTime? LastUsedAt { get; init; }
+    public DateTime? RevokedAt { get; init; }
+}
+
+public static class DeployReporterScopes
+{
+    public const string Report = "deploy.report";
+}
+
+public sealed record DeployReporterPrincipal(string TokenId, string Name);
 
 public sealed record TelemetryIngestPrincipal(string TokenId, string Project, string Environment, IReadOnlySet<string> Signals);
 
