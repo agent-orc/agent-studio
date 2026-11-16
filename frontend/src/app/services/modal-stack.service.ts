@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 
 /**
  * Modal-stack arbitration for Escape.
@@ -167,6 +167,7 @@ export class ModalStackService {
     return Array.from(root.querySelectorAll<HTMLElement>(
       'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
     )).filter(element => !element.inert && !element.closest('[inert]') &&
+      !element.classList.contains('cdk-focus-trap-anchor') &&
       !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true' &&
       element.getClientRects().length > 0 && element.tabIndex >= 0);
   }
@@ -233,18 +234,33 @@ export class ModalStackService {
 
 /**
  * Helper to bind a signal-typed `open` flag to a modal-stack entry. The
- * `effect` registers when the signal flips true and disposes when it
- * flips false (or when the host component is destroyed via destroyRef).
+ * `effect` registers when the signal turns truthy and disposes when it turns
+ * falsy or the host component is destroyed. Call it in an injection context,
+ * typically a constructor. Use it for a surface that renders above another
+ * stack entry (the task detail, a dialog): without its own entry, Escape
+ * closes the surface underneath and removes the opener with it.
  *
  * Usage in a component:
  * ```
- * private readonly modalStack = inject(ModalStackService);
- * private readonly destroyRef = inject(DestroyRef);
  * constructor() {
- *   bindOpenToModalStack(this.modalStack, this.open, () => this.close(), 'create-job', this.destroyRef);
+ *   bindOpenToModalStack('create-job', this.open, () => this.close());
  * }
  * ```
  */
+export function bindOpenToModalStack(id: string, open: () => unknown, close: () => boolean | void): void {
+  const stack = inject(ModalStackService);
+  let release: (() => void) | null = null;
+  effect(() => {
+    if (open() && !release) {
+      release = stack.push(id, close);
+    } else if (!open() && release) {
+      release();
+      release = null;
+    }
+  });
+  inject(DestroyRef).onDestroy(() => release?.());
+}
+
 interface ModalEntry {
   readonly id: string;
   readonly close: () => boolean | void;

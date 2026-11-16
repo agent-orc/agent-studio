@@ -69,7 +69,7 @@ import {
   formatRateWindow, formatResetIn, formatTime, formatTokens, gitCommitCount,
   gitToggleTooltip, isCliErrorMessage, rateLimitTooltip, stateLabel,
 } from './services/task-detail-formatters';
-import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task-detail-keyboard.util';
+import { taskDetailPrimaryShortcutAllowed, taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task-detail-keyboard.util';
 import { ArchivedTaskNoticeComponent } from '../retention/components/archived-task-notice/archived-task-notice.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
@@ -1175,6 +1175,8 @@ export class TaskDetailComponent implements OnDestroy {
   }
 
   /** Keeps j/k global but gives arrow paging only to task navigation focus.
+   * Enter runs the primary action only from the card surface itself, so a
+   * focused button, link, tab, summary or menu item keeps its own Enter.
    * Escape remains owned by ModalStackService. */
   @HostListener('document:keydown', ['$event'])
   onTriageKey(event: KeyboardEvent): void {
@@ -1199,7 +1201,7 @@ export class TaskDetailComponent implements OnDestroy {
         this.prevInLaneRequested.emit();
         return;
       case 'Enter':
-        if (this.mutationsBlocked() || this.triageActingId() !== null) return;
+        if (!taskDetailPrimaryShortcutAllowed(event) || this.mutationsBlocked() || this.triageActingId() !== null) return;
         this.detailHeaderRef?.triggerPrimary();
         event.preventDefault();
         return;

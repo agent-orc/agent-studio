@@ -384,6 +384,79 @@ describe('WorkbenchViewerComponent', () => {
     http.verify();
   });
 
+  it('starts at the heading and moves Tab past the frame to an enabled control (AGT-3829)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchViewerComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        {
+          provide: TaskService,
+          useValue: { getReferenceStatuses: () => of([]), getCliModelCatalog: () => of({ models: [], source: 'test' }), refresh: vi.fn(), taskEvents: EMPTY },
+        },
+      ],
+    }).compileComponents();
+    (document.activeElement as HTMLElement | null)?.blur();
+    const fixture = TestBed.createComponent(WorkbenchViewerComponent);
+    document.body.appendChild(fixture.nativeElement);
+    try {
+      fixture.componentRef.setInput('projectName', 'Demo');
+      fixture.componentRef.setInput('workbenchId', 'boundary');
+      fixture.detectChanges();
+      const http = TestBed.inject(HttpTestingController);
+      http.expectOne('/api/projects/Demo/workbenches/boundary').flush({
+        ...DOCUMENT,
+        workbench: { ...DOCUMENT.workbench, phase: 'decision-ready' },
+        revision: 'a'.repeat(40),
+        workingTreeModified: false,
+        fingerprint: 'b'.repeat(64),
+      });
+      await fixture.whenStable();
+      fixture.detectChanges();
+      http.match('/api/projects/Demo/workbenches/DEM-W4/references').forEach(request => request.flush({
+        projectName: 'Demo', workbenchKey: 'DEM-W4', workbenchId: 'boundary', legacyTaskKeys: [], items: [],
+      }));
+      await fixture.whenStable();
+
+      // Opening the Dossier while focus sits on the body lands on its heading.
+      expect(document.activeElement?.getAttribute('data-testid')).toBe('workbench-viewer-title');
+
+      const frame = fixture.nativeElement.querySelector(
+        '[data-testid="workbench-viewer-frame"]') as HTMLIFrameElement;
+      const inlineAction = fixture.nativeElement.querySelector(
+        '[data-testid="workbench-inline-decision-action"]') as HTMLElement;
+      const start = inlineAction.querySelector(
+        '[data-testid="workbench-decision-start"]') as HTMLButtonElement;
+      const rework = inlineAction.querySelector(
+        '[data-testid="workbench-decision-rework"]') as HTMLButtonElement;
+      const tabFromLastControl = () => fixture.componentInstance.onFrameMessage({
+        source: frame.contentWindow,
+        data: { type: WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE },
+      } as MessageEvent);
+
+      // Nothing in the bar is enabled: focus still leaves the frame, to the next tab stop.
+      expect(start.disabled).toBe(true);
+      expect(rework.disabled).toBe(true);
+      tabFromLastControl();
+      expect(document.activeElement).toBe(inlineAction);
+
+      fixture.componentInstance.onFrameMessage({
+        source: frame.contentWindow,
+        data: {
+          type: WORKBENCH_DECISION_CHANGE_MESSAGE,
+          responses: [{ decisionId: 'route', kind: 'single', selectedOptionIds: ['direct'], comment: null }],
+        },
+      } as MessageEvent);
+      fixture.detectChanges();
+      expect(start.disabled).toBe(false);
+      tabFromLastControl();
+      expect(document.activeElement).toBe(start);
+    } finally {
+      fixture.nativeElement.remove();
+    }
+  });
+
   it('offers the documented transition after every referenced card is terminal', async () => {
     await TestBed.configureTestingModule({
       imports: [WorkbenchViewerComponent],
