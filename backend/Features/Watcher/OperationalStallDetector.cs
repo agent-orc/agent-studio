@@ -13,7 +13,11 @@ public sealed record OperationalStallSnapshot(
     IReadOnlyList<DeployStallFact> Deployments,
     IReadOnlyList<HostHeartbeatFact>? Heartbeats = null,
     IReadOnlyList<LegacyModelHostFact>? LegacyModelHosts = null,
-    FleetClaimStallFact? FleetClaims = null);
+    FleetClaimStallFact? FleetClaims = null,
+    IReadOnlyList<ProjectPreflightStallFact>? ProjectPreflights = null);
+
+public sealed record ProjectPreflightStallFact(string Host, string Project, string ProjectId,
+    string Error, DateTime SinceUtc);
 
 public sealed record LegacyModelHostFact(string Host, string Role, string RunnerId,
     DateTime SinceUtc);
@@ -57,6 +61,16 @@ public static class OperationalStallDetector
         OperationalStallSnapshot facts, OperationalStallThresholds thresholds, DateTime nowUtc)
     {
         var result = new List<WatcherSignalObservation>();
+        foreach (var preflight in facts.ProjectPreflights ?? [])
+        {
+            if (nowUtc - preflight.SinceUtc <= TimeSpan.FromMinutes(10)) continue;
+            AddScoped("project-preflight-stall", $"host:{preflight.Host}:project:{preflight.ProjectId}",
+                "critical", preflight.SinceUtc,
+                $"Project delivery preflight keeps failing on {preflight.Host} for {preflight.Project}: {preflight.Error}.",
+                0, "Repair the reported git error and verify the next project preflight passes.",
+                $"host={preflight.Host}; project={preflight.Project}; gitError={preflight.Error}",
+                project: preflight.Project);
+        }
         foreach (var heartbeat in facts.Heartbeats ?? [])
         {
             if (!heartbeat.Stopped
