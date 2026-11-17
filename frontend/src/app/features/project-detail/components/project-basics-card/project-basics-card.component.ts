@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { catchError, forkJoin, of } from 'rxjs';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
@@ -56,6 +56,7 @@ export function checkoutStatusTone(status: string): StatusTone {
 })
 export class ProjectBasicsCardComponent {
   readonly projectName = input.required<string>();
+  readonly pathsSaved = output<void>();
 
   private readonly tasks = inject(TaskService);
   private readonly http = inject(HttpClient);
@@ -240,6 +241,7 @@ export class ProjectBasicsCardComponent {
           ? 'Saved. Restart the backend before local auto-pickup uses identity or path changes.'
           : 'Project basics saved.');
         this.notifications.success('Project basics saved.');
+        if (pathsChanged) this.pathsSaved.emit();
         if (renamed) {
           this.manager.notifyProjectRenamed(project.displayName, updated.displayName);
           this.overlays.renameOpenProjectShell(updated.displayName);
