@@ -335,12 +335,14 @@ describe('TriageController · optimistic navigation on Accept', () => {
     })));
     const refresh = vi.spyOn(jobService, 'refresh').mockImplementation(noop);
     const errorDialog = vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
-    const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
+    const notify = vi.spyOn(TestBed.inject(NotificationService), 'notify');
 
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
     expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
-    expect(warning).toHaveBeenCalledWith(refusal, 'Acceptance needs an operator override');
+    // AGT-3873: docked below the toolbar, whose notice carries the override.
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({
+      message: refusal, title: 'Acceptance needs an operator override', position: 'below-toolbar' }));
     expect(refresh).not.toHaveBeenCalled();
     expect(errorDialog).not.toHaveBeenCalled();
   });
@@ -364,12 +366,15 @@ describe('TriageController · optimistic navigation on Accept', () => {
     })));
     vi.spyOn(jobService, 'refresh').mockImplementation(noop);
     const errorDialog = vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
-    const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
+    const notify = vi.spyOn(TestBed.inject(NotificationService), 'notify');
     vi.spyOn(selection, 'openDetail').mockImplementation(noop);
 
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
-    expect(warning).toHaveBeenCalledWith(refusal, 'Accept refused');
+    // No override can admit an unintegrated delivery: the toast offers none.
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({
+      message: refusal, title: 'Accept refused', position: 'below-toolbar', actions: [] }));
+    expect(TestBed.inject(AcceptanceRefusalStore).overrideRequest()).toBeNull();
     expect(TestBed.inject(AcceptanceRefusalStore).forTask(taskA.taskKey))
       .toEqual({ taskKey: taskA.taskKey, code: 'integration-dead-end', message: refusal });
     expect(errorDialog).not.toHaveBeenCalled();
@@ -393,7 +398,10 @@ describe('TriageController · optimistic navigation on Accept', () => {
     expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
     expect(TestBed.inject(LanePagerService).snapshot()?.jobs[0].taskKey).toBe(taskA.taskKey);
     expect(ctrl.moveRefusal()?.message).toBe('Acceptance refused: no content verdict for the current brief. '
-      + 'Send a round to close the gap, review again, or accept with a written reason under Acceptance next steps.');
+      + 'Accept it with a written reason, review it again against the current brief, '
+      + 'or send a round to close the gap under Acceptance next steps.');
+    // AGT-3873: the banner offers the override and the review itself.
+    expect(ctrl.moveRefusal()?.overridable).toBe(true);
     expect(selection.triageToast()).toBeNull();
     expect(dialog).not.toHaveBeenCalled();
     // AGT-3874: recorded like the integration refusals, so the toolbar offers the override.
@@ -420,13 +428,20 @@ describe('TriageController · optimistic navigation on Accept', () => {
     vi.spyOn(jobService, 'moveJob').mockReturnValue(throwError(() => ({
       status: 409, error: { code: 'completion-content-gap', error: 'Completion refused: requirement-fit verdict was concerns.' },
     })));
-    const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
+    const notify = vi.spyOn(TestBed.inject(NotificationService), 'notify');
     const check = vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'checkCard').mockResolvedValue();
 
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
-    expect(warning).toHaveBeenCalledWith('Acceptance refused: requirement-fit verdict was concerns.', 'Accept refused');
-    expect(warning.mock.calls.flat().join(' ')).not.toMatch(/does not match the current brief/);
+    // AGT-3873: the toast carries the actions and docks below the toolbar.
+    const toast = notify.mock.calls.map(call => call[0]).find(call => call.title === 'Accept refused')!;
+    expect(toast).toMatchObject({ message: 'Acceptance refused: requirement-fit verdict was concerns.',
+      title: 'Accept refused', position: 'below-toolbar' });
+    expect(toast.actions?.map(action => action.label)).toEqual(['Accept with a written reason', 'Review again']);
+    expect(JSON.stringify(notify.mock.calls)).not.toMatch(/does not match the current brief/);
+    // The refused Accept opens the toolbar's written-reason form in place.
+    expect(TestBed.inject(AcceptanceRefusalStore).overrideRequest()).toBe(taskA.taskKey);
+    expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
     expect(ctrl.moveRefusal()?.message).toContain('Acceptance refused: requirement-fit verdict was concerns.');
     expect(ctrl.moveRefusal()?.message).not.toMatch(/operator override/);
     expect(TestBed.inject(AcceptanceRefusalStore).forTask(taskA.taskKey)).toEqual({
@@ -447,11 +462,18 @@ describe('TriageController · optimistic navigation on Accept', () => {
       status: 409, error: { code: 'completion-content-gap', error: 'Completion refused: the required report is missing (results/report.md).' },
     })));
     vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'checkCard').mockResolvedValue();
+    const notify = vi.spyOn(TestBed.inject(NotificationService), 'notify');
 
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
     expect(ctrl.moveRefusal()?.message).toBe('Acceptance refused: the required report is missing (results/report.md). '
       + 'Send a round to close the gap under Acceptance next steps; an override cannot replace the missing report.');
+    // AGT-3873: no override is offered or opened; the toast says what to do instead.
+    expect(ctrl.moveRefusal()?.overridable).toBe(false);
+    expect(TestBed.inject(AcceptanceRefusalStore).overrideRequest()).toBeNull();
+    const toast = notify.mock.calls.map(call => call[0]).find(call => call.title === 'Accept refused')!;
+    expect(toast.actions).toEqual([]);
+    expect(toast.details?.join(' ')).toContain('an override cannot replace the missing report');
   });
 });
 
