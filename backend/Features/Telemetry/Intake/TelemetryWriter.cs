@@ -76,18 +76,19 @@ public sealed class TelemetryWriter : BackgroundService
     {
         var handled = 0;
         long bytes = 0, stored = 0;
-        var mask = new FlushMask(_masker);
         while (handled < MaxRecordsPerFlush && bytes < MaxBytesPerFlush && stored < _options.MaxStoredBytesPerRequest
                && _queue.TryDequeue(out var batch))
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
+                var maskValue = await _masker.ForEnvironmentAsync(batch.Environment, cancellationToken);
+                var mask = new FlushMask(maskValue);
                 var metrics = batch.Metrics.Select(sample => sample with
                     { Attributes = mask.Attributes(sample.Attributes) }).ToList();
                 var logs = batch.Logs.Select(log => log with
-                    { Body = _masker.Mask(log.Body), SeverityText = _masker.Mask(log.SeverityText),
-                        EventName = log.EventName is null ? null : _masker.Mask(log.EventName),
+                    { Body = maskValue(log.Body), SeverityText = maskValue(log.SeverityText),
+                        EventName = log.EventName is null ? null : maskValue(log.EventName),
                         Attributes = mask.Attributes(log.Attributes) }).ToList();
                 var result = _store.Write(batch.Environment, metrics, logs, _clock.GetUtcNow(), batch.StageId);
                 if (result.LogsEvictedForSize > 0)
@@ -177,21 +178,21 @@ public sealed class TelemetryWriter : BackgroundService
     /// masked once and stays shared, and a value string that many records refer
     /// to is masked once.
     /// </summary>
-    private sealed class FlushMask(ITelemetryValueMasker masker)
+    private sealed class FlushMask(Func<string, string> mask)
     {
         private readonly Dictionary<TelemetryAttributes, TelemetryAttributes> _sets = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<string, string> _values = new(ReferenceEqualityComparer.Instance);
 
         public TelemetryAttributes Attributes(TelemetryAttributes attributes)
         {
-            if (!attributes.IsShared) return attributes.MapValues(Value);
-            if (!_sets.TryGetValue(attributes, out var masked)) _sets[attributes] = masked = attributes.MapValues(Value);
+            if (!attributes.IsShared) return attributes.MapText(Value);
+            if (!_sets.TryGetValue(attributes, out var masked)) _sets[attributes] = masked = attributes.MapText(Value);
             return masked;
         }
 
         private string Value(string value)
         {
-            if (!_values.TryGetValue(value, out var masked)) _values[value] = masked = masker.Mask(value);
+            if (!_values.TryGetValue(value, out var masked)) _values[value] = masked = mask(value);
             return masked;
         }
     }

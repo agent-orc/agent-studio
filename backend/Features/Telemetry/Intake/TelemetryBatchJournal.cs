@@ -6,14 +6,12 @@ namespace AgentStudio.Telemetry;
 internal sealed class TelemetryBatchJournal
 {
     private readonly string _root;
-    private readonly ITelemetryValueMasker _masker;
     private readonly ITelemetryDurability _durability;
     private long _nextOrder;
 
-    public TelemetryBatchJournal(string root, ITelemetryValueMasker masker, ITelemetryDurability durability)
+    public TelemetryBatchJournal(string root, ITelemetryDurability durability)
     {
         _root = Path.Combine(root, "pending");
-        _masker = masker;
         _durability = durability;
         Directory.CreateDirectory(_root);
         _durability.FlushParentDirectory(_root);
@@ -29,16 +27,16 @@ internal sealed class TelemetryBatchJournal
             .ThenBy(path => path, StringComparer.Ordinal)
             .Select(path => Read(path));
 
-    public TelemetryIngestBatch Stage(TelemetryIngestBatch batch)
+    public TelemetryIngestBatch Stage(TelemetryIngestBatch batch, Func<string, string> mask)
     {
         var staged = batch with
         {
             Metrics = batch.Metrics.Select(item => item with
-                { Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray(),
+                { Attributes = item.Attributes.MapText(mask) }).ToArray(),
             Logs = batch.Logs.Select(item => item with
-                { Body = _masker.Mask(item.Body), SeverityText = _masker.Mask(item.SeverityText),
-                    EventName = item.EventName is null ? null : _masker.Mask(item.EventName),
-                    Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray()
+                { Body = mask(item.Body), SeverityText = mask(item.SeverityText),
+                    EventName = item.EventName is null ? null : mask(item.EventName),
+                    Attributes = item.Attributes.MapText(mask) }).ToArray()
         };
         staged = staged with { StageId = $"{++_nextOrder:D20}-{Guid.NewGuid():N}" };
         var path = PathFor(staged.StageId);

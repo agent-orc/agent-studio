@@ -27,11 +27,11 @@ public static class CredentialRedactor
     // GitHub personal, OAuth, user-to-server, installation and refresh tokens,
     // fine-grained personal tokens, Anthropic keys and OAuth tokens, OpenAI keys.
     private static readonly Regex ProviderToken = new(
-        @"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,})",
+        @"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9_-]{20,}|sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,})",
         Linear);
 
     private static readonly Regex UrlCredentials = new(
-        @"(?i)\b((?:https?|git|ssh|ftp)://)[^\s/:@'""]+:[^\s/@'""]+@",
+        @"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/:@'""]*:[^\s/@'""]+@",
         Linear);
 
     private static readonly Regex AccessTokenUserInfo = new(
@@ -43,7 +43,7 @@ public static class CredentialRedactor
         Linear);
 
     private static readonly Regex NamedSecret = new(
-        """(?ix)(["']?(?:authorization|proxy-authorization|password|currentpassword|newpassword|temporarypassword|cookie|set-cookie|x-csrf-token|csrftoken|enrollmentcode|secret|authtoken|access_token|refresh_token|claude_code_oauth_token|handoff)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;}&]+)""",
+        """(?ix)(^|[^a-z0-9_-])(["']?(?:authorization|proxy-authorization|cookie|set-cookie|x-csrf-token|csrftoken|enrollmentcode|handoff|claude_code_oauth_token|(?:[a-z0-9]+_?)?(?:api_?key|secret|token|password))["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;}&]+)""",
         Linear);
 
     /// <summary>Shortest literal worth registering; shorter text would mask ordinary words.</summary>
@@ -110,6 +110,6 @@ public static class CredentialRedactor
         redacted = UrlCredentials.Replace(redacted, "$1[REDACTED]@");
         redacted = AccessTokenUserInfo.Replace(redacted, "$1[REDACTED]@");
         redacted = SecretHeader.Replace(redacted, "$1[REDACTED]");
-        return NamedSecret.Replace(redacted, "$1[REDACTED]");
+        return NamedSecret.Replace(redacted, "$1$2[REDACTED]");
     }
 }

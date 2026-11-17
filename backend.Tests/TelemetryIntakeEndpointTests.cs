@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using AgentStudio.Clients;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
 using AgentStudio.Telemetry;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -253,6 +254,94 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         var exportedMetrics = sink.Batches.SelectMany(batch => batch.Metrics).ToList();
         Assert.Equal(6, exportedMetrics.Count);
         Assert.DoesNotContain(exportedMetrics, sample => sample.Attributes.Json.Contains("hunter2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Provider_values_are_masked_in_every_log_field_before_staging_and_storage()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "secret-workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek")
+        }).Build();
+        var store = new BuiltInSecretStore(configuration,
+            new ConfiguredKeyEncryptionKeySource(configuration, _ => null, _ => { }));
+        var provider = new SecretProvider(store, new SecretAuditLog(configuration), new SecretValueScrubber(_clock),
+            _clock, NullLogger<SecretProvider>.Instance);
+        var value = "value-" + Guid.NewGuid().ToString("N");
+        var projectValue = "value-" + Guid.NewGuid().ToString("N");
+        var workspaceValue = "value-" + Guid.NewGuid().ToString("N");
+        await provider.PutAsync(SecretScope.ForEnvironment("shop", "stage"), "DATABASE_URL", value,
+            SecretActor.Human("owner"));
+        await provider.PutAsync(SecretScope.ForProject("shop"), "PROJECT_KEY", projectValue,
+            SecretActor.Human("owner"));
+        await provider.PutAsync(SecretScope.Workspace, "WORKSPACE_KEY", workspaceValue,
+            SecretActor.Human("owner"));
+        var harness = await Start(secretStore: store);
+        var token = (await CreateToken(harness)).Secret;
+        var logs = JsonSerializer.Serialize(new
+        {
+            resourceLogs = new[] { new
+            {
+                scopeLogs = new[] { new
+                {
+                    logRecords = new[] { new
+                    {
+                        timeUnixNano = "1792152000000000000", severityNumber = 17,
+                        severityText = value, eventName = value,
+                        body = new { stringValue = value + " " + projectValue + " " + workspaceValue },
+                        attributes = new[]
+                        {
+                            new { key = "field", value = new { stringValue = value } },
+                            new { key = value, value = new { stringValue = "ordinary" } }
+                        }
+                    } }
+                } }
+            } }
+        });
+
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, Encoding.UTF8.GetBytes(logs), token,
+            "application/json")).StatusCode);
+        var staged = Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "telemetry", "pending"), "*.json"));
+        var stagedText = File.ReadAllText(staged);
+        Assert.DoesNotContain(value, stagedText, StringComparison.Ordinal);
+        Assert.DoesNotContain(projectValue, stagedText, StringComparison.Ordinal);
+        Assert.DoesNotContain(workspaceValue, stagedText, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED_CREDENTIAL]", stagedText, StringComparison.Ordinal);
+
+        var metrics = JsonSerializer.Serialize(new
+        {
+            resourceMetrics = new[] { new
+            {
+                scopeMetrics = new[] { new
+                {
+                    metrics = new[] { new
+                    {
+                        name = "db.pool.size",
+                        gauge = new { dataPoints = new[] { new
+                        {
+                            timeUnixNano = "1792152000000000000", asInt = "4",
+                            attributes = new[] { new { key = "field", value = new { stringValue = value } } }
+                        } } }
+                    } }
+                } }
+            } }
+        });
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Metrics, Encoding.UTF8.GetBytes(metrics), token,
+            "application/json")).StatusCode);
+        Assert.All(Directory.EnumerateFiles(Path.Combine(_root, "telemetry", "pending"), "*.json"),
+            path => Assert.DoesNotContain(value, File.ReadAllText(path), StringComparison.Ordinal));
+
+        await harness.Writer.DrainOnceAsync(CancellationToken.None);
+        var page = await harness.Client.GetStringAsync(Environment + "/logs?from=2026-10-16T11:00:00Z");
+        Assert.DoesNotContain(value, page, StringComparison.Ordinal);
+        Assert.DoesNotContain(projectValue, page, StringComparison.Ordinal);
+        Assert.DoesNotContain(workspaceValue, page, StringComparison.Ordinal);
+        var database = Path.Combine(_root, "telemetry", "shop", "stage.sqlite");
+        var stored = File.ReadAllText(database);
+        Assert.DoesNotContain(value, stored, StringComparison.Ordinal);
+        Assert.DoesNotContain(projectValue, stored, StringComparison.Ordinal);
+        Assert.DoesNotContain(workspaceValue, stored, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -537,7 +626,7 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     }
 
     private async Task<Harness> Start(TelemetryOptions? options = null, ITelemetryExportSink? sink = null,
-        ITelemetryEnvironmentDirectory? directory = null)
+        ITelemetryEnvironmentDirectory? directory = null, ISecretStore? secretStore = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
@@ -551,6 +640,7 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         builder.Services.AddSingleton<ITelemetryIngestCredentials, AccessStoreTelemetryIngestCredentials>();
         builder.Services.AddSingleton(directory ?? new ShopStageDirectory());
         builder.Services.AddSingleton<ITelemetryValueMasker, CredentialTelemetryValueMasker>();
+        if (secretStore is not null) builder.Services.AddSingleton(secretStore);
         builder.Services.AddSingleton<TelemetryStore>();
         builder.Services.AddSingleton<TelemetryIntakeQueue>();
         builder.Services.AddSingleton<TelemetryIntakeService>();
