@@ -3,6 +3,16 @@
 Version: 2026-11-14
 Status: System-of-record map for frontend changes.
 
+Card delivery badges are shown for cards named by a release or with verified
+integration evidence. An unreleased integrated card can show pending delivery;
+an unintegrated or incident card has no badges. A failed
+deployment remains visible on the card after an environment rollback, with the
+failed release version and attempt date, until a later deployment of a release
+containing that card succeeds. A successful rollback after a failed attempt
+reads "Failed, rolled back"; a rollback that withdraws a previously successful
+card reads "Rolled back". State labels use product wording, and the badge text
+wraps so release versions and dates remain readable on narrow board cards.
+
 Concept cards and detail views show the dossier and review state without code
 delivery indicators. They omit build and test evidence, delivery integration,
 and checkout context. Concept acceptance remains available when a stale
