@@ -1,0 +1,12 @@
+@if (requests().length) {
+  <section aria-label="Gate retry requests" data-testid="batch-infrastructure-retries">
+    <h3>Gate retry requests</h3>
+    <ul>@for (request of requests(); track request.requestId) {
+      <li role="status"><strong>{{ request.taskKey }}</strong> ·
+        @if (request.status === 'pending') { Retry requested at {{ request.requestedAtUtc | date:'medium' }}; waits for the batch gate. }
+        @if (request.status === 'refused') { Refused: {{ request.reason }} }
+        @if (request.status === 'applied') { Returned to verification. }
+      </li>
+    }</ul>
+  </section>
+}

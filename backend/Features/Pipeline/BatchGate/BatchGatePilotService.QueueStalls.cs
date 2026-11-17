@@ -413,37 +413,70 @@ public sealed partial class BatchGatePilotService
         return new GateQueueStallRelease(released, refused);
     }
 
-    /// <summary>Resume the same reviewed delivery after a gate infrastructure park.</summary>
-    public async Task<bool> RetryInfrastructureGateAsync(string project, string taskKey, string actor,
-        CancellationToken ct)
+    /// <summary>Record an operator retry without waiting for the pilot tick.</summary>
+    public BatchGateInfrastructureRetry? RequestInfrastructureRetry(string project, string taskKey, string actor)
     {
-        await _tick.WaitAsync(ct).ConfigureAwait(false);
-        try
+        if (!BatchEnabled(project)) return null;
+        var candidate = InfrastructureRetryCandidate(project, taskKey);
+        if (candidate is null) return null;
+        var (task, review, _) = candidate.Value;
+        return _store.RequestInfrastructureRetry(project, task.Key ?? task.Id, review.AttemptId,
+            actor, _time.GetUtcNow());
+    }
+
+    private (TaskInfo Task, ReviewAttemptDto Review, RunAttemptDto Source)?
+        InfrastructureRetryCandidate(string project, string taskKey)
+    {
+        var task = _scanner.ScanAllJobs().FirstOrDefault(item =>
+            item.State == TaskStates.Escalated
+            && string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase)
+            && (item.Key == taskKey || item.Id == taskKey));
+        if (task?.ParkedBlocker?.BlockerType != HumanReviewEscalationCategories.GateInfrastructure
+            || task.PendingIntent is not null
+            || _mutations.ReadStashedPendingIntent(task.FolderPath) is not null)
+            return null;
+        var projection = _authority.GetTaskProjection(AuthorityKey(task));
+        if (projection.CurrentReviewAttempt is not { } review
+            || projection.CurrentRunAttempt is not { } source
+            || review.SourceRunAttemptId != source.AttemptId
+            || review.Outcome is not (ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect)
+            || Detail(LastEscalation(task), "from") != TaskStates.AutoReview)
+            return null;
+        return (task, review, source);
+    }
+
+    private async Task ProcessInfrastructureRetriesAsync(CancellationToken ct)
+    {
+        foreach (var project in _scanner.GetWatchPaths().Select(path => path.Name))
+        foreach (var request in _store.ListInfrastructureRetries(project).Where(item => item.Status == "pending"))
         {
-            if (!BatchEnabled(project)) return false;
-            var task = _scanner.ScanAllJobs().FirstOrDefault(item =>
-                item.State == TaskStates.Escalated
-                && string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase)
-                && (item.Key == taskKey || item.Id == taskKey));
-            if (task?.ParkedBlocker?.BlockerType != HumanReviewEscalationCategories.GateInfrastructure
-                || task.PendingIntent is not null
-                || _mutations.ReadStashedPendingIntent(task.FolderPath) is not null)
-                return false;
-            var projection = _authority.GetTaskProjection(AuthorityKey(task));
-            if (projection.CurrentReviewAttempt is not { } review
-                || projection.CurrentRunAttempt is not { } source
-                || review.SourceRunAttemptId != source.AttemptId
-                || review.Outcome is not (ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect)
-                || Detail(LastEscalation(task), "from") != TaskStates.AutoReview)
-                return false;
+            var candidate = InfrastructureRetryCandidate(project, request.TaskKey);
+            if (candidate is null || candidate.Value.Review.AttemptId != request.ReviewAttemptId)
+            {
+                _store.CompleteInfrastructureRetry(request, "refused",
+                    "This card no longer has the reviewed delivery parked for gate infrastructure.", _time.GetUtcNow());
+                continue;
+            }
+            if (!BatchEnabled(project))
+            {
+                _store.CompleteInfrastructureRetry(request, "refused",
+                    "Batch verification is disabled.", _time.GetUtcNow());
+                continue;
+            }
+            var (task, review, source) = candidate.Value;
             var reviewedAt = ReviewedAt(review);
             var moved = await _transitions.MoveAsync(task.Id, TaskStates.AutoReview, task.WatchPath, ct,
                 cause: "batch-gate-infrastructure-retry",
-                reason: $"{actor} retried the verification gate after the gate infrastructure was restored.",
+                reason: $"{request.Actor} retried the verification gate after the gate infrastructure was restored.",
                 suppressProductExecution: true, expectedSourceState: TaskStates.Escalated,
                 transitionCause: LaneChangeCauses.EscalationRequeue,
                 transitionDetail: "batch-gate-infrastructure-retry").ConfigureAwait(false);
-            if (moved.Status != MoveJobStatus.Success) return false;
+            if (moved.Status != MoveJobStatus.Success)
+            {
+                _store.CompleteInfrastructureRetry(request, "refused",
+                    $"The lane move failed: {moved.Status}.", _time.GetUtcNow());
+                continue;
+            }
             _scanner.InvalidateCache();
             var live = _scanner.FindJob(task.Id, task.WatchPath) ?? task;
             try
@@ -457,19 +490,19 @@ public sealed partial class BatchGatePilotService
                 _store.ReopenPending(review.AttemptId);
                 await EnqueueAsync(live, review, source, reviewedAt, ct).ConfigureAwait(false);
                 _store.ClearQueueWait(review.AttemptId);
-                return true;
+                _store.CompleteInfrastructureRetry(request, "applied", null, _time.GetUtcNow());
             }
             catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or IOException)
             {
-                _logger.LogError(ex, "batch-gate-infrastructure-retry-failed task={TaskKey}", taskKey);
+                _logger.LogError(ex, "batch-gate-infrastructure-retry-failed task={TaskKey}", request.TaskKey);
+                _store.CompleteInfrastructureRetry(request, "refused",
+                    "The gate retry could not join the verification queue: " + ex.Message, _time.GetUtcNow());
                 await _reviewJournal.EscalateAsync(live.Id, live.WatchPath, live.ProjectName,
                     HumanReviewEscalationCategories.GateInfrastructure,
                     "The gate retry could not join the verification queue. Check the gate worker and retry again. "
                     + ex.Message, ct).ConfigureAwait(false);
-                return false;
             }
         }
-        finally { _tick.Release(); }
     }
 
     /// <summary>
