@@ -260,8 +260,7 @@ public static partial class GateFailureTriagePolicy
             markers);
 
     /// <summary>
-    /// The rule an agent needs to repair the file. Repeated in the reason line
-    /// because AOW-15 took three rounds to learn it one issue at a time.
+    /// Fallback for old gate logs that carry no structured issue codes.
     /// </summary>
     public const string DefinitionRule =
         "Fix .agent-studio/project.yml in the delivery: commands.prepare is required and names a " +
@@ -281,7 +280,7 @@ public static partial class GateFailureTriagePolicy
             GateProductKinds.Definition,
             "gate-definition:" + (items.Count == 0 ? "unspecified" : ItemFingerprint(items)),
             items,
-            text.Trim().TrimEnd('.') + ". " + DefinitionRule,
+            text.Trim().TrimEnd('.') + "." + (items.Count == 0 ? " " + DefinitionRule : string.Empty),
             null,
             ["definition-invalid"]);
     }

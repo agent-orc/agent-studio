@@ -19,8 +19,9 @@ namespace TaskServer.Tests;
 /// I9 typed runbook executor. Fixtures under testdata/credential-runbooks are redacted
 /// replays of operator reports, not measured logs; adapters and clocks are deterministic.
 /// </summary>
-public sealed class CredentialRunbookTests
+public sealed class CredentialRunbookTests(InitializedStoreFixture fixture) : IClassFixture<InitializedStoreFixture>
 {
+    private readonly InitializedStoreFixture _fixture = fixture;
     private static readonly DateTimeOffset Start = new(2026, 10, 13, 9, 0, 0, TimeSpan.Zero);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly string Root = RepositoryRoot.Find();
@@ -30,7 +31,7 @@ public sealed class CredentialRunbookTests
     {
         var docs = CredentialRunbookPolicy.Parse(File.ReadAllText(
             Path.Combine(Root, "docs", "credentials-and-logins", "runbooks.json")));
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var embedded = Store(temp.Path, new ManualTimeProvider(Start))
             .GetCredentialRunbookCatalogue();
         Assert.Equal(JsonSerializer.Serialize(docs, Json), JsonSerializer.Serialize(embedded, Json));
@@ -116,7 +117,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Codex_incident_replay_holds_the_cohort_without_an_item_and_resumes_after_canary()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -162,7 +163,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Uncorroborated_401_selects_no_runbook_and_starts_nothing()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -180,7 +181,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Unknown_predicate_is_diagnosis_only_and_never_reserves_a_login()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -203,7 +204,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Facts_that_contradict_the_registry_or_a_stale_generation_cannot_start()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -227,7 +228,7 @@ public sealed class CredentialRunbookTests
     public async Task Claude_rotation_drill_pauses_for_consent_and_retires_only_after_two_unit_proof(
         string topology, string codingUnit)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -302,7 +303,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Failed_install_rolls_back_to_the_proved_prior_generation_as_bounded_recovery()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -335,7 +336,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Workspace_repair_keeps_admin_registration_explicit_and_refuses_unproved_retirement()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -392,7 +393,7 @@ public sealed class CredentialRunbookTests
         var crashPoints = 0;
         for (var crashAt = 1; ; crashAt++)
         {
-            using var temp = new TempDirectory();
+            using var temp = _fixture.CreateDirectory();
             var clock = new ManualTimeProvider(Start);
             var host = new FakeHost();
             var store = Store(temp.Path, clock);
@@ -445,7 +446,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Diagnosis_begin_retry_after_repair_upgrade_keeps_the_same_operation()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -466,7 +467,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Evidence_accepts_task_identifiers_but_rejects_provider_token_prefixes()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -484,7 +485,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Stale_journal_update_and_receipt_cannot_overwrite_newer_operation_state()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -510,7 +511,7 @@ public sealed class CredentialRunbookTests
     [Fact]
     public async Task Cancel_route_is_idempotent_and_releases_only_a_binding_without_custody_effects()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         await using var factory = new RunbookApiFactory(temp.Path, clock);
         using var client = factory.CreateClient();
