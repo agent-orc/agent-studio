@@ -233,17 +233,27 @@ describe('FirstRunChecklistComponent probes', () => {
     fixture.destroy();
   });
 
-  it('marks local owner setup not applicable without an installation read', () => {
+  it('tells the local profile that approval and host enrollment need the owner and offers to create it', () => {
     authStatus.set({ authenticated: false, profile: 'local', bootstrapRequired: true });
     const fixture = TestBed.createComponent(FirstRunChecklistComponent);
     fixture.detectChanges();
     http.expectNone('/api/v1/installation');
     http.expectOne('/api/projects').flush([]);
+    // The owner account does not block the proof card; it gates approval and enrollment.
     expect(fixture.componentInstance.ownerReady()).toBe(true);
     const owner = fixture.nativeElement.querySelector('[data-testid="first-run-owner"]') as HTMLElement;
     expect(owner.dataset['state']).toBe('ready');
-    expect(owner.textContent).toContain('No owner sign-in is needed in the local profile.');
-    expect(owner.textContent).toContain('Not applicable');
+    expect(owner.textContent).not.toContain('No owner sign-in is needed');
+    expect(owner.querySelector('[data-testid="first-run-owner-local"]')?.textContent)
+      .toContain('production approval and run-host enrollment need the owner account');
+    expect(owner.querySelector('[data-testid="local-owner-open"]')?.textContent).toContain('Create owner account');
+    expect(owner.textContent).toContain('Needed for approval');
+
+    authStatus.set({ authenticated: true, profile: 'local', bootstrapRequired: false,
+      user: { id: 'owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false } });
+    fixture.detectChanges();
+    expect(owner.querySelector('[data-testid="local-owner-signed-in"]')?.textContent).toContain('Signed in as Owner');
+    expect(owner.textContent).toContain('Signed in');
     fixture.destroy();
   });
 
