@@ -13,6 +13,7 @@
  * tested without mounting either.
  */
 import type { ParkedBlockerStatus, ParkedDecisionOption, TaskInfo } from './task.model';
+import { laneName } from './lane-presentation';
 
 /** Sweep verdict tone; matches the shared chip tone vocabulary. */
 export type ParkedRecallTone = 'ok' | 'warn' | 'neutral';
@@ -80,6 +81,11 @@ export interface ParkedBlockerView {
   cause: ParkCauseView;
   /** The park reason as one sentence, without a slug prefix. */
   reason: string;
+  /**
+   * False when the park carried no readable reason and `reason` is the plain
+   * lane and blocker wording of `unrecordedParkReason` (AGT-3873).
+   */
+  reasonRecorded: boolean;
   /** This park waits for a person's choice rather than for a fix. */
   isDecision: boolean;
   /** The question, when the parking run stated one. */
@@ -133,8 +139,30 @@ const RECALL_LABELS: Record<string, { label: string; tone: ParkedRecallTone }> =
 /** Stated when the parking run left neither a question nor a reason. */
 export const UNSTATED_QUESTION = 'the parking run recorded no question';
 
-/** Stated when a park carries no readable reason. */
+/** Stated when a park carries no readable reason and no lane is known. */
 export const UNSTATED_REASON = 'No reason was recorded for this park.';
+
+/** What a park of each blocker type waits for, when its reason was not written down. */
+const UNRECORDED_PARK_WAITS: Record<string, string> = {
+  'operator-decision': "Held for the owner's decision",
+  'agent-needs-input': 'Waiting for the answer the agent asked for',
+  'needs-human-input': "Waiting for a person's input",
+  'human-decision-needed': "Held for a person's decision",
+  'steer-unanswered': 'Waiting for an answer to the steer question',
+};
+
+/**
+ * AGT-3873: a park without a readable reason, said from what is known: its
+ * lane and blocker type, e.g. "Held for the owner's decision in Human review."
+ * A Human Review card waiting for its acceptance carries an `operator-decision`
+ * park whose hand-off wrote no prose; "No reason was recorded" read like an
+ * error there.
+ */
+export function unrecordedParkReason(park: Pick<ParkedBlockerStatus, 'lane' | 'blockerType'>): string {
+  const type = park.blockerType?.trim().toLowerCase() ?? '';
+  const wait = UNRECORDED_PARK_WAITS[type] ?? (type ? `Parked for ${parkedBlockerLabel(type).toLowerCase()}` : 'Parked');
+  return park.lane ? `${wait} in ${laneName(park.lane)}.` : `${wait}.`;
+}
 
 const REISSUE = ['reissue-escalated', 'send-back-to-ready'] as const;
 const ACCEPT = ['accept-escalated', 'mark-done'] as const;
@@ -277,7 +305,11 @@ const SLUG = /^[a-z0-9]+(?:[-_][a-z0-9]+)+$/;
  * legacy shapes are replaced by the fact the category stands for; any other
  * text after the prefix is the recorded failure and is kept.
  */
-export function parkReasonSentence(reason: string | null | undefined, cause: ParkCauseView): string {
+export function parkReasonSentence(
+  reason: string | null | undefined,
+  cause: ParkCauseView,
+  park?: Pick<ParkedBlockerStatus, 'lane' | 'blockerType'>,
+): string {
   const audit = cause.origin === 'acceptance-audit';
   let text = reason?.trim() ?? '';
   const bracket = /^\[([^\]]+)\]\s*/.exec(text);
@@ -293,7 +325,7 @@ export function parkReasonSentence(reason: string | null | undefined, cause: Par
   }
   text = text.trim();
   if (!text || SLUG.test(text) || /^[a-z0-9-]+: [a-z0-9-]+$/.test(text)) {
-    return audit ? acceptanceAuditFact(cause.causeDetail) : UNSTATED_REASON;
+    return audit ? acceptanceAuditFact(cause.causeDetail) : park ? unrecordedParkReason(park) : UNSTATED_REASON;
   }
   text = text.charAt(0).toUpperCase() + text.slice(1);
   return /[.!?]$/.test(text) ? text : `${text}.`;
@@ -441,7 +473,8 @@ export function buildParkedBlockerView(
   if (!park || parkPreconditionMet(info)) return null;
 
   const cause = resolveParkCause(park, timeline);
-  const reason = parkReasonSentence(park.reason, cause);
+  const reason = parkReasonSentence(park.reason, cause, park);
+  const reasonRecorded = reason !== unrecordedParkReason(park);
   const blockerLabel = cause.label ?? parkedBlockerLabel(park.blockerType);
   const parkedFor = parkedForLabel(parkedSecondsAt(park, nowMs));
   const question = park.decision?.question?.trim() || null;
@@ -452,6 +485,7 @@ export function buildParkedBlockerView(
     blockerLabel,
     cause,
     reason,
+    reasonRecorded,
     isDecision: park.requiresDecisionCard,
     question,
     questionId,

@@ -586,7 +586,10 @@ export class RemoteHostsService {
     this.log('reprobe-requested', { hostId: id });
     this.patch(id, item => ({ ...item, busyAction: 'reprobe' }));
     this.http.post(`/api/clients/${encodeURIComponent(host.clientId)}/runner-project-preflights/invalidate`, {}).subscribe({
-      next: () => this.reload(),
+      next: () => {
+        this.patch(id, item => ({ ...item, busyAction: null }));
+        this.reload();
+      },
       error: error => this.actionFailed(id, error),
     });
   }
@@ -601,7 +604,10 @@ export class RemoteHostsService {
       `/api/v1/management/remote-hosts/${encodeURIComponent(host.clientId)}/capabilities/reprobe`,
       { capability },
     ).subscribe({
-      next: () => this.reload(),
+      next: () => {
+        this.patch(id, item => ({ ...item, busyAction: null }));
+        this.reload();
+      },
       error: error => this.actionFailed(id, error),
     });
   }

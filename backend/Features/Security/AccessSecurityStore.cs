@@ -988,6 +988,23 @@ public sealed partial class AccessSecurityStore
         }
     }
 
+    /// <summary>
+    /// The enrolled runner a deploy host name addresses (F6): a live runner id,
+    /// else the one live runner enrolled under that owner-chosen name. Null when
+    /// no live runner, or more than one, carries the name.
+    /// </summary>
+    public string? DeployHostRunnerId(string? hostId)
+    {
+        if (string.IsNullOrWhiteSpace(hostId)) return null;
+        lock (_gate)
+        {
+            var live = StateLocked().Runners.Where(r => r.RevokedAt is null && r.RetiredAt is null).ToList();
+            if (live.Any(r => r.Id == hostId)) return hostId;
+            var named = live.Where(r => string.Equals(r.Name?.Trim(), hostId, StringComparison.Ordinal)).Take(2).ToList();
+            return named.Count == 1 ? named[0].Id : null;
+        }
+    }
+
     public RunnerPrincipal? AuthenticateRunner(string? bearer)
     {
         if (!TryTokenParts(bearer, "rnr", out var credentialId)) return null;

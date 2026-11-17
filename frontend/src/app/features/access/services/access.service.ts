@@ -66,7 +66,7 @@ export class AccessService {
       if (status === 401 || status === 403) this.clearProtectedState();
       this.state.set(status === 401 || status === 403 ? 'denied' : 'error');
       this.error.set(status === 401
-        ? 'Sign in to manage access. A local installation without sign-in has one implicit owner and needs no setup.'
+        ? 'Access settings, runner enrollments, and production approval need a signed-in Owner.'
         : status === 403 ? 'Your account cannot view access settings.'
           : status === 404 ? 'This Studio uses a standalone Task Server, which keeps its own accounts.'
             : message(error, 'Access settings could not be loaded.'));

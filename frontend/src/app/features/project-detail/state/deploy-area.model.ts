@@ -16,6 +16,17 @@ export interface DeployEnvironment {
   kind: string;
 }
 
+/** F2: the last release attempt the release-candidate gate refused, until a release is created. */
+export interface ReleaseGateRefusal {
+  commitSha: string;
+  mode: string;
+  reason: string;
+  nextStep: string | null;
+  atUtc: string;
+}
+
+export interface ReleaseGateStatus { refusal: ReleaseGateRefusal | null }
+
 export interface Release {
   id: string;
   projectId: string;

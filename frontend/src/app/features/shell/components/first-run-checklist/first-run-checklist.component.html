@@ -35,9 +35,14 @@
     <li data-testid="first-run-owner" [attr.data-state]="ownerReady() ? 'ready' : 'pending'">
       <span class="first-run__number">1</span>
       <div><h3>Owner account</h3>
-        <p>{{ localProfile() ? 'No owner sign-in is needed in the local profile.' : ownerReady() ? 'Owner account and signed-in session verified.' : identity().error && !monolithWithoutTaskServer() ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p></div>
-      <app-status-indicator class="first-run__state" [tone]="ownerReady() ? 'success' : 'neutral'"
-        [label]="localProfile() ? 'Not applicable' : ownerReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
+        @if (localProfile()) {
+          <p data-testid="first-run-owner-local">The local profile opens without sign-in, but production approval and run-host enrollment need the owner account.</p>
+          <app-local-owner-sign-in />
+        } @else {
+          <p>{{ ownerReady() ? 'Owner account and signed-in session verified.' : identity().error && !monolithWithoutTaskServer() ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p>
+        }</div>
+      <app-status-indicator class="first-run__state" [tone]="ownerReady() && (!localProfile() || auth.status()?.authenticated) ? 'success' : 'neutral'"
+        [label]="localProfile() ? (auth.status()?.authenticated ? 'Signed in' : 'Needed for approval') : ownerReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
     <li data-testid="first-run-providers" [attr.data-state]="providersReady() ? 'ready' : 'pending'">
       <span class="first-run__number">2</span>

@@ -92,6 +92,20 @@ public sealed class RunHostDirectoryTests : IDisposable
     }
 
     [Fact]
+    public void An_environment_that_names_its_run_host_by_enrollment_name_shows_that_host()
+    {
+        var (security, directory) = Build();
+        var host = Enroll(security, "run-host-1", [RunnerScopes.Deploy], ["demo"]);
+        directory.RecordContact(Principal(host), DeployHostContact.Claim);
+        var response = new ProjectEnvironmentsResponse("demo", [View("stage", "run-host-1")], [], [], []);
+
+        var row = Assert.Single(directory.Attach(response).RunHosts!);
+
+        Assert.Equal(("run-host-1", "run-host-1", RunHostStates.Reachable), (row.Id, row.Name, row.State));
+        Assert.NotNull(row.LastClaimAt);
+    }
+
+    [Fact]
     public async Task Deploy_claims_and_run_target_polls_keep_the_run_host_reachable()
     {
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>

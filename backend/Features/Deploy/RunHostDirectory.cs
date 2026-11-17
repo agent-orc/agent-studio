@@ -45,12 +45,17 @@ public sealed class RunHostDirectory(AccessSecurityStore security, ClientIdentit
         return security.ListRunners().Where(IsRunHost).Select(runner => Status(runner, now)).ToList();
     }
 
-    /// <summary>The status of each declared host id, in order, including ids no run host holds.</summary>
+    /// <summary>
+    /// The status of each declared host id, in order, including ids no run host holds.
+    /// A declared id names the run host by its runner id or its unique enrollment name (F6);
+    /// the row keeps the declared id, which is what each environment refers to.
+    /// </summary>
     public IReadOnlyList<RunHostStatus> ForHosts(IEnumerable<string> hostIds)
     {
         var hosts = List().ToDictionary(host => host.Id, StringComparer.Ordinal);
         return hostIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal)
-            .Select(id => hosts.TryGetValue(id, out var host) ? host
+            .Select(id => security.DeployHostRunnerId(id) is { } runnerId && hosts.TryGetValue(runnerId, out var host)
+                ? host with { Id = id }
                 : new RunHostStatus(id, id, RunHostStates.NotEnrolled, [], null, null, null))
             .ToList();
     }

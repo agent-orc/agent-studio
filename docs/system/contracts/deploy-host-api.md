@@ -33,7 +33,8 @@ project deploys nothing. The page prints the host commands: `agent-host
 --enroll` saves the runner id (`runner_...`) in `installation.env`, the second
 command copies it into `/etc/agent-runner/deploy.env` as `RUNNER_HOSTNAME`,
 and `agent-runner-deploy.service` claims with that id as its `hostId`. The
-same id is the `targetHostId` of every environment the host serves. The Task
+same id, or the host's unique enrollment name, is the `targetHostId` of every
+environment the host serves. The Task
 Server host join token stays coding and review only: it mints a Task Server
 principal, which these routes do not accept.
 
@@ -44,7 +45,8 @@ claim that returns a job also `lastClaimAt`, and a report `lastReportAt`.
 `reachable` (contact within two minutes), `unreachable`, or `no-contact`;
 Hosts shows each one as a "Run host" role row. `GET
 /api/projects/{project}/environments` adds `runHosts`, the status of each
-declared `targetHostId`, with `not-enrolled` for an id no run host holds, and
+declared `targetHostId` under that id, resolving an enrollment name to its run
+host, with `not-enrolled` for an id no run host holds, and
 the Deploy area names that host and its state on each environment card.
 
 The claim response supplies `id`, `project`, `environmentId`, `hostId`,
@@ -61,9 +63,11 @@ Non-release jobs may still carry `variables`; each one has a `name` and either
 a plain `value` or a secret name in `secret`. The deploy host uses the snapshot,
 not the repository's current working tree, to execute the
 job. A claim for a release's environment goes to its currently registered host.
-The SSH executor requires each snapshotted step's `target` to equal that host.
-If host registration changes after the release, an old release's step fails
-this check; create a new release with the new target before deploying there.
+The SSH executor requires each step's `target` to equal that host. The
+backend writes the routed host into every step's `target` when it queues the
+job, so after a host change a rollback or redeploy of an older release runs on
+the current host with the snapshot's artifact, paths and variables. Release
+verification compares the snapshot steps with that same host substitution.
 Schema 2 jobs use the `ssh-v2` template so an older deploy host refuses them
 instead of running its local Docker or static template. Deploy the backend
 before installing the new agent-host binary on deploy hosts. Then switch
