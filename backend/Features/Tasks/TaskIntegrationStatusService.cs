@@ -566,28 +566,34 @@ public sealed class TaskIntegrationStatusService
     }
 
     /// <summary>
-    /// AGT-3810: once the missing server checkout exists, the reviewed delivery
-    /// itself can be merged again, so Retry integration may replay it. Runs
-    /// only on the Git-derived lookup; the cache-only card reads stay free of
-    /// Git processes.
+    /// A recorded checkout failure is replayable only when the provider's
+    /// integration base can also be resolved. Runs only on the Git-derived
+    /// lookup; cache-only card reads stay free of Git processes.
     /// </summary>
     private TaskIntegrationStatus WithServerCheckoutReplay(TaskInfo job, TaskIntegrationStatus status)
         => status.Failure is { Code: AcceptedIntegrationFailureCodes.ServerCheckoutMissing, ReplayAvailable: false } failure
-           && HasServerCheckout(job)
+           && HasServerCheckoutAndIntegrationBase(job, status.IntegrationBranch)
             ? status with { Failure = failure with { ReplayAvailable = true } }
             : status;
 
     /// <summary>
-    /// The same probe the integration worktree provider makes before it refuses
-    /// with <c>server-checkout-missing</c>: a resolvable repository root that is
-    /// a Git checkout.
+    /// Match both prerequisites checked by the integration worktree provider:
+    /// a Git checkout and its selected base ref. A local developer branch is
+    /// not a substitute for a missing origin tracking ref.
     /// </summary>
-    private bool HasServerCheckout(TaskInfo job)
+    private bool HasServerCheckoutAndIntegrationBase(TaskInfo job, string branch)
     {
         if (!_git.HasConfiguredRepository(job.WatchPath)) return false;
         var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
-        return !string.IsNullOrWhiteSpace(root) && Directory.Exists(root)
-            && (Directory.Exists(Path.Combine(root, ".git")) || File.Exists(Path.Combine(root, ".git")));
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)
+            || !Directory.Exists(Path.Combine(root, ".git"))
+                && !File.Exists(Path.Combine(root, ".git"))) return false;
+        if (string.IsNullOrWhiteSpace(branch)) return false;
+        var baseRef = _git.IntegrationBaseRef(root, branch);
+        if (baseRef.StartsWith("refs/remotes/origin/", StringComparison.Ordinal)
+            && _git.GetBranchTip(root, baseRef) is null)
+            _git.RefreshIntegrationBranch(root, branch);
+        return _git.GetBranchTip(root, baseRef) is not null;
     }
 
     /// <summary>
