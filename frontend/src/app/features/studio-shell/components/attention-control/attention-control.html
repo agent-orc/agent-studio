@@ -2,9 +2,9 @@
         aria-haspopup="dialog" [class.attention-control__trigger--active]="count() > 0"
         [attr.aria-label]="accessibleName()" [appTooltip]="triggerLabel()" (click)="toggle()">
   <app-studio-icon name="bell" [size]="14" />
-  <span class="attention-control__label">Needs you</span>
-  @if (reviewHostDrift()) { <span class="attention-control__drift" data-testid="review-host-drift-cue">Review host</span> }
+  <span class="attention-control__label">Needs you </span>
   <strong class="attention-control__count" data-testid="studio-attention-count">{{ count() }}</strong>
+  @if (reviewHostDrift()) { <span class="attention-control__drift" data-testid="review-host-drift-cue">Review host</span> }
 </button>
 
 @if (open()) {
