@@ -410,7 +410,8 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
 
         var scanner = Scanner(config);
         var leases = new SecretWorkloadLeases(environments,
-            new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => _clock.GetUtcNow().UtcDateTime), scanner, bindings);
+            new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => _clock.GetUtcNow().UtcDateTime), scanner, bindings,
+            new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock));
         var claimed = leases.FindClaimedDeployJob(job.Project, job.Id, job.LeaseToken!)!;
         Assert.Equal(["DATABASE_URL"], claimed.SecretRefs);
         Assert.Equal(reference, claimed.SecretBindings!["DATABASE_URL"]);
@@ -634,7 +635,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
-    public void HostMove_RoutesClaimToCurrentHostWithoutChangingReleaseSshTarget()
+    public void HostMove_RoutesClaimAndSshTargetToCurrentHostWithSnapshotPaths()
     {
         var (service, repo, _) = Build();
         var snapshot = service.Declarations("demo")!.Single(item => item.Id == "stage") with
@@ -649,10 +650,12 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var queued = service.QueueDeployment("demo", snapshot, _artifact, "operator", rollback: false);
         Assert.NotNull(queued);
         Assert.Equal("new-host", queued.HostId);
-        Assert.Equal("stage-host", Assert.Single(queued.SshSteps).Target);
+        // The executor runs a step only when its target is the claiming host (F8).
+        Assert.Equal(("new-host", "/srv/apps/web/compose.yml", "web"),
+            (Assert.Single(queued.SshSteps).Target, queued.SshSteps[0].ComposeFile, queued.SshSteps[0].Service));
         Assert.Null(service.Claim("stage-host"));
         var claimed = service.Claim("new-host");
-        Assert.Equal("stage-host", Assert.Single(claimed!.SshSteps).Target);
+        Assert.Equal("new-host", Assert.Single(claimed!.SshSteps).Target);
     }
 
     [Fact]

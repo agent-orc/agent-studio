@@ -46,6 +46,9 @@
               <span class="promotion__meta" [attr.data-testid]="'concept-promotion-slice-decision-' + slice.order">
                 {{ slice.decision }}@if (slice.section) { · {{ slice.section }}}
               </span>
+              <span class="promotion__meta" [attr.data-testid]="'concept-promotion-slice-route-' + slice.order">
+                {{ slice.route }}
+              </span>
               @if (slice.card; as card) {
                 <app-status-indicator class="promotion__card" tone="success" [compact]="true"
                                       [label]="'Created ' + cardLabel(card)" />

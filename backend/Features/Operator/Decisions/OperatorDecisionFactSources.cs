@@ -17,6 +17,43 @@ public interface IOperatorDecisionFactSource
     IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc);
 }
 
+/// <summary>One installation-wide warning for scheduled review retries that have lost their driver.</summary>
+public sealed class OperatorReviewRetryFactSource(
+    Func<IReadOnlyList<ReviewInfrastructureRetryDue>> scheduled,
+    Func<bool> tickFailed,
+    IConfiguration configuration) : IOperatorDecisionFactSource
+{
+    private static readonly TimeSpan StartGrace =
+        TimeSpan.FromSeconds(2 * ReviewInfrastructureRetryScheduler.DefaultIntervalSeconds);
+
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.ReviewRetrySchedulerStalled];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    {
+        var disabled = !configuration.GetValue("Runner:ReviewInfrastructureRetry:Enabled", true);
+        var failed = tickFailed();
+        var affected = scheduled()
+            .Where(retry => disabled || failed || nowUtc > retry.DueAtUtc + StartGrace)
+            .OrderBy(retry => retry.DueAtUtc)
+            .ToArray();
+        if (affected.Length == 0) return [];
+
+        var cards = affected.Select(retry => retry.TaskKey).Distinct(StringComparer.Ordinal).ToArray();
+        var state = disabled ? "disabled" : failed ? "failing" : "not starting overdue retries";
+        var parkLimit = AutoReviewStrandingWatchdog.RetryOverdueLimit(configuration);
+        var deadlines = affected.Select(retry =>
+            $"{retry.TaskKey} by {AutoReviewStrandingWatchdog.ParkOverdueRetryBy(retry.DueAtUtc, parkLimit):yyyy-MM-dd HH:mm} UTC");
+        return [new OperatorDecisionFact(
+            OperatorDecisionTypes.ReviewRetrySchedulerStalled,
+            $"{OperatorDecisionTypes.ReviewRetrySchedulerStalled}|installation",
+            null, null,
+            $"Review retry scheduler is {state}; {cards.Length} affected card(s): {string.Join(", ", cards)}. "
+            + $"The watchdog will park these cards for an operator decision: {string.Join("; ", deadlines)}.",
+            affected[0].DueAtUtc <= nowUtc ? affected[0].DueAtUtc : nowUtc,
+            [], cards, "Review retries are not starting")];
+    }
+}
+
 /// <summary>Completed deploys already metered by workspace quota, without a new event store.</summary>
 public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, ProjectRegistry projects)
     : IOperatorDecisionFactSource

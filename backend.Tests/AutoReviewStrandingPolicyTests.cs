@@ -285,6 +285,20 @@ public sealed class AutoReviewStrandingPolicyTests
                 ScheduledRetryOverdueLimit = TimeSpan.FromHours(2),
             }));
 
+    [Theory]
+    [InlineData(0, AutoReviewStrandingAction.Leave)]
+    [InlineData(30, AutoReviewStrandingAction.Leave)]
+    [InlineData(31, AutoReviewStrandingAction.Escalate)]
+    public void Undo_holds_an_ownerless_card_for_one_threshold_even_when_retry_scheduler_is_disabled(
+        int minutesSinceUndo, AutoReviewStrandingAction expected)
+        => Assert.Equal(expected, AutoReviewStrandingPolicy.Decide(Stranded() with
+        {
+            HasReview = true,
+            ScheduledRetryOverdue = TimeSpan.FromHours(2),
+            ScheduledRetryOverdueLimit = TimeSpan.FromMinutes(5),
+            SinceUndo = TimeSpan.FromMinutes(minutesSinceUndo),
+        }));
+
     [Fact]
     public void Cause_breaker_wait_owns_the_parked_card()
         => Assert.Equal(AutoReviewStrandingAction.Leave,

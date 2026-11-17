@@ -13,6 +13,7 @@ import type {
   IntegrationReleaseStatus,
   Release,
   DeployRunFilter,
+  ReleaseGateStatus,
 } from '../state/deploy-area.model';
 import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
 import { EnvironmentHealthService } from '../../environment-health/services/environment-health.service';
@@ -109,6 +110,12 @@ export class ProjectDeployDataService {
   /** Creates the release of the gated integration branch tip; the answer is the new status. */
   createIntegrationRelease(projectName: string): Observable<IntegrationReleaseStatus> {
     return this.http.post<IntegrationReleaseStatus>(`${deployRoot(projectName)}/integration-release`, {});
+  }
+
+  /** F2: the standing release-candidate gate refusal, if the last release attempt was refused. */
+  releaseGate(projectName: string): Observable<DeployPanel<ReleaseGateStatus>> {
+    return panel(this.http.get<ReleaseGateStatus>(`${deployRoot(projectName)}/release-gate`),
+      'The release gate state could not be loaded.', true);
   }
 
   /** AGT-3201 deploy runs, newest first. */

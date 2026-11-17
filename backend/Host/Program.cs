@@ -725,6 +725,7 @@ builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
 builder.Services.AddSingleton<AgentStudio.Deploy.IntegrationReleaseService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AgentStudio.Deploy.IntegrationReleaseReconciler>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
     AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
@@ -1494,6 +1495,10 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTas
     () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
     task => sp.GetRequiredService<TaskRunnerService>().GetQuotaFallbackForJob(task.Id, task.ProjectName)
         ?? task.QuotaFallback));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorReviewRetryFactSource(
+    () => sp.GetRequiredService<AttemptAuthorityService>().ScheduledReviewInfrastructureRetries(),
+    () => sp.GetRequiredService<ReviewInfrastructureRetryScheduler>().TickFailed,
+    sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorWatcherCaseFactSource(
     sp.GetRequiredService<AgentStudio.Watcher.WatcherCaseStore>(), sp.GetRequiredService<IConfiguration>()["TaskRepository"]));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBatchGateFactSource(

@@ -23,6 +23,8 @@ public sealed class ConceptPromotionService
     private readonly AgentStudio.Docs.WorkbenchChangeNotifier _workbenchChanges;
     private readonly ILogger<ConceptPromotionService> _logger;
     private readonly PipelineExecutionLog? _pipelineLog;
+    private readonly AgentStudio.Clients.ClientIdentityStore? _clients;
+    private readonly AgentStudio.Registry.ProjectRegistry? _projects;
     private readonly object _gate = new();
     internal Action<string>? FailurePoint { get; set; }
 
@@ -32,7 +34,9 @@ public sealed class ConceptPromotionService
         ManagedRepositoryMutationService repositoryMutations,
         AgentStudio.Docs.WorkbenchChangeNotifier workbenchChanges,
         ILogger<ConceptPromotionService> logger,
-        PipelineExecutionLog? pipelineLog = null)
+        PipelineExecutionLog? pipelineLog = null,
+        AgentStudio.Clients.ClientIdentityStore? clients = null,
+        AgentStudio.Registry.ProjectRegistry? projects = null)
     {
         _scanner = scanner;
         _mutations = mutations;
@@ -40,6 +44,8 @@ public sealed class ConceptPromotionService
         _workbenchChanges = workbenchChanges;
         _logger = logger;
         _pipelineLog = pipelineLog;
+        _clients = clients;
+        _projects = projects;
     }
 
     /// <summary>Whether the concept card already promoted at least one Dossier slice.</summary>
@@ -71,7 +77,7 @@ public sealed class ConceptPromotionService
                 State = card?.State,
             });
         }
-        return plan with { Promoted = promoted };
+        return plan with { Promoted = promoted, Route = RouteFor(source) };
     }
 
     public PromoteConceptTasksResponse Promote(
@@ -337,7 +343,7 @@ public sealed class ConceptPromotionService
                 var recovered = _scanner.FindJob(childId, source.WatchPath);
                 if (recovered is not null && recovered.CreationSource != spawn.Reason)
                     throw new InvalidOperationException("The promotion child identity belongs to another card.");
-                var jobId = recovered?.Id ?? _mutations.CreateJob(spawn.Request with
+                var jobId = recovered?.Id ?? _mutations.CreateJob(ApplyRoute(source, spawn.Request) with
                 {
                     Id = childId,
                     CreationSource = spawn.Reason,
@@ -436,6 +442,42 @@ public sealed class ConceptPromotionService
         Mode = TaskModes.Coding,
         TargetState = TaskStates.Preparation,
     };
+
+    private ConceptPromotionRoute RouteFor(TaskInfo source)
+    {
+        var owner = _clients?.Find(source.OwnerClientId);
+        var project = _projects?.FindByStorageLocation(source.WatchPath)
+            ?? _projects?.FindByIdOrDisplayName(source.ProjectName);
+        var cli = !string.IsNullOrWhiteSpace(source.CliType) ? source.CliType!
+            : !string.IsNullOrWhiteSpace(project?.CliDefault) ? project.CliDefault!
+            : !string.IsNullOrWhiteSpace(owner?.DefaultCliType) ? owner.DefaultCliType! : CliTypes.Claude;
+        cli = CliTypes.Normalize(cli);
+        var model = !string.IsNullOrWhiteSpace(source.Model) ? source.Model
+            : !string.IsNullOrWhiteSpace(project?.ModelDefault) ? project.ModelDefault : owner?.DefaultModel;
+        model = ModelMetadataRegistry.NormalizeForCli(cli, model);
+        var thinking = !string.IsNullOrWhiteSpace(source.ThinkingLevel)
+            ? source.ThinkingLevel : owner?.DefaultThinkingLevel;
+        return new ConceptPromotionRoute
+        {
+            CliType = cli,
+            Model = model,
+            ThinkingLevel = ModelMetadataRegistry.ResolveThinkingLevel(cli, model, thinking),
+        };
+    }
+
+    private CreateTaskRequest ApplyRoute(TaskInfo source, CreateTaskRequest request)
+    {
+        var route = RouteFor(source);
+        return request with
+        {
+            OwnerClientId = source.OwnerClientId,
+            CliType = route.CliType,
+            Model = route.Model,
+            ThinkingLevel = route.ThinkingLevel,
+            ModelExplicit = source.ModelExplicit,
+            ThinkingLevelExplicit = source.ThinkingLevelExplicit,
+        };
+    }
 
     /// <summary>A single fork surfaced by the Dossier becomes a decision card, not a prose request.</summary>
     private static CreateTaskRequest DecisionRequest(ConceptSourceDocument source, ConceptImplementationTask item) => new()

@@ -835,6 +835,16 @@ describe('TaskSelectionService · stable task URLs', () => {
       expect(selection.selected()?.info.id).toBe('next-task');
       expect(selection.consumeTaskTabReplacement(nextInfo.taskKey)).toBe(true);
     });
+
+    it('keeps the moved card selected when it was the only pager entry', () => {
+      const pager = TestBed.inject(LanePagerService);
+      pager.capture(info.state, [info], info.taskKey);
+      selection.selected.set(detail);
+
+      expect(selection.advanceAfterMutation(info.taskKey, true)).toBe(false);
+      expect(selection.selected()?.info.taskKey).toBe(info.taskKey);
+      expect(pager.snapshot()).toBeNull();
+    });
   });
 
   it('drops late A and B replies that reach the handlers after A, B, A navigation', () => {

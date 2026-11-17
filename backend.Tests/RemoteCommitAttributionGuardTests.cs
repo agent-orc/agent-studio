@@ -11,6 +11,64 @@ namespace AgentStudio.Tests;
 public sealed class RemoteCommitAttributionGuardTests
 {
     [Fact]
+    public void MergeOnlyContinuation_AttributesResultMergesWhenPriorWorkNamesTheCard()
+    {
+        var own = Commit("1111111111111111111111111111111111111111", "AGT-3947: prior work");
+        var merge = Commit("2222222222222222222222222222222222222222",
+            "Merge remote-tracking branch 'origin/develop' into recovery") with
+        {
+            IsMerge = true,
+            ParentShas = [own.Sha, new string('3', 40)],
+        };
+        var result = RemoteCommitAttributionGuard.Attribute("AGT-3947",
+            "runner/test/AGT-3947", [own, merge],
+            previousCommits: [new TaskCommitInfo { Sha = own.Sha }],
+            mergeParentOnIntegration: sha => sha == new string('3', 40));
+
+        Assert.True(result.Accepted, result.Warning);
+        Assert.Equal([own.Sha, merge.Sha], result.Commits.Select(commit => commit.Sha));
+    }
+
+    [Fact]
+    public void MergeOnlyContinuation_RefusesForeignNonMergeAndNamesIt()
+    {
+        var foreign = Commit("1111111111111111111111111111111111111111",
+            "AGT-9999: foreign work");
+        var merge = Commit("2222222222222222222222222222222222222222", "Merge origin/develop") with
+        {
+            IsMerge = true,
+            ParentShas = [foreign.Sha, new string('3', 40)],
+        };
+        var result = RemoteCommitAttributionGuard.Attribute("AGT-3947",
+            "runner/test/AGT-3947", [foreign, merge],
+            previousCommits: [new TaskCommitInfo { Sha = foreign.Sha }],
+            mergeParentOnIntegration: sha => sha == new string('3', 40));
+
+        Assert.False(result.Accepted);
+        Assert.Contains(foreign.ShortSha, result.Warning);
+        Assert.Contains("next round", result.Warning);
+    }
+
+    [Fact]
+    public void MergeOnlyContinuation_RefusesMergeFromOutsideDevelop()
+    {
+        var own = Commit("1111111111111111111111111111111111111111", "AGT-3947: prior work");
+        var merge = Commit("2222222222222222222222222222222222222222", "Merge unrelated branch") with
+        {
+            IsMerge = true,
+            ParentShas = [own.Sha, new string('4', 40)],
+        };
+        var result = RemoteCommitAttributionGuard.Attribute("AGT-3947",
+            "runner/test/AGT-3947", [own, merge],
+            previousCommits: [new TaskCommitInfo { Sha = own.Sha }],
+            mergeParentOnIntegration: _ => false);
+
+        Assert.False(result.Accepted);
+        Assert.Contains(merge.ShortSha, result.Warning);
+        Assert.Contains("merge parent is not on the integration branch", result.Warning);
+    }
+
+    [Fact]
     public void InspectRemoteDeliveryCommitRange_ExcludesTwoDevelopMergesButRejectsForeignTaskWork()
     {
         var root = Path.Combine(Path.GetTempPath(), "remote-integration-range-" + Guid.NewGuid().ToString("N"));
@@ -73,9 +131,9 @@ public sealed class RemoteCommitAttributionGuardTests
             Assert.Equal(5, range.Commits.Count);
             Assert.Contains(range.Commits, commit => commit.Sha == ownOne);
             Assert.Contains(range.Commits, commit => commit.Sha == resolutionMerge
-                && commit.IsMerge && commit.FilesChanged == 1);
+                && commit.IsMerge && commit.FilesChanged == 1 && commit.ParentShas.Count == 2);
             Assert.Contains(range.Commits, commit => commit.Sha == cleanMerge
-                && commit.IsMerge && commit.FilesChanged == 0);
+                && commit.IsMerge && commit.FilesChanged == 0 && commit.ParentShas.Count == 2);
             Assert.DoesNotContain(range.Commits, commit => commit.Subject.Contains("AGT-3784"));
             Assert.True(RemoteCommitAttributionGuard.Attribute("AGT-3786",
                 "runner/test/AGT-3786", range.Commits).Accepted);
