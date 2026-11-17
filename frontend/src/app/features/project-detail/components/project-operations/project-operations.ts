@@ -4,13 +4,13 @@ import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
 import { take } from 'rxjs';
-import { metric, ratio, type OperationsLogResult, type ProjectOperations } from './project-operations.model';
+import { hostStateLabel, hostStateTone, metric, ratio, type OperationsLogResult, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 
 @Component({
-  selector: 'app-project-operations', standalone: true, imports: [StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent],
+  selector: 'app-project-operations', standalone: true, imports: [StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, PendingButtonDirective],
   templateUrl: './project-operations.html', styleUrl: './project-operations.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -23,6 +23,7 @@ export class ProjectOperationsComponent {
   readonly openRelease = output<string>();
   readonly openCard = output<string>();
   readonly snapshot = signal<ProjectOperations | null>(null);
+  readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly selectedEnvironment = signal('');
   readonly since = signal('');
@@ -31,10 +32,13 @@ export class ProjectOperationsComponent {
   readonly release = signal('');
   readonly searchText = signal('');
   readonly logs = signal<OperationsLogResult | null>(null);
+  readonly searching = signal(false);
   readonly logError = signal<string | null>(null);
   readonly telemetryAvailable = computed(() => this.snapshot()?.environments.some(row => row.telemetryAvailable) ?? false);
   readonly metric = metric;
   readonly ratio = ratio;
+  readonly hostStateLabel = hostStateLabel;
+  readonly hostStateTone = hostStateTone;
   readonly projectSlug = computed(() => studioProjectSlug(this.projectName()));
 
   constructor() { effect(() => this.load(this.projectName())); }
@@ -43,14 +47,17 @@ export class ProjectOperationsComponent {
     const generation = ++this.readGeneration;
     ++this.logGeneration;
     this.snapshot.set(null); this.logs.set(null); this.error.set(null); this.release.set('');
+    this.searching.set(false);
+    this.loading.set(true);
     this.http.get<ProjectOperations>(`/api/projects/${encodeURIComponent(project)}/deploy/operations`).pipe(take(1)).subscribe({
       next: value => {
         if (generation !== this.readGeneration) return;
         this.snapshot.set(value); this.error.set(null);
+        this.loading.set(false);
         if (!value.environments.some(item => item.environment.id === this.selectedEnvironment()))
           this.selectedEnvironment.set(value.environments[0]?.environment.id ?? '');
       },
-      error: () => { if (generation === this.readGeneration) this.error.set('Operations data could not be loaded.'); },
+      error: () => { if (generation === this.readGeneration) { this.error.set('Operations data could not be loaded.'); this.loading.set(false); } },
     });
   }
 
@@ -60,6 +67,7 @@ export class ProjectOperationsComponent {
     ++this.logGeneration;
     this.logs.set(null);
     this.logError.set(null);
+    this.searching.set(false);
   }
 
   search(): void {
@@ -68,6 +76,7 @@ export class ProjectOperationsComponent {
     const generation = ++this.logGeneration;
     this.logs.set(null);
     this.logError.set(null);
+    this.searching.set(true);
     const params: Record<string, string> = { environmentId };
     if (this.since()) params['since'] = new Date(this.since()).toISOString();
     if (this.until()) params['until'] = new Date(this.until()).toISOString();
@@ -77,10 +86,10 @@ export class ProjectOperationsComponent {
     this.http.get<OperationsLogResult>(`/api/projects/${encodeURIComponent(this.projectName())}/deploy/operations/logs`,
       { params }).pipe(take(1)).subscribe({
       next: value => {
-        if (generation === this.logGeneration) { this.logs.set(value); this.logError.set(null); }
+        if (generation === this.logGeneration) { this.logs.set(value); this.logError.set(null); this.searching.set(false); }
       },
       error: () => {
-        if (generation === this.logGeneration) { this.logs.set(null); this.logError.set('Log search could not be completed.'); }
+        if (generation === this.logGeneration) { this.logs.set(null); this.logError.set('Log search could not be completed.'); this.searching.set(false); }
       },
     });
   }

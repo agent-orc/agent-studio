@@ -501,7 +501,10 @@ It then reports each answered AGT-3176 deploy job on
 `POST /api/deploy/jobs/{project}/{jobId}/report`, and the observed state and
 events on `POST /api/deploy/run-targets/{hostId}/observed-state`. All routes
 require `runner.deploy`, and in the networked profile the caller's Runner ID
-must equal `hostId`. The desired-state read claims the open deploy job, or
+must equal `hostId`. The host also sends a bounded, masked tail of Docker stdout
+and stderr after a restart. Studio keeps that tail with the restart count, opens
+or updates a runtime incident for a crash loop or crash rollback, and writes an
+Activity alert. The desired-state read claims the open deploy job, or
 renews its lease. A run target holds one job for at most 30 minutes from its
 first claim; after that Studio records it as `deploy-step-failed` and queues
 the usual automatic rollback. Without an open job, an environment keeps its

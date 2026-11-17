@@ -68,6 +68,9 @@ export interface ProjectEnvironments {
     health: string;
     pendingArtifact: string | null;
     history: ProjectEnvironmentHistory[];
+    observed?: { state: string; restarts: number; crashOutput?: string[] | null } | null;
+    runtimeIncident?: { id: string; kind: string; startedAt: string; updatedAt: string;
+      restarts: number; endedAt: string | null } | null;
   }[];
   promotions: {
     artifact: string;

@@ -621,6 +621,47 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('deploy-release-detail')).toContainText(release.version);
   });
 
+  test('host crash is visible without application telemetry at desktop and phone widths', async ({ page }) => {
+    const environments = deployEnvironmentsFixture();
+    const production = environments.environments.find(item => item.declaration.id === 'production')!;
+    production.declaration.template = 'container';
+    production.declaration.destination = '8080';
+    production.observed = { state: 'crash-loop', restarts: 102, crashOutput: ['FATAL: configuration missing'] };
+    production.runtimeIncident = { id: 'production/crash', kind: 'crash-loop',
+      startedAt: '2026-10-19T12:00:00Z', updatedAt: '2026-10-19T12:01:00Z', restarts: 102, endedAt: null };
+    await openDeploy(page, fullMocks({ environments }));
+    await expect(page.getByTestId('deploy-environment-production').getByTestId('deploy-environment-health'))
+      .toContainText('Crash loop');
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
+        telemetryAvailable: false, metrics: null, markers: [], observed: production.observed,
+        runtimeIncident: production.runtimeIncident }],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.getByTestId('deploy-tab-operations').click();
+    await expect(page.getByTestId('operations-host-restarts')).toContainText('102');
+    await expect(page.getByTestId('operations-crash-output')).toContainText('FATAL: configuration missing');
+    for (const [width, height, theme] of [[1280, 800, 'light'], [1280, 800, 'dark'],
+      [390, 844, 'light'], [390, 844, 'dark']] as const) {
+      await page.setViewportSize({ width, height });
+      await setTheme(page, theme);
+      fs.mkdirSync(results, { recursive: true });
+      await page.getByTestId('operations-crash-output').scrollIntoViewIfNeeded();
+      await expect(page.getByTestId('operations-crash-output')).toBeInViewport();
+      await page.screenshot({ path: path.join(results,
+        `host-crash-operations-${width}-${theme}--mocked.png`) });
+      await page.getByTestId('deploy-tab-overview').click();
+      await expect(page.getByTestId('deploy-environment-production')).toContainText('Crash loop');
+      await page.getByTestId('deploy-environment-production').scrollIntoViewIfNeeded();
+      await expect(page.getByTestId('deploy-environment-production')).toBeInViewport();
+      await page.screenshot({ path: path.join(results,
+        `host-crash-card-${width}-${theme}--mocked.png`) });
+      await page.getByTestId('deploy-tab-operations').click();
+    }
+  });
+
   test('shows guided failure on the environment card and sends a reasoned skip', async ({ page }) => {
     const deployments = deployDeploymentsFixture().map(item => item.id === 'run-b-stage' ? {
       ...item, state: 'waiting-for-intervention', createdAtUtc: new Date(DEPLOY_FIXTURE_NOW).toISOString(),

@@ -179,7 +179,10 @@ unavailable. `GET /api/projects/{project}/deploy/operations/logs` accepts
 environment, bounded time range, level, release, and text filters and returns
 at most 100 lines. `IOperationsTelemetryReader` is the integration boundary
 for the pending intake store; until it is connected, telemetry and logs show
-an explicit empty state while deploy markers and DORA remain live. The reader
+an explicit empty state while deploy markers and DORA remain live. Host restart
+counts and the last bounded crash output appear separately in Operations even
+without application telemetry. An active host crash incident takes precedence
+over an older healthy deploy status on the environment card. The reader
 contract allows only aggregate usage without personal identifiers and requires
 secret masking before stored log lines are returned.
 

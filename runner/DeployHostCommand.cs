@@ -76,7 +76,11 @@ public static class DeployHostCommand
         }
         claimed.EnsureSuccessStatusCode();
         var job = await claimed.Content.ReadFromJsonAsync<Job>(cancellationToken);
-        if (job is null) return 0;
+        if (job is null)
+        {
+            await DeployHostContainerObserver.ObserveAsync(client, args[1], cancellationToken);
+            return 0;
+        }
         using var lease = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var leaseLost = false;
         var renewal = RenewWhileRunning(client, job, clock ?? TimeProvider.System, () =>

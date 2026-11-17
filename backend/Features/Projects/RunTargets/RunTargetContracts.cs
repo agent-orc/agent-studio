@@ -140,6 +140,10 @@ public sealed record RunTargetObservedReport(IReadOnlyList<RunTargetObservation>
     IReadOnlyList<RunTargetDatabaseObservation>? Databases = null,
     IReadOnlyList<RunTargetDatabaseOperationResult>? DatabaseOperations = null);
 
+/// <summary>A container template that the deploy host must supervise between deploy jobs.</summary>
+public sealed record DeployHostContainerTarget(string Project, string EnvironmentId, string Container,
+    string Artifact);
+
 public sealed record RunTargetObservation(
     string Project,
     string EnvironmentId,
@@ -148,7 +152,8 @@ public sealed record RunTargetObservation(
     string? PreviousArtifact,
     int Restarts,
     DateTime ObservedAt,
-    IReadOnlyList<RunTargetEvent> Events);
+    IReadOnlyList<RunTargetEvent> Events,
+    IReadOnlyList<string>? CrashOutput = null);
 
 public sealed record RunTargetEvent(DateTime At, string Kind, string? Artifact);
 

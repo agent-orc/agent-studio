@@ -23,6 +23,22 @@ describe('ProjectOperationsComponent', () => {
     }).compileComponents();
   });
 
+  it('shows host restarts and crash output when application telemetry is absent', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/operations').flush({
+      ...snapshot, environments: [{ ...snapshot.environments[0], observed: {
+        state: 'crash-loop', restarts: 102, crashOutput: ['FATAL: missing configuration'],
+      } }],
+    });
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="operations-host-restarts"]')?.textContent).toContain('102');
+    expect(host.querySelector('[data-testid="operations-crash-output"]')?.textContent).toContain('FATAL: missing configuration');
+    expect(host.querySelector<HTMLElement>('[data-testid="operations-host-state"]')?.dataset['tone']).toBe('danger');
+  });
+
   it('shows unavailable telemetry without invented numbers and links a rollback to release and card', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');

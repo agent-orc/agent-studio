@@ -309,6 +309,18 @@ describe('deploy area model', () => {
       expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'healthy' });
     });
 
+    it('shows an active container incident ahead of stale healthy status', () => {
+      const sources = deploySourcesFixture();
+      sources.environments!.environments[0].runtimeIncident = { id: 'stage/crash', kind: 'crash-loop',
+        startedAt: '2026-10-19T12:00:00Z', updatedAt: '2026-10-19T12:01:00Z', restarts: 102, endedAt: null };
+      sources.environments!.environments[0].observed = { state: 'crash-loop', restarts: 102,
+        crashOutput: ['FATAL: startup failed'] };
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'crash-loop' });
+      sources.environments!.environments[0].runtimeIncident.endedAt = '2026-10-19T12:02:00Z';
+      sources.environments!.environments[0].observed.state = 'running';
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'healthy' });
+    });
+
     it('reads "no checks" only for an unknown health without a declared health URL', () => {
       const host = hostOnlySourcesFixture();
       host.environments!.environments[0].health = 'unknown';

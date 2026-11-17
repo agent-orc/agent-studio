@@ -3,7 +3,7 @@
   <a [href]="'#/projects/' + projectSlug() + '/operations/structure'">Structure · project partial picture</a>
   <header class="project-operations__head">
     <div><p>Operations</p><h2 id="project-operations-title">Monitoring, usage and load</h2><p>Last 30 days by application environment.</p></div>
-    <button type="button" (click)="load(projectName())">Refresh</button>
+    <button type="button" [appPendingButton]="loading()" pendingLabel="Refreshing…" (click)="load(projectName())">Refresh</button>
   </header>
   @if (error(); as message) { <p role="alert">{{ message }}</p> }
   @if (snapshot(); as state) {
@@ -11,6 +11,18 @@
     @for (row of state.environments; track row.environment.id) {
       <article class="project-operations__environment" [attr.data-testid]="'operations-' + row.environment.id">
         <h3>{{ row.environment.name }} <small>{{ row.environment.kind }}</small></h3>
+        @if (row.observed; as observed) {
+          <dl class="project-operations__host">
+            <div><dt>Restarts</dt><dd data-testid="operations-host-restarts">{{ metric(observed.restarts) }}</dd></div>
+            <div><dt>Container state</dt><dd><app-status-indicator [tone]="hostStateTone(row)" [label]="hostStateLabel(row)" testId="operations-host-state" /></dd></div>
+          </dl>
+          @if (observed.crashOutput?.length) {
+            <section class="project-operations__crash" data-testid="operations-crash-output" aria-label="Last crash output">
+              <h4>Last crash output</h4>
+              <pre>{{ observed.crashOutput?.join('\n') }}</pre>
+            </section>
+          }
+        }
         @if (row.metrics; as m) {
           @if (m.samples.length) {
             <div class="project-operations__trends">
@@ -26,7 +38,7 @@
             <div><dt>Response median</dt><dd>{{ metric(m.responseP50Ms, ' ms') }}</dd></div>
             <div><dt>Response p95</dt><dd>{{ metric(m.responseP95Ms, ' ms') }}</dd></div>
             <div><dt>Error rate</dt><dd>{{ m.errorRate === null ? 'No data' : metric(m.errorRate * 100, '%') }}</dd></div>
-            <div><dt>Restarts</dt><dd>{{ metric(m.restarts) }}</dd></div>
+            @if (!row.observed) { <div><dt>Restarts</dt><dd>{{ metric(m.restarts) }}</dd></div> }
             <div><dt>Requests</dt><dd>{{ metric(m.requests) }}</dd></div>
             <div><dt>Sessions</dt><dd>{{ metric(m.sessions) }}</dd></div>
             <div><dt>Active users per day</dt><dd>{{ metric(m.activeUsers) }}</dd></div>
@@ -46,7 +58,7 @@
             <ul>@for (endpoint of m.topEndpoints; track endpoint.path) { <li><code>{{ endpoint.path }}</code> · {{ metric(endpoint.requests) }} requests</li> }</ul>
           }
         } @else {
-          <p class="project-operations__empty" role="status">Telemetry is not available yet. Monitoring, usage, load and logs will appear when the intake store is connected.</p>
+          <p class="project-operations__empty" role="status">Telemetry is not available yet. Application monitoring, usage, load and searchable logs will appear when the intake store is connected.</p>
         }
         <h4>Deploy and rollback markers</h4>
         @if (!row.markers.length) { <p>No deploy runs in the last 30 days.</p> }
@@ -88,7 +100,7 @@
         <label>Release ID <input type="text" data-testid="operations-log-release" [value]="release()"
           (input)="changeFilter(release, $any($event.target).value)" placeholder="Any release ID"></label>
         <label>Text <input type="search" [value]="searchText()" (input)="changeFilter(searchText, $any($event.target).value)" placeholder="Search text"></label>
-        <button type="button" data-testid="operations-search-logs" (click)="search()">Search logs</button>
+        <button type="button" data-testid="operations-search-logs" [appPendingButton]="searching()" pendingLabel="Searching…" (click)="search()">Search logs</button>
       </div>
       @if (logError(); as message) { <p role="alert">{{ message }}</p> }
       @if (logs(); as result) {

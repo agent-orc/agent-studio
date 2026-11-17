@@ -94,7 +94,8 @@ public sealed record RunTargetObservation(
     string? PreviousArtifact,
     int Restarts,
     DateTime ObservedAt,
-    IReadOnlyList<RunTargetEvent> Events);
+    IReadOnlyList<RunTargetEvent> Events,
+    IReadOnlyList<string>? CrashOutput = null);
 
 public sealed record RunTargetEvent(DateTime At, string Kind, string? Artifact);
 

@@ -152,11 +152,11 @@ export function triggerLabel(raw: string): string {
   return (DEPLOY_TRIGGERS as readonly string[]).includes(raw) ? TRIGGER_LABEL[raw as keyof typeof TRIGGER_LABEL] : raw;
 }
 
-export type HealthState = 'healthy' | 'unhealthy' | 'unknown' | 'up' | 'degraded' | 'down' | 'invalid';
+export type HealthState = 'healthy' | 'unhealthy' | 'unknown' | 'up' | 'degraded' | 'down' | 'invalid' | 'crash-loop' | 'crash-rollback';
 /** AGT-3201 `EnvironmentStatus.health`. */
 const STATUS_HEALTH: Record<string, HealthState> = { healthy: 'healthy', unhealthy: 'unhealthy', unknown: 'unknown' };
 /** AGT-3176 `environments[].health`, from the latest host report. */
-const HOST_HEALTH: Record<string, HealthState> = { healthy: 'healthy', failed: 'unhealthy', unknown: 'unknown' };
+const HOST_HEALTH: Record<string, HealthState> = { healthy: 'healthy', failed: 'unhealthy', unknown: 'unknown', 'crash-loop': 'crash-loop' };
 /** AGT-3176 history statuses: what a host report says about the run it closed. */
 const HOST_REPORT: Record<string, { state: DeploymentState; trigger: string }> = {
   healthy: { state: 'succeeded', trigger: 'deploy' },
@@ -164,7 +164,7 @@ const HOST_REPORT: Record<string, { state: DeploymentState; trigger: string }> =
   failed: { state: 'failed', trigger: 'deploy' },
 };
 
-export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'No data', up: 'Up', degraded: 'Degraded', down: 'Down', invalid: 'Misconfigured' };
+export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'No data', up: 'Up', degraded: 'Degraded', down: 'Down', invalid: 'Misconfigured', 'crash-loop': 'Crash loop', 'crash-rollback': 'Crash rollback' };
 
 /** Actions the lifecycle accepts per state (AGT-3201 StandardLifecyclePolicy); the server still decides. */
 export type DeployRunAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'skip' | 'abort';
@@ -466,6 +466,10 @@ function cardsFor(deployed: boolean, release: Release | null, releaseRecordsKnow
 }
 
 function healthFor(status: EnvironmentStatus | null, base: CardBase, health?: EnvironmentHealthResponse | null): DeployHealth {
+  const incident = base.view?.runtimeIncident;
+  if (incident && !incident.endedAt)
+    return { status: 'reported', state: incident.kind === 'crash-rollback' ? 'crash-rollback' : 'crash-loop' };
+  if (base.view?.observed?.state === 'crash-loop') return { status: 'reported', state: 'crash-loop' };
   const observed = health?.environments.find(item => item.environmentId === base.id);
   if (observed && (observed.checks.length > 0 || observed.status === 'invalid'))
     return { status: 'reported', state: observed.status };

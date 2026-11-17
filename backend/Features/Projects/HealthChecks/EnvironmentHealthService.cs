@@ -378,8 +378,11 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
 
     private IReadOnlyList<EnvironmentHealthView> View(string project, IReadOnlyList<EnvironmentDeclaration> declarations,
         ProjectHealthState state, DateTimeOffset now)
-        => declarations.Select(environment =>
+    {
+        var runtime = environments.RuntimeIncidents(project);
+        return declarations.Select(environment =>
         {
+            var hostIncident = runtime.GetValueOrDefault(environment.Id);
             var checks = HealthCheckDeclarations.Effective(environment).Select(check =>
             {
                 var checkState = state.Checks.GetValueOrDefault(HealthCheckStore.Key(environment.Id, check.Id));
@@ -409,18 +412,31 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
             var primary = checks.FirstOrDefault(check => check.Kind == "http") ?? checks.FirstOrDefault();
             // A managed database before its first deploy has nothing to watch yet (AGT-3878).
             var counted = checks.Where(check => check.LastSample?.Error != HealthSample.NotApplicable).ToArray();
-            var status = counted.Length == 0 || counted.All(check => check.Status == "unknown") ? "unknown"
+            var status = hostIncident is { EndedAt: null } ? "down"
+                : counted.Length == 0 || counted.All(check => check.Status == "unknown") ? "unknown"
                 : counted.Any(check => check.Status == "down") ? "down"
                 : counted.Any(check => check.Status == "invalid") ? "invalid"
                 : counted.Any(check => check.Status is "degraded" or "unknown") ? "degraded" : "up";
+            var lastCheckIncident = states.Select(item => item.LastIncident).OfType<HealthIncident>()
+                .MaxBy(item => item.EndedAt);
+            var lastRuntimeIncident = hostIncident is { EndedAt: not null } endedHost
+                ? RuntimeHealthIncident(environment.Id, endedHost) : null;
             return new EnvironmentHealthView(project, environment.Id, environment.Name, environment.Kind,
                 HealthTargets.Display(environment.Address), status, Worst(checks.Select(check => check.Uptime24h)),
                 Worst(checks.Select(check => check.Uptime7d)), Worst(checks.Select(check => check.Uptime30d)),
                 primary?.Latency24h ?? new(null, null, null),
-                states.Select(item => item.OpenIncident).OfType<HealthIncident>().MinBy(item => item.StartedAt),
-                states.Select(item => item.LastIncident).OfType<HealthIncident>().MaxBy(item => item.EndedAt),
+                hostIncident is { EndedAt: null } open ? RuntimeHealthIncident(environment.Id, open)
+                    : states.Select(item => item.OpenIncident).OfType<HealthIncident>().MinBy(item => item.StartedAt),
+                lastRuntimeIncident is not null && (lastCheckIncident is null
+                    || lastRuntimeIncident.EndedAt > lastCheckIncident.EndedAt) ? lastRuntimeIncident : lastCheckIncident,
                 checks);
         }).ToArray();
+    }
+
+    private static HealthIncident RuntimeHealthIncident(string environmentId, RuntimeIncident incident)
+        => new(incident.Id, environmentId, "container-runtime", new DateTimeOffset(incident.StartedAt),
+            $"{(incident.Kind == "crash-rollback" ? "Crash rollback" : "Crash loop")} after {incident.Restarts} restarts",
+            incident.Restarts, incident.EndedAt is { } ended ? new DateTimeOffset(ended) : null);
 
     private static double? Worst(IEnumerable<double?> values)
     {

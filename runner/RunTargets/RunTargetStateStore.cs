@@ -69,6 +69,7 @@ public sealed class RunTargetAppState
     public DateTime? LastRestartAt { get; set; }
     public DateTime? NextRestartAt { get; set; }
     public int DockerRestarts { get; set; }
+    public int TotalDockerRestarts { get; set; }
 
     /// <summary>Restarts of the current revision inside the crash-rollback window.</summary>
     public List<DateTime> RecentRestarts { get; set; } = [];
@@ -79,6 +80,8 @@ public sealed class RunTargetAppState
     /// <summary>True while Studio sends no spec for the app and the host keeps it as it is.</summary>
     public bool Held { get; set; }
     public List<RunTargetEvent> Events { get; set; } = [];
+    /// <summary>Masked tail from the last crashed revision, retained across a rollback.</summary>
+    public List<string> CrashOutput { get; set; } = [];
 }
 
 public sealed class RunTargetHostState
