@@ -1313,7 +1313,7 @@ public sealed class DeployService
             ? DeployOutcome<Deployment>.Forbidden(decision.Reason!) : DeployOutcome<Deployment>.Conflict(decision.Reason!);
 
     /// <summary>The run log line when the environment moved to another host after the release was created.</summary>
-    private static string? HostChange(ReleaseRecord record, string environmentId, DeployJob job)
+    internal static string? HostChange(ReleaseRecord record, string environmentId, DeployJob job)
         => record.Environments.FirstOrDefault(item => item.Id == environmentId) is { } declared
            && declared.TargetHostId != job.HostId
             ? $"Release {record.Release.Version} declared deploy host {declared.TargetHostId}; the environment now "

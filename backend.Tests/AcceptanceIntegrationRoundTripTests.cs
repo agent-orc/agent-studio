@@ -1067,11 +1067,12 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             NullLogger<StallInterventionReceipts>.Instance);
         var escalation = new HumanReviewEscalation(deps.States, deps.Transitions,
             _tempDir, NullLogger.Instance, deps.Scanner);
+        var watchdogTime = new FakeTimeProvider(new DateTimeOffset(clock));
         var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
             lifecycle, new BatchGateStore(_tempDir), null!, deps.Settings,
             deps.Pipeline, new AutoReviewPostProcessingQueue(), deps.Transitions,
             null!, escalation, records, receipts, deps.Configuration,
-            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+            NullLogger<AutoReviewStrandingWatchdog>.Instance, time: watchdogTime);
 
         Assert.Equal(1, await watchdog.RunOnceAsync());
         var first = Assert.Single(records.All());
@@ -1093,6 +1094,10 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.True(undone.Undone, undone.Message);
         Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
         Assert.False((await watchdog.UndoParkAsync(first.Id, "operator")).Undone);
+
+        Assert.Equal(0, await watchdog.RunOnceAsync());
+        clock = clock.AddMinutes(31);
+        watchdogTime.Advance(TimeSpan.FromMinutes(31));
 
         // A second visit gets a distinct receipt, then Retry review mints a
         // successor from the same immutable run without a coding attempt.

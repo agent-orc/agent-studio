@@ -599,22 +599,7 @@ public sealed class DeployServiceTests : IDisposable
         Commit("runbook-definition");
         var runbooks = Runbooks(environments, store);
         var requested = runbooks.Request("demo", "stage", "backup", Operator).Value!;
-        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
-            builder.UseSetting("WatchPaths:0:Name", "demo");
-            builder.UseSetting("WatchPaths:0:Path", _watch);
-            builder.UseSetting("WatchPaths:0:RootPath", _repo);
-            builder.UseSetting("WatchPaths:0:RepositoryPath", _repo);
-            builder.UseSetting("ReviewDecisionOrchestrator:Enabled", "false");
-            builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
-            builder.ConfigureTestServices(services =>
-            {
-                services.RemoveAll<TimeProvider>();
-                services.AddSingleton<TimeProvider>(_clock);
-            });
-        });
+        await using var factory = LocalFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var password = $"test-{Guid.NewGuid():N}!";
@@ -642,6 +627,73 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Contains(store.ReadAudit("demo", 20), entry => entry.Action == "runbook-succeeded"
             && entry.DeploymentId == requested.Id);
     }
+
+    [Fact]
+    public async Task Local_claim_is_refused_naming_both_hosts_when_the_credential_belongs_to_another_host()
+    {
+        // F6: on the local profile a foreign credential used to claim, and was refused only at secret resolution.
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: backup\n    steps: [backup]\n");
+        Commit("runbook-definition");
+        var requested = Runbooks(environments, store).Request("demo", "stage", "backup", Operator).Value!;
+        await using var factory = LocalFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var foreign = security.EnrollRunner(security.CreateEnrollment(
+            new RunnerEnrollmentRequest("other-host", [RunnerScopes.Deploy], null, null)).Code);
+
+        using (var refused = await Claim(client, "stage-host", foreign.Secret))
+        {
+            Assert.True(refused.StatusCode == HttpStatusCode.Forbidden, await refused.Content.ReadAsStringAsync());
+            var error = (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()!;
+            Assert.Contains("'stage-host'", error);
+            Assert.Contains($"'{foreign.Runner.Id}'", error);
+        }
+        Assert.Equal("queued", environments.Read("demo")!.Jobs.Single().Status);
+
+        // The owner-chosen enrollment name maps the project.yml target to the generated runner id.
+        var host = security.EnrollRunner(security.CreateEnrollment(
+            new RunnerEnrollmentRequest("stage-host", [RunnerScopes.Deploy], null, null)).Code);
+        using (var claimed = await Claim(client, "stage-host", host.Secret))
+        {
+            Assert.Equal(HttpStatusCode.OK, claimed.StatusCode);
+            Assert.Equal(requested.Id, (await claimed.Content.ReadFromJsonAsync<DeployJob>())!.RunbookRunId);
+        }
+
+        Assert.Equal(host.Runner.Id, security.DeployHostRunnerId("stage-host"));
+        Assert.Equal(foreign.Runner.Id, security.DeployHostRunnerId(foreign.Runner.Id));
+        security.EnrollRunner(security.CreateEnrollment(
+            new RunnerEnrollmentRequest("stage-host", [RunnerScopes.Deploy], null, null)).Code);
+        Assert.Null(security.DeployHostRunnerId("stage-host"));
+    }
+
+    private static async Task<HttpResponseMessage> Claim(HttpClient client, string hostId, string bearer)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/deploy/jobs/claim")
+        {
+            Content = JsonContent.Create(new DeployClaimRequest(hostId)),
+        };
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        return await client.SendAsync(request);
+    }
+
+    private WebApplicationFactory<Program> LocalFactory() => new TestHostFactory().WithWebHostBuilder(builder =>
+    {
+        builder.UseEnvironment("Test");
+        builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
+        builder.UseSetting("WatchPaths:0:Name", "demo");
+        builder.UseSetting("WatchPaths:0:Path", _watch);
+        builder.UseSetting("WatchPaths:0:RootPath", _repo);
+        builder.UseSetting("WatchPaths:0:RepositoryPath", _repo);
+        builder.UseSetting("ReviewDecisionOrchestrator:Enabled", "false");
+        builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
+        builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<TimeProvider>();
+            services.AddSingleton<TimeProvider>(_clock);
+        });
+    });
 
     public void Dispose()
     {
@@ -2057,6 +2109,62 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Schema_two_rollback_after_a_host_move_runs_the_older_release_on_the_current_host()
+    {
+        // F8: the SSH target moved to the enrolled host ids after releases 1 and 2.
+        var (deploy, environments, _) = Build();
+        WriteSshProjectYml();
+        Directory.Delete(Path.Combine(_repo, "docs", "deployments", "environments"), true);
+        var r1 = CreateRelease(deploy, Artifact('a'), Commit("ssh-definition"));
+        DeployThroughProduction(deploy, environments, r1, Owner);
+        var yaml = Path.Combine(_repo, ".agent-studio", "project.yml");
+        File.WriteAllText(yaml, File.ReadAllText(yaml)
+            .Replace("target: stage-host", "target: stage-enrolled", StringComparison.Ordinal)
+            .Replace("target: prod-host", "target: prod-enrolled", StringComparison.Ordinal));
+
+        // Staging: the new release fails its health check, the automatic
+        // rollback repeats release 1 on the new host.
+        CreateRelease(deploy, Artifact('b'), Commit("enrolled-hosts"));
+        Report(deploy, environments, "stage-enrolled", healthy: false, evidence: DeployEvidence.HealthFailed);
+        Assert.Null(environments.Claim("stage-host"));
+        AssertRunsOnCurrentHost(environments.Claim("stage-enrolled", requireVerifiedRelease: true),
+            "stage-enrolled", Artifact('a'), "/srv/apps/demo/stage/compose.yml");
+        deploy.SyncAfterHostCall("demo");
+        var stageRollback = Assert.Single(deploy.Deployments("demo", "stage")!,
+            item => item.Trigger == DeploymentTriggers.AutomaticRollback);
+        Assert.Equal((r1.Id, DeploymentStates.Succeeded), (stageRollback.ReleaseId, stageRollback.State));
+        Assert.Contains(deploy.Log("demo", stageRollback.Id, null)!.Lines, line => line.Message
+            == $"Release {r1.Version} declared deploy host stage-host; the environment now declares deploy host "
+            + "stage-enrolled, so the run goes there with the release's declaration.");
+
+        // Production: release 3 passes Staging, fails health in Production and
+        // rolls back to release 1, which Production last ran healthy.
+        var r3 = CreateRelease(deploy, Artifact('c'), Commit("fix"));
+        Report(deploy, environments, "stage-enrolled", healthy: true);
+        var waiting = deploy.Deployments("demo", "production")!.Single(item =>
+            item.ReleaseId == r3.Id && item.State == DeploymentStates.AwaitingApproval);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        Report(deploy, environments, "prod-enrolled", healthy: false, evidence: DeployEvidence.HealthFailed);
+        Assert.Null(environments.Claim("prod-host"));
+        AssertRunsOnCurrentHost(environments.Claim("prod-enrolled", requireVerifiedRelease: true),
+            "prod-enrolled", Artifact('a'), "/srv/apps/demo/production/compose.yml");
+        deploy.SyncAfterHostCall("demo");
+        var productionRollback = Assert.Single(deploy.Deployments("demo", "production")!,
+            item => item.Trigger == DeploymentTriggers.AutomaticRollback);
+        Assert.Equal((r1.Id, DeploymentStates.Succeeded), (productionRollback.ReleaseId, productionRollback.State));
+        Assert.Equal(r1.Id, deploy.Status("demo")!.Single(item => item.Environment.Id == "production").CurrentRelease?.Id);
+
+        void AssertRunsOnCurrentHost(DeployJob? job, string host, string artifact, string composeFile)
+        {
+            Assert.NotNull(job);
+            Assert.Equal((host, artifact, true), (job.HostId, job.Artifact, job.IsRollback));
+            var step = Assert.Single(job.SshSteps);
+            Assert.Equal((host, composeFile, "demo"), (step.Target, step.ComposeFile, step.Service));
+            Assert.True(environments.Report("demo", job.Id, ReportJob(job, healthy: true)));
+        }
+    }
+
+    [Fact]
     public void Mixed_stage_json_and_generated_production_keep_lifecycle_order()
     {
         var (_, environments, _) = Build();
@@ -2277,7 +2385,8 @@ public sealed class DeployServiceTests : IDisposable
         var service = factory.Services.GetRequiredService<DeployService>();
         var stage = hosts.Claim("stage-host")!;
         var security = factory.Services.GetRequiredService<AccessSecurityStore>();
-        var enrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("deploy-host",
+        // F6: the artifact route checks host identity on every profile; the enrollment name maps the job's host.
+        var enrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("stage-host",
             [RunnerScopes.Deploy], null, null));
         var credential = security.EnrollRunner(enrollment.Code);
         using var host = factory.CreateClient();

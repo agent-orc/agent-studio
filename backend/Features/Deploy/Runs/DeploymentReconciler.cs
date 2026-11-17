@@ -149,6 +149,8 @@ public static class DeploymentReconciler
             log.Add(new(run.Id, run.DeployStep, job.CreatedAt, trigger == DeploymentTriggers.AutomaticRollback
                 ? $"Automatic rollback to release {release.Version} queued after a failed deployment."
                 : $"Release {release.Version} queued for {environment.Name} by {actor}."));
+            if (record is not null && DeployService.HostChange(record, environment.Id, job) is { } moved)
+                log.Add(new(run.Id, run.DeployStep, job.CreatedAt, moved));
             audit.Add(new(job.CreatedAt, actor, trigger == DeploymentTriggers.Deploy ? "deployment-queued" : "rollback-queued",
                 release.Id, run.Id, environment.Id, $"Release {release.Version} queued for {environment.Name}."));
         }

@@ -391,6 +391,8 @@ public sealed record PipelineStepRunSummary
     public long OutputTokens { get; init; }
     public long CacheReadTokens { get; init; }
     public long CacheCreationTokens { get; init; }
+    public bool? InputIncludesCached { get; init; }
+    public string? UsageNormalization { get; init; }
     public string? CostBasis { get; init; }
     public decimal? EstimatedCostUsd { get; init; }
     public bool? ModelPriced { get; init; }
