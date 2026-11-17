@@ -66,9 +66,13 @@ public sealed class EngineReportReviewTests : IDisposable
         try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
     }
 
-    [Fact]
-    public async Task Engine_create_review_sends_a_research_delivery_to_human_review_with_its_report_verdict()
+    [Theory]
+    [InlineData("pass")]
+    [InlineData("concerns")]
+    [InlineData("block")]
+    public async Task Engine_create_review_sends_a_research_delivery_to_human_review_with_its_report_verdict(string verdict)
     {
+        _verdict = verdict;
         SeedCard(TaskStates.Progress, TaskModes.Research, null);
         using var factory = BuildFactory();
         using var http = factory.CreateClient();
@@ -101,14 +105,36 @@ public sealed class EngineReportReviewTests : IDisposable
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         Assert.Null(authority.GetTaskProjection(Card).CurrentReviewAttempt);
         Assert.Single(_calls);
-        Assert.Equal("pass", CompletionContentEvidence.Read(card, authority).ContentStatus);
+        Assert.Equal(verdict, CompletionContentEvidence.Read(card, authority).ContentStatus);
         var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(card.FolderPath);
         Assert.Contains(timeline, entry => entry.Kind == TimelineEventKinds.PostStepStarted
             && entry.Summary.Contains("Report review started (engine-create-review)", StringComparison.Ordinal));
         Assert.Contains(timeline, entry => entry.Kind == TimelineEventKinds.PostStepFinished
-            && entry.Summary.Contains("Requirement fit of the report: pass", StringComparison.Ordinal));
+            && entry.Summary.Contains($"Requirement fit of the report: {verdict}", StringComparison.Ordinal));
         Assert.Contains(timeline, entry => entry.Kind == TimelineEventKinds.LaneChanged
-            && entry.Details?.GetValueOrDefault(LaneChangeCauses.DetailQualifierKey) == "report-review");
+            && entry.Details?.GetValueOrDefault(LaneChangeCauses.DetailQualifierKey) == "report-review"
+            && entry.Details?.GetValueOrDefault("reason")?.Contains(verdict, StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    [Fact]
+    public async Task Quota_deferred_report_review_waits_in_auto_review_without_a_park()
+    {
+        _verdict = "quota";
+        SeedCard(TaskStates.AutoReview, TaskModes.Research, Now);
+        using var factory = BuildFactory();
+        SeedCompletedRun(factory.Services);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var reviews = factory.Services.GetRequiredService<EngineReportReviewService>();
+
+        var start = reviews.Start(scanner.FindJob(Card, _projectPath)!, "test");
+        Assert.True(start.Started, start.Reason);
+        var decision = await start.Completion!.WaitAsync(Deadline);
+
+        Assert.Equal(ReportReviewAction.Wait, decision.Action);
+        var card = scanner.FindJob(Card, _projectPath)!;
+        Assert.Equal(TaskStates.AutoReview, card.State);
+        Assert.Equal(LifecyclePhases.AwaitingReview, card.Phase);
+        Assert.Null(ParkedBlockerMarker.TryRead(card.FolderPath));
     }
 
     [Fact]
@@ -315,7 +341,9 @@ public sealed class EngineReportReviewTests : IDisposable
         {
             lock (_calls) _calls.Add(aspectId);
             // An empty reply is a dead reviewer: no verdict, even after the retry.
-            return Task.FromResult(_verdict.Length == 0
+            return Task.FromResult(_verdict == "quota"
+                ? "{\"quotaDeferred\":true,\"error\":\"Quota reset pending\"}"
+                : _verdict.Length == 0
                 ? string.Empty
                 : $"Checked results/report.html.\n[[ASPECT_VERDICT: status={_verdict}; summary=The report answers the brief; "
                     + "evidence_checked=results/report.html; missing=none]]\n[[TASK_DONE]]");
