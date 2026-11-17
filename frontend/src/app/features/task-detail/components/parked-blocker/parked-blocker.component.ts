@@ -165,8 +165,10 @@ export class ParkedBlockerComponent {
     const view = buildParkedBlockerView(this.info(), this.now(), this.timeline?.events() ?? []);
     // Human Review is also the ordinary acceptance lane: an operator-decision
     // park nobody caused and that asks nothing is not a park (AGT-3649-D13).
+    // A park whose reason was never written keeps its lane statement, "Held
+    // for the owner's decision in Human review." (AGT-3873).
     if (view && this.info().state === '5-human-review' && view.blockerType === 'operator-decision'
-      && !view.question && view.cause.origin === 'unknown') return null;
+      && !view.question && view.cause.origin === 'unknown' && view.reasonRecorded) return null;
     return view;
   });
 
