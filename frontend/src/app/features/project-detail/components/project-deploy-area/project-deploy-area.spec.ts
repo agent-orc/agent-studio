@@ -115,6 +115,8 @@ class FakeDeployData {
   }
   pipeline(): Observable<DeployPanel<unknown>> { return this.pipelinePanel; }
   health(): Observable<DeployPanel<unknown>> { return this.healthPanel; }
+  integrationRelease(): Observable<DeployPanel<unknown>> { return of({ status: 'unavailable' }); }
+  createIntegrationRelease(): Observable<unknown> { return of({}); }
   releaseGate(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`gate:${project}`); return this.releaseGatePanel; }
   deploymentLog(_project: string, id: string): Observable<DeployPanel<unknown>> {
     this.requests.push(`log:${id}`);
