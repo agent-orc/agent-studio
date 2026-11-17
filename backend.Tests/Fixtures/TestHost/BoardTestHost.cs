@@ -46,7 +46,14 @@ public abstract class BoardTestHost : SharedTestHost
     protected sealed override void ConfigureHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Test");
-        builder.ConfigureServices(ConfigureServices);
+        builder.ConfigureServices(services =>
+        {
+            ConfigureServices(services);
+            // A shared board host starts before its tests write any cards. Its
+            // drain sentinel therefore needs the watcher to be running so the
+            // next request observes the same index a fresh host would build.
+            services.AddHostedService(provider => provider.GetRequiredService<TaskWatcherService>());
+        });
         var settings = new Dictionary<string, string?> { ["TaskRepository"] = Workspace };
         for (var i = 0; i < _projects.Length; i++)
         {
