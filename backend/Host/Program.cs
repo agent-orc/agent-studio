@@ -1517,6 +1517,7 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPro
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGateHostFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)

@@ -128,6 +128,7 @@
           }</ul>
         </section>
       }
+      <app-batch-infrastructure-retries [requests]="data.infrastructureRetries ?? []" />
       <app-batch-per-task-gates [gates]="data.perTaskGates" />
       <app-batch-lane-admission [lane]="data.laneAdmission" [refusals]="data.suiteRefusals" />
       @if (data.detachedFlights?.length) {
