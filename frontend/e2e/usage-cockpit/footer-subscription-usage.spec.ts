@@ -33,6 +33,7 @@ function hosts(invalid: boolean) {
 
 function cockpit() {
   const snapshot = structuredClone(SNAPSHOT);
+  snapshot.cost.oneShotSources = [{ source: 'auto-tag', todayUsd: 0.01, weekUsd: 0.04 }];
   snapshot.clis = [...snapshot.clis, GEMINI_UNAVAILABLE].map(cli => cli.cliId === 'gemini' ? cli : ({
     ...cli,
     windows: cli.cliId === 'codex' ? cli.windows : cli.windows.filter(window => window.id.includes('weekly')),
@@ -127,6 +128,13 @@ test('one footer entry per subscription, honest age, host problem, account and r
   await expect(page.getByTestId('usage-detail-jump-gemini')).toBeVisible();
   await expect(page.getByTestId('usage-detail-windows-claude')).toContainText('N/A');
   await expect(page.getByTestId('usage-detail-chat-toggle')).toBeVisible();
+  await page.getByTestId('usage-detail-close').click();
+
+  await footer.getByTestId('footer-usage-cost').click();
+  await expect(page.getByTestId('usage-detail-one-shot-sources')).toContainText('auto-tag');
+  await page.getByTestId('usage-detail-one-shot-sources').screenshot({
+    path: join(shots, 'footer-one-shot-cost--mocked.png'),
+  });
   await page.getByTestId('usage-detail-close').click();
 
   for (const width of [1920, 1280, 390]) {
