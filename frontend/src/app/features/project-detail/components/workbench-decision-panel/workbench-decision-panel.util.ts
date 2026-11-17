@@ -169,6 +169,8 @@ export function answerSaveState(
 export function revisionRoundText(round: WorkbenchRevisionRound): string {
   const card = round.title ? `${round.taskKey} · ${round.title}` : round.taskKey;
   switch (round.status) {
+    case 'updated': return `Revision round updated the Dossier on ${card}.`;
+    case 'unchanged': return `Revision round finished on ${card}; the Dossier is unchanged.`;
     case 'started': return `Revision round started on ${card}.`;
     case 'queued': return `Revision round queued on ${card}. ${round.detail ?? ''}`.trim();
     case 'saved': return `Revision request saved on ${card}. ${round.detail ?? ''}`.trim();
