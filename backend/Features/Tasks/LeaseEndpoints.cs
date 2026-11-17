@@ -1321,6 +1321,7 @@ public static class LeaseEndpoints
                     var detail = urlsMatch
                         ? OneLine(req.ProjectPreflight.Detail)
                         : $"fetch and push URL must both match registered repository '{repository.RepositoryUrl}'";
+                    var previousPreflight = clients.FindRunnerProjectPreflight(clientId, repository.ProjectId);
                     clients.SetRunnerProjectPreflight(clientId, new RunnerProjectPreflight
                     {
                         ProjectId = repository.ProjectId,
@@ -1335,6 +1336,10 @@ public static class LeaseEndpoints
                         // Server receipt time is the cache authority. A host
                         // clock cannot make a stale proof live indefinitely.
                         CheckedAt = DateTime.UtcNow,
+                        FirstFailedAt = succeeded ? null : previousPreflight is { Status: "failed" }
+                            && string.Equals(previousPreflight.Detail, detail, StringComparison.Ordinal)
+                            ? previousPreflight.FirstFailedAt ?? previousPreflight.CheckedAt
+                            : DateTime.UtcNow,
                         CredentialGeneration = req.RepositoryCredentialGeneration,
                     });
                     logger.Log(succeeded ? LogLevel.Information : LogLevel.Warning,

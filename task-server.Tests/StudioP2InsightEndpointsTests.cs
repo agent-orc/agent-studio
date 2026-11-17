@@ -2,20 +2,17 @@ using System.Net;
 using System.Net.Http.Json;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class StudioP2InsightEndpointsTests
+public sealed class StudioP2InsightEndpointsTests(StudioClassFixture fixture) : IClassFixture<StudioClassFixture>
 {
     [Fact]
     public async Task Bus_messages_can_be_ingested_listed_filtered_and_fetched_by_id()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new P2InsightApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var project = await CreateProjectAsync(client, "Bus Project", "BUS");
 
@@ -74,8 +71,7 @@ public sealed class StudioP2InsightEndpointsTests
     [Fact]
     public async Task Bus_summary_and_token_aggregate_are_zero_shaped_for_a_project_with_no_data()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new P2InsightApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var project = await CreateProjectAsync(client, "Empty Bus Project", "EBP");
 
@@ -92,8 +88,7 @@ public sealed class StudioP2InsightEndpointsTests
     [Fact]
     public async Task Token_usage_can_be_ingested_and_read_back_through_every_projection()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new P2InsightApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var project = await CreateProjectAsync(client, "Token Project", "TKN");
         var now = DateTime.UtcNow;
@@ -146,8 +141,7 @@ public sealed class StudioP2InsightEndpointsTests
     [Fact]
     public async Task Token_usage_summary_is_zero_shaped_for_a_fresh_project()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new P2InsightApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var project = await CreateProjectAsync(client, "Fresh Token Project", "FTP");
 
@@ -169,8 +163,7 @@ public sealed class StudioP2InsightEndpointsTests
     [Fact]
     public async Task Runtime_events_can_be_ingested_and_listed_and_accept_the_refresh_query_param()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new P2InsightApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var project = await CreateProjectAsync(client, "Runtime Project", "RTP");
 
@@ -195,8 +188,7 @@ public sealed class StudioP2InsightEndpointsTests
     [Fact]
     public async Task Token_pricing_calculate_prices_a_known_model_and_rejects_an_unknown_one()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new P2InsightApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
 
         var priced = await client.PostAsJsonAsync(
@@ -237,18 +229,4 @@ public sealed class StudioP2InsightEndpointsTests
         return client;
     }
 
-    private sealed class P2InsightApiFactory(string dataDirectory) : WebApplicationFactory<Program>
-    {
-        protected override void ConfigureWebHost(IWebHostBuilder builder)
-        {
-            builder.UseEnvironment("Testing");
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
-                {
-                    ["TaskServer:DataDirectory"] = dataDirectory,
-                    ["TaskServer:ListenUrl"] = string.Empty,
-                    ["TaskServer:RetentionSchedulerEnabled"] = "false",
-                }));
-        }
-    }
 }

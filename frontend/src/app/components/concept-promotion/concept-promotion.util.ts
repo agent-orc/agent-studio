@@ -55,7 +55,18 @@ export function decisionLabel(
   const working = decisions.find(decision => decision.id === decisionId && decision.isWorkingAssumption);
   if (!working) return decisionId;
   const source = working.operatorSelected ? 'operator choice' : 'recommended';
-  return `${working.label}: ${working.optionLabel} (${source})`;
+  // Authored option labels often carry "(recommended)" already (AGT-3649-D13).
+  const option = working.optionLabel.replace(/\s*\(recommended\)\s*$/i, '').trim()
+    || working.optionLabel;
+  return `${working.label}: ${option} (${source})`;
+}
+
+/** Collapsed-bar progress, e.g. `2 of 5 slices have cards`; null before the plan loads. */
+export function promotionProgressLabel(slices: readonly ConceptPromotionSlice[]): string | null {
+  if (slices.length === 0) return null;
+  const withCards = slices.filter(slice => slice.card).length;
+  return `${withCards} of ${slices.length} slice${slices.length === 1 ? '' : 's'} `
+    + `${slices.length === 1 ? 'has' : 'have'} cards`;
 }
 
 export function cardLabel(card: NonNullable<ConceptPromotionSlice['card']>): string {

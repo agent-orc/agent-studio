@@ -169,6 +169,8 @@ export function answerSaveState(
 export function revisionRoundText(round: WorkbenchRevisionRound): string {
   const card = round.title ? `${round.taskKey} · ${round.title}` : round.taskKey;
   switch (round.status) {
+    case 'updated': return `Revision round updated the Dossier on ${card}.`;
+    case 'unchanged': return `Revision round finished on ${card}; the Dossier is unchanged.`;
     case 'started': return `Revision round started on ${card}.`;
     case 'queued': return `Revision round queued on ${card}. ${round.detail ?? ''}`.trim();
     case 'saved': return `Revision request saved on ${card}. ${round.detail ?? ''}`.trim();
@@ -320,10 +322,16 @@ export function decisionStageTone(stage: string | null | undefined, documented: 
 const DECISION_OUTCOME_TONES: Readonly<Record<string, StatusTone>> = {
   'feature-spawn': 'success',
   archive: 'neutral',
-  rework: 'warning',
+  rework: 'success',
 };
 
-/** Tone of a recorded decision receipt; an unknown outcome reads neutral. */
-export function decisionOutcomeTone(outcome: string | null | undefined): StatusTone {
+/**
+ * Tone of a recorded decision receipt; an unknown outcome reads neutral. A
+ * recorded rework request is a completed action, not a warning (AGT-3649-D13).
+ */
+export function decisionOutcomeTone(outcome: string | null | undefined,
+  state?: string | null): StatusTone {
+  if (state === 'failed') return 'danger';
+  if (state === 'pending') return 'running';
   return DECISION_OUTCOME_TONES[outcome ?? ''] ?? 'neutral';
 }

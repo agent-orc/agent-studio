@@ -7,13 +7,12 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class StudioHostsTests
+public sealed class StudioHostsTests(StudioClassFixture fixture) : IClassFixture<StudioClassFixture>
 {
     [Fact]
     public async Task Client_list_groups_runners_by_host_and_reflects_runtime_capacity_and_admission()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         await store.RegisterRunnerAsync(
@@ -36,14 +35,13 @@ public sealed class StudioHostsTests
         Assert.Equal(4, capacity!.MaxParallelism);
 
         var afterCapacity = await client.GetFromJsonAsync<List<StudioClientSummaryDto>>("/api/v1/studio/clients");
-        Assert.Equal(4, Assert.Single(afterCapacity!).RuntimeCapacity!.MaxParallelism);
+        Assert.Equal(4, Assert.Single(afterCapacity!, item => item.ClientId == "host-hosts-1").RuntimeCapacity!.MaxParallelism);
     }
 
     [Fact]
     public async Task Defaults_round_trip_and_reject_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         await store.RegisterRunnerAsync(
@@ -83,8 +81,7 @@ public sealed class StudioHostsTests
     [Fact]
     public async Task Drain_and_revive_round_trip_through_admission_state_and_are_idempotent()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         await store.RegisterRunnerAsync(
@@ -105,7 +102,7 @@ public sealed class StudioHostsTests
         drainAgain.EnsureSuccessStatusCode();
 
         var clientsWhileDraining = await client.GetFromJsonAsync<List<StudioClientSummaryDto>>("/api/v1/studio/clients");
-        Assert.Equal("operator-draining", Assert.Single(clientsWhileDraining!).AdmissionState);
+        Assert.Equal("operator-draining", Assert.Single(clientsWhileDraining!, item => item.ClientId == "host-drain-1").AdmissionState);
 
         var revive = await client.PostAsJsonAsync("/api/v1/studio/clients/host-drain-1/revive", new StudioHostReviveRequest());
         revive.EnsureSuccessStatusCode();
@@ -117,14 +114,13 @@ public sealed class StudioHostsTests
         Assert.Equal("open", (await reviveAgain.Content.ReadFromJsonAsync<RemoteHostAdmissionDto>())!.AdmissionState);
 
         var clientsAfterRevive = await client.GetFromJsonAsync<List<StudioClientSummaryDto>>("/api/v1/studio/clients");
-        Assert.Equal("open", Assert.Single(clientsAfterRevive!).AdmissionState);
+        Assert.Equal("open", Assert.Single(clientsAfterRevive!, item => item.ClientId == "host-drain-1").AdmissionState);
     }
 
     [Fact]
     public async Task Retire_and_permanent_delete_are_idempotent_and_observable_via_the_client_list()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         await store.RegisterRunnerAsync(
@@ -148,7 +144,7 @@ public sealed class StudioHostsTests
         Assert.Equal("decommissioned", retiredAgain.RetiredReason);
 
         var clientsAfterRetire = await client.GetFromJsonAsync<List<StudioClientSummaryDto>>("/api/v1/studio/clients");
-        Assert.NotNull(Assert.Single(clientsAfterRetire!).RetiredAt);
+        Assert.NotNull(Assert.Single(clientsAfterRetire!, item => item.ClientId == "host-retire-1").RetiredAt);
 
         var permanent = await client.DeleteAsync("/api/v1/studio/clients/host-retire-1/permanent");
         permanent.EnsureSuccessStatusCode();
@@ -161,7 +157,7 @@ public sealed class StudioHostsTests
         Assert.Equal(deleted.PermanentlyDeletedAt, deletedAgain.PermanentlyDeletedAt);
 
         var clientsAfterDelete = await client.GetFromJsonAsync<List<StudioClientSummaryDto>>("/api/v1/studio/clients");
-        Assert.NotNull(Assert.Single(clientsAfterDelete!).PermanentlyDeletedAt);
+        Assert.NotNull(Assert.Single(clientsAfterDelete!, item => item.ClientId == "host-retire-1").PermanentlyDeletedAt);
 
         // Soft tombstone only: the underlying runner row is preserved.
         var runners = await store.ListRunnerCapabilitySnapshotsAsync(default);
@@ -171,8 +167,7 @@ public sealed class StudioHostsTests
     [Fact]
     public async Task Preflight_invalidate_bumps_a_per_host_generation_counter()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         await store.RegisterRunnerAsync(
@@ -197,8 +192,7 @@ public sealed class StudioHostsTests
     [Fact]
     public async Task Telemetry_round_trips_whatever_was_last_reported()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         await store.RegisterRunnerAsync(
@@ -228,8 +222,7 @@ public sealed class StudioHostsTests
     [Fact]
     public async Task Management_commands_dispatch_known_commands_and_reject_an_unknown_one()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         await store.RegisterRunnerAsync(
@@ -265,8 +258,7 @@ public sealed class StudioHostsTests
     [Fact]
     public async Task Provider_auth_event_is_recorded_durably()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
 
         var response = await client.PostAsJsonAsync(

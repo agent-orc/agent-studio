@@ -17,6 +17,7 @@
 }
 
 .promotion__label { color: var(--studio-fg-strong); font-weight: 700; }
+.promotion__progress { color: var(--studio-fg); font-variant-numeric: tabular-nums; }
 .promotion__hint { flex: 1 1 16rem; min-width: 0; color: var(--studio-fg-dim); }
 
 .promotion__panel {

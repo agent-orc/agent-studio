@@ -32,11 +32,11 @@ describe('WorkbenchReviewTagComponent', () => {
 
     fixture.componentRef.setInput('reviewDue', true);
     fixture.detectChanges();
-    expect(tag.textContent).toContain('Review due · partially superseded · reviewed 3 days ago');
+    expect(tag.textContent).toContain('Review due · partially superseded · relevance reviewed 3 days ago');
 
     fixture.componentRef.setInput('review', null);
     fixture.detectChanges();
-    expect(tag.textContent).toContain('Never reviewed');
+    expect(tag.textContent).toContain('Relevance not reviewed');
     fixture.destroy();
     vi.useRealTimers();
   });

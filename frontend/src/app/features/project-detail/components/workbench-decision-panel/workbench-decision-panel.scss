@@ -163,6 +163,15 @@
 }
 
 .decision-panel__receipt-note { flex: 1 1 100%; }
+.decision-panel .decision-panel__round-link {
+  min-height: auto;
+  padding: 0 var(--studio-spacing-1);
+  border: 0;
+  background: transparent;
+  color: var(--studio-accent-3);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .decision-panel__receipt-note[data-round-status='failed'] { color: var(--studio-error); }
 
 .decision-panel__created {
