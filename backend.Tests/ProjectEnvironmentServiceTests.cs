@@ -410,7 +410,8 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
 
         var scanner = Scanner(config);
         var leases = new SecretWorkloadLeases(environments,
-            new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => _clock.GetUtcNow().UtcDateTime), scanner, bindings);
+            new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => _clock.GetUtcNow().UtcDateTime), scanner, bindings,
+            new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock));
         var claimed = leases.FindClaimedDeployJob(job.Project, job.Id, job.LeaseToken!)!;
         Assert.Equal(["DATABASE_URL"], claimed.SecretRefs);
         Assert.Equal(reference, claimed.SecretBindings!["DATABASE_URL"]);
