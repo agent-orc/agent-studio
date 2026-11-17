@@ -235,6 +235,10 @@ export class ProjectHubViewComponent {
    * opens (open-or-focus by key), so both entry points land on one tab.
    */
   openUrlPreview(url: { id: string }): void {
+    if (url.id === 'repo') {
+      this.tabState.open({ kind: 'hub', projectName: this.projectName(), section: 'git' });
+      return;
+    }
     this.tabState.open({ kind: 'url-preview', projectName: this.projectName(), urlId: url.id }, 'new');
   }
 

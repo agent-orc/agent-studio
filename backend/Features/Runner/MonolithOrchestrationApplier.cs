@@ -255,10 +255,21 @@ public sealed class MonolithOrchestrationApplier(
                         RecordedAtUtc = DateTimeOffset.UtcNow,
                     });
             }
-            if (RemoteDeliverySettlementStore.Read(task.FolderPath)?.Stage
-                < RemoteDeliverySettlementStage.IntegrationSettled)
+            var settlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
+            // AGT-3883: develop already carries this delivery, for example as a
+            // net-change publication after develop moved on. Integrating it
+            // again would publish a second, empty net change.
+            if (settlement?.Stage < RemoteDeliverySettlementStage.IntegrationSettled
+                && services.GetService<TaskIntegrationStatusService>()?.BuildLookup([task])
+                    .Values.FirstOrDefault()?.Status == IntegrationStatuses.Integrated)
+                RemoteDeliverySettlementStore.RecordIntegration(task.FolderPath,
+                    nameof(MergeIntoIntegrationOutcome.AlreadyMerged), null);
+            else if (settlement?.Stage < RemoteDeliverySettlementStage.IntegrationSettled)
             {
-                var result = await integration.EnqueueAsync(request);
+                // A retry the stranding watchdog reopened must not get the
+                // failed result of the same delivery back from the replay cache.
+                var result = await integration.EnqueueAsync(request,
+                    discardCompletedReplay: settlement.DiscardCompletedReplay);
                 // The integration can move the card, an agent round to Ready,
                 // and its folder with it; read the card it left.
                 scanner.InvalidateCache();
@@ -415,6 +426,22 @@ public sealed class MonolithOrchestrationApplier(
                 var subject = subjectElement.Deserialize<ReviewSubjectRecord>(Json)
                     ?? throw new InvalidDataException("The coding review subject is invalid.");
                 ReviewSubjectStore.Write(task.FolderPath, subject);
+            }
+            // AGT-3797: a report delivery mints no ReviewAttempt, so CreateReview
+            // starts its report review; without one the card had no owner.
+            else if (decision?.Action is null or TransitionAction.CreateReview
+                && services.GetService<EngineReportReviewService>() is { } reportReviews
+                && reportReviews.Owns(task))
+            {
+                var started = reportReviews.Start(task, "engine-create-review");
+                if (!started.Started && !reportReviews.IsRunning(task))
+                    operatorLog.Append(task.WatchPath, new OrchestratorLogEntry
+                    {
+                        Kind = OrchestratorLogKinds.Alert,
+                        Topic = "report-review-not-started",
+                        JobId = task.Id,
+                        Summary = $"The report review of \"{task.Title ?? task.Id}\" did not start: {started.Reason}",
+                    });
             }
         }
 

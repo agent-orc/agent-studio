@@ -16,7 +16,12 @@ the next week boundary and its actor, reason, scope, and expiry are stored in
 the quota audit alongside the limits. `GET /api/workspaces/{id}/quota/audit`
 returns that history.
 
-Token counts come from the merged project token ledger. Ledger rows are
+Token counts come from the merged project token ledger and workspace-scope
+one-shot bus rows. A one-shot row is assigned to a project by its explicit
+project, project tag, or owning card. Projectless rows count in the workspace
+meter as "Unattributed one-shot jobs"; they do not count against a project
+limit. The same row is merged only once if it also appears in a project ledger.
+Ledger rows are
 normalized, so input, cached input, cache writes, and output each count once
 for every provider, including legacy OpenAI rows that recorded cached input
 inside input. The price catalogue supplies a separate USD estimate. Compute

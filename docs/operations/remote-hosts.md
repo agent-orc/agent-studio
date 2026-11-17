@@ -93,6 +93,32 @@ test counts under `--- test-shards.json ---`. The
 [pipeline domain map](../system/domains/pipeline.md#sharded-test-suites-in-the-gate-agt-3232)
 describes the planning and verdict rules.
 
+### Gate host disk: cache pruning and disk pressure (AGT-3866)
+
+The gate worker prunes the gate host's own caches before a run, at most once an
+hour per host. It removes Node compile cache files (`NODE_COMPILE_CACHE`, or
+`<tmp>/node-compile-cache` when unset) and gate workspaces below
+`<tmp>/agentstudio-review-gates` that have not changed for
+`RemoteGate:CachePruneAgeHours` (default 24, never less than 13 so a running
+gate keeps its workspace). Each prune writes one line per target:
+
+```text
+remote_gate_cache_pruned target=node-compile-cache path=/tmp/node-compile-cache entries=81234 freed_bytes=54760833024 max_age_hours=24
+```
+
+Angular CLI, Vite, ESLint and TypeScript enable Node's compile cache. Node keys
+each entry by the module file name and never evicts one, and every gate run
+loads `node_modules` from a fresh workspace path, so without the prune the
+cache grows by every run (51 GB on kori-gate on 16 November 2026).
+
+A gate run that fails while the gate host's run directory or workspace root is
+below the critical disk threshold (8 GiB or 5 % free) reports
+`FailureKind=DiskFull`. Its reason starts with `Gate host disk pressure:` and
+names the path, free bytes and free percent; the batch verdict is
+`disk-pressure` and a parked card says the gate failed under disk pressure. The
+same applies when the API host's own disk admission turns critical during a
+gate run, and a paused batch gate reports `Batch gate paused by disk pressure:`.
+
 ## Prelaunch infrastructure failures
 
 The Task Server counts consecutive infrastructure failures per card and failure
@@ -290,6 +316,20 @@ On 9.11.2026 (AGT-3648 S4-F12) a review image built from develop of 5 November
 served a server built on 9 November. Both said 0.9.5, the image reported no
 commit, and the host read `current` while it graded a card into Human review;
 AGT-3689 added the `differs` state and the review image identity.
+
+Cards graded off Stable (AGT-3845): when a review role grades a card while it
+does not run the Stable build, the grade report records a `workerReleaseStable`
+sentence. Execution Hosts lists every card whose newest Remote Review grade
+carries one, with a link to the card
+(`GET /api/v1/management/host-releases/off-stable-grades`). On a Human Review
+card the same sentence shows next to the acceptance controls with
+**Review again on the current build**, which reviews every aspect of the same
+delivery again (`POST /api/tasks/{id}/content-review?scope=full`). The card
+detail's review resource reports `review-projection-pending` until the
+published projection carries the newest grade report. The full card detail sets
+`reviewEvidencePending` while a settled review's report is not written yet (the
+settlement moves the card first). The client re-reads in both cases, and review
+facts are never withheld with the card's Git facts after a lane move.
 
 Root SSH with
 `/usr/local/sbin/agent-runner-deploy update-clis 0.166.0 2.1.305` is an emergency

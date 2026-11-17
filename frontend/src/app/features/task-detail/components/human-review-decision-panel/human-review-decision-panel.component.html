@@ -1,5 +1,6 @@
 @if (applies()) {
-  <section class="review" data-testid="human-review-decision" aria-labelledby="human-review-title-{{ job().id }}">
+  <section class="review" data-testid="human-review-decision" aria-labelledby="human-review-title-{{ job().id }}"
+           [appDecisionFocus]="job()" [decisionFocusLabel]="null">
     <div class="review__head">
       <h3 class="review__title" id="human-review-title-{{ job().id }}">Your review</h3>
       <p class="review__hint">Read the delivery and the review on this card, then accept it or send it back.</p>

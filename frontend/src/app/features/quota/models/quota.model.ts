@@ -15,16 +15,20 @@ import type { CliType } from '../../../models/task.model';
  */
 export interface QuotaWindow {
   label: string;
+  /** Duration inferred by the shared backend quota policy. */
+  windowHours?: number | null;
   usedPct: number | null;
   used: number | null;
   limit: number | null;
   unit: string | null;
   resetAt: string | null;
+  observedStartAt?: string | null;
   resetLabel: string | null;
 }
 
 export interface QuotaSnapshot {
   cliType: CliType;
+  subscriptionKey?: string | null;
   fetchedAt: string;
   /** CLI `--version` output recorded alongside this probe. */
   cliVersion?: string | null;

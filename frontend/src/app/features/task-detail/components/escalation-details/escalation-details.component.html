@@ -35,16 +35,18 @@
   }
 
   @if (hasCouncilContext()) {
-    <details #councilDisclosure class="escalation-details__section" [class.escalation-details__section--maximized]="followUpMaximized()" data-testid="escalation-council-follow-up" (toggle)="disclosureChanged()">
+    <details #councilDisclosure class="escalation-details__section escalation-details__section--maximizable" [class.escalation-details__section--maximized]="followUpMaximized()" data-testid="escalation-council-follow-up" (toggle)="disclosureChanged(councilDisclosure.open)">
       <summary>
         <app-disclosure-marker [open]="councilDisclosure.open" [size]="10" />
         <span>Council reaction and follow-up</span>
-        <button type="button" class="escalation-details__maximize" data-testid="escalation-follow-up-maximize"
-          [attr.aria-label]="followUpMaximized() ? 'Restore follow-up' : 'Maximize follow-up'"
-          (click)="$event.preventDefault(); $event.stopPropagation(); followUpMaximized.set(!followUpMaximized())">
-          {{ followUpMaximized() ? '⤡' : '⤢' }}
-        </button>
       </summary>
+      <!-- Beside the summary, not inside it: a button in a summary is nested
+           interactive content (AGT-3835). It only acts on open content. -->
+      <button type="button" class="escalation-details__maximize" data-testid="escalation-follow-up-maximize"
+        [attr.aria-label]="followUpMaximized() ? 'Restore follow-up' : 'Maximize follow-up'"
+        (click)="followUpMaximized.set(!followUpMaximized())">
+        {{ followUpMaximized() ? '⤡' : '⤢' }}
+      </button>
       <div class="escalation-details__content escalation-details__content--artifacts"
         data-testid="escalation-council-follow-up-content">
         @if (followUpMarkdown(); as followUp) {

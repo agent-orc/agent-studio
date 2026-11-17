@@ -5,7 +5,7 @@ namespace AgentStudio.Publishing;
 /// repository facts (workflows, tags, manifests), never from an operator setting.
 /// The operator intent is "dead simple sehen, dass etwas Publizierbares da ist -
 /// im Prinzip nach jedem Task": a Project Hub badge like
-/// "NuGet 0.3.1 -&gt; 4 tasks pending", and a per-task "publishable: npm, website"
+/// "NuGet 0.3.1 -&gt; 4 commits pending", and a per-task "publishable: npm, website"
 /// chip.
 ///
 /// <para><b>Target derivation.</b> A release-triggered workflow (tag push or a
@@ -16,6 +16,8 @@ namespace AgentStudio.Publishing;
 /// <para><b>Pending delta.</b> Merged mainline (first-parent) commits on the
 /// integration branch since the reference point (last tag / last deploy) that
 /// touch the target's path scope - package source paths vs the website folder.
+/// The pending card lookup includes commits introduced by each of those
+/// mainline steps, including the second-parent side of no-ff merges.
 /// Zero pending = no badge (quiet). A package with no tag at all surfaces the
 /// "first publish pending" special state instead of a count.</para>
 ///
@@ -85,8 +87,9 @@ public sealed class PublishTargetService : IDisposable
     }
 
     /// <summary>
-    /// The internal computation (targets + pending SHA sets) used by the board
-    /// fold to answer per-task publishability by set-membership. Cached per project.
+    /// The internal computation (targets + introduced-commit SHA sets) used by
+    /// the board fold to answer per-task publishability by set-membership.
+    /// Cached per project.
     /// </summary>
     internal ProjectPublishComputation GetComputation(string projectName)
     {
@@ -151,6 +154,9 @@ public sealed class PublishTargetService : IDisposable
 
             var websiteTarget = DeriveWebsiteTarget(root!, integrationBranch, workflows, websiteRoots, latestTag);
             if (websiteTarget != null) targets.Add(websiteTarget);
+
+            if (targets.Any(target => target.PendingShas.Count > 0))
+                targets = ExpandPendingMainlineCommits(root!, integrationBranch, targets);
 
             return new ProjectPublishComputation(projectName, true, null, targets);
         }
@@ -346,6 +352,65 @@ public sealed class PublishTargetService : IDisposable
     }
 
     // ----- helpers -----
+
+    private List<PublishTargetComputation> ExpandPendingMainlineCommits(
+        string root, string integrationBranch, List<PublishTargetComputation> targets)
+    {
+        // One graph read for the project. Walking the first-parent line from
+        // oldest to newest assigns each reachable commit to the step that first
+        // introduced it. A merge's second-parent commits therefore match their
+        // accepted card without also matching cards from an earlier release.
+        var graph = _git.GetCommitParentGraph(root, [integrationBranch]);
+        if (graph.Count == 0)
+            throw new PublishProjectionReadException("integration commit graph");
+
+        var parents = graph.Values.SelectMany(value => value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tip = graph.Keys.SingleOrDefault(sha => !parents.Contains(sha));
+        if (tip is null)
+            throw new PublishProjectionReadException("integration first-parent line");
+
+        var mainline = new List<string>();
+        var lineSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var sha = tip; sha is not null;)
+        {
+            if (!lineSeen.Add(sha) || !graph.TryGetValue(sha, out var commitParents))
+                throw new PublishProjectionReadException("integration first-parent line");
+            mainline.Add(sha);
+            sha = commitParents.Count > 0 ? commitParents[0] : null;
+        }
+        mainline.Reverse();
+
+        var selected = targets.SelectMany(target => target.PendingShas)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var introduced = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var reached = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var mainlineSha in mainline)
+        {
+            var newlyReached = selected.Contains(mainlineSha) ? new List<string>() : null;
+            var stack = new Stack<string>();
+            stack.Push(mainlineSha);
+            while (stack.Count > 0)
+            {
+                var sha = stack.Pop();
+                if (!reached.Add(sha)) continue;
+                newlyReached?.Add(sha);
+                if (graph.TryGetValue(sha, out var commitParents))
+                    foreach (var parent in commitParents) stack.Push(parent);
+            }
+            if (newlyReached is not null)
+                introduced[mainlineSha] = newlyReached;
+        }
+
+        if (selected.Any(sha => !introduced.ContainsKey(sha)))
+            throw new PublishProjectionReadException("scoped mainline commits");
+
+        return targets.Select(target => new PublishTargetComputation(
+                target.Target,
+                target.PendingShas.SelectMany(sha => introduced[sha])
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray()))
+            .ToList();
+    }
 
     private static IReadOnlyList<string> ResolveWebsiteRoots(IReadOnlyList<WorkflowFacts> workflows)
     {

@@ -24,6 +24,8 @@ interface Fixture {
   boardIntegration: Record<string, unknown> | null;
   /** What the Git resource answers. */
   gitIntegration: Record<string, unknown> | null;
+  /** AGT-3874: the review projection on the board card and the review resource. */
+  reviewProjection?: Record<string, unknown> | null;
 }
 
 const CONCEPT: Fixture = {
@@ -49,6 +51,23 @@ const INTEGRATED: Fixture = {
     deliveryRef: 'runner/agent-runner-01/AGT-3651', detail: null },
 };
 
+const CONCERNS_SUMMARY = 'The 830-card first-paint target remains unmet and lacks idle-host confirmation';
+
+/** AGT-3874: an integrated delivery whose requirement-fit verdict is `concerns`. */
+const CONCERNS: Fixture = {
+  ...INTEGRATED, id: 'agt-3534-concerns', ref: 'AGT-3534',
+  reviewProjection: {
+    attempts: [{ plane: 'remote', attemptId: 'review-1', receivedAt: '2026-11-09T09:30:00Z', outcome: 'Pass',
+      grade: null, buildTestsResult: 'passed', buildTestsReason: null, subjectSha: DELIVERY_SHA,
+      reportRef: 'remote-review-grade-review-1.md', aspects: [
+        { aspect: 'requirement-fit', status: 'concerns', classification: 'product', summary: CONCERNS_SUMMARY },
+      ] }],
+    rounds: 1, latestPlane: 'remote', latestOutcome: 'Pass', latestReceivedAt: '2026-11-09T09:30:00Z',
+    blockingAspects: [], delivery: { status: 'integrated', reason: null },
+    decisionRequired: { required: false, source: null, reason: null },
+  },
+};
+
 function json(route: Route, body: unknown, status = 200): Promise<void> {
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }
@@ -69,6 +88,7 @@ function task(f: Fixture) {
       filesChanged: 1, files: ['src/delivery.ts'], at: '2026-11-09T09:00:00Z' } : null,
     commits: [],
     integration: f.boardIntegration,
+    reviewProjection: f.reviewProjection ?? null,
     requiresIntegration: coded ? null : false,
     estimatedTokens: 0,
   };
@@ -189,7 +209,7 @@ async function mockApplication(page: Page, f: Fixture, move: (route: Route) => P
   });
   await page.route(`**/api/tasks/${f.id}/details/usage**`, route => json(route, { error: 'usage offline' }, 503));
   await page.route(`**/api/tasks/${f.id}/details/review**`, route =>
-    json(route, resource(f, 'review', { reviewProjection: null, evidence: null })));
+    json(route, resource(f, 'review', { reviewProjection: f.reviewProjection ?? null, evidence: null })));
   await page.route(`**/api/tasks/${f.id}/details/overview**`, route => json(route, resource(f, 'overview', {
     decision: null, planningSpawn: null, conceptDossier: null, olderBriefDelivery: null,
     relatedWikiPages: [], creationSource: 'operator', completionClaim: null,
@@ -327,6 +347,68 @@ test.describe('Concept and held Accept in Human review (AGT-3704)', () => {
     await theme(page, 'dark');
     await screenshot(page, 'server-refused-accept-dark.png');
     if (RESULTS_DIR) await page.screenshot({ path: path.join(RESULTS_DIR, 'server-refused-accept-full-dark.png') });
+  });
+
+  test('a completion-content-gap refusal offers the override next to Accept, and the override is accepted (AGT-3874)', async ({ page }) => {
+    const refusal = 'Completion refused: requirement-fit verdict was concerns.';
+    let refused = false;
+    const traffic = await mockApplication(page, INTEGRATED, route => {
+      if (refused) return json(route, {});
+      refused = true;
+      return json(route, { error: refusal, code: 'completion-content-gap' }, 409);
+    });
+    await openCoreFirst(page, INTEGRATED);
+
+    const accept = page.getByTestId('studio-triage-action-mark-done');
+    await expect(accept).toBeEnabled({ timeout: 15_000 });
+    await accept.click();
+    await expect.poll(() => traffic.moves.length).toBe(1);
+
+    const shown = page.getByTestId('acceptance-refusal');
+    await expect(shown).toContainText(refusal, { timeout: 15_000 });
+    await expect(shown).toHaveAttribute('data-refusal-source', 'server');
+    const action = page.getByTestId('acceptance-refusal-action');
+    await expect(action).toHaveText('Accept with override…');
+    await expect(accept).toBeInViewport({ ratio: 1 });
+    for (const value of ['dark', 'light'] as const) {
+      await theme(page, value);
+      await screenshot(page, `content-gap-refusal-${value}.png`);
+    }
+
+    // The refusal toast overlaps the toolbar's right edge; its placement is AGT-3873.
+    const toast = page.getByTestId('notification-warning')
+      .filter({ hasText: 'Acceptance was refused because the delivery or content review' });
+    await toast.getByTestId('notification-close').click();
+    await expect(toast).toHaveCount(0);
+    await action.click();
+    await page.getByTestId('acceptance-refusal-override-reason')
+      .fill('Owner accepts: the first-paint target moves to its own card.');
+    await page.getByTestId('acceptance-refusal-submit').click();
+    await expect.poll(() => traffic.moves.length).toBe(2);
+    expect(traffic.moves[1]).toMatchObject({
+      targetState: '6-completed', operatorOverride: true,
+      reason: 'Owner accepts: the first-paint target moves to its own card.',
+    });
+  });
+
+  test('a concerns verdict shows the hold next to Accept after a reload, without a prior click (AGT-3874)', async ({ page }) => {
+    const traffic = await mockApplication(page, CONCERNS, route => json(route, {}));
+    await openCoreFirst(page, CONCERNS);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await dismissDevErrorDialog(page);
+
+    const accept = page.getByTestId('studio-triage-action-mark-done');
+    const shown = page.getByTestId('acceptance-refusal');
+    await expect(shown).toContainText(CONCERNS_SUMMARY, { timeout: 30_000 });
+    await expect(shown).toHaveAttribute('data-refusal-source', 'hold');
+    await expect(page.getByTestId('acceptance-refusal-action')).toHaveText('Accept with override…');
+    await expect(accept).toBeEnabled();
+    await expect(accept).toBeInViewport({ ratio: 1 });
+    expect(traffic.moves).toEqual([]);
+    for (const value of ['dark', 'light'] as const) {
+      await theme(page, value);
+      await screenshot(page, `content-verdict-hold-${value}.png`);
+    }
   });
 
   test('picking an empty lane in the lane list says it pages and how to move the task', async ({ page }) => {

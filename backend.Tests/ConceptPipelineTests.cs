@@ -86,6 +86,57 @@ public sealed class ConceptPipelineTests : IDisposable
     }
 
     [Fact]
+    public void ArticleTemplate_TextInksMeetAaContrastInBothThemes()
+    {
+        // AGT-3835: the light faint ink (#7c7a74) measured 4.18:1 on the paper.
+        var html = ConceptWorkbenchContract.RenderHouseStyleIndex(new ConceptWorkbenchDescriptor
+        {
+            Title = "Contrast", Summary = "Contrast", Status = "active", Phase = "shaping",
+        });
+        var darkStart = html.IndexOf("@media (prefers-color-scheme: dark)", StringComparison.Ordinal);
+        Assert.True(darkStart > 0);
+        var themes = new Dictionary<string, Dictionary<string, string>>
+        {
+            ["light"] = ArticlePalette(html[..darkStart]),
+            ["dark"] = ArticlePalette(html[darkStart..html.IndexOf("* { box-sizing", darkStart, StringComparison.Ordinal)]),
+        };
+        var pairs = new List<(string Fg, string Bg)>();
+        foreach (var ink in new[] { "ink", "muted", "faint" })
+            foreach (var surface in new[] { "paper", "surface", "surface-strong" })
+                pairs.Add((ink, surface));
+        foreach (var status in new[] { "link", "good", "warn", "bad" })
+            pairs.AddRange([(status, "paper"), (status, "surface"), (status, status + "-soft")]);
+
+        var failures = new List<string>();
+        foreach (var (theme, palette) in themes)
+            foreach (var (fg, bg) in pairs)
+            {
+                var ratio = ContrastRatio(palette[fg], palette[bg]);
+                if (ratio < 4.5) failures.Add($"{theme} {fg} on {bg}: {ratio:0.00}");
+            }
+        Assert.Empty(failures);
+    }
+
+    private static Dictionary<string, string> ArticlePalette(string css) =>
+        System.Text.RegularExpressions.Regex.Matches(css, @"--article-([\w-]+):\s*(#[0-9a-fA-F]{6});")
+            .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value);
+
+    private static double ContrastRatio(string foreground, string background)
+    {
+        static double Luminance(string hex)
+        {
+            double Channel(int offset)
+            {
+                var value = Convert.ToInt32(hex.Substring(offset, 2), 16) / 255.0;
+                return value <= 0.03928 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+            }
+            return 0.2126 * Channel(1) + 0.7152 * Channel(3) + 0.0722 * Channel(5);
+        }
+        var (a, b) = (Luminance(foreground), Luminance(background));
+        return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
+    }
+
+    [Fact]
     public void Review_RejectsAWorkbenchWithoutRequiredEvidenceSection()
     {
         var directory = ConceptWorkbenchContract.CreateScaffold(
@@ -249,6 +300,39 @@ public sealed class ConceptPipelineTests : IDisposable
         Assert.NotEqual("decided", descriptor.RootElement.GetProperty("status").GetString());
         Assert.Equal(2, scanner.BuildPromoteConceptPlan(source.Id, taskStore)?.Items.Count);
         Assert.Empty(updates);
+    }
+
+    [Fact]
+    public void PromotionPlan_Refusal_NamesTheMissingPiece()
+    {
+        var (taskStore, _, scanner, _, mutations, source) = PublishConceptWithTwoSlices();
+        Assert.NotNull(scanner.ReadPromoteConceptPlan(source.Id, taskStore).Plan);
+
+        // A concept review failure names its findings (AGT-3875).
+        var descriptorPath = Path.Combine(_root, "repository", "docs", "delivery-flow", "workbench.json");
+        var descriptor = File.ReadAllText(descriptorPath);
+        File.WriteAllText(descriptorPath, descriptor.Replace("\"decision-pending\"", "\"active\""));
+        var failed = scanner.ReadPromoteConceptPlan(source.Id, taskStore);
+        Assert.Null(failed.Plan);
+        Assert.Equal(ConceptPromotionRefusals.ReviewFailed, failed.RefusalCode);
+        Assert.Contains("did not pass concept review", failed.Refusal);
+        Assert.Contains("status must be decision-pending", failed.Refusal);
+
+        // A concept card that never delivered a Dossier was never concept-reviewed.
+        File.Delete(Path.Combine(source.FolderPath, ".metadata", "concept-workbench.json"));
+        var unpublished = scanner.ReadPromoteConceptPlan(source.Id, taskStore);
+        Assert.Equal(ConceptPromotionRefusals.NoReview, unpublished.RefusalCode);
+        Assert.Contains("has not delivered a reviewed Dossier", unpublished.Refusal);
+
+        var codingId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "coding-card", Title = "Coding card", Mode = TaskModes.Coding,
+            RequiresIntegration = false, WatchPath = taskStore, TargetState = TaskStates.Ready,
+        });
+        var coding = scanner.ReadPromoteConceptPlan(codingId!, taskStore);
+        Assert.Equal(ConceptPromotionRefusals.NoConceptCard, coding.RefusalCode);
+        Assert.Contains("is not a concept card", coding.Refusal);
+        Assert.Null(scanner.BuildPromoteConceptPlan(source.Id, taskStore));
     }
 
     [Theory]

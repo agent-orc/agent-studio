@@ -286,6 +286,11 @@ export function taskNeedsServerCheckout(info: TaskInfo): boolean {
   return isServerCheckoutFailure(info.integration?.failure?.code);
 }
 
+/** The checkout now exists, so Retry integration can merge the same delivery (AGT-3810). */
+export function serverCheckoutReady(info: TaskInfo): boolean {
+  return taskNeedsServerCheckout(info) && !!info.integration?.failure?.replayAvailable;
+}
+
 /** Lane primary for one task; drops Reissue while the server checkout is missing. */
 export function primaryActionForTask(info: TaskInfo): TriageButton | null {
   const action = primaryActionFor(info.state);

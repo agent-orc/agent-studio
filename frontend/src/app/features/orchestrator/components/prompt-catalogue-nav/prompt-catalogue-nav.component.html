@@ -46,6 +46,7 @@
           [class.prompt-catalogue__item--inherited]="!hasVisibleOverride(item)"
           [reserveChevron]="true"
           [label]="item.title"
+          [visibleName]="item.title"
           [active]="item.name === selectedName()"
           [ariaCurrent]="item.name === selectedName() ? 'page' : null"
           [ariaLabel]="item.title + (hasVisibleOverride(item) ? ', ' + overrideLabel(item) : ', inherited')"

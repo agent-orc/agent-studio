@@ -3,6 +3,9 @@
        [attr.data-tone]="tone()">
     <app-status-indicator [tone]="tone()" [label]="item.headline" [compact]="true" testId="acceptance-readiness-status" />
     <p class="readiness-note__reason" data-testid="acceptance-readiness-reason">{{ item.reason }}</p>
+    @if (nextStep(); as step) {
+      <p class="readiness-note__next" data-testid="acceptance-readiness-next-step">Next step: {{ step }}</p>
+    }
     @if (item.missing && item.readiness === 'review-concerns') {
       <p class="readiness-note__missing" data-testid="acceptance-readiness-missing">Missing: {{ item.missing }}</p>
     }

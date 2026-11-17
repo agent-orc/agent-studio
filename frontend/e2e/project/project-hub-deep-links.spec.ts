@@ -276,10 +276,7 @@ test('missing verify definition explains accepted test output in both themes and
   await setTheme(page, 'dark');
   await notice.screenshot({ path: path.join(RESULTS_DIR, 'agt-3616--verify-definition--dark--mocked.png') });
   await page.setViewportSize({ width: 390, height: 1200 });
-  if (await page.getByTestId('studio-sidebar').count() > 0) {
-    await page.getByTestId('studio-ab-explorer').click();
-  }
-  await expect(page.getByTestId('studio-sidebar')).toHaveCount(0);
+  await expect(page.getByTestId('studio-sidebar')).toBeHidden();
   await expect(notice).toBeVisible();
   await notice.scrollIntoViewIfNeeded();
   await notice.screenshot({ path: path.join(RESULTS_DIR, 'agt-3616--verify-definition--390--mocked.png') });

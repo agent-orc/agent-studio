@@ -435,17 +435,15 @@
 
 @media (max-width: 600px) {
   // The Explorer track otherwise leaves a project pane only about 100 px wide
-  // on a phone. Keep the activity bar available and give the editor the rest.
+  // on a phone, and the 48 px activity rail took another eighth of the width
+  // (AGT-3836). Both give way to the editor; the header More menu carries the
+  // rail's Activity and Dossiers destinations.
   .studio-body, .studio--sidebar-hidden .studio-body {
-    grid-template-columns: var(--studio-activitybar-w) minmax(0, 1fr) auto !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
   }
-  .studio-body > .studio-sidebar { display: none; }
+  .studio-body > :is(.studio-sidebar, app-studio-activity-bar) { display: none; }
   .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) { grid-template-rows: minmax(0, 1fr); }
-  .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) > app-studio-activity-bar > .studio-activitybar {
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) > :is(.studio-sidebar, .studio-editor) { grid-column: 2; grid-row: 1; }
+  .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) > .studio-editor { grid-column: 1; grid-row: 1; }
   .studio-body > app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open {
     grid-column: 1 / -1;
     grid-row: 1;
@@ -1896,6 +1894,8 @@
 // Inline Workspace settings owns its own panel scroll. Keep the outer editor
 // viewport fixed so wheel and scrollIntoView cannot move the entire settings page.
 .studio-editor__main:has(.ws-settings--inline) { overflow: hidden; }
+// The skip-link target (AGT-3833) takes focus only to hand Tab on to its content.
+.studio-editor__main:focus { outline: none; }
 
 // The projected content wrapper from app.html. Without an explicit
 // height + min-height: 0 the dashboard inside it never gets a height

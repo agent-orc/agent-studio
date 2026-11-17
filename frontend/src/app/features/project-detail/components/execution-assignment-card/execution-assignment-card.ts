@@ -11,7 +11,9 @@ import {
   signal,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
 import { RemoteHostsService, codingLocationUnavailableReason, type RemoteHost } from '../../../remote-hosts';
+import { TaskService } from '../../../../services/task.service';
 
 type ProbeState = 'pending' | 'running' | 'passed' | 'failed';
 type ProbeKey = 'code' | 'branch' | 'toolchain' | 'noop';
@@ -21,6 +23,13 @@ interface ProbeCheck {
   label: string;
   detail: string;
   state: ProbeState;
+}
+
+interface ProbeResult {
+  key: ProbeKey;
+  label: string;
+  detail: string;
+  passed: boolean;
 }
 
 interface ProjectExecutionSettings {
@@ -52,12 +61,13 @@ export class ExecutionAssignmentCardComponent implements OnInit {
   readonly probeTone = probeCheckTone;
 
   private readonly http = inject(HttpClient);
+  private readonly tasks = inject(TaskService);
   readonly hostRegistry = inject(RemoteHostsService);
 
   readonly selectedHostId = signal('local');
   readonly pickupMode = signal<'auto' | 'manual' | 'paused'>('manual');
   readonly localCodingAdmitted = signal(false);
-  readonly integrationBranch = signal('develop');
+  readonly integrationBranch = signal('');
   readonly saving = signal(false);
   readonly saveError = signal<string | null>(null);
   readonly saveConfirmation = signal<string | null>(null);
@@ -75,14 +85,15 @@ export class ExecutionAssignmentCardComponent implements OnInit {
   );
   readonly deliveryPreflight = computed(() =>
     (this.selectedHost()?.projectPreflights ?? []).find(preflight =>
-      preflight.projectName.localeCompare(this.projectName(), undefined, { sensitivity: 'accent' }) === 0,
+      preflight.projectName.localeCompare(this.projectName(), undefined, { sensitivity: 'accent' }) === 0
+      && (!this.integrationBranch() || preflight.targetBranch === this.integrationBranch()),
     ) ?? null,
   );
   readonly latestProviderRefusal = computed(() =>
     this.hostRegistry.providerRefusals()[0] ?? null,
   );
   readonly probePassed = computed(() =>
-    this.checks().every((check) => check.state === 'passed'),
+    this.checks().length === 4 && this.checks().every((check) => check.state === 'passed'),
   );
   readonly pickupModes = [
     { id: 'auto' as const, label: 'Auto', hint: 'Offer ready tasks automatically at the selected location.' },
@@ -99,13 +110,14 @@ export class ExecutionAssignmentCardComponent implements OnInit {
         next: (settings) => {
           const project = settings?.[this.projectName()];
           this.pickupMode.set(project?.pickupMode || 'manual');
+          if (project?.pickupMode) this.tasks.recordProjectPickupMode(this.projectName(), project.pickupMode);
           this.localCodingAdmitted.set(project?.localCodingAdmitted ?? false);
+          this.integrationBranch.set(project?.integrationBranch ?? '');
           this.selectedHostId.set(
             project?.executionLocation
             || (project?.remoteExecutionEnabled === false ? 'local' : project?.executionRunner)
             || 'local',
           );
-          this.integrationBranch.set(project?.integrationBranch || 'develop');
         },
       });
   }
@@ -125,6 +137,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
       .subscribe({
         next: (response) => {
           this.pickupMode.set(response.pickupMode || mode);
+          this.tasks.recordProjectPickupMode(this.projectName(), this.pickupMode());
           this.saving.set(false);
           this.log('pickup-mode-saved', { pickupMode: this.pickupMode() });
         },
@@ -179,23 +192,22 @@ export class ExecutionAssignmentCardComponent implements OnInit {
     this.checks.set(initialChecks());
     this.log('probe-started', { hostId: host.id });
 
-    const outcomes: Record<ProbeKey, { passed: boolean; detail: string }> = {
-      code: codeChannelOutcome(host),
-      branch: branchOutcome(this.integrationBranch()),
-      toolchain: toolchainOutcome(host),
-      noop: noopOutcome(host),
-    };
-
-    for (const check of this.checks()) {
+    this.checks.update(checks => checks.map(check => ({ ...check, state: 'running' as ProbeState, detail: 'Checking…' })));
+    try {
+      const results = await firstValueFrom(this.http.post<ProbeResult[]>(
+        `/api/projects/${encodeURIComponent(this.projectName())}/execution-readiness-probe`,
+        { hostId: host.id },
+      ));
       if (generation !== this.probeGeneration) return;
-      this.patchCheck(check.key, { state: 'running', detail: 'Checking…' });
-      await pause(220);
+      this.checks.set(results.map(result => ({
+        key: result.key, label: result.label, detail: result.detail,
+        state: (result.passed ? 'passed' : 'failed') as ProbeState,
+      })));
+    } catch {
       if (generation !== this.probeGeneration) return;
-      const outcome = outcomes[check.key];
-      this.patchCheck(check.key, {
-        state: outcome.passed ? 'passed' : 'failed',
-        detail: outcome.detail,
-      });
+      this.checks.update(checks => checks.map(check => ({
+        ...check, state: 'failed' as ProbeState, detail: 'Readiness probe could not reach the server.',
+      })));
     }
 
     this.probing.set(false);
@@ -206,12 +218,6 @@ export class ExecutionAssignmentCardComponent implements OnInit {
     this.probeGeneration += 1;
     this.probing.set(false);
     this.checks.set(initialChecks());
-  }
-
-  private patchCheck(key: ProbeKey, patch: Partial<ProbeCheck>): void {
-    this.checks.update((checks) =>
-      checks.map((check) => (check.key === key ? { ...check, ...patch } : check)),
-    );
   }
 
   private log(event: string, detail: Record<string, unknown>): void {
@@ -226,51 +232,8 @@ export class ExecutionAssignmentCardComponent implements OnInit {
 function initialChecks(): ProbeCheck[] {
   return [
     { key: 'code', label: 'Code channel', detail: 'Git origin access for this project.', state: 'pending' },
-    { key: 'branch', label: 'Develop branch', detail: 'The project integration branch must be develop.', state: 'pending' },
-    { key: 'toolchain', label: 'Toolchain', detail: 'Git, a build runtime, and a coding CLI are available.', state: 'pending' },
-    { key: 'noop', label: 'No-op run', detail: 'Runner accepts a zero-change handshake without creating a task.', state: 'pending' },
+    { key: 'branch', label: 'Integration branch', detail: 'The configured integration branch is available.', state: 'pending' },
+    { key: 'toolchain', label: 'Toolchain', detail: 'The detected stack and a coding CLI are available.', state: 'pending' },
+    { key: 'noop', label: 'Host readiness', detail: 'The coding host is ready to accept work.', state: 'pending' },
   ];
-}
-
-function codeChannelOutcome(host: RemoteHost): { passed: boolean; detail: string } {
-  const passed = host.capabilities.some((item) => item.toLowerCase() === 'git');
-  return {
-    passed,
-    detail: passed ? 'Git code channel is available.' : 'This host does not advertise Git access.',
-  };
-}
-
-function branchOutcome(branch: string): { passed: boolean; detail: string } {
-  const passed = branch.trim().toLowerCase() === 'develop';
-  return {
-    passed,
-    detail: passed ? 'Integration branch is develop.' : `Integration branch is ${branch || 'not configured'}; expected develop.`,
-  };
-}
-
-function toolchainOutcome(host: RemoteHost): { passed: boolean; detail: string } {
-  const capabilities = host.capabilities.map((item) => item.toLowerCase());
-  const hasRuntime = capabilities.some((item) => item.startsWith('node ') || item.startsWith('dotnet '));
-  const hasCli = host.cliQuotas.length > 0;
-  const passed = capabilities.includes('git') && hasRuntime && hasCli;
-  return {
-    passed,
-    detail: passed
-      ? 'Git, build runtime, and coding CLI are reported ready.'
-      : 'Git, build runtime, or coding CLI capability is missing.',
-  };
-}
-
-function noopOutcome(host: RemoteHost): { passed: boolean; detail: string } {
-  const passed = host.status === 'online' || host.status === 'idle';
-  return {
-    passed,
-    detail: passed
-      ? 'Runner heartbeat is healthy and can accept the no-op task.'
-      : `Host is ${host.status} and cannot accept a probe.`,
-  };
-}
-
-function pause(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

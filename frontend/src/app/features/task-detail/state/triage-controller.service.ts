@@ -11,7 +11,8 @@ import { describeMoveRefusal } from '../../../models/lane-move-guard';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
-import { AcceptanceRefusalStore, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { AcceptanceRefusalStore, acceptanceRefusalSentence, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { AcceptanceReadinessStore, acceptanceOverrideAllowed } from '../../acceptance-readiness';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import {
   archiveIntegrationVerdict,
@@ -47,6 +48,7 @@ export class TriageController {
   private readonly prefetch = inject(TaskDetailPrefetchService);
   private readonly undo = inject(UndoController);
   private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
+  private readonly acceptanceReadiness = inject(AcceptanceReadinessStore);
   private readonly studioTabs = inject(StudioTabStateService);
   readonly moveRefusal = signal<{ taskKey: string; message: string } | null>(null);
 
@@ -270,7 +272,7 @@ export class TriageController {
         this.clearActing();
         const refusal = typeof err?.error?.error === 'string' ? err.error.error.trim() : '';
         const message = err?.status === 409 && err?.error?.code === 'completion-content-gap'
-          ? `${(refusal || 'Completion refused: the current brief has no passing content verdict.').replace(/^Completion refused:\s*/i, 'Acceptance needs content review: ')} Complete the required review for the current brief, or use a written operator override, then try Accept again.`
+          ? contentGapBanner(refusal)
           : err?.status === 409 && err?.error?.code === 'run-attempt-missing'
             ? 'Acceptance needs an operator override. Add a written reason in the acceptance section below, then accept with override.'
             : err?.status === 409 && err?.error?.code === 'integration-dead-end'
@@ -292,10 +294,12 @@ export class TriageController {
         }
         if (ev.targetState === '6-completed' && err?.status === 409
             && err?.error?.code === 'completion-content-gap') {
-          this.notifications.warning(
-            'Acceptance was refused because the delivery or content review does not match the current brief. See Acceptance grounds for the versions, review again, or accept with a written reason.',
-            'Acceptance needs a decision');
-          this.jobService.refresh(true);
+          // AGT-3867: the server's own reason, never a guessed brief
+          // mismatch. The toolbar keeps it next to Accept with "Accept with
+          // override…" (AGT-3874), and the detail offers the next steps the
+          // board offers for the same card.
+          this.recordAcceptRefusal(info, err);
+          void this.acceptanceReadiness.checkCard(info);
           return;
         }
         if (ev.targetState === '6-completed'
@@ -306,10 +310,7 @@ export class TriageController {
                 && /integrat|delivery|containment/i.test(err.error.error)))) {
           // AGT-3704: never a silent refusal. The toolbar shows the reason
           // next to Accept with the action that resolves it.
-          const refusal = serverAcceptanceRefusal(info, err);
-          this.acceptanceRefusals.record(refusal);
-          this.notifications.warning(refusal.message, 'Accept refused');
-          this.jobService.refresh(true);
+          this.recordAcceptRefusal(info, err);
           return;
         }
         if (err?.status === 409 && err?.error?.code === 'completion-content-gap') return;
@@ -324,6 +325,17 @@ export class TriageController {
         });
       },
     });
+  }
+
+  /**
+   * Keep a refused Accept next to the Accept button with its resolving action
+   * (`acceptanceRefusalFor`), toast the server's refusal, and reload the board.
+   */
+  private recordAcceptRefusal(info: TaskInfo, err: unknown): void {
+    const refusal = serverAcceptanceRefusal(info, err);
+    this.acceptanceRefusals.record(refusal);
+    this.notifications.warning(refusal.message, 'Accept refused');
+    this.jobService.refresh(true);
   }
 
   /** Keep the board and open detail on the persisted lane until reissue completes. */
@@ -646,4 +658,16 @@ export class TriageController {
     }
   }
 
+}
+
+/**
+ * AGT-3867: the banner of a content refusal names the server's reason and
+ * only the next steps the detail offers. An override is named only where the
+ * completion policy lets it admit the card.
+ */
+function contentGapBanner(refusal: string): string {
+  const reason = acceptanceRefusalSentence(refusal || 'Completion refused: the current brief has no passing content verdict.');
+  return acceptanceOverrideAllowed(refusal)
+    ? `${reason} Send a round to close the gap, review again, or accept with a written reason under Acceptance next steps.`
+    : `${reason} Send a round to close the gap under Acceptance next steps; an override cannot replace the missing report.`;
 }

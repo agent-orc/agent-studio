@@ -116,6 +116,70 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
     }
 
     [Fact]
+    public void SaveAnswers_RecordsCompleteAnswersWithNotesWithoutSettlingTheDossier()
+    {
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+        var first = catalogue.Read("Project", "routing-policy")!;
+        var responses = new List<WorkbenchDecisionResponse>
+        {
+            new() { DecisionId = "route", Kind = "single", SelectedOptionIds = ["direct"] },
+            new() { DecisionId = "proof", Kind = "single", SelectedOptionIds = ["receipt"],
+                Comment = "Unsure here; I want a Dossier that explains this first." },
+        };
+
+        // A fully answered Dossier is saved without starting a card (AGT-3875).
+        var saved = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "save-all-answers", Outcome = "record-only", Actor = "Robert",
+            ExpectedFingerprint = first.Fingerprint, Responses = responses, Confirmed = true,
+        });
+
+        Assert.True(saved.Success, saved.Error);
+        var open = catalogue.Read("Project", "routing-policy")!;
+        Assert.Null(open.Workbench.Decision);
+        Assert.Equal("review-requested", open.Workbench.LifecycleState);
+        Assert.Equal(["direct"], open.Workbench.RecordedResponses[0].SelectedOptionIds);
+        Assert.Equal("Unsure here; I want a Dossier that explains this first.",
+            open.Workbench.RecordedResponses[1].Comment);
+
+        // A note alone is worth saving, and a later save replaces the earlier one.
+        var noteOnly = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "save-note-only", Outcome = "record-only", Actor = "Robert",
+            ExpectedFingerprint = open.Fingerprint, Confirmed = true,
+            Responses =
+            [
+                new() { DecisionId = "route", Kind = "single", SelectedOptionIds = [], Comment = "Ask the team." },
+                new() { DecisionId = "proof", Kind = "single", SelectedOptionIds = [] },
+            ],
+        });
+
+        Assert.True(noteOnly.Success, noteOnly.Error);
+        var replaced = catalogue.Read("Project", "routing-policy")!.Workbench.RecordedResponses;
+        Assert.Equal("Ask the team.", replaced[0].Comment);
+        Assert.Empty(replaced[1].SelectedOptionIds);
+    }
+
+    [Fact]
+    public void SaveAnswers_RefusesAnEmptyAnswerSet()
+    {
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+        var first = catalogue.Read("Project", "routing-policy")!;
+
+        var refused = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "save-nothing", Outcome = "record-only", Actor = "Robert",
+            ExpectedFingerprint = first.Fingerprint, Confirmed = true,
+            Responses = [new() { DecisionId = "route", Kind = "single", SelectedOptionIds = [], Comment = " " }],
+        });
+
+        Assert.False(refused.Success);
+        Assert.Contains("write a note", refused.Error);
+    }
+
+    [Fact]
     public void Confirm_WritesTheDecisionIntoWorkbenchJsonWithLifecycleHistory()
     {
         WriteSchemaTwo("routing-policy");
@@ -398,6 +462,66 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
         Assert.Equal("PRJ-12", item.Decision.RevisionTaskKey);
         Assert.Equal(["b"], Assert.Single(item.Decision.Responses).SelectedOptionIds);
     }
+
+    [Fact]
+    public void Confirm_ReworkOnAnotherRouteRecordsTheCardsPreviousRoute()
+    {
+        // AGT-3838: confirming a Claude route for a Codex concept card is a
+        // visible change; the receipt keeps where the card came from.
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+
+        var result = decisions.Confirm("Project", "routing-policy", ReworkConfirm(
+            catalogue.Read("Project", "routing-policy")!.Fingerprint, "claude", "claude-opus-5", "high"),
+            revisionTaskKey: "PRJ-12",
+            revisionRoute: new WorkbenchAgentRoute("codex", "gpt-5-codex", null));
+
+        Assert.True(result.Success, result.Error);
+        using var written = JsonDocument.Parse(File.ReadAllText(Descriptor("routing-policy")));
+        var receipt = written.RootElement.GetProperty("decision");
+        Assert.Equal("claude", receipt.GetProperty("cliType").GetString());
+        Assert.Equal("claude-opus-5", receipt.GetProperty("model").GetString());
+        var from = receipt.GetProperty("routeChangedFrom");
+        Assert.Equal("codex", from.GetProperty("cliType").GetString());
+        Assert.Equal("gpt-5-codex", from.GetProperty("model").GetString());
+        Assert.False(from.TryGetProperty("thinkingLevel", out _));
+
+        var item = Assert.Single(catalogue.List("Project", includeHistory: true)!.Items);
+        Assert.True(item.Valid, item.Error);
+        Assert.Equal(new WorkbenchAgentRoute("codex", "gpt-5-codex", null), item.Decision!.RouteChangedFrom);
+    }
+
+    [Fact]
+    public void Confirm_ReworkOnTheCardsOwnRouteRecordsNoRouteChange()
+    {
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+
+        var result = decisions.Confirm("Project", "routing-policy", ReworkConfirm(
+            catalogue.Read("Project", "routing-policy")!.Fingerprint, "codex", "gpt-5-codex", null),
+            revisionTaskKey: "PRJ-12",
+            revisionRoute: new WorkbenchAgentRoute("codex", "gpt-5-codex", "medium"));
+
+        Assert.True(result.Success, result.Error);
+        using var written = JsonDocument.Parse(File.ReadAllText(Descriptor("routing-policy")));
+        Assert.False(written.RootElement.GetProperty("decision").TryGetProperty("routeChangedFrom", out _));
+        Assert.Null(Assert.Single(catalogue.List("Project", includeHistory: true)!.Items).Decision!.RouteChangedFrom);
+    }
+
+    private static ConfirmWorkbenchDecisionRequest ReworkConfirm(
+        string? fingerprint, string? cliType, string? model, string? thinkingLevel) => new()
+    {
+        OperationId = "workbench-ui-rework-route",
+        Outcome = "rework",
+        Actor = "Robert",
+        ExpectedFingerprint = fingerprint,
+        Request = "Add a privacy section.",
+        Responses = [],
+        CliType = cliType,
+        Model = model,
+        ThinkingLevel = thinkingLevel,
+        Confirmed = true,
+    };
 
     [Fact]
     public void Prepare_RefusesAReworkWithNeitherRequestNorComment()

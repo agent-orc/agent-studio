@@ -44,6 +44,22 @@ without a flight uses its recovery retry time, and other batches name the next
 pilot tick. These are observation deadlines, not a promise of publication.
 The batch panel shows these facts beside the flight queue and batch history.
 
+The state read also reports `laneIdle` (AGT-3857): how long a formed batch
+waited while the project ran no batch gate, by cause. `per-task-holder` means a
+direct integration held the project reservation, an approved per-task push was
+pending, or per-task gates held the gate slots. `restart-recovery` means the
+server restarted, or a previous process's flight claim or batch was still being
+recovered. `planner` means nothing held the lane and the planner had not
+started the batch yet. Each pilot tick observes the lane. The open interval is
+stored in the batch store, so a restarted process closes it at the last
+observation and records the downtime as `restart-recovery`. The response gives
+the current cause, minutes per cause for the last 24 hours and 7 days, and the
+20 latest intervals, each naming its cause. The batch panel shows the current
+cause and the 24-hour split. A flight claim owner records its process start
+time, so a server that comes back under the same process id (PID 1 in a
+container) expires the previous owner's claim on its first tick. It does not
+wait for the two-minute heartbeat.
+
 An interrupted deterministic red batch ends as `Paused` with reason
 `isolation interrupted` on the next pilot tick when unresolved members remain.
 The pilot derives any child findings, releases the parent members to planning,
@@ -116,7 +132,12 @@ window. An execution without its gate run ID is permanently unattributed.
 
 Rows carry request, slot, lease, command start and finish times, process and
 shard evidence (including class names and measured class durations), rerun cost,
-host load, and trigger. A base run names the red
+host load, and trigger. `sameCodeRerunMs` (AGT-3858) splits the time a row spent
+on code that was already gated by purpose: `flaky-test-rerun` (the targeted
+rerun of failed tests inside the run), `infrastructure-retry` (the same
+candidate after an infrastructure red) and `flaky-suspect-regate`; an
+isolation subset is new code and records none. The daily summary sums them as
+`sameCodeRerunMinutesByPurpose`, and the batch panel shows the line. A base run names the red
 candidate or fallback that requested it. A cache hit executes no host gate and
 does not add a row. The batch gate state includes a UTC `dailySummary` with
 minutes by type, batch and fallback published cards per hour (the UTC day's
@@ -166,7 +187,9 @@ This path does not use title urgency, risk, or changed-path overlap. Its fallbac
 the project batch reservation. A later direct integration must hold the
 reservation through its merge gate and possible rollback. It acquires the
 reservation after the per-project merge lock, so a queued per-task integration
-does not block a formed batch. Its machine queue
+does not block a formed batch. While a batch flight reserves the project, a
+new per-task integration waits until the flight holds the reservation
+(AGT-3882). Its machine queue
 wait is capped at two minutes and its gate run at 25 minutes. The batch
 gate state reports the combined 27-minute reservation gate cap.
 When the gate host has more than one slot, per-task fallback gates leave the
@@ -597,7 +620,10 @@ record remains pending because a nearby completion time cannot prove ownership.
 When several records match one execution, a completed record takes precedence
 over later partial snapshots.
 Error excerpts come only from the named test's output block. A test is a flaky suspect
-only when it failed in three batches with pairwise disjoint member sets. The
+when it failed in three batches with pairwise disjoint member sets, or when it
+failed in a flaky suspect run (AGT-3858) whose same-code re-gate did not
+reproduce the red: the failure carries `flakySuspectRun` and the test counts
+`flakySuspectRuns`. The
 operator can open a prefilled bug card for any ranked test, flaky suspect or
 deterministic failure, in the normal creation dialog. The dialog
 applies central model routing and requires submission to create it.
@@ -621,6 +647,10 @@ is behind their current integration tip. They replay the final delivery tree's
 net change against the merge base as one commit on the tip. The gate and push
 use that exact commit, and the card maps each delivery commit absent from the
 tip to it. A tree conflict names its files and starts an agent round.
+When the per-task integration route creates a merge commit, its subject names
+the delivered card key and title. `MergeIntoDevelopRunner` supplies that identity
+to `GitService` for direct and mechanically recovered merges, so first-parent
+history and downstream changelogs identify the card.
 
 The merge route is the documented strategy for non-linear deliveries. It is
 the same `--no-ff` merge the per-task integration uses, so every delivery SHA,
@@ -644,6 +674,24 @@ Green findings remain reusable on the tested base. Interruption recovery reads
 the child verdicts and findings before planning the remaining members. The
 batch state and pilot report expose proven-red, proven-green, and superseded
 findings.
+
+Flaky suspects (AGT-3858, `BatchFlakySuspectPolicy`). Ordered halving deduces
+the last untested member red once every tested subset passed, so a flaky
+cohort red used to send an innocent member to a per-card suite. When isolation
+ran at least one child, every child passed, and every child tested the
+cohort's own code (the same member result SHAs, on the cohort's base or on a
+tip this isolation published from the cohort's green members; a superseded or
+stale-base child does not count), the red run is marked a flaky suspect with
+its failing test names. The members the existing path would send to per-card
+suites are gated once more together as a child batch on the cohort's code
+(`sameCodeRerunOfRunId` names the red run; trigger
+`flaky-suspect-regate:<batch>`). A green re-gate publishes them and no
+per-card suite starts. A second red on the same code, or any other result,
+takes the existing per-card path; that re-gate records no proven-red finding.
+The mark is written once before the re-gate, so a restart or an isolation
+retry never re-gates the same red again. The batch state shows
+`flakySuspect` (red run, failing tests, `active`, and the re-gate's outcome
+`passed`, `reproduced` or `inconclusive` with its minutes) on the red batch.
 
 Assembly sorts a replay that is not a conflict into three outcomes
 (`BatchGatePolicy.ReplayDisposition`): a mapped success is admitted; a member
@@ -906,7 +954,10 @@ card badge reads, for example, "Per-task fallback · batch-ejected · waits
 for engine decision". Across all review
 generations of the process, at most one gate slot fewer than the gate host has
 runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
-slot before they choose their merged candidate, so the batch slot stays free. A
+slot before they choose their merged candidate, so the batch slot stays free.
+While a batch gate runs, at most one other full suite starts on the gate host,
+and a per-card suite is not started for a card a batch gates anyway (AGT-3856,
+see [the batch gate delivery state](../../operations/gates/batch-gate.md)). A
 formed batch whose base moved before replay closes again with compatible members
 on the new base only when at least `minimumSize` remain. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
@@ -1140,7 +1191,8 @@ credential and starts the release-pinned backend binary with
 `--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
 on that host. Pull gate mutations authenticate this service bearer directly;
 they do not require a browser `X-Client-Id` header. The worker registers,
-claims from `/api/pull-gates`, downloads
+claims from `/api/pull-gates` (an empty claim answers `204 No Content`, which
+the worker treats as no work and polls again after 2 s; AGT-3649-D12), downloads
 the exact source bundle, heartbeats its lease, streams progress through those
 heartbeats, and uploads the result and files from its `artifacts/` run folder.
 The server refuses uploads after lease expiry or replacement. Completed
@@ -3373,7 +3425,8 @@ whose `task.integration` said `integrated`. Two defects met.
   the published branch's first-parent line. One bounded first-parent range from
   that tree to the current tip identifies the later publication commits. Each
   must be covered by its own passed per-task gate, by a passed batch gate
-  spanning those commits, or by a later exact full-suite gate on a containing
+  spanning those commits, by the publishing card's exact verified
+  `gate-not-applicable` merge record, or by a later exact full-suite gate on a containing
   first-parent publication. The latter names its covering publication in the
   acceptance reason. Batch evidence cannot substitute for the original
   tree's first-parent ancestry. A branch rewrite or an uncovered later

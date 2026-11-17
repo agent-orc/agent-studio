@@ -398,6 +398,28 @@ public sealed class GitWorkspaceTests : IDisposable
         Assert.Empty(probeRefs.StdOut);
     }
 
+    [Fact]
+    public async Task Project_preflight_clears_stale_commit_graph_lock()
+    {
+        await SeedOriginAsync();
+        var first = await GitWorkspace.PreflightProjectAsync(
+            PreflightOptions(), "PROJ-042", _origin, "main", _ => { }, CancellationToken.None);
+        Assert.True(first.Succeeded, first.Detail);
+        await GitAsync(Path.Combine(_workDir, "PROJ-042", "repo"), "config", "fetch.writeCommitGraph", "true");
+        var lockPath = Path.Combine(_workDir, "PROJ-042", "repo", ".git", "objects", "info",
+            "commit-graphs", "commit-graph-chain.lock");
+        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+        File.WriteAllBytes(lockPath, []);
+        File.SetLastWriteTimeUtc(lockPath, File.GetLastWriteTimeUtc(lockPath).AddMinutes(-5));
+
+        var logs = new List<string>();
+        var second = await GitWorkspace.PreflightProjectAsync(
+            PreflightOptions(), "PROJ-042", _origin, "main", logs.Add, CancellationToken.None);
+
+        Assert.True(second.Succeeded, second.Detail);
+        Assert.False(File.Exists(lockPath), string.Join(" | ", logs));
+    }
+
     // AGT-2985: on a fresh host the delivery preflight creates the shared clone
     // before the first claim. A `--no-checkout` clone left an empty index there,
     // so the first preparation saw every tracked file as a staged deletion and

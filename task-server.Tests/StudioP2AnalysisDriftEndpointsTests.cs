@@ -3,21 +3,18 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class StudioP2AnalysisDriftEndpointsTests
+public sealed class StudioP2AnalysisDriftEndpointsTests(StudioClassFixture fixture) : IClassFixture<StudioClassFixture>
 {
     [Fact]
     public async Task Analysis_reports_list_create_get_and_filter_round_trip()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Analysis WS"), "test", default);
@@ -64,8 +61,7 @@ public sealed class StudioP2AnalysisDriftEndpointsTests
     [Fact]
     public async Task Analysis_schedule_defaults_then_upserts()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Schedule WS"), "test", default);
@@ -94,8 +90,7 @@ public sealed class StudioP2AnalysisDriftEndpointsTests
     [Fact]
     public async Task Drift_actions_dispatch_studio_operations_and_expose_prompt_and_rules()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Drift WS"), "test", default);
@@ -148,8 +143,7 @@ public sealed class StudioP2AnalysisDriftEndpointsTests
     [Fact]
     public async Task Drift_architecture_reflects_completed_scan_and_element_status_overrides()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Arch WS"), "test", default);
@@ -201,8 +195,7 @@ public sealed class StudioP2AnalysisDriftEndpointsTests
     [Fact]
     public async Task Drift_reports_merge_across_kinds_and_resolve_individually()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = Client(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Reports WS"), "test", default);
@@ -282,18 +275,4 @@ public sealed class StudioP2AnalysisDriftEndpointsTests
         return client;
     }
 
-    private sealed class StudioApiFactory(string dataDirectory) : WebApplicationFactory<Program>
-    {
-        protected override void ConfigureWebHost(IWebHostBuilder builder)
-        {
-            builder.UseEnvironment("Testing");
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
-                {
-                    ["TaskServer:DataDirectory"] = dataDirectory,
-                    ["TaskServer:ListenUrl"] = string.Empty,
-                    ["TaskServer:RetentionSchedulerEnabled"] = "false",
-                }));
-        }
-    }
 }

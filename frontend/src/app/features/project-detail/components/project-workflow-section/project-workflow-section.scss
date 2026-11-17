@@ -155,8 +155,13 @@
   font-size: 0.75rem;
 }
 
-.wf__transition-config strong {
+.wf__transition-config button {
+  border: 0;
+  background: none;
   color: var(--studio-fg-dim);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
 }
 
 // ---- Stage 2/3 placeholders ----

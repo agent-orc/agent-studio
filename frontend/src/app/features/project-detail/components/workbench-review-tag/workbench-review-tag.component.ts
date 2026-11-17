@@ -33,13 +33,14 @@ export class WorkbenchReviewTagComponent {
 
   readonly label = computed(() => {
     const review = this.review();
-    if (!review) return 'Never reviewed';
-    return `${review.verdict.replaceAll('-', ' ')} · reviewed ${reviewAge(review.reviewedAt, this.now())}`;
+    // Relevance review, not the concept-fit review gate (AGT-3649-D13).
+    if (!review) return 'Relevance not reviewed';
+    return `${review.verdict.replaceAll('-', ' ')} · relevance reviewed ${reviewAge(review.reviewedAt, this.now())}`;
   });
   readonly tone = computed(() => reviewTone(this.review()?.verdict, this.reviewDue()));
   readonly tooltip = computed(() => {
     const review = this.review();
-    if (!review) return 'Verdict: never reviewed';
+    if (!review) return 'No relevance review recorded. Concept-fit reviews of the concept card are not relevance reviews.';
     return [
       `Verdict: ${review.verdict.replaceAll('-', ' ')}`,
       `Review due: ${this.reviewDue() ? 'Yes' : 'No'}`,

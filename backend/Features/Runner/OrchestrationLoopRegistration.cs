@@ -23,6 +23,8 @@ public static class OrchestrationLoopRegistration
         // worker below, so a card never depends on an in-memory retry counter to
         // reach its integration.
         services.AddSingleton<AutoReviewDeliveryResumeService>();
+        // AGT-3883: what the watchdog asks when the engine owns delivery.
+        services.AddSingleton<IEngineDeliveryIntegration, EngineDeliveryIntegrationService>();
         services.AddSingleton<AutoReviewStrandingWatchdog>();
         services.AddHostedService(provider => provider.GetRequiredService<AutoReviewStrandingWatchdog>());
         services.AddHostedService<AutoReviewPostProcessingWorker>();

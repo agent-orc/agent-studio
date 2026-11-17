@@ -244,6 +244,11 @@ and labels its values as sample data. The `Environment`, `Release`, `Deployment`
 The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
 `/releases`, and `/deployments` when configured. Its Pipeline view reads the
 parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
+For a registered URL project without a server checkout, Deploy shows one checkout
+state across its views and skips repository-backed reads. The explorer also
+skips its Dossier catalogue refresh until the checkout is available. Both
+resume when the shared checkout state reports a usable checkout. Project
+Settings also skips the developer checkout lag request until a checkout exists.
 The release view loads
 `/releases/{releaseId}/notes` from the included cards.
 The release response also projects current Quality verdicts from the included
@@ -942,6 +947,10 @@ occur. It is not a claim about tunnel transfer time.
   decision-pending status or decision-ready phase opens that count; unsaved
   browser selections do not close it. An active Dossier with open decisions
   stays under `Needs a decision` until the recorded decision closes them.
+  A rework receipt remains visible after its source card's agent run finishes.
+  The viewer projects the run as updated, unchanged, or failed, links the card,
+  and restores decision actions even when the agent retained the receipt and
+  left the Dossier content unchanged.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -983,11 +992,16 @@ occur. It is not a claim about tunnel transfer time.
   for the browser session. The details panel shows that retained state and an
   explicit discard action. Request rework opens a form with a free-text
   request field and names the source concept card that runs the revision
-  (`revisionCard` on the Dossier document); the model the picker marks as
-  default is preselected. Confirm records the pending receipt (with `request`
-  and `revisionTaskKey`) and starts or queues an ordinary follow-up round on
-  that card through the task continue admission; the receipt shows whether
-  the round started or why it queued. Without a source card the action stays
+  (`revisionCard` on the Dossier document). The form preselects that card's
+  current CLI, model and thinking level (`revisionCard.cliType`, `model`,
+  `thinkingLevel`), not the browser-wide default; a combined task still starts
+  on the browser default (AGT-3838). Choosing another route shows the change
+  from and to before confirmation, because the round and every later round on
+  the card run on the confirmed route. Confirm records the pending receipt
+  (with `request`, `revisionTaskKey`, and `routeChangedFrom` when the route
+  changed) and starts or queues an ordinary follow-up round on that card
+  through the task continue admission; the receipt shows the route change and
+  whether the round started or why it queued. Without a source card the action stays
   disabled with the reason, and confirm writes nothing. After the revision
   lands, the Dossier opens on the owner's recorded selections wherever the
   revised markup still offers them, not on the authored defaults (AGT-3703).
@@ -997,9 +1011,19 @@ occur. It is not a claim about tunnel transfer time.
   `sourceTaskKeys`, `relatedTaskKeys`, and decision receipts retained as
   compatibility bridges. The compact viewer head shows every resolved card as
   a live lane dot. While a decision-pending or decided Workbench has at least
-  one reference beyond Ready and not every reference is terminal, it also shows
-  the derived `In implementation` summary marker. This is a live read-model
-  marker and does not add a descriptor lifecycle state.
+  one implementation card beyond Ready and not every implementation card is
+  terminal, it also shows the derived `In implementation` summary marker, and
+  the header status reads `In implementation`; otherwise a decided Dossier
+  reads `Decided`. Implementation cards are the resolved references plus the
+  Dossier's own member cards (`cards`), without the concept card that wrote it
+  (`sourceTaskKeys` and `revisionCard`), so a concept card in Human Review
+  does not mark the Dossier as in implementation (AGT-3649-D13). This is a
+  live read-model marker and does not add a descriptor lifecycle state. The
+  review tag and `Record relevance review` action name the operator's
+  relevance review; concept-fit reviews of the concept card are a separate
+  gate and do not set it. The promotion bar loads the slice plan when it
+  renders and states `n of m slices have cards`; a decision label never
+  repeats `(recommended)` that the authored option label already carries.
   Once every referenced card is in `6-completed` or `7-archive`, the catalogue
   projects a quiet `Ready to document` suggestion in the viewer header and list
   surfaces. `POST /api/projects/{projectName}/workbenches/{id}/document`
@@ -1059,9 +1083,12 @@ occur. It is not a claim about tunnel transfer time.
   local coding admission is off, and disable remote identities without a
   confirmed coding role or with an unavailable status. Their option labels
   explain why. Onboarding reads local admission from
-  `GET /api/projects/execution-capability`. The guided check reports code
-  channel,
-  `develop`, toolchain, and no-op readiness from the host registry snapshot.
+  `GET /api/projects/execution-capability`. The guided check calls
+  `POST /api/projects/{projectName}/execution-readiness-probe`. The server
+  checks the assigned host's delivery preflight for repository access and the
+  configured integration branch, then compares the detected `project.yml`
+  stack with fresh runner toolchain and coding CLI capabilities. Host readiness
+  reflects the coding executor advertisement; the check does not start a task.
   Board cards deliberately show the actual live runner from the fenced run
   lease, not merely this configured target, so assignment and attribution
   cannot be confused. A fresh connected remote lease also drives the card's
@@ -1092,7 +1119,10 @@ occur. It is not a claim about tunnel transfer time.
 - Project basics also shows the observed checkout's lag behind origin. Its
   status request fetches the published branch; a clean, unlocked checkout that
   is behind offers **Sync checkout**, which calls the explicit project checkout
-  sync endpoint and reports the resulting state.
+  sync endpoint and reports the resulting state. When no checkout holds the
+  integration branch, a clean, unlocked registered checkout offers **Switch
+  checkout to {branch}**. The Execution definition reads the local integration
+  branch tip, including referenced files, and labels that branch in Settings.
 - `frontend/src/app/services/task.service.ts`: task API integration, optimistic
   lane moves, reorder, and rollback.
 - Board card context menus offer neighbouring visible manual lanes (container

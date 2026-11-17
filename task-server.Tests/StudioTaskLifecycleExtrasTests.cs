@@ -8,13 +8,12 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class StudioTaskLifecycleExtrasTests
+public sealed class StudioTaskLifecycleExtrasTests(StudioClassFixture fixture) : IClassFixture<StudioClassFixture>
 {
     [Fact]
     public async Task Create_task_resolves_project_from_body_and_delegates_to_CreateTaskAsync()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var project = await SeedProjectAsync(store, "Extras Create");
@@ -36,8 +35,7 @@ public sealed class StudioTaskLifecycleExtrasTests
     [Fact]
     public async Task Dependents_reflect_a_reference_row_written_directly_into_task_references()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var project = await SeedProjectAsync(store, "Extras Dependents");
@@ -72,8 +70,7 @@ public sealed class StudioTaskLifecycleExtrasTests
     [Fact]
     public async Task Reference_status_reports_live_and_ghost_keys()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var project = await SeedProjectAsync(store, "Extras RefStatus");
@@ -96,8 +93,7 @@ public sealed class StudioTaskLifecycleExtrasTests
     [Fact]
     public async Task Reorder_assigns_dense_ascending_ranks_within_the_lane()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var project = await SeedProjectAsync(store, "Extras Reorder");
@@ -120,8 +116,7 @@ public sealed class StudioTaskLifecycleExtrasTests
     [Fact]
     public async Task Archive_lists_only_archived_tasks_and_honors_the_project_filter()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var project = await SeedProjectAsync(store, "Extras Archive");
@@ -150,8 +145,7 @@ public sealed class StudioTaskLifecycleExtrasTests
     [Fact]
     public async Task Batch_move_moves_multiple_real_tasks_and_the_get_reflects_it()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var project = await SeedProjectAsync(store, "Extras BatchMove");
@@ -190,8 +184,7 @@ public sealed class StudioTaskLifecycleExtrasTests
     [Fact]
     public async Task Planning_closure_completes_synchronously_while_other_actions_stay_requested()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var project = await SeedProjectAsync(store, "Extras Lifecycle");
@@ -239,8 +232,7 @@ public sealed class StudioTaskLifecycleExtrasTests
     [Fact]
     public async Task Lifecycle_action_routes_resolve_through_the_unscoped_project_token()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var project = await SeedProjectAsync(store, "Extras Unscoped");
@@ -258,7 +250,7 @@ public sealed class StudioTaskLifecycleExtrasTests
     private static async Task<ProjectDto> SeedProjectAsync(TaskServerStore store, string name)
     {
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest($"{name} WS"), "test", default);
-        var compact = name.Replace(" ", "", StringComparison.Ordinal).ToUpperInvariant();
+        var compact = name.Split(' ', StringSplitOptions.RemoveEmptyEntries)[^1].ToUpperInvariant();
         var prefix = compact[..Math.Min(6, compact.Length)];
         return await store.CreateProjectAsync(new CreateProjectRequest(workspace.WorkspaceId, name, prefix), "test", default);
     }

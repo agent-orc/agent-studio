@@ -118,7 +118,7 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname;
-    if (p === '/api/v1/studio/auth/status') {
+    if (p === '/api/auth/status' || p === '/api/v1/studio/auth/status') {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -131,6 +131,9 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
         contentType: 'application/json',
         body: JSON.stringify({ items: [], total: 0, offset: 0, limit: 50, hasMore: false }),
       });
+    }
+    if (p === '/api/workbenches') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) });
     }
     if (p === '/api/crash-recovery/pending') {
       return route.fulfill({
@@ -190,7 +193,7 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(jobs) });
     }
     if (/^\/api\/clients\/[^/]+\/telemetry$/.test(p)) {
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ points: [] }) });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ points: [], findings: [] }) });
     }
     if (p.startsWith('/api/clients')) {
       const list = [{
@@ -257,6 +260,8 @@ test.describe('Token bubble on job cards', () => {
 
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
+    await dismissErrorDialogIfPresent(page);
+    await page.getByRole('tab', { name: 'All projects · Board' }).click();
 
     const card = page.locator('[data-testid="task-card"]', { hasText: 'Quiet card no tokens' });
     await expect(card).toBeVisible();
@@ -312,6 +317,8 @@ test.describe('Token bubble on job cards', () => {
 
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
+    await dismissErrorDialogIfPresent(page);
+    await page.getByRole('tab', { name: 'All projects · Board' }).click();
 
     const card = page.locator('[data-testid="task-card"]', { hasText: 'Noisy card with tokens' });
     await expect(card).toBeVisible();
@@ -363,6 +370,10 @@ test.describe('Token bubble on job cards', () => {
     const byType = popover.getByTestId('token-usage-by-type');
     await expect(byType).toContainText('Core agent work');
     await expect(byType).toContainText('Aspect');
+    await expect(popover).toContainText('By type (current attempt)');
+    const typeCosts = await byType.locator('tbody tr td:last-child').allTextContents();
+    const displayedTypeTotal = typeCosts.reduce((sum, value) => sum + Number(value.trim().replace('$', '')), 0);
+    await expect(byType.getByTestId('token-usage-by-type-total')).toContainText(`$${displayedTypeTotal.toFixed(2)}`);
 
     await expect(popover.getByTestId('token-popover-timeline-link')).toBeVisible();
 
@@ -429,6 +440,8 @@ test.describe('Token bubble on job cards', () => {
 
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
+    await dismissErrorDialogIfPresent(page);
+    await page.getByRole('tab', { name: 'All projects · Board' }).click();
 
     const smallBubble = page.locator('[data-testid="task-card"]', { hasText: 'Small spend card' })
       .locator('[data-testid="task-card-token-bubble"]');

@@ -10,6 +10,7 @@ import { TaskSelectionService } from './task-selection.service';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { LanePagerService } from './lane-pager.service';
 import { AcceptanceRefusalStore } from './acceptance-refusal.model';
+import { AcceptanceReadinessStore } from '../../acceptance-readiness';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { NotificationService } from '../../../services/notification.service';
@@ -391,9 +392,66 @@ describe('TriageController · optimistic navigation on Accept', () => {
 
     expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
     expect(TestBed.inject(LanePagerService).snapshot()?.jobs[0].taskKey).toBe(taskA.taskKey);
-    expect(ctrl.moveRefusal()?.message).toContain('Complete the required review for the current brief, or use a written operator override');
+    expect(ctrl.moveRefusal()?.message).toBe('Acceptance refused: no content verdict for the current brief. '
+      + 'Send a round to close the gap, review again, or accept with a written reason under Acceptance next steps.');
     expect(selection.triageToast()).toBeNull();
     expect(dialog).not.toHaveBeenCalled();
+    // AGT-3874: recorded like the integration refusals, so the toolbar offers the override.
+    expect(TestBed.inject(AcceptanceRefusalStore).forTask(taskA.taskKey)).toEqual({
+      taskKey: taskA.taskKey, code: 'completion-content-gap',
+      message: 'Acceptance refused: no content verdict for the current brief.',
+    });
+  });
+
+  /**
+   * AGT-3867, F10: a concern on the current brief was refused with a toast
+   * about a brief mismatch, and nothing was recorded, so the toolbar offered
+   * no override. The toast and banner now carry the server's reason, the
+   * toolbar keeps it, and the card's readiness is checked for the detail.
+   */
+  it('names the server reason of a content refusal and records it for the toolbar', () => {
+    const taskA = makeJob('task-a', '5-human-review');
+    selection.selected.set(makeDetail('task-a', '5-human-review'));
+    TestBed.inject(LanePagerService).capture('5-human-review', [taskA], taskA.taskKey);
+    selection.triageLaneState = '5-human-review';
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+    vi.spyOn(jobService, 'revertOptimisticMove').mockImplementation(noop);
+    vi.spyOn(jobService, 'refresh').mockImplementation(noop);
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(throwError(() => ({
+      status: 409, error: { code: 'completion-content-gap', error: 'Completion refused: requirement-fit verdict was concerns.' },
+    })));
+    const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
+    const check = vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'checkCard').mockResolvedValue();
+
+    ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
+
+    expect(warning).toHaveBeenCalledWith('Acceptance refused: requirement-fit verdict was concerns.', 'Accept refused');
+    expect(warning.mock.calls.flat().join(' ')).not.toMatch(/does not match the current brief/);
+    expect(ctrl.moveRefusal()?.message).toContain('Acceptance refused: requirement-fit verdict was concerns.');
+    expect(ctrl.moveRefusal()?.message).not.toMatch(/operator override/);
+    expect(TestBed.inject(AcceptanceRefusalStore).forTask(taskA.taskKey)).toEqual({
+      taskKey: taskA.taskKey, code: 'completion-content-gap',
+      message: 'Acceptance refused: requirement-fit verdict was concerns.' });
+    expect(check).toHaveBeenCalledWith(taskA);
+  });
+
+  it('does not name an override for a missing report the override cannot replace', () => {
+    const taskA = makeJob('task-a', '5-human-review');
+    selection.selected.set(makeDetail('task-a', '5-human-review'));
+    TestBed.inject(LanePagerService).capture('5-human-review', [taskA], taskA.taskKey);
+    selection.triageLaneState = '5-human-review';
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+    vi.spyOn(jobService, 'revertOptimisticMove').mockImplementation(noop);
+    vi.spyOn(jobService, 'refresh').mockImplementation(noop);
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(throwError(() => ({
+      status: 409, error: { code: 'completion-content-gap', error: 'Completion refused: the required report is missing (results/report.md).' },
+    })));
+    vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'checkCard').mockResolvedValue();
+
+    ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
+
+    expect(ctrl.moveRefusal()?.message).toBe('Acceptance refused: the required report is missing (results/report.md). '
+      + 'Send a round to close the gap under Acceptance next steps; an override cannot replace the missing report.');
   });
 });
 

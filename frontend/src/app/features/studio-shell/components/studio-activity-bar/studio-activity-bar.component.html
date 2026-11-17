@@ -8,7 +8,7 @@
             class="studio-ab__btn"
             [class.studio-ab__btn--active]="activeKey() === item.key"
             [cacTooltip]="item.label"
-            [attr.aria-label]="item.label"
+            [attr.aria-label]="buttonLabel(item, badgeCounts()[item.key])"
             [attr.aria-current]="activeKey() === item.key ? 'page' : null"
             [attr.data-panel]="item.key"
             [attr.data-testid]="'studio-ab-' + item.key"

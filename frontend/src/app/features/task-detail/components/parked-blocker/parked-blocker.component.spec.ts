@@ -293,6 +293,26 @@ describe('ParkedBlockerComponent', () => {
     expect(el.querySelector('[data-testid="parked-blocker"]')).toBeNull();
   });
 
+  it('renders no operator park for an ordinary Human Review after a passing review', () => {
+    const el = render(auditPark({
+      lane: '5-human-review', blockerType: 'operator-decision', requiresDecisionCard: true,
+      reason: 'Remote Review passed and delivery integration completed. Human Review is waiting for a decision; '
+        + 'review the task and accept or requeue it.',
+      cause: 'review-verdict', causeDetail: 'Merged', decision: null,
+      lastEvaluatedAt: null, evaluationStale: true,
+    }), '5-human-review');
+    expect(el.querySelector('[data-testid="parked-blocker"]')).toBeNull();
+  });
+
+  it('keeps an operator park with a stated reason in Human Review', () => {
+    const el = render(auditPark({
+      lane: '5-human-review', blockerType: 'operator-decision', requiresDecisionCard: true,
+      reason: 'Hold until the vendor confirms the API quota.', cause: 'operator-move', causeDetail: null,
+      decision: null,
+    }), '5-human-review');
+    expect(el.querySelector('[data-testid="parked-blocker"]')).not.toBeNull();
+  });
+
   it('keeps a recorded decision visible even with a generic park reason', () => {
     const el = render(auditPark({
       lane: '5-human-review', reason: 'Parked with no recorded cause.',
