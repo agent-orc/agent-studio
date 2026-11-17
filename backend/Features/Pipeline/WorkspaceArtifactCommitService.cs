@@ -34,7 +34,9 @@ public sealed class WorkspaceArtifactCommitService
     private readonly ConcurrentDictionary<long, Task> _lockRetries = new();
     private readonly ConcurrentDictionary<string, byte> _refusedFileNotices =
         new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, int> _ignoredPathNotices =
+    private readonly ConcurrentDictionary<string, HashSet<string>> _ignoredPathNotices =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _ignoredFallbackNotices =
         new(StringComparer.OrdinalIgnoreCase);
     private long _nextLockRetry;
 
@@ -819,9 +821,10 @@ public sealed class WorkspaceArtifactCommitService
             // describe their uncommitted changes as a successful skip.
             ResetPaths(gitRoot, droppedPaths);
             foreach (var path in excluded.Where(Covered)) addFree.Add(path);
-            _logger.LogWarning(
-                "workspace-artifact-ignored-paths-dropped root={Root} scope={Scope} count={Count} first={First} reason=git-add-refused",
-                gitRoot, scope, reported.Count, string.Join(",", reported.Take(IgnoredPathSample)));
+            if (_ignoredFallbackNotices.TryAdd(gitRoot, 0))
+                _logger.LogWarning(
+                    "workspace-artifact-ignored-paths-dropped root={Root} scope={Scope} count={Count} first={First} reason=git-add-refused",
+                    gitRoot, scope, reported.Count, string.Join(",", reported.Take(IgnoredPathSample)));
             if (stagedDropped)
             {
                 ResetPaths(gitRoot, addFree);
@@ -878,17 +881,22 @@ public sealed class WorkspaceArtifactCommitService
         return ignored;
     }
 
-    // One line per change of the ignored count per repo: the same ignored
-    // folders come back on every flush and would otherwise flood the log.
+    // Report newly encountered ignored paths once per repo. Split buckets can
+    // alternate on every flush, so comparing only the previous bucket floods
+    // the log even when the repo's ignored-path set has not grown.
     private void NoteIgnoredPaths(string gitRoot, string scope, IReadOnlyCollection<string> ignored)
     {
-        var key = gitRoot + "|" + scope;
-        var previous = _ignoredPathNotices.TryGetValue(key, out var count) ? count : 0;
-        _ignoredPathNotices[key] = ignored.Count;
-        if (ignored.Count == 0 || ignored.Count == previous) return;
-        _logger.LogInformation(
-            "workspace-artifact-ignored-paths-dropped root={Root} scope={Scope} count={Count} first={First}",
-            gitRoot, scope, ignored.Count, string.Join(",", ignored.Order(StringComparer.Ordinal).Take(IgnoredPathSample)));
+        if (ignored.Count == 0) return;
+        var seen = _ignoredPathNotices.GetOrAdd(gitRoot, _ => new HashSet<string>(StringComparer.Ordinal));
+        lock (seen)
+        {
+            var previousCount = seen.Count;
+            seen.UnionWith(ignored);
+            if (seen.Count == previousCount) return;
+            _logger.LogInformation(
+                "workspace-artifact-ignored-paths-dropped root={Root} scope={Scope} count={Count} first={First}",
+                gitRoot, scope, seen.Count, string.Join(",", seen.Order(StringComparer.Ordinal).Take(IgnoredPathSample)));
+        }
     }
 
     private const int IgnoredPathSample = 3;
