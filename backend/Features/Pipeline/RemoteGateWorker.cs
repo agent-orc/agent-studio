@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -17,7 +18,8 @@ public static class RemoteGateWorker
 
     public static async Task<int> RunAsync(string requestPath,
         Action<string>? progress = null, CancellationToken shutdown = default,
-        Func<ILogger<BuildTestGateRunner>, BuildTestGateRunner>? runnerFactory = null)
+        Func<ILogger<BuildTestGateRunner>, BuildTestGateRunner>? runnerFactory = null,
+        IHostFilesystemProbe? diskProbe = null, GateHostCacheRoots? cacheRoots = null)
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -94,6 +96,12 @@ public static class RemoteGateWorker
             TimeProvider.System);
         using var logging = LoggerFactory.Create(builder => builder.AddSimpleConsole());
         var logger = logging.CreateLogger<RemoteGateWorkerLog>();
+        // AGT-3866: the gate host cleans its own caches and names a full disk.
+        var roots = cacheRoots ?? GateHostCacheRoots.ForThisHost();
+        PruneHostCaches(roots, invocation, logger);
+        var probe = diskProbe ?? HostFilesystemProbes.Default;
+        var diskPaths = new[] { ("gate run", directory), ("gate workspaces", roots.GateWorkspaces) };
+        var diskAtStart = HostDiskPressurePolicy.Decide(probe.Measure(diskPaths), new HostDiskPressureThresholds());
         BuildTestGateResult result;
         var sessionLost = false;
         var cleanupFailed = false;
@@ -218,6 +226,18 @@ public static class RemoteGateWorker
                 FailureKind = BuildTestGateFailureKind.Environment,
                 Reason = "Remote gate source cleanup failed; gate remains blocked. " + result.Reason,
             };
+        if (result.Verdict == BuildTestGateVerdict.Fail)
+        {
+            // The suite's own temp data can push the disk over the edge and be
+            // gone by the end, so the start measurement counts as well.
+            var diskAtEnd = HostDiskPressurePolicy.Decide(probe.Measure(diskPaths), new HostDiskPressureThresholds());
+            result = GateDiskPressure.Attach(result,
+                diskAtEnd.Level == HostDiskPressureLevel.Critical ? diskAtEnd : diskAtStart,
+                Environment.MachineName);
+            if (result.DiskPressure is not null)
+                logger.LogWarning("remote_gate_disk_pressure run_id={RunId} reason={Reason}",
+                    invocation.RunId, GateDiskPressure.Describe(result.DiskPressure));
+        }
         result = AttachCancellationSource(result, Volatile.Read(ref shutdownRequested) != 0);
         result = result with { Executor = "remote-worker:" + Environment.MachineName };
         var response = new RemoteGateResponse(1, invocation.RunId, invocation.BundleSha256, result);
@@ -233,6 +253,21 @@ public static class RemoteGateWorker
             }
         }
         return 0;
+    }
+
+    private static void PruneHostCaches(GateHostCacheRoots roots, RemoteGateInvocation invocation,
+        ILogger logger)
+    {
+        try
+        {
+            GateHostCachePruner.PruneIfDue(roots.NodeCompileCache, roots.GateWorkspaces, roots.StampPath,
+                GateHostCachePruner.MaxAge(invocation.CachePruneAgeHours), DateTime.UtcNow,
+                line => logger.LogInformation("{CachePrune}", line));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(exception, "remote_gate_cache_prune_failed run_id={RunId}", invocation.RunId);
+        }
     }
 
     internal static BuildTestGateResult AttachCancellationSource(
@@ -325,6 +360,16 @@ public static class RemoteGateWorker
     }
 
     private sealed class RemoteGateWorkerLog { }
+}
+
+/// <summary>The gate host directories the worker prunes (AGT-3866).</summary>
+public sealed record GateHostCacheRoots(string NodeCompileCache, string GateWorkspaces, string StampPath)
+{
+    public static GateHostCacheRoots ForThisHost() => new(
+        GateHostCachePruner.NodeCompileCacheRoot(
+            Environment.GetEnvironmentVariable("NODE_COMPILE_CACHE"), Path.GetTempPath()),
+        BuildTestGateRunner.ReviewWorkspaceRoot,
+        Path.Combine(Path.GetTempPath(), "agentstudio-gate-host-prune", "last-prune"));
 }
 
 internal static class GateArtifactOutput

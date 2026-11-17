@@ -2,6 +2,15 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 import { batchIsolationEvidenceUrl, type BatchIsolationFinding } from '../../../models/batch-gate.model';
 
 /**
+ * Short name of an evidence file: its folder and file name. The folder carries
+ * the batch id, so two findings' evidence stays apart; the host prefix does not.
+ */
+export function shortEvidenceName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts.slice(-2).join('/') || path;
+}
+
+/**
  * AGT-3577: why the bisection proved a member red: the failing tests and
  * error excerpts of the run that proved it, and that run's evidence.
  */
@@ -17,4 +26,10 @@ export class BatchProvenRedComponent {
   readonly finding = input.required<BatchIsolationFinding>();
   readonly failures = computed(() => this.finding().failures ?? []);
   readonly evidenceUrl = computed(() => batchIsolationEvidenceUrl(this.project(), this.finding()));
+  /**
+   * AGT-3836: the absolute host path wrapped over five lines at 390 px.
+   * AGT-3872: the recorded path is a host path inside the instance directory,
+   * so the UI shows only the short name; the evidence link opens the file.
+   */
+  readonly evidenceName = computed(() => shortEvidenceName(this.finding().evidencePath));
 }

@@ -3,12 +3,13 @@ import {
   computed, effect, inject, input, output, signal, untracked,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { EMPTY, Observable, catchError, map, of, switchMap, tap, throwError } from 'rxjs';
+import { EMPTY, Observable, catchError, finalize, map, of, switchMap, tap, throwError } from 'rxjs';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { CliCatalogStore } from '../../../cli';
+import { ActionPanelCoordinator, closeWhenAnotherPanelOpens } from '../../../../services/action-panel-coordinator.service';
 import {
-  ConfirmWorkbenchDecisionRequest,
   PrepareWorkbenchDecisionRequest,
   WorkbenchDecisionPoint,
   WorkbenchDecisionResponse,
@@ -23,31 +24,40 @@ import {
   WorkbenchDecisionDraftStore,
 } from '../../state/workbench-decision-draft.store';
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
+import { createDossierCard, resolveDossierCardId } from '../../state/dossier-card-creation';
 import {
+  AgentChoice,
   actionErrorMessage,
   answeredDecisionCount,
   bounded,
   cardPrompt,
   createOperationId,
+  defaultAgent,
+  featureJobRequest,
   featureTaskDraft,
+  answerSaveState,
+  hasDecisionInput,
   laneLabel,
   readDefaultCli,
   readDefaultModel,
   readDefaultThinkingLevel,
   reworkPrompt,
+  reworkRouteChange,
+  revisionCardRoute,
   selectedDecisionText,
-  taskKeyTail,
   unlinkedCardFailure,
 } from '../workbench-decision-panel/workbench-decision-panel.util';
 import { bindFormEscape, focusAfterRender } from '../workbench-decision-panel/workbench-decision-focus.util';
 
 type ActionMode = 'feature-spawn' | 'rework' | null;
 type DecisionOutcome = Exclude<ActionMode, null> | 'record-only';
+/** The coordinator id all decision forms of one Dossier share; they show the same draft. */
+const DECISION_PANEL = 'dossier-decision';
 
 @Component({
   selector: 'app-workbench-decision-actions',
   standalone: true,
-  imports: [CliModelSelectorComponent, PendingButtonDirective],
+  imports: [CliModelSelectorComponent, PendingButtonDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-decision-actions.component.html',
   styleUrl: './workbench-decision-actions.component.scss',
@@ -70,6 +80,7 @@ export class WorkbenchDecisionActionsComponent {
   private readonly destroyRef = inject(DestroyRef);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
+  private readonly panels = inject(ActionPanelCoordinator, { optional: true });
   private restoredDraftKey = '';
   /** The bar control that opened the confirmation form; closing it returns focus there. */
   private opener = 'workbench-decision-start';
@@ -82,6 +93,7 @@ export class WorkbenchDecisionActionsComponent {
   readonly validationError = signal<string | null>(null);
   readonly actionError = signal<string | null>(null);
   readonly createdCard = signal<WorkbenchDecisionDraftCard | null>(null);
+  readonly saving = signal(false);
   readonly cliType = signal<CliType>(readDefaultCli());
   readonly model = signal(readDefaultModel(readDefaultCli()));
   readonly thinkingLevel = signal<string | null>(readDefaultThinkingLevel(readDefaultCli()));
@@ -91,7 +103,12 @@ export class WorkbenchDecisionActionsComponent {
   readonly pending = computed(() => this.requestState().pending !== null);
   readonly answeredCount = computed(() => answeredDecisionCount(this.decisionPoints(), this.responses()));
   readonly answersComplete = computed(() => this.answeredCount() === this.decisionPoints().length);
-  readonly canRecordPartial = computed(() => !this.settled() && !this.pending() && this.answeredCount() > 0 && !this.answersComplete());
+  readonly noteCount = computed(() => this.responses().filter(response => response.comment?.trim()).length);
+  /** Whether the Dossier holds the answers on screen; any answer set can be saved (AGT-3875). */
+  readonly saveState = computed(() => this.settled() ? 'none' : answerSaveState(this.document(), this.responses(),
+    this.drafts.draft(this.projectName(), this.document().workbench.id)?.responses));
+  readonly canSaveAnswers = computed(() => !this.settled() && !this.pending()
+    && hasDecisionInput(this.responses()) && this.saveState() !== 'saved');
   readonly selectedSummary = computed(() => selectedDecisionText(
     this.decisionPoints(), this.responses()));
   readonly hasReworkComment = computed(() =>
@@ -102,6 +119,11 @@ export class WorkbenchDecisionActionsComponent {
   readonly revisionCard = computed(() => this.document().revisionCard ?? null);
   readonly revisionCardLane = computed(() => laneLabel(this.revisionCard()?.lane ?? null));
   readonly reworkAvailable = computed(() => this.revisionCard()?.available === true);
+  /** The revision card's route; a rework starts on it so it never reroutes the card unasked (AGT-3838). */
+  readonly revisionRoute = computed(() => revisionCardRoute(this.revisionCard()));
+  readonly routeChange = computed(() =>
+    this.mode() === 'rework' ? reworkRouteChange(this.revisionRoute(), this.agent()) : null);
+  private readonly keepsRevisionRoute = computed(() => this.mode() === 'rework' && this.revisionRoute() !== null);
   readonly reworkDisabledReason = computed(() => this.reworkAvailable()
     ? null
     : this.revisionCard()?.reason
@@ -124,6 +146,7 @@ export class WorkbenchDecisionActionsComponent {
       const id = this.document().workbench.id;
       const key = `${project}\u0000${id}`;
       const draft = this.drafts.draft(project, id);
+      if (draft?.mode) untracked(() => this.panels?.claimIfFree(DECISION_PANEL));
       if (draft?.mode === 'feature-spawn') {
         this.mode.set('feature-spawn');
         this.title.set(draft.title);
@@ -149,6 +172,10 @@ export class WorkbenchDecisionActionsComponent {
       if (key !== this.restoredDraftKey) untracked(() => this.preselectDefaultModel());
       this.restoredDraftKey = key;
     });
+    // Another action panel of this view opened: close the form so it cannot cover it (AGT-3875).
+    closeWhenAnotherPanelOpens(this.panels, DECISION_PANEL, () => {
+      if (this.mode() !== null && !this.pending()) this.dropForm();
+    });
     // Escape closes the open form even below another modal-stack entry (AGT-3829).
     bindFormEscape(computed(() => this.mode() !== null),
       () => this.host.nativeElement.querySelector('.decision-actions__confirmation'),
@@ -173,7 +200,7 @@ export class WorkbenchDecisionActionsComponent {
     this.drafts.updateAction(this.projectName(), this.document().workbench.id, { request });
   }
 
-  updateAgent(change: { cliType: CliType; model: string; thinkingLevel: string | null }): void {
+  updateAgent(change: AgentChoice): void {
     this.cliType.set(change.cliType);
     this.model.set(change.model);
     this.thinkingLevel.set(change.thinkingLevel);
@@ -183,19 +210,23 @@ export class WorkbenchDecisionActionsComponent {
   prepareFeatureCard(): void {
     if (!this.canPrepareFeature()) return;
     this.seedFeatureDraft();
+    this.panels?.claim(DECISION_PANEL);
     this.mode.set('feature-spawn');
     this.opener = 'workbench-decision-start';
     this.focusAfterRender('workbench-decision-title');
   }
 
-  recordPartial(): void {
-    if (!this.canRecordPartial()) return;
+  /** Writes the answers and notes as `recordedResponses` through the decision gate. */
+  saveAnswers(): void {
+    if (!this.canSaveAnswers()) return;
     const actor = this.actor().trim();
     if (!actor) { this.invalid('Add the decision owner.'); return; }
     this.resetFeedback();
     const request = { ...this.baseRequest('record-only', actor, null), operationId: createOperationId() };
+    this.saving.set(true);
     this.store.recordChoices(this.projectName(), this.document().workbench.id, request)
-      .pipe(catchError(error => this.fail(error))).subscribe(() => this.finish());
+      .pipe(catchError(error => this.fail(error)), finalize(() => this.saving.set(false)))
+      .subscribe(() => this.finish());
   }
 
   beginRework(): void {
@@ -203,11 +234,12 @@ export class WorkbenchDecisionActionsComponent {
     this.resetFeedback();
     const operationId = createOperationId();
     const draft = this.drafts.beginRework(this.projectName(), this.document().workbench.id, {
-      actor: this.actor(), operationId, cliType: this.cliType(), model: this.model(),
-      thinkingLevel: this.thinkingLevel(),
+      actor: this.actor(), operationId, ...(this.revisionRoute() ?? this.agent()),
     }, this.responses());
+    this.restoreAgent(draft);
     this.operationId.set(draft.operationId ?? operationId);
     this.request.set(draft.request ?? '');
+    this.panels?.claim(DECISION_PANEL);
     this.mode.set('rework');
     this.opener = 'workbench-decision-rework';
     this.focusAfterRender('workbench-decision-rework-request');
@@ -217,10 +249,18 @@ export class WorkbenchDecisionActionsComponent {
     event?.preventDefault();
     event?.stopPropagation();
     if (this.pending()) return;
+    this.dropForm();
+    this.panels?.release(DECISION_PANEL);
+    this.focusAfterRender(this.opener);
+  }
+
+  private dropForm(): void {
+    const leavingRework = this.keepsRevisionRoute();
     this.drafts.closeAction(this.projectName(), this.document().workbench.id);
     this.mode.set(null);
     this.operationId.set('');
-    this.focusAfterRender(this.opener);
+    // The card's route was a rework preselection; a combined task starts on the browser default again.
+    if (leavingRework) { this.restoreAgent(defaultAgent()); this.preselectDefaultModel(); }
   }
 
   createFeatureCard(): void {
@@ -250,61 +290,19 @@ export class WorkbenchDecisionActionsComponent {
     ).pipe(catchError(error => this.fail(error))).subscribe(() => this.finish());
   }
 
-  private confirmFeature(
-    prepared: PrepareWorkbenchDecisionRequest,
-    card: WorkbenchDecisionDraftCard,
-    result: WorkbenchDecisionResult,
-  ): Observable<WorkbenchDecisionResult> {
-    const request: ConfirmWorkbenchDecisionRequest = {
-      ...prepared,
-      expectedRevision: result.revision,
-      expectedFingerprint: result.fingerprint,
-      spawnedTaskKeys: [card.key],
-      spawnedTaskIds: card.id ? [card.id] : [],
-      ...this.agent(),
-      confirmed: true,
-    };
-    return this.store.confirm(this.projectName(), this.document().workbench.id, request);
+  private confirmFeature(prepared: PrepareWorkbenchDecisionRequest, card: WorkbenchDecisionDraftCard,
+    result: WorkbenchDecisionResult): Observable<WorkbenchDecisionResult> {
+    return this.store.confirm(this.projectName(), this.document().workbench.id, {
+      ...prepared, expectedRevision: result.revision, expectedFingerprint: result.fingerprint,
+      spawnedTaskKeys: [card.key], spawnedTaskIds: card.id ? [card.id] : [], ...this.agent(), confirmed: true,
+    });
   }
 
   private createCard(draft: WorkbenchTaskDraft): Observable<WorkbenchDecisionDraftCard> {
     if (this.createdCard()) return of(this.createdCard()!);
-    return this.tasks.getWatchPaths().pipe(
-      map(entries => {
-        const path = entries.find(entry => entry.name === this.projectName())?.path;
-        if (!path) throw new Error(`Could not resolve the task path for ${this.projectName()}.`);
-        return path;
-      }),
-      switchMap(watchPath => this.tasks.createJob({
-        title: draft.title,
-        agent: this.cliType(),
-        watchPath,
-        promptMarkdown: cardPrompt(this.document(), draft, this.decisionPoints(), this.responses()),
-        targetState: draft.initialLane,
-        cliType: this.cliType(),
-        model: this.model().trim() || undefined,
-        thinkingLevel: this.thinkingLevel() || undefined,
-        modelExplicit: true,
-        thinkingLevelExplicit: true,
-        taskType: draft.taskType,
-        mode: draft.mode,
-        dossier: { path: this.document().workbench.entryPath },
-      }).pipe(switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName()).pipe(
-        map(detail => ({ detail, id: created.id, watchPath })),
-        catchError(() => this.tasks.deleteJob(created.id, watchPath).pipe(
-          catchError(() => throwError(() => new Error(
-            `The task was created, but its details could not be read. The task may remain on the board. Ask a Studio operator to remove task ${created.id}.`))),
-          switchMap(() => throwError(() => new Error('The task was created, but its details could not be read. The task was removed. Try again.'))),
-        )),
-      )))),
-      map(({ detail, id, watchPath }) => ({
-        id,
-        watchPath,
-        key: detail.info.key || detail.info.displayKey || taskKeyTail(detail.info.taskKey),
-        taskKey: detail.info.taskKey,
-        title: detail.info.title,
-        lane: detail.info.state,
-      })),
+    return createDossierCard(this.tasks, this.projectName(), featureJobRequest(
+      this.document(), draft, this.decisionPoints(), this.responses(), this.agent(),
+    )).pipe(
       tap(card => {
         this.createdCard.set(card);
         this.drafts.rememberCreatedCard(this.projectName(), this.document().workbench.id, card);
@@ -315,16 +313,11 @@ export class WorkbenchDecisionActionsComponent {
 
   /** Resolve an older draft's missing id; removal must never use its display key. */
   private resolveCardId(card: WorkbenchDecisionDraftCard): Observable<WorkbenchDecisionDraftCard> {
-    if (card.id) return of(card);
-    return this.tasks.getDetailByProject(card.taskKey || card.key, this.projectName()).pipe(
-      map(detail => detail.info.id ? { ...card, id: detail.info.id, watchPath: detail.info.watchPath } : card),
-      tap(resolved => {
-        if (!resolved.id) return;
-        this.createdCard.set(resolved);
-        this.drafts.rememberCreatedCard(this.projectName(), this.document().workbench.id, resolved);
-      }),
-      catchError(() => of(card)),
-    );
+    return resolveDossierCardId(this.tasks, this.projectName(), card).pipe(tap(resolved => {
+      if (!resolved.id || resolved === card) return;
+      this.createdCard.set(resolved);
+      this.drafts.rememberCreatedCard(this.projectName(), this.document().workbench.id, resolved);
+    }));
   }
 
   /**
@@ -387,7 +380,7 @@ export class WorkbenchDecisionActionsComponent {
       this.goal(), this.selectedSummary());
   }
 
-  private agent(): { cliType: CliType; model: string; thinkingLevel: string | null } {
+  private agent(): AgentChoice {
     return { cliType: this.cliType(), model: this.model().trim(), thinkingLevel: this.thinkingLevel() };
   }
 
@@ -398,15 +391,15 @@ export class WorkbenchDecisionActionsComponent {
     if (draft.thinkingLevel !== undefined) this.thinkingLevel.set(draft.thinkingLevel);
   }
 
-  /** Preselect the picker default once per Dossier, preserving later explicit choices. */
+  /** Preselect the picker default once per Dossier, preserving explicit choices and a rework's card route. */
   private preselectDefaultModel(): void {
-    if (this.model().trim()) return;
+    if (this.model().trim() || this.keepsRevisionRoute()) return;
     const cli = this.cliType();
     const project = this.projectName();
     const id = this.document().workbench.id;
     this.catalog.ensure(cli).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: models => {
-        if (this.model().trim() || this.cliType() !== cli
+        if (this.model().trim() || this.cliType() !== cli || this.keepsRevisionRoute()
           || this.projectName() !== project || this.document().workbench.id !== id) return;
         const preferred = models.find(model => model.available !== false && model.isDefault);
         if (!preferred) return;
@@ -424,6 +417,7 @@ export class WorkbenchDecisionActionsComponent {
   }
 
   private finish(): void {
+    this.panels?.release(DECISION_PANEL);
     this.drafts.discard(this.projectName(), this.document().workbench.id);
     this.decisionChanged.emit();
   }

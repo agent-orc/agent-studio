@@ -52,7 +52,7 @@ public sealed partial class BatchGateStore
     {
         try
         {
-            IndexDeliveryManifest(Read<BatchGateManifest>(path));
+            IndexDeliveryManifest(ReadManifestFile(path));
             _unreadableDeliveryManifests.Remove(path);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)

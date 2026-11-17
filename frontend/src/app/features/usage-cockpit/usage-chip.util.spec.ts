@@ -79,6 +79,7 @@ describe('CLI chip view', () => {
     expect([view.weekly.tag, view.weekly.value, view.session.tag, view.session.value]).toEqual(['WK', '15%', '5H', '32%']);
     expect(view.ariaLabel).toBe('Codex, weekly 15 percent used, current five-hour window 32 percent used. Open usage.');
     expect(view.detail).toContain('Weekly: 15% used, resets Tue 29 Sept, 09:00 Europe/Berlin (Tue 29 Sept, 07:00 UTC)');
+    expect(view.detail).toContain('provider week Tue 22 Sept, 09:00 Europe/Berlin (Tue 22 Sept, 07:00 UTC) to Tue 29 Sept');
   });
 
   it('never borrows the weekly value for an unreported session window', () => {
@@ -86,6 +87,12 @@ describe('CLI chip view', () => {
     expect(view.session).toMatchObject({ tag: 'Session', value: 'N/A', reported: false });
     expect(view.ariaLabel).toContain('current session not reported');
     expect(view.ariaLabel).not.toMatch(/session[^.]*0 percent/);
+  });
+
+  it('uses the provider-observed weekly start when the cycle resets early', () => {
+    const observed = cli({ windows: [{ ...cli().windows[0], startAtUtc: '2026-09-23T07:00:00Z' }] });
+    expect(buildCliChipView('codex', observed, ZONE, NOW).detail)
+      .toContain('provider week Wed 23 Sept, 09:00 Europe/Berlin');
   });
 
   it('uses 5H only when the provider reports a five-hour window', () => {
@@ -157,6 +164,11 @@ describe('CLI chip view', () => {
 });
 
 describe('cost chip view', () => {
+  it('marks an unpriced receipt beside the priced subtotal', () => {
+    const view = buildCostChipView(cost({ unpricedTodayRuns: 2 }), NOW);
+    expect(view.value).toBe('$12.48*');
+    expect(view.ariaLabel).toContain('priced subtotal + 2 runs without price');
+  });
   it('shows the ledger estimate and says so in the accessible name', () => {
     const view = buildCostChipView(cost(), NOW);
     expect(view).toMatchObject({ state: 'normal', value: '$12.48', exact: '$12.48' });
@@ -185,6 +197,27 @@ describe('cost chip view', () => {
   it('labels partial coverage and stale ledger snapshots', () => {
     expect(buildCostChipView(cost({ coverage: { status: 'partial', observedAt: '2026-09-25T14:57:00Z', ttlSeconds: 60 } }), NOW).state).toBe('partial');
     expect(buildCostChipView(cost({ coverage: { status: 'complete', observedAt: '2026-09-25T14:00:00Z', ttlSeconds: 60 } }), NOW).state).toBe('stale');
+  });
+
+  it('shows partial coverage and latest receipt separately when the ledger read is current', () => {
+    const view = buildCostChipView(cost({
+      coverage: { status: 'partial', observedAt: '2026-09-25T14:57:40Z', ttlSeconds: 60,
+        reason: 'Demo Platform: unknown-model has no historical USD price.' },
+      latestReceiptAt: '2026-09-25T09:58:00Z',
+    }), NOW);
+    expect(view.state).toBe('partial');
+    expect(view.detail).toContain('Latest receipt');
+    expect(view.detail).toContain('unknown-model');
+    expect(view.ariaLabel).toContain('unknown-model');
+  });
+
+  it('marks a failed ledger refresh stale even when the last good read was partial', () => {
+    const view = buildCostChipView(cost({
+      coverage: { status: 'partial', observedAt: '2026-09-25T14:57:40Z', ttlSeconds: 60,
+        reason: 'Demo Platform: unknown-model has no price.' },
+    }), NOW, [], true);
+    expect(view.state).toBe('stale');
+    expect(view.detail).toContain('The latest refresh failed');
   });
 
   it('exposes only the fields the cost chip template renders', () => {

@@ -1,0 +1,41 @@
+:host { display: block; min-width: 0; }
+
+// AGT-3845: an actionable pre-acceptance fact reads as a warn tint with the
+// shared status indicator, like the acceptance attempt gap (R1: no accent bar).
+.off-stable {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: var(--studio-spacing-2) var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 42%, var(--studio-border));
+  border-radius: var(--studio-radius-md);
+  background: color-mix(in srgb, var(--studio-accent-warn) 8%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
+  font-size: 0.78rem;
+  min-width: 0;
+}
+
+.off-stable__line,
+.off-stable__hint,
+.off-stable__error { margin: 0; overflow-wrap: anywhere; }
+.off-stable__line { color: var(--studio-fg-strong); font-weight: 600; }
+.off-stable__hint { color: var(--studio-fg-muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+.off-stable__error { color: var(--studio-error); }
+
+.off-stable__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+}
+.off-stable__actions button {
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-spacing-1);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-strong);
+  font: inherit;
+  cursor: pointer;
+}
+.off-stable__actions button:disabled { cursor: not-allowed; opacity: 0.6; }
+.off-stable__actions button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }

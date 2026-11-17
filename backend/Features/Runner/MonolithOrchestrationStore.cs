@@ -142,6 +142,15 @@ public sealed class MonolithOrchestrationStore
             Supersede(item.Run.RunId, observedState, reason: "card-moved");
     }
 
+    /// <summary>AGT-3883: the lane decisions taken on one authority attempt, oldest first.</summary>
+    public IReadOnlyList<MonolithOrchestrationOccurrence> ForAuthorityAttempt(string projectId, string attemptId)
+    {
+        lock (_gate) return _runs.Values.Where(item => item.Run.ProjectId == projectId
+                && item.AuthorityAttemptId == attemptId && IsLaneDecision(item) && !item.Shadow)
+            .OrderBy(item => item.CreationSequence).ThenBy(item => item.Run.CreatedAt)
+            .ThenBy(item => item.Run.RunId, StringComparer.Ordinal).ToArray();
+    }
+
     public IReadOnlyList<string> OpenLaneDecisionIds(string projectId, string taskId)
     {
         lock (_gate) return _runs.Values.Where(item => item.Run.ProjectId == projectId

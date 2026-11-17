@@ -52,6 +52,77 @@ public static class BatchGateLookAheadPlanner
         => perTaskGates < PerTaskGateLimit(slotsTotal);
 
     /// <summary>
+    /// AGT-3856: full suites outside the batch lane that may run on the gate
+    /// host beside a running batch gate. The slot rule above still applies.
+    /// </summary>
+    public const int BatchCompanionSuiteLimit = 1;
+
+    /// <summary>Wait reason of a full suite refused under <see cref="BatchCompanionSuiteLimit"/>.</summary>
+    public const string CompanionSuiteWaitReason =
+        "a batch gate runs and one other full suite already shares the gate host";
+
+    /// <summary>
+    /// AGT-3856: extends the AGT-3466 slot rule from slots to concurrent full
+    /// suites. While a batch gate runs, at most
+    /// <see cref="BatchCompanionSuiteLimit"/> other full suite runs on the
+    /// gate host. On 3 and 4 November 2026 a published batch gate took a
+    /// median 13.7 minutes with at most two gates on the host and 27.6 minutes
+    /// with more. Returns the refusal reason, or null when the suite may start.
+    /// The batch lane itself (batch gates, isolation children, base checks)
+    /// is never refused here.
+    /// </summary>
+    public static string? CompanionSuiteRefusal(int batchGatesRunning, int companionSuitesRunning)
+        => batchGatesRunning > 0 && companionSuitesRunning >= BatchCompanionSuiteLimit
+            ? CompanionSuiteWaitReason : null;
+
+    /// <summary>Look-ahead reason of a per-task gate chosen only because no batch partner was eligible.</summary>
+    public const string BelowMinimumReason = "close condition reached below minimum batch size";
+
+    /// <summary>Look-ahead reason of a per-task gate the operator's close-now forced below minimum size.</summary>
+    public const string CloseNowBelowMinimumReason = "operator close-now below minimum batch size";
+
+    /// <summary>Threshold reason of a per-task gate chosen only because no batch partner was eligible.</summary>
+    public const string ThresholdNoPartnerReason = "oldest eligible card reached deadline without a batch partner";
+
+    /// <summary>
+    /// True when a planner chose the per-task route only for lack of a batch
+    /// partner; <paramref name="planEvent"/> is the recorded plan reason, with
+    /// or without its planner prefix. A risk, close-now or scope route is false.
+    /// </summary>
+    public static bool PartnerMissingRoute(string? planEvent)
+        => planEvent is not null
+           && (planEvent.EndsWith(BelowMinimumReason, StringComparison.Ordinal)
+               || planEvent.EndsWith(ThresholdNoPartnerReason, StringComparison.Ordinal));
+
+    /// <summary>
+    /// AGT-3856: a per-card green suite is refused for a card that a batch
+    /// gates anyway. A card in a formed or running batch is already a partner.
+    /// A card that took the per-task route only for lack of a partner
+    /// (<paramref name="facts"/>.<see cref="PerTaskSuiteFacts.PartnerMissingRoute"/>)
+    /// is refused once partners can close a batch with it: eligible cards
+    /// now, or cards that finish their pre-check before this card's deadline.
+    /// A high-risk card, an operator close-now and a card refused before keep
+    /// their per-task suite. Returns the refusal reason, or null.
+    /// </summary>
+    public static string? PerTaskSuiteRefusal(PerTaskSuiteFacts facts)
+    {
+        if (facts.BatchId is { } batchId)
+            return $"already a member of batch {Short(batchId)}: the batch gate tests it";
+        if (!facts.PartnerMissingRoute || facts.RefusedBefore || facts.MinimumSize <= 1) return null;
+        if (facts.EligiblePartners + 1 >= facts.MinimumSize)
+            return $"{facts.EligiblePartners} batch {(facts.EligiblePartners == 1 ? "partner waits" : "partners wait")}"
+                + ": the next batch gates this card instead of a per-card suite";
+        if (facts.NowUtc < facts.DeadlineUtc
+            && facts.EligiblePartners + facts.QueuedPartners + 1 >= facts.MinimumSize)
+            return $"{facts.QueuedPartners} batch {(facts.QueuedPartners == 1 ? "partner finishes its" : "partners finish their")}"
+                + $" pre-check before this card's deadline at {facts.DeadlineUtc.UtcDateTime:HH:mm} UTC:"
+                + " the next batch gates this card instead of a per-card suite";
+        return null;
+    }
+
+    private static string Short(string id) => id.Length > 8 ? id[..8] : id;
+
+    /// <summary>
     /// Plans one scope. The decision names the waiting cards it considered, so
     /// an authority that applies it later can tell which cards it did not know.
     /// </summary>
@@ -135,7 +206,7 @@ public static class BatchGateLookAheadPlanner
             return new("wait", QueuedPartnersReason, null,
                 candidates.Select(card => card.TaskKey).ToArray(), target, upcoming);
         if (candidates.Length < input.MinimumSize)
-            return new("per-task", "close condition reached below minimum batch size",
+            return new("per-task", input.CloseNow ? CloseNowBelowMinimumReason : BelowMinimumReason,
                 null, [oldest.TaskKey], input.MinimumSize, upcoming);
         var count = Math.Min(candidates.Length, Math.Max(input.MinimumSize, target));
         return new("close", input.CloseNow ? "operator close-now"
@@ -211,3 +282,18 @@ public static class BatchGateLookAheadPlanner
         "conservative" => 1.35, "aggressive" => .75, _ => 1d,
     };
 }
+
+/// <summary>
+/// AGT-3856: what the host knows about one card when its per-task suite would
+/// start. <paramref name="BatchId"/> names a formed or running batch the card
+/// is a member of. <paramref name="PartnerMissingRoute"/> is true when the
+/// planner chose the per-task route only for lack of a batch partner.
+/// <paramref name="EligiblePartners"/> counts other cards of the same scope a
+/// batch could take now, <paramref name="QueuedPartners"/> the ones that still
+/// wait for their pre-check. <paramref name="RefusedBefore"/> bounds the rule
+/// to one refusal per review generation.
+/// </summary>
+public sealed record PerTaskSuiteFacts(
+    string? BatchId, bool PartnerMissingRoute, bool RefusedBefore,
+    int EligiblePartners, int QueuedPartners, int MinimumSize,
+    DateTimeOffset NowUtc, DateTimeOffset DeadlineUtc);

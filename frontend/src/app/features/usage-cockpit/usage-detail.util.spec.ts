@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { UsageCli, UsageCockpitResponse, UsageRun } from './models/usage-cockpit.model';
 import {
   buildUsageDetailView,
+  cliAccountHref,
   describeLedgerScope,
   formatCountdown,
   formatRemainingPct,
@@ -68,8 +69,11 @@ function snapshot(overrides: Partial<UsageCockpitResponse> = {}): UsageCockpitRe
 describe('instants and countdowns', () => {
   it('shows workspace-local and UTC separately', () => {
     expect(instantView('2026-09-29T07:00:00Z', ZONE)).toEqual({
-      local: 'Tue 29 Sept, 09:00', utc: 'Tue 29 Sept, 07:00 UTC', iso: '2026-09-29T07:00:00.000Z',
+      local: 'Tue 29 Sept, 09:00 Europe/Berlin', utc: 'Tue 29 Sept, 07:00 UTC',
+      text: 'Tue 29 Sept, 09:00 Europe/Berlin (Tue 29 Sept, 07:00 UTC)', iso: '2026-09-29T07:00:00.000Z',
     });
+    // AGT-3794-F14: a UTC alias reads as UTC, once.
+    expect(instantView('2026-09-29T07:00:00Z', 'Etc/UTC')?.text).toBe('Tue 29 Sept, 07:00 UTC');
     expect(instantView(null, ZONE)).toBeNull();
     expect(instantView('nonsense', ZONE)).toBeNull();
   });
@@ -90,9 +94,13 @@ describe('ledger links', () => {
     expect(ledgerScopeFromHash(href)).toEqual({ ...scope, projectId: 'p1' });
   });
 
-  it('opens an existing CLI page and falls back to the workspace page', () => {
-    expect(ledgerHref(scope, 'Codex')).toMatch(/^#\/workspace\/settings\/tokens\/codex&/);
-    expect(ledgerHref(scope, 'gemini')).toMatch(/^#\/workspace\/settings\/tokens&/);
+  it('lands on the workspace ledger page; CLI links open the CLI account page without a ledger scope', () => {
+    // AGT-3794-F14: the ledger is workspace-wide, so the settings rail must highlight the workspace page.
+    expect(ledgerHref(scope)).toMatch(/^#\/workspace\/settings\/tokens&/);
+    expect(cliAccountHref('Codex')).toBe('#/workspace/settings/tokens/codex');
+    expect(cliAccountHref('claude')).toBe('#/workspace/settings/tokens/claude');
+    expect(cliAccountHref('gemini')).toBeNull();
+    expect(ledgerScopeFromHash(cliAccountHref('claude')!)).toBeNull();
   });
 
   it('rejects incomplete or malformed scopes', () => {
@@ -117,7 +125,7 @@ describe('reconciliation', () => {
 
   it('lists unattributed last and marks unknown rows as incomplete', () => {
     const view = buildUsageDetailView(snapshot(), NOW).cost;
-    expect(view.projects.map(p => p.name)).toEqual(['Agent Studio', 'Docs', 'Unattributed']);
+    expect(view.projects.map(p => p.name)).toEqual(['Agent Studio', 'Docs', 'Unattributed one-shot jobs']);
     expect(view.reconcile).toEqual({ todayRemainder: '$0.01', weekRemainder: '$0.01', complete: true });
 
     const partial = snapshot();
@@ -195,5 +203,11 @@ describe('live runs and models', () => {
     const view = buildUsageDetailView({ ...base, clis: [codex], cost }, NOW);
     expect(view.clis[0].stateReason).toBe('Provider: delayed');
     expect(view.cost.coverageReason).toBe('Pricing: incomplete');
+  });
+
+  it('does not present ledger read time as a receipt when no receipt exists', () => {
+    const base = snapshot();
+    const cost = { ...base.cost, latestReceiptAt: null };
+    expect(buildUsageDetailView({ ...base, cost }, NOW).cost.latestReceipt).toBeNull();
   });
 });

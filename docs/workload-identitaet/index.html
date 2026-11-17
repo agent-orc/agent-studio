@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="de" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workload-Identität: wie sich Aufträge, Hosts und Apps ausweisen | Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<style>
+  nav.contents { margin: 24px 0 36px; font: 0.82rem/1.8 var(--article-sans); }
+  .diagram text { font-family: var(--article-sans); }
+  .diagram .zone { fill: none; stroke: var(--article-line); stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .diagram .zone-label { fill: var(--article-faint); font-size: 13px; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase; }
+  .diagram .node { fill: var(--article-surface); stroke: var(--article-line); }
+  .diagram .focus { fill: var(--article-link-soft); stroke: var(--article-link); }
+  .diagram .ext { fill: var(--article-surface-strong); stroke: var(--article-line); }
+  .diagram .gap { fill: var(--article-warn-soft); stroke: var(--article-warn); }
+  .diagram .label { fill: var(--article-ink); font-size: 15px; font-weight: 650; }
+  .diagram .sub { fill: var(--article-muted); font-size: 12.5px; }
+  .diagram .warn-label { fill: var(--article-warn); font-size: 12px; font-weight: 650; }
+  .diagram .edge-label { fill: var(--article-link); font-size: 12px; font-weight: 650; }
+  .diagram .edge { fill: none; stroke: var(--article-link); stroke-width: 2; }
+  .diagram .edge-warn { fill: none; stroke: var(--article-warn); stroke-width: 2; }
+  .diagram .edge-muted { fill: none; stroke: var(--article-faint); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .diagram .arrowhead { fill: var(--article-link); }
+  .diagram .arrowhead-warn { fill: var(--article-warn); }
+  .diagram .arrowhead-muted { fill: var(--article-faint); }
+  .diagram .step { fill: var(--article-link); }
+  .diagram .step-text { fill: var(--article-paper); font-size: 12px; font-weight: 750; }
+  .decision { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.9rem/1.6 var(--article-sans); }
+  .decision h3 { margin: 0 0 8px; }
+  .decision p { margin-bottom: 8px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; margin: 8px 0; padding: 9px 10px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); cursor: pointer; }
+  .decision label input { margin-top: 5px; }
+  .decision label b { display: block; }
+  .decision label .d { display: block; color: var(--article-muted); font-size: 0.86rem; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; padding: 8px; border: 1px solid var(--article-line); border-radius: 6px; background: var(--article-paper); color: var(--article-ink); font: 0.86rem/1.5 var(--article-sans); }
+  .yes { color: var(--article-good); font-weight: 650; }
+  .no { color: var(--article-bad); font-weight: 650; }
+  .mid { color: var(--article-warn); font-weight: 650; }
+</style>
+</head>
+<body>
+<main class="article">
+<header class="page">
+  <p class="kicker">Konzept-Dossier · AGT-3876 · 16. November 2026</p>
+  <h1>Workload-Identität: wie sich Aufträge, Hosts und Apps ausweisen</h1>
+  <p class="lede">Agent-Läufe, Review- und Gate-Hosts, Deploy-Aufträge und gehostete Apps melden sich heute überwiegend mit gespeicherten Schlüsseln und Tokens an. Dieses Dossier erklärt die Alternative aus IP-D10: Studio stellt jedem Auftrag einen kurzlebigen, signierten Ausweis aus, und Ziele wie AWS, Google Cloud, Azure, Kubernetes oder Modell-APIs vertrauen diesem Ausweis statt eines hinterlegten Schlüssels. Es vergleicht beide Wege und schlägt eine Reihenfolge vor, die den größten Teil des Nutzens früh bringt.</p>
+  <div class="meta"><span><b>Status</b> Entscheidung offen</span><span><b>Phase</b> entscheidungsreif</span><span><b>Quelle</b> AGT-3876</span><span><b>Bezug</b> IP-D10 im Dossier Integrierte Plattform (AGT-W81)</span></div>
+</header>
+
+<nav class="contents" aria-label="Inhalt"><a href="#anlass">Anlass</a> · <a href="#begriffe">Begriffe</a> · <a href="#heute">Heutiger Stand</a> · <a href="#alternatives">Alternativen</a> · <a href="#option-a">Option A</a> · <a href="#option-b">Option B</a> · <a href="#vergleich">Vergleich</a> · <a href="#recommendation">Empfehlung</a> · <a href="#evidence">Belege</a> · <a href="#open-decisions">Offene Entscheidungen</a> · <a href="#quellen">Quellen</a> · <a href="#implementation">Umsetzung</a></nav>
+
+<section id="anlass">
+<h2><span class="number">01</span> Anlass</h2>
+<p>Im Dossier <a href="../operations/integrierte-plattform/index.html">Integrierte Plattform</a> hat der Owner IP-D10 „Wie weisen sich Aufträge und Apps aus?“ mit A beantwortet: eigene signierte Identität je Auftrag und Deployment im SPIFFE-Format, OIDC-Föderation zu Cloud-Zielen statt gespeicherter Schlüssel. Dazu die Anmerkung vom 16. November 2026: „Hier bin ich unsicher und hätte gerne noch ein Dossier, das mir das Thema aufbereitet.“ Dieses Dossier soll die Entscheidung mit Verständnis bestätigen oder ändern lassen. Es setzt kein Fachwissen über Identitäts-Infrastruktur voraus.</p>
+<div class="callout" data-tone="accent">
+  <h3>Kurzfassung</h3>
+  <ul>
+    <li><b>Das Problem.</b> Studio hält heute viele dauerhafte Nachweise: Modell-Logins der CLIs, SSH-Schlüssel der Hosts, Deploy-Keys und PATs als Rückfall, Ziel-Geheimnisse für Deploys, das Datenbank-Passwort jeder App. Wer einen Host übernimmt, bekommt sie alle, bis jemand sie einzeln rotiert.</li>
+    <li><b>Option A</b> ersetzt sie dort, wo das Ziel es kann, durch kurzlebige Ausweise, die Studio unterschreibt. Dauerhaft bleibt dann im Kern nur ein Schlüssel: der, mit dem Studio unterschreibt. AWS, Google Cloud, Azure, Kubernetes, Anthropic und OpenAI unterstützen das bereits.</li>
+    <li><b>Option B</b> bleibt bei gespeicherten Schlüsseln und investiert in Schutz und Rotation. Billig zu bauen, teuer im Betrieb, und der Aufwand wächst mit jedem Ziel.</li>
+    <li><b>Empfehlung.</b> IP-D10 bei A belassen, aber als Stufenplan schärfen: Studio wird Aussteller und benennt Aufträge ab dem ersten Tag im SPIFFE-Format; zuerst Föderation zu Cloud-Deploy-Zielen, dann Modell-APIs und SSH-Zertifikate für Server; Zertifikate für Hosts und Identitäten für laufende Apps später; eine eigene SPIFFE-Infrastruktur wie SPIRE nur für Firmen, die sie schon haben. Gespeicherte Schlüssel bleiben als sichtbarer Rückfall, wo ein Ziel keine Föderation kann.</li>
+  </ul>
+</div>
+</section>
+
+<section id="begriffe">
+<h2><span class="number">02</span> Begriffe</h2>
+<p>Das Thema klingt nach Fachjargon, folgt aber einem einfachen Bild: einem Dienstausweis. Ein Ausweis nennt, wer jemand ist, wer ihn ausgestellt hat und bis wann er gilt. Wer ihn prüft, vertraut nicht dem Inhaber, sondern der ausstellenden Stelle.</p>
+<table>
+  <thead><tr><th>Begriff</th><th>Bedeutung hier</th></tr></thead>
+  <tbody>
+    <tr><td><b>Workload</b></td><td>Ein Programm, das ohne Mensch arbeitet: ein Agent-Lauf, ein Review-Lauf, ein Deploy-Auftrag, ein Runner-Dienst, eine gehostete App.</td></tr>
+    <tr><td><b>Identität</b></td><td>Der Name, unter dem ein Workload auftritt, zum Beispiel „Lauf 3 der Karte AGT-3876 im Projekt agent-studio“.</td></tr>
+    <tr><td><b>Nachweis</b> (Credential)</td><td>Das, was der Workload vorzeigt, um seine Identität zu belegen: ein Passwort, ein API-Key, ein Token, ein Zertifikat.</td></tr>
+    <tr><td><b>Bearer-Token</b></td><td>Ein Nachweis, der wie Bargeld wirkt: Wer ihn hat, darf ihn benutzen. Wer ihn stiehlt, ebenfalls.</td></tr>
+    <tr><td><b>Langlebig / kurzlebig</b></td><td>Langlebig heißt: gültig bis jemand ihn widerruft, oft Monate oder Jahre. Kurzlebig heißt: läuft nach Minuten oder Stunden von selbst ab.</td></tr>
+    <tr><td><b>Aussteller</b> (Issuer)</td><td>Die Stelle, die Nachweise unterschreibt. Bei Option A wäre das Studio selbst.</td></tr>
+    <tr><td><b>Signatur und öffentlicher Schlüssel</b></td><td>Der Aussteller unterschreibt mit einem geheimen Schlüssel. Jeder Prüfer kann die Unterschrift mit dem zugehörigen öffentlichen Schlüssel kontrollieren. Die öffentlichen Schlüssel liegen in einer Liste, dem JWKS (JSON Web Key Set).</td></tr>
+    <tr><td><b>Audience</b></td><td>Für wen ein Nachweis bestimmt ist. Ein Token mit Audience „AWS“ wird von Anthropic abgelehnt und umgekehrt. Das begrenzt den Schaden, wenn ein Token an der falschen Stelle landet.</td></tr>
+    <tr><td><b>Föderation</b></td><td>Ein Ziel (etwa ein Cloud-Konto) wird einmal so eingerichtet, dass es Nachweisen eines fremden Ausstellers vertraut, wenn bestimmte Angaben darin passen. Danach braucht das Ziel keinen gespeicherten Schlüssel mehr für diesen Workload.</td></tr>
+    <tr><td><b>Token-Austausch</b></td><td>Der Workload tauscht seinen Ausweis beim Ziel gegen einen kurzlebigen Zugang dieses Ziels (RFC 8693, RFC 7523). Das Ziel stellt damit seinen eigenen, eng begrenzten Nachweis aus.</td></tr>
+    <tr><td><b>Vertrauensbereich</b> (Trust Domain)</td><td>Der Namensraum, für den ein Aussteller zuständig ist, etwa eine Studio-Installation. In SPIFFE ist er der erste Teil jedes Namens.</td></tr>
+  </tbody>
+</table>
+</section>
+
+
+<section id="heute">
+<h2><span class="number">03</span> Heutiger Stand</h2>
+<p>Der Stand wurde am 16. November 2026 im Code geprüft. Jede Verbindung zwischen Maschinen beruht heute auf einem Bearer-Geheimnis: einer zufälligen Zeichenkette, die der Server nur als Hash speichert und die auf dem Host in einer nur für den Dienst lesbaren Datei liegt. Wirklich kurzlebig sind vier Dinge: die Installations-Tokens der GitHub App, die SSH-Zertifikate für Host-Operationen, ein Token für die Übergabe an Quality Studio und ein Föderations-Weg zu Cloud Run, der allerdings ein Token braucht, das heute niemand in Studio ausstellen kann.</p>
+<figure class="media-breakout" id="abb-heute"><svg class="diagram" viewBox="0 0 1120 520" role="img" aria-labelledby="heute-title heute-desc"><title id="heute-title">Wer sich heute wem gegenüber womit ausweist</title><desc id="heute-desc">Drei Bereiche. Links der Studio-Server mit dem Secret-Speicher und seinem Haupt-Schlüssel, dem privaten Schlüssel der GitHub App, dem Schlüssel der Host-Zertifizierungsstelle und den Hashes der Bearer-Tokens; signierte Ausweise für Workloads gibt es nicht. In der Mitte die Runner-, Gate- und Review-Hosts: Der Host-Dienst meldet sich mit einem Bearer-Token an, das 30 Tage gilt, und hält dauerhafte Anmeldungen der Modell-CLIs sowie Deploy-Keys oder persönliche Tokens als Rückfall. Studio erreicht die Hosts mit SSH-Zertifikaten von höchstens 59 Minuten. Ein Agent-Lauf erhält ein Repository-Token für höchstens eine Stunde, aber die dauerhafte Modell-Anmeldung als Umgebungsvariable. Ein Deploy-Auftrag nutzt den SSH-Schlüssel des Hosts oder gespeicherte Ziel-Geheimnisse. Rechts die externen Ziele: GitHub, Modell-APIs, Deploy-Ziele und die gehostete App, die ihr Datenbank-Passwort als Datei bekommt und keine eigene Identität hat.</desc>
+<defs><marker id="heute-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead"/></marker><marker id="heute-arrow-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead-warn"/></marker><marker id="heute-arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead-muted"/></marker></defs>
+<rect class="zone" x="16" y="16" width="318" height="488" rx="12"/><text class="zone-label" x="34" y="44">Steuerzone</text>
+<rect class="zone" x="390" y="16" width="334" height="488" rx="12"/><text class="zone-label" x="408" y="44">Hosts</text>
+<rect class="zone" x="790" y="16" width="314" height="488" rx="12"/><text class="zone-label" x="808" y="44">Externe Ziele</text>
+<rect class="node" x="36" y="70" width="278" height="190" rx="10"/><text class="label" x="54" y="100">Studio-Server</text><text class="sub" x="54" y="126">Secret-Speicher, Haupt-Schlüssel</text><text class="sub" x="54" y="148">privater Schlüssel der GitHub App</text><text class="sub" x="54" y="170">Schlüssel der Host-CA</text><text class="sub" x="54" y="192">Hashes der Bearer-Tokens</text><text class="sub" x="54" y="214">Ed25519-Schlüssel für Quality Studio</text><text class="sub" x="54" y="236">(Menschen-Übergabe, nicht Workloads)</text>
+<rect class="gap" x="36" y="290" width="278" height="84" rx="10"/><text class="label" x="54" y="320">Ausweise für Workloads</text><text class="warn-label" x="54" y="344">fehlen: kein Aussteller, keine</text><text class="warn-label" x="54" y="362">SPIFFE-Namen, kein mTLS</text>
+<rect class="node" x="410" y="70" width="294" height="130" rx="10"/><text class="label" x="428" y="100">Host-Dienst</text><text class="sub" x="428" y="124">Runner-Bearer in Datei, 30 Tage</text><text class="sub" x="428" y="146">Modell-Logins der CLIs, dauerhaft</text><text class="sub" x="428" y="168">Deploy-Key oder PAT als Rückfall</text>
+<rect class="node" x="410" y="230" width="294" height="110" rx="10"/><text class="label" x="428" y="260">Agent- oder Review-Lauf</text><text class="sub" x="428" y="284">Repo-Token je Versuch, höchstens 1 h</text><text class="sub" x="428" y="306">Modell-Login als Umgebungsvariable</text>
+<rect class="node" x="410" y="370" width="294" height="110" rx="10"/><text class="label" x="428" y="400">Deploy-Auftrag</text><text class="sub" x="428" y="424">SSH-Schlüssel des Hosts</text><text class="sub" x="428" y="446">Ziel-Geheimnisse aus dem Speicher</text>
+<rect class="ext" x="810" y="70" width="274" height="70" rx="10"/><text class="label" x="828" y="100">GitHub</text><text class="sub" x="828" y="122">Git und API</text>
+<rect class="ext" x="810" y="160" width="274" height="80" rx="10"/><text class="label" x="828" y="190">Modell-APIs</text><text class="sub" x="828" y="212">Anthropic, OpenAI, Google</text>
+<rect class="ext" x="810" y="270" width="274" height="80" rx="10"/><text class="label" x="828" y="300">Deploy-Ziele</text><text class="sub" x="828" y="322">VM per SSH, Kubernetes, Cloud</text>
+<rect class="ext" x="810" y="380" width="274" height="100" rx="10"/><text class="label" x="828" y="410">Gehostete App</text><text class="sub" x="828" y="432">Datenbank-Passwort als Datei</text><text class="sub" x="828" y="454">keine eigene Identität</text>
+<path class="edge-warn" d="M410 110 H318" marker-end="url(#heute-arrow-warn)"/><text class="warn-label" x="336" y="100">Bearer</text><text class="warn-label" x="336" y="128">30 Tage</text>
+<path class="edge" d="M314 180 H406" marker-end="url(#heute-arrow)"/><text class="edge-label" x="334" y="172">SSH-Zert.</text><text class="edge-label" x="334" y="200">≤ 59 min</text>
+<path class="edge" d="M704 255 C750 255 760 120 806 112" marker-end="url(#heute-arrow)"/><text class="edge-label" x="742" y="208">1 h</text>
+<path class="edge-warn" d="M704 160 C750 160 760 130 806 128" marker-end="url(#heute-arrow-warn)"/><text class="warn-label" x="730" y="150">Rückfall</text>
+<path class="edge-warn" d="M704 310 C750 310 760 205 806 200" marker-end="url(#heute-arrow-warn)"/><text class="warn-label" x="730" y="290">dauerhaft</text>
+<path class="edge-warn" d="M704 420 C750 420 760 315 806 310" marker-end="url(#heute-arrow-warn)"/><text class="warn-label" x="730" y="400">dauerhaft</text>
+<path class="edge-muted" d="M704 460 H806" marker-end="url(#heute-arrow-muted)"/><text class="sub" x="726" y="478">Werte</text>
+</svg>
+<figcaption>Abbildung 1 · Heutige Nachweise. Blau: kurzlebig, läuft von selbst ab. Orange: dauerhaft oder mindestens 30 Tage gültig. Der kurzlebige Teil (GitHub-Tokens, SSH-Zertifikate) zeigt, dass das Muster von Option A in Studio schon an zwei Stellen läuft.</figcaption></figure>
+
+<table class="breakout">
+  <thead><tr><th>Wer → wem</th><th>Nachweis heute</th><th>Gültigkeit</th><th>Wo im Code</th></tr></thead>
+  <tbody>
+    <tr><td>Agent-Lauf → GitHub</td><td>Installations-Token der GitHub App, je Host und Rolle in einer Git-Credential-Datei; im Arbeits-Container ein eigenes Token je Versuch, nur lesend, an das Lease gebunden (SM-11)</td><td>höchstens 1 Stunde; Versuchs-Token wird nach Lease-Ende widerrufen</td><td><code>contracts/TaskServer.Contracts/GitHubApp/GitHubAppBroker.cs</code>, <code>runner/RepositoryCredentialSync.cs</code>, <code>task-server/AttemptCredentials/GitHubAppTokenIssuer.cs</code></td></tr>
+    <tr><td>Studio → GitHub</td><td>privater Schlüssel und Client-Secret der GitHub App, im Secret-Provider nur für die Plattform lesbar</td><td>dauerhaft</td><td><code>backend/Features/GitHubApp/SecretProviderGitHubAppVault.cs</code>, <code>backend/Features/Secrets/SecretAccessPolicy.cs</code></td></tr>
+    <tr><td>Host → GitHub (Rückfall)</td><td>Deploy-Key je Host, PAT oder OAuth-Token in einer Helper-Datei, lesender PAT für Review-Hosts, PAT für das Anlegen von Repositories</td><td>dauerhaft oder bis zum Ablauf des PAT</td><td><code>runner/RunnerFirstRunGitCredentials.cs</code>, <code>runner/ProtectedGitCredentialHost.cs</code>, <code>runner/ReviewRepositoryCredentials.cs</code>, <code>backend/Features/Registry/ProjectRepositoryProvisioning.cs</code></td></tr>
+    <tr><td>Agent-Lauf → Modell-APIs</td><td>Claude: OAuth-Token aus <code>claude setup-token</code> oder API-Key in <code>/etc/agent-runner/provider-auth.env</code>, als Umgebungsvariable an die CLI; Codex: <code>auth.json</code> aus der Geräte-Anmeldung; lokal werden die Login-Dateien des Operators in jedes Aufgaben-Home verlinkt oder kopiert</td><td>dauerhaft (erneuert sich selbst)</td><td><code>backend/Features/Management/ProviderAuthProvisioning.cs</code>, <code>runner/ProviderAuthEnvironment.cs</code>, <code>runner/ProviderCredentialMonitor.cs</code>, <code>cli-hosting/TaskCleanContextStore.cs</code></td></tr>
+    <tr><td>Runner-, Review- und Gate-Host → Task Server oder Studio</td><td>Bearer-Token (<code>ats_…</code> beziehungsweise <code>rnr.…</code>) aus einer Einmal-Anmeldung; an Host, Rolle und Projekte gebunden (SM-9); Rotation mit Überlappung; Pull-Gate mit eigenem Bearer; kein mTLS</td><td>30 Tage; Einmal-Code 15 Minuten</td><td><code>task-server/TaskServerPrincipalStore.cs</code>, <code>backend/Features/Security/AccessSecurityStore.cs</code>, <code>runner/RunnerEnrollmentCommand.cs</code>, <code>backend/Features/Pipeline/PullGateDaemon.cs</code></td></tr>
+    <tr><td>Studio und Engine → Task Server</td><td>Bootstrap-Bearer aus Datei</td><td>ohne Ablauf</td><td><code>task-server/TaskServerBootstrapOptions.cs</code></td></tr>
+    <tr><td>Studio → Host (Operationen)</td><td>OpenSSH-Nutzer-Zertifikat der Studio-Host-CA, feste Befehlsliste, Widerruf per KRL (SM-6); der CA-Schlüssel liegt als Datei</td><td>höchstens 59 Minuten; CA-Schlüssel dauerhaft</td><td><code>backend/Features/Security/HostCertificates/HostCertificateAuthority.cs</code></td></tr>
+    <tr><td>Deploy-Auftrag → Secret-Provider</td><td>Runner-Bearer plus Scope <code>runner.deploy</code>, Lease-Token des Jobs und passender Host; Läufe brauchen ein lebendes Lease und deklarierte Namen</td><td>so lange wie das Lease</td><td><code>backend/Features/Secrets/SecretWorkloadBinding.cs</code>, <code>backend/Features/Secrets/SecretEndpoints.cs</code></td></tr>
+    <tr><td>Deploy-Auftrag → Ziel</td><td>Live-Weg: SSH-Schlüssel des Hosts oder Dateien unter <code>/etc/agent-host/secrets</code>. Die Adapter aus AGT-3263 (SSH, Kubernetes mit kubeconfig, Cloud Run mit Föderation) lesen ihre Zugänge aus dem Secret-Provider; Cloud Run erwartet ein vom Betreiber hinterlegtes OIDC-Token, weil Studio keines ausstellt. Die Adapter werden bisher nur in Tests aufgerufen.</td><td>dauerhaft</td><td><code>runner/DeployHostCommand.cs</code>, <code>runner/SshDeployExecutor.cs</code>, <code>runner/DeployAdapters/CloudRunDeployAdapter.cs</code>, <code>runner/DeployAdapters/KubernetesDeployAdapter.cs</code></td></tr>
+    <tr><td>Gehostete App → Datenbank und Geheimnisse</td><td>Werte aus <code>secret://</code>-Verweisen, beim Deploy als Env-Datei oder als Dateien im flüchtigen Speicher geliefert (AGT-3246); die App hat keine eigene Identität</td><td>dauerhaft (das Passwort selbst)</td><td><code>backend/Features/Secrets/ProjectSecretBindings.cs</code>, <code>runner/RunTargets/RunTargetSecrets.cs</code></td></tr>
+    <tr><td>Secret-Provider → externer Speicher</td><td>Vault/OpenBao-Token oder 1Password-Connect-Bearer (AGT-3249); keine Anmeldung per JWT, AppRole oder Kubernetes</td><td>dauerhaft</td><td><code>backend/Features/Secrets/External/HttpSecretStore.cs</code>, <code>backend/Features/Secrets/External/SecretStoreRouting.cs</code></td></tr>
+    <tr><td>Skripte und Dienste → Studio</td><td>Dienstkonto-Tokens und API-Tokens (AGT-3228), Sitzungen des Operator-Agenten (SM-1)</td><td>90 Tage, 30 Tage, 8 Stunden</td><td><code>backend/Features/Security/Iam/AccessSecurityStore.Iam.cs</code>, <code>backend/Features/Security/Iam/AccessSecurityStore.OperatorAgents.cs</code></td></tr>
+  </tbody>
+</table>
+<h3>Kern des Problems</h3>
+<ul>
+  <li><b>Die Modell-Logins.</b> Sie gelten dauerhaft, liegen auf jedem Host und kommen als Umgebungsvariable in jeden Lauf. SM-11 hält sie bewusst aus Containern heraus, bis es Tokens je Versuch gibt. Ein Agent, der eine Anweisung aus einer fremden Datei befolgt, kann sie lesen.</li>
+  <li><b>Die Ziel-Zugänge für Deploys.</b> SSH-Schlüssel, kubeconfig und Cloud-Schlüssel öffnen Produktion und laufen nicht ab.</li>
+  <li><b>Die Haupt-Schlüssel.</b> Haupt-Schlüssel des Secret-Speichers (<code>backend/Features/Secrets/BuiltIn/KeyEncryptionKeySource.cs</code>), Schlüssel der Host-CA und privater Schlüssel der GitHub App. Sie bleiben in jeder Option; Option A fügt einen weiteren hinzu, nimmt dafür viele andere weg.</li>
+</ul>
+<p>Bausteine, auf denen Option A aufsetzen kann, gibt es bereits: Die Bindung von Lease, Job und Host an einen Workload (<code>SecretWorkloadBinding.cs</code>) ist genau die Prüfung, die ein Aussteller vor der Ausgabe braucht. Die Host-CA signiert schon kurzlebige SSH-Zertifikate. Und Studio veröffentlicht bereits einen JWKS-Endpunkt (<code>/.well-known/agent-studio/jwks.json</code> in <code>backend/Features/QualityStudio/QualityStudioEndpoints.cs</code>), allerdings für die Übergabe einer Menschen-Sitzung an Quality Studio, nicht für Workloads.</p>
+</section>
+<section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+<h2><span class="number">04</span> Alternativen</h2>
+<p>IP-D10 stellte zwei Optionen gegenüber. Beim genaueren Hinsehen zerfällt Option A in zwei Wege, die sich im Aufwand stark unterscheiden, und es gibt einen dritten Weg über einen vorhandenen Dienst. Die Abschnitte 05 und 06 erklären A und B im Einzelnen, Abschnitt 07 vergleicht alle vier.</p>
+<div class="variant-grid">
+  <article class="variant"><h3>A1 · Studio als Aussteller, schrittweise</h3><p>Studio unterschreibt kurzlebige JWT-Ausweise (JWT-SVIDs) mit Namen im SPIFFE-Format, gebunden an Lease, Freigabe oder Host. Ziele mit Föderation vertrauen Studio direkt; Server per SSH bekommen kurzlebige Zertifikate der vorhandenen Host-CA. Zertifikate für Hosts (mTLS) und Identitäten für laufende Apps folgen später. Kein zusätzlicher Dienst auf dem Einzelplatz.</p></article>
+  <article class="variant"><h3>A2 · Volle SPIFFE-Infrastruktur sofort</h3><p>SPIRE-Server in der Steuerzone, SPIRE-Agent auf jedem Host, X.509-SVIDs und mTLS für alle internen Verbindungen, JWT-SVIDs für Ziele, OIDC-Discovery-Provider. Am vollständigsten, aber zwei weitere Dienste je Installation; SPIRE weiß nichts von Karten, Leases und Freigaben, Studio müsste jede Registrierung laufend nachführen.</p></article>
+  <article class="variant"><h3>B · Gespeicherte Schlüssel je Ziel</h3><p>Je Ziel ein dauerhafter Zugang im Secret-Provider, verschlüsselt, nur über ein Lease ausgegeben, mit Inventar und Rotation. Der heutige Weg, ausgebaut. Wenig Bauaufwand, hoher und wachsender Betriebsaufwand.</p></article>
+  <article class="variant"><h3>C · Externer Aussteller als Pflicht</h3><p>Vault oder OpenBao (Identity Tokens, SSH-Zertifikate, dynamische Datenbank-Zugänge) oder der Identitätsdienst einer Firma stellt die Ausweise aus. Ausgereift, aber jede Installation muss den Dienst betreiben, und er fällt unabhängig von Studio aus. Als Adapter unter A1 bleibt er für Firmen möglich.</p></article>
+</div>
+</section>
+<section id="option-a">
+<h2><span class="number">05</span> Option A: signierte Identität und Föderation</h2>
+
+<h3>5.1 Workload-Identität</h3>
+<p>Statt jedem Auftrag einen Schlüssel mitzugeben, bekommt jeder Auftrag beim Start einen Ausweis von Studio: einen Namen, unterschrieben, mit kurzer Gültigkeit und für genau ein Ziel bestimmt. Das Ziel ist einmal so eingerichtet, dass es Ausweisen von Studio vertraut, aber nur für bestimmte Namen. Es tauscht den Ausweis gegen einen eigenen, ebenfalls kurzlebigen Zugang. Gestohlen ist so ein Ausweis nach Minuten wertlos, und er öffnet nur das eine Ziel, für das er ausgestellt wurde.</p>
+<p>Der Unterschied zu heute liegt nicht in der Kryptografie, sondern darin, <em>wo das Dauerhafte liegt</em>. Bei gespeicherten Schlüsseln liegt je Ziel ein dauerhaftes Geheimnis in Studio und in jedem Auftrag, der es benutzt. Bei Föderation gibt es genau ein dauerhaftes Geheimnis: den Signatur-Schlüssel des Ausstellers. Er verlässt Studio nie.</p>
+
+<h3>5.2 SPIFFE-IDs und SVIDs</h3>
+<p><a href="#q-spiffe">SPIFFE</a> (Secure Production Identity Framework For Everyone, ein CNCF-Standard) legt zwei Dinge fest: wie Workload-Namen aussehen und in welcher Form ein Ausweis vorgezeigt wird. Ein Name ist eine URI aus Vertrauensbereich und Pfad. Für Studio schlägt dieses Dossier vor:</p>
+<table>
+  <thead><tr><th>Workload</th><th>SPIFFE-ID</th></tr></thead>
+  <tbody>
+    <tr><td>Runner- oder Gate-Host</td><td><code>spiffe://studio.beispiel.de/host/&lt;host-id&gt;</code></td></tr>
+    <tr><td>Agent- oder Review-Lauf</td><td><code>spiffe://studio.beispiel.de/run/&lt;projekt&gt;/&lt;karte&gt;/&lt;versuch&gt;</code></td></tr>
+    <tr><td>Deploy-Auftrag</td><td><code>spiffe://studio.beispiel.de/deploy/&lt;projekt&gt;/&lt;umgebung&gt;</code></td></tr>
+    <tr><td>Gehostete App</td><td><code>spiffe://studio.beispiel.de/app/&lt;projekt&gt;/&lt;umgebung&gt;/&lt;app&gt;</code></td></tr>
+    <tr><td>Dienst der Steuerzone</td><td><code>spiffe://studio.beispiel.de/control/&lt;dienst&gt;</code></td></tr>
+  </tbody>
+</table>
+<p>Der Deploy-Name endet bewusst bei der Umgebung. Manche Ziele vergleichen den Namen nur exakt (Azure) oder nur über <code>sub</code> und <code>aud</code> (AWS). Release, Karte, Lauf und Freigabe stehen deshalb als zusätzliche Angaben im Token, nicht im Namen. Eine Installation ohne eigene Domain nimmt als Vertrauensbereich ihre Installations-Kennung, etwa <code>inst-7f3a.agent-studio.internal</code>; der Bereich muss kein registrierter DNS-Name sein.</p>
+<p>Den Ausweis nennt SPIFFE <b>SVID</b> (SPIFFE Verifiable Identity Document). Es gibt ihn in zwei Formen:</p>
+<ul>
+  <li><b>JWT-SVID</b>: ein signiertes JSON-Token. Der Name steht in <code>sub</code>, das Ziel in <code>aud</code>, die Gültigkeit in <code>exp</code>. Das ist dasselbe Format, das OIDC-Föderation erwartet. Clouds, Kubernetes und inzwischen Anthropic und OpenAI nehmen es an.</li>
+  <li><b>X.509-SVID</b>: ein kurzlebiges Zertifikat mit dem Namen als URI im Zertifikat. Es dient zur gegenseitigen TLS-Anmeldung (mTLS) zwischen eigenen Diensten, etwa Runner-Host und Server. Der private Schlüssel bleibt beim Workload; abgefangen werden kann nur der öffentliche Teil.</li>
+</ul>
+<p>SPIFFE beschreibt außerdem eine lokale Schnittstelle (Workload API), über die ein Programm seinen Ausweis abholt, ohne selbst ein Geheimnis zu kennen, und die Föderation zwischen Vertrauensbereichen. Die bekannteste Umsetzung ist <a href="#q-spire">SPIRE</a>. Für Studio ist wichtig: Das <em>Format</em> lässt sich sofort übernehmen, ohne SPIRE zu betreiben. Studio stellt die Ausweise ohnehin selbst aus, weil nur Studio weiß, welcher Lauf zu welcher Karte und welcher Deploy zu welcher Freigabe gehört.</p>
+<pre><code>{
+  "iss": "https://studio.beispiel.de/oidc",
+  "sub": "spiffe://studio.beispiel.de/deploy/memowikis/prod",
+  "aud": "sts.amazonaws.com",
+  "iat": 1794830400,
+  "exp": 1794831000,
+  "jti": "5c1e…",
+  "studio_project": "memowikis",
+  "studio_environment": "prod",
+  "studio_release": "r-142",
+  "studio_card": "MW-88",
+  "studio_run": "deploy-9f2c",
+  "studio_approval": "human:owner"
+}</code></pre>
+<p class="dim">Beispiel eines JWT-SVID für einen Prod-Deploy: zehn Minuten gültig (<code>exp − iat = 600</code>), nur für AWS STS bestimmt, mit Release, Karte und Freigabe als Zusatzangaben.</p>
+
+<h3>5.3 OIDC-Föderation</h3>
+<p>OIDC (OpenID Connect) regelt, wie ein Aussteller seine öffentlichen Schlüssel bekannt gibt: unter <code>&lt;aussteller&gt;/.well-known/openid-configuration</code> steht, wo die Schlüsselliste (JWKS) liegt. Ein Ziel, das dem Aussteller vertraut, holt diese Liste, prüft damit die Unterschrift und dann seine eigene Regel. Abbildung 2 zeigt den Ablauf.</p>
+<figure class="media-breakout" id="abb-foederation"><svg class="diagram" viewBox="0 0 1120 470" role="img" aria-labelledby="flow-title flow-desc"><title id="flow-title">Ablauf der OIDC-Föderation am Beispiel eines Deploys nach AWS</title><desc id="flow-desc">Einmalig richtet der Betreiber im AWS-Konto Studio als vertrauenswürdigen Aussteller ein und legt eine Rolle mit einer Vertrauensregel an, die nur den Namen des Prod-Deploys von MemoWikis und die Audience sts.amazonaws.com zulässt. Studio veröffentlicht seine öffentlichen Schlüssel unter einer festen HTTPS-Adresse. Beim Deploy fragt der Deploy-Auftrag nach der Freigabe bei Studio einen Ausweis an (Schritt 1). Studio prüft Lease und Freigabe und gibt ein signiertes Token mit zehn Minuten Laufzeit aus (Schritt 2). Der Auftrag reicht es bei AWS STS ein (Schritt 3). STS prüft die Unterschrift mit den veröffentlichten Schlüsseln und die Vertrauensregel (Schritt 4) und gibt einen Rollen-Zugang für höchstens eine Stunde zurück (Schritt 5). Damit spielt der Auftrag das Release ein (Schritt 6). Nirgends liegt ein dauerhafter AWS-Schlüssel.</desc>
+<defs><marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead"/></marker><marker id="flow-arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead-muted"/></marker></defs>
+<rect class="zone" x="16" y="16" width="520" height="438" rx="12"/><text class="zone-label" x="36" y="44">Studio-Installation</text>
+<rect class="zone" x="584" y="16" width="520" height="438" rx="12"/><text class="zone-label" x="604" y="44">Ziel: AWS-Konto</text>
+<rect class="focus" x="44" y="70" width="230" height="96" rx="10"/><text class="label" x="62" y="100">Aussteller</text><text class="sub" x="62" y="122">signiert mit geheimem Schlüssel</text><text class="sub" x="62" y="142">prüft Lease und Freigabe</text>
+<rect class="node" x="300" y="70" width="210" height="96" rx="10"/><text class="label" x="318" y="100">Öffentliche Schlüssel</text><text class="sub" x="318" y="122">/.well-known/openid-</text><text class="sub" x="318" y="140">configuration und JWKS</text>
+<rect class="node" x="44" y="290" width="466" height="140" rx="10"/><text class="label" x="62" y="320">Deploy-Auftrag MemoWikis → prod</text><text class="sub" x="62" y="344">sub: spiffe://studio.beispiel.de/deploy/memowikis/prod</text><text class="sub" x="62" y="364">aud: sts.amazonaws.com · gültig 10 Minuten</text><text class="sub" x="62" y="384">weitere Angaben: Release r-142, Karte MW-88, Freigabe</text><text class="sub" x="62" y="404">kein gespeicherter AWS-Schlüssel</text>
+<rect class="node" x="612" y="70" width="230" height="96" rx="10"/><text class="label" x="630" y="100">IAM-OIDC-Anbieter</text><text class="sub" x="630" y="122">Aussteller-Adresse und</text><text class="sub" x="630" y="140">Audience, einmal eingerichtet</text>
+<rect class="node" x="862" y="70" width="222" height="96" rx="10"/><text class="label" x="880" y="100">Rolle deploy-prod</text><text class="sub" x="880" y="122">Regel: sub = …/memowikis/prod</text><text class="sub" x="880" y="140">und aud = sts.amazonaws.com</text>
+<rect class="focus" x="612" y="200" width="472" height="70" rx="10"/><text class="label" x="630" y="230">AWS STS · AssumeRoleWithWebIdentity</text><text class="sub" x="630" y="252">prüft Unterschrift, Ablauf, sub und aud</text>
+<rect class="ext" x="612" y="330" width="472" height="100" rx="10"/><text class="label" x="630" y="360">Zielumgebung</text><text class="sub" x="630" y="382">Container-Dienst, Registry, Speicher</text><text class="sub" x="630" y="402">nur mit dem Rollen-Zugang erreichbar</text>
+<path class="edge" d="M160 290 V170" marker-end="url(#flow-arrow)"/><circle class="step" cx="146" cy="232" r="11"/><text class="step-text" x="142" y="236">1</text>
+<path class="edge" d="M220 170 V290" marker-end="url(#flow-arrow)"/><circle class="step" cx="234" cy="232" r="11"/><text class="step-text" x="230" y="236">2</text>
+<path class="edge" d="M510 330 C560 330 560 250 608 240" marker-end="url(#flow-arrow)"/><circle class="step" cx="556" cy="296" r="11"/><text class="step-text" x="552" y="300">3</text>
+<path class="edge-muted" d="M700 200 V170" marker-end="url(#flow-arrow-muted)"/>
+<path class="edge-muted" d="M960 200 V170" marker-end="url(#flow-arrow-muted)"/>
+<path class="edge-muted" d="M612 118 C560 118 560 118 514 118" marker-end="url(#flow-arrow-muted)"/><circle class="step" cx="562" cy="104" r="11"/><text class="step-text" x="558" y="108">4</text>
+<path class="edge" d="M612 258 C570 270 560 350 514 360" marker-end="url(#flow-arrow)"/><circle class="step" cx="574" cy="330" r="11"/><text class="step-text" x="570" y="334">5</text>
+<path class="edge" d="M510 410 C560 410 560 390 608 385" marker-end="url(#flow-arrow)"/><circle class="step" cx="562" cy="430" r="11"/><text class="step-text" x="558" y="434">6</text>
+</svg>
+<figcaption>Abbildung 2 · Föderation ersetzt den gespeicherten Cloud-Schlüssel. 1 Ausweis anfragen · 2 signiertes Token, 10 Minuten · 3 bei AWS STS einreichen · 4 STS holt die öffentlichen Schlüssel und prüft die Regel · 5 Rollen-Zugang, höchstens 1 Stunde · 6 Release einspielen. GCP und Azure arbeiten gleich, mit eigenem Namen für die Bausteine.</figcaption></figure>
+
+<h4>Bekanntes Vorbild: GitHub Actions nach AWS</h4>
+<p>Das verbreitetste Beispiel ist GitHub Actions. Ein Workflow mit der Berechtigung <code>id-token: write</code> bekommt von <code>https://token.actions.githubusercontent.com</code> ein Token mit etwa <code>sub = repo:org/repo:environment:production</code>. Im AWS-Konto ist GitHub als OIDC-Anbieter eingetragen; die Rolle erlaubt <code>sts:AssumeRoleWithWebIdentity</code> nur, wenn <code>sub</code> und <code>aud</code> passen. Der Workflow erhält Rollen-Zugänge für 15 Minuten bis zur eingestellten Höchstdauer der Rolle. In GitHub liegt kein AWS-Schlüssel. Studio würde genau die Rolle von GitHub übernehmen, mit eigener Aussteller-Adresse.</p>
+<h4>Studio nach AWS</h4>
+<p>Einmalig: IAM-OIDC-Anbieter mit der Aussteller-Adresse von Studio und der Audience <code>sts.amazonaws.com</code>; je Umgebung eine Rolle mit Bedingung <code>studio.beispiel.de/oidc:sub = spiffe://studio.beispiel.de/deploy/memowikis/prod</code>. AWS holt die Schlüssel selbst und verlangt dafür eine öffentlich erreichbare HTTPS-Adresse. Für Kubernetes auf EKS gilt dieselbe Rolle; der Cluster-Zugang wird über einen Zugriffseintrag an die Rolle gebunden.</p>
+<h4>Studio nach Google Cloud</h4>
+<p>Einmalig: ein Workload-Identity-Pool mit einem OIDC-Anbieter für Studio. Eine Zuordnung übersetzt Angaben aus dem Token, etwa <code>google.subject = assertion.sub</code> und <code>attribute.umgebung = assertion.studio_environment</code>, und eine Bedingung begrenzt, welche Tokens überhaupt angenommen werden. Danach erhält der Name direkt Rechte oder darf ein Dienstkonto nutzen. Google kann die Schlüsselliste auch hochgeladen bekommen; die Aussteller-Adresse muss dann nicht öffentlich erreichbar sein.</p>
+<h4>Studio nach Azure</h4>
+<p>Einmalig: an einer App-Registrierung oder einer verwalteten Identität eine föderierte Anmeldeinformation mit Aussteller, <code>sub</code> und Audience <code>api://AzureADTokenExchange</code>. Alle drei Werte werden exakt verglichen, Platzhalter gibt es nicht, und je Identität sind höchstens 20 solcher Einträge erlaubt; für Muster bietet Microsoft flexible Einträge mit einer eingeschränkten Ausdruckssprache. Deshalb ist der Deploy-Name je Umgebung stabil gewählt.</p>
+<h4>Kubernetes</h4>
+<p>Kubernetes ist selbst ein Aussteller: Jeder Pod bekommt ein projiziertes Dienstkonto-Token, gebunden an den Pod, mit eigener Audience und Ablauf, das der Kubelet vor Ablauf erneuert. Das ist das Vorbild für Option A. Für Studio zählen zwei Richtungen:</p>
+<ul>
+  <li><b>Studio deployt in einen Cluster.</b> Bei verwalteten Clustern (EKS, GKE, AKS) über die Cloud-Föderation oben. Bei selbst betriebenen Clustern trägt der Betreiber Studio als JWT-Aussteller in die Authentifizierungs-Konfiguration des API-Servers ein (strukturierte Konfiguration, seit Version 1.30 standardmäßig aktiv) und bindet per RBAC den Namen <code>…/deploy/&lt;projekt&gt;/&lt;umgebung&gt;</code> an einen Namespace. Die kubeconfig mit dauerhaftem Token entfällt.</li>
+  <li><b>Eine App läuft in einem Cluster.</b> Sie nutzt das Pod-Token des Clusters und nicht Studios Ausweis. Studio muss nur wissen, welcher Name welcher App gehört.</li>
+</ul>
+<h4>Modell-APIs</h4>
+<p>Seit 2026 bieten <a href="#q-anthropic-wif">Anthropic</a> und <a href="#q-openai-wif">OpenAI</a> Workload Identity Federation an. Bei Anthropic legt man einen Aussteller, ein Dienstkonto und eine Regel an; die Regel prüft etwa <code>sub</code> per Präfix (<code>spiffe://studio.beispiel.de/run/agent-studio/*</code>) und die Audience. Der Lauf tauscht sein JWT nach RFC 7523 gegen ein Anthropic-Token mit einstellbarer Laufzeit (Standard eine Stunde, im Assistenten zehn Minuten). Der Aussteller muss öffentlich per HTTPS auf Port 443 erreichbar sein, oder man hinterlegt die Schlüsselliste direkt. OpenAI nimmt OIDC-Tokens und SPIFFE-JWT-SVIDs an. Zwei Grenzen: Ein gesetztes <code>ANTHROPIC_API_KEY</code> hat beim SDK Vorrang und überdeckt die Föderation still; und persönliche Abo-Anmeldungen der CLIs sind keine Workload-Zugänge und bleiben, wie sie sind. Gemini ist über Vertex AI mit der Google-Föderation erreichbar.</p>
+<h4>Server per SSH</h4>
+<p>SSH kennt kein OIDC, aber dasselbe Prinzip: Studio betreibt eine SSH-Zertifizierungsstelle. Die VM vertraut ihr einmal (<code>TrustedUserCAKeys</code>). Für jeden Deploy erzeugt der Auftrag ein Schlüsselpaar, Studio signiert den öffentlichen Teil für fünf Minuten und den Login <code>deploy</code>. Umgekehrt trägt die VM ein Host-Zertifikat, sodass der Auftrag nicht dem ersten Kontakt vertrauen muss. Der dauerhafte private Schlüssel auf dem Runner entfällt.</p>
+<h4>GitHub</h4>
+<p>GitHub nimmt für Git und API keine fremden Ausweise an. Studio nutzt bereits eine GitHub App: Deren Installations-Tokens gelten eine Stunde und gelten je Repository. Das ist schon das Muster von Option A. Der dauerhafte Rest ist der private Schlüssel der App; er gehört wie der Signatur-Schlüssel des Ausstellers in einen geschützten Signierer.</p>
+
+<h3>5.4 Betrieb in Studio</h3>
+<table class="breakout">
+  <thead><tr><th>Baustein</th><th>Was er tut</th><th>Einzelplatz</th><th>Firma</th></tr></thead>
+  <tbody>
+    <tr><td><b>Aussteller</b></td><td>Gibt JWT-SVIDs aus, nur für einen Lauf mit gültigem Lease, einen Deploy nach Freigabe, einen angemeldeten Host. Schreibt jede Ausgabe ins Audit.</td><td>Teil des Studio-Servers, kein eigener Dienst</td><td>derselbe, optional hinter Vault/OpenBao oder SPIRE</td></tr>
+    <tr><td><b>Signatur-Schlüssel</b></td><td>Unterschreibt die Ausweise. Wer ihn hat, kann sich bei jedem vertrauenden Ziel als jeder Workload ausgeben.</td><td>Schlüsselspeicher des Betriebssystems oder verschlüsselte Datei, wie der Haupt-Schlüssel des Secret-Providers</td><td>KMS, HSM oder Vault Transit; Studio sieht den Schlüssel nie</td></tr>
+    <tr><td><b>Veröffentlichung</b></td><td><code>/.well-known/openid-configuration</code> und JWKS unter einer festen HTTPS-Adresse. Enthält nur öffentliche Schlüssel.</td><td>über die vorhandene Edge oder als zwei statische Dateien bei einem beliebigen HTTPS-Host; Ziele mit Upload (Google, Anthropic) auch ohne</td><td>über die Edge der Installation</td></tr>
+    <tr><td><b>Rotation</b></td><td>Neuer Schlüssel steht mindestens einen Tag vor der ersten Nutzung in der Liste; der alte bleibt, bis das letzte damit signierte Token abgelaufen ist.</td><td>automatisch, z. B. alle 90 Tage</td><td>automatisch, nach Firmenregel</td></tr>
+    <tr><td><b>Vertrauensbereich und Namen</b></td><td>Ein Bereich je Installation, Namensschema wie in 5.2.</td><td>Installations-Kennung</td><td>Firmen-Domain; Föderation mit anderen Bereichen möglich</td></tr>
+    <tr><td><b>Ziel-Einrichtung</b></td><td>Studio erzeugt die Vertrauensregel je Ziel als Text zum Einfügen (AWS-Richtlinie, gcloud-Befehl, Azure-Eintrag, Kubernetes-Konfiguration) und prüft danach einen Probetausch.</td><td>einmal je Ziel</td><td>auch als Terraform-Baustein</td></tr>
+    <tr><td><b>SSH-Zertifizierungsstelle</b></td><td>Signiert kurzlebige Nutzer- und Host-Zertifikate.</td><td>ein zweiter Schlüssel im selben Speicher</td><td>derselbe oder Vault SSH</td></tr>
+    <tr><td><b>Später: X.509-SVIDs</b></td><td>Kurzlebige Zertifikate für mTLS zwischen Hosts und Server.</td><td>erst bei entfernten Hosts</td><td>eigene CA oder SPIRE</td></tr>
+  </tbody>
+</table>
+
+<h3>5.5 Änderungen für Lauf, Deploy und App</h3>
+<table>
+  <thead><tr><th></th><th>Heute</th><th>Mit Option A</th></tr></thead>
+  <tbody>
+    <tr><td><b>Agent-Lauf</b></td><td>Dauerhafter Modell-Login des Hosts als Umgebungsvariable; GitHub-Token je Host oder je Versuch, höchstens eine Stunde.</td><td>Der Runner legt für den Lauf ein JWT-SVID mit Audience Anthropic oder OpenAI in den flüchtigen Speicher des Containers und ersetzt es alle paar Minuten, solange das Lease lebt (Anthropic nimmt jedes Token nur einmal an). Getauscht wird es gegen ein Modell-Token mit zehn Minuten Laufzeit, von der CLI selbst, falls sie den Austausch beherrscht, sonst vom Runner über einen Helfer der CLI. Kein API-Key im Container. Endet das Lease, verliert der Lauf den Modell-Zugang spätestens zehn Minuten später. GitHub bleibt beim Installations-Token je Repository.</td></tr>
+    <tr><td><b>Deploy</b></td><td>SSH-Schlüssel des Hosts oder hinterlegte Ziel-Zugänge (Schlüssel, kubeconfig, Subject-Token), dauerhaft.</td><td>Nach der Freigabe stellt Studio dem Auftrag einen Ausweis für genau dieses Ziel aus; der Auftrag tauscht ihn gegen einen Cloud-Zugang für höchstens eine Stunde oder ein SSH-Zertifikat für fünf Minuten. Beim Ziel steht nur die Regel, in Studio kein Ziel-Schlüssel.</td></tr>
+    <tr><td><b>Gehostete App</b></td><td>Datenbank-URL und Passwörter aus dem Secret-Provider, beim Deploy als Datei geliefert; keine eigene Identität.</td><td>Zunächst unverändert: Der Deploy liefert die App-Geheimnisse beim Start (IP-D7, Lieferweg 7.7). In W4 bekommt die App eine eigene Identität, holt ihre Geheimnisse selbst und meldet sich bei Cloud-Datenbanken mit kurzlebigen IAM-Tokens an (etwa RDS-IAM, Cloud SQL IAM, Entra-Anmeldung für PostgreSQL). Für eine selbst betriebene Datenbank bleibt ein gespeichertes Passwort oder ein dynamischer Zugang aus Vault/OpenBao.</td></tr>
+  </tbody>
+</table>
+</section>
+<section id="option-b">
+<h2><span class="number">06</span> Option B: gespeicherte Schlüssel je Ziel</h2>
+<h3>Ablauf</h3>
+<p>Für jedes Ziel erzeugt der Betreiber beim Ziel einen dauerhaften Zugang und legt ihn im Secret-Provider ab: einen AWS-Zugangsschlüssel eines IAM-Nutzers, eine JSON-Schlüsseldatei eines Google-Dienstkontos, ein Client-Secret einer Azure-App-Registrierung, einen privaten SSH-Schlüssel, eine kubeconfig mit Token, einen API-Key je Modell-Anbieter. Studio verschlüsselt den Wert (ein Daten-Schlüssel je Geheimnis, ein Haupt-Schlüssel außerhalb des Datenträgers), zeigt ihn Menschen nicht wieder an und gibt ihn nur an einen Auftrag mit gültigem Lease heraus. Das ist der heutige Weg, weiter ausgebaut, und entspricht IP-D7 und IP-D8.</p>
+<h3>Kosten der Rotation</h3>
+<p>Ein gespeicherter Schlüssel wird nicht von selbst ungültig. Rotation heißt jedes Mal: neuen Schlüssel beim Ziel erzeugen, im Speicher hinterlegen, alle Nutzer auf den neuen Wert bringen, prüfen, alten widerrufen. Studio kann das für Ziele mit API automatisieren, braucht dafür aber beim Ziel das Recht, Schlüssel zu verwalten, also einen noch mächtigeren dauerhaften Zugang.</p>
+<table>
+  <thead><tr><th>Schlüssel</th><th>Ablauf beim Ziel</th><th>Rotation</th></tr></thead>
+  <tbody>
+    <tr><td>AWS-Zugangsschlüssel (IAM-Nutzer)</td><td>keiner; AWS empfiehlt Rollen statt Nutzer-Schlüssel, Security Hub prüft auf 90 Tage</td><td>zwei Schlüssel je Nutzer erlauben Überlappung; manuell oder per Skript</td></tr>
+    <tr><td>Google-Dienstkonto-Schlüssel (JSON)</td><td>standardmäßig keiner; in neuen Organisationen ist das Erzeugen solcher Schlüssel per Richtlinie zunächst gesperrt</td><td>neuer Schlüssel, Verteilung, alten löschen; Google rät zur Föderation</td></tr>
+    <tr><td>Azure-Client-Secret</td><td>im Portal höchstens 24 Monate</td><td>vor Ablauf erneuern, sonst bricht der Deploy</td></tr>
+    <tr><td>Privater SSH-Schlüssel</td><td>keiner</td><td>öffentlichen Teil auf jedem Ziel tauschen</td></tr>
+    <tr><td>kubeconfig mit Dienstkonto-Token</td><td>je nach Erzeugung unbegrenzt oder fest</td><td>Token neu ausstellen, Datei tauschen</td></tr>
+    <tr><td>Modell-API-Key</td><td>standardmäßig keiner</td><td>neuer Key in der Konsole des Anbieters, alten löschen</td></tr>
+  </tbody>
+</table>
+<h3>Kosten des Schutzes</h3>
+<ul>
+  <li><b>Haupt-Schlüssel des Speichers</b> außerhalb des Datenträgers verwahren (Schlüsselspeicher des Betriebssystems, KMS oder ein externer Speicher), sonst liegt mit einer Sicherung alles offen.</li>
+  <li><b>Inventar</b>: wo welcher Schlüssel benutzt wird, wer ihn zuletzt gesetzt hat, wann er abläuft. Ohne Inventar ist eine Rotation nach einem Vorfall ein Suchen.</li>
+  <li><b>Kalender und Erinnerungen</b> für jeden Schlüssel mit Ablauf, und eine Regel für die ohne Ablauf.</li>
+  <li><b>Plan für den Vorfall</b>: Wer einen Host übernimmt, hat alle Schlüssel, die dort je ausgegeben wurden, bis sie rotiert sind. Die Liste wächst mit Zielen mal Umgebungen.</li>
+</ul>
+<p>Der Bauaufwand ist klein, weil Secret-Provider, Leases und Inventar größtenteils bestehen (siehe <a href="#heute">Heutiger Stand</a>). Der laufende Aufwand ist groß und wächst mit jedem neuen Ziel, jeder Umgebung und jedem Mandanten.</p>
+</section>
+<section id="vergleich">
+<h2><span class="number">07</span> Vergleich</h2>
+<table class="breakout">
+  <thead><tr><th></th><th>A1 · Aussteller, schrittweise</th><th>A2 · SPIRE sofort</th><th>B · Gespeicherte Schlüssel</th><th>C · Externer Aussteller</th></tr></thead>
+  <tbody>
+    <tr><td><b>Sicherheitsgewinn</b></td><td><span class="yes">hoch</span>: keine dauerhaften Ziel-Schlüssel, wo das Ziel Föderation kann; gestohlene Ausweise verfallen in Minuten und gelten nur für ein Ziel</td><td><span class="yes">sehr hoch</span>: zusätzlich mTLS intern und Prüfung des Prozesses auf dem Host</td><td><span class="no">gering</span>: hängt an Disziplin bei Rotation; ein übernommener Host hat alle dort ausgegebenen Schlüssel</td><td><span class="yes">hoch</span>, wie A1</td></tr>
+    <tr><td><b>Bauaufwand in Studio</b></td><td><span class="mid">mittel</span>: Aussteller, Veröffentlichung, Austausch in den Adaptern; nutzt Lease-Bindung, Host-CA und JWKS-Muster</td><td><span class="no">hoch</span>: SPIRE betreiben, Registrierungen aus Karten und Leases nachführen, Agent auf jedem Host</td><td><span class="yes">gering</span>: Secret-Provider und Inventar bestehen</td><td><span class="mid">mittel</span>: Adapter, Einrichtung, Fehlerbilder</td></tr>
+    <tr><td><b>Laufender Aufwand</b></td><td><span class="yes">gering</span>: Schlüsselwechsel automatisch, Vertrauen je Ziel einmal</td><td><span class="mid">mittel</span>: zwei weitere Dienste mit Updates</td><td><span class="no">hoch</span>, wächst mit Zielen × Umgebungen × Mandanten</td><td><span class="mid">mittel</span>: ein weiterer Dienst</td></tr>
+    <tr><td><b>Einzelplatz</b></td><td>kein weiterer Dienst; für AWS und Azure muss die Schlüsselliste öffentlich per HTTPS erreichbar sein (Edge oder zwei statische Dateien)</td><td>schwer: SPIRE-Server und -Agent auf einer Maschine</td><td>am einfachsten für den ersten Deploy</td><td>schwer: Vault betreiben und entsiegeln</td></tr>
+    <tr><td><b>Firma</b></td><td>passt; Signatur-Schlüssel kann in KMS oder HSM liegen, Vault oder SPIRE als Adapter</td><td>passt, wenn SPIRE schon läuft</td><td>Prüfer fragen nach Rotationsnachweisen; Schlüssel-Erzeugung ist in Clouds oft per Richtlinie gesperrt</td><td>passt, wenn Vault schon läuft</td></tr>
+    <tr><td><b>Aussteller fällt aus</b></td><td>keine neuen Läufe und Deploys; die gibt es ohne Studio ohnehin nicht; laufende Apps nicht betroffen (siehe unten)</td><td>SPIRE-Agenten liefern zwischengespeicherte Ausweise bis zum Ablauf; danach wie A1</td><td>nichts auszustellen; fällt der Secret-Speicher aus, gibt es ebenfalls keine Deploys</td><td>Vault fällt unabhängig von Studio aus; zusätzliche Ausfallursache</td></tr>
+    <tr><td><b>Migration von heute</b></td><td>je Ziel einzeln: Föderation neben dem alten Schlüssel einrichten, Probetausch, alten Schlüssel löschen</td><td>je Host auf einmal</td><td>keine</td><td>je Ziel, plus Einführung von Vault</td></tr>
+    <tr><td><b>Früher Nutzen</b></td><td>W1 entfernt Cloud-Schlüssel, W2 Modell-Keys und Server-Schlüssel</td><td>erst nach vollständigem Aufbau</td><td>keiner über heute hinaus</td><td>nach Einführung von Vault</td></tr>
+  </tbody>
+</table>
+
+<h3>Ausfall des Ausstellers</h3>
+<p>Der Aussteller ist Teil des Studio-Servers. Fällt Studio aus, starten ohnehin keine Läufe und keine Deploys, denn beide werden von Studio vergeben. Der Aussteller ist also keine neue Ausfallursache für Aufträge. Anders bei Dingen, die ohne Studio weiterlaufen sollen:</p>
+<ul>
+  <li><b>Gehostete Apps</b>, die ihre Geheimnisse beim Deploy bekommen haben, laufen weiter. Bekommen Apps später eine eigene Laufzeit-Identität (W4), gilt deren Ausweis 24 Stunden und wird ab der Hälfte erneuert. Ein Studio-Ausfall von bis zu zwölf Stunden bleibt damit folgenlos.</li>
+  <li><b>Prüfung bei den Zielen</b> braucht nur die veröffentlichte Schlüsselliste. Liegt sie statisch an der Edge oder bei einem HTTPS-Host, prüfen Ziele auch dann, wenn der Studio-Server steht.</li>
+  <li><b>Ein laufender Agent-Lauf</b> verliert den Modell-Zugang, wenn Studio ihm minutenlang keinen neuen Ausweis geben kann. Das ist gewollt: Ein Lauf ohne erreichbares Studio kann sein Ergebnis auch nicht abliefern.</li>
+</ul>
+<h3>Diebstahl des Signatur-Schlüssels</h3>
+<p>Das ist der neue Ernstfall von Option A: Wer den Schlüssel hat, kann sich bei jedem vertrauenden Ziel als jeder Workload ausgeben, solange die Regeln das zulassen. Gegenmittel: enge Regeln je Ziel (Name je Umgebung, feste Audience), Verwahrung wie beim Haupt-Schlüssel des Secret-Speichers oder in einem KMS, Widerruf durch Entfernen des Schlüssels aus der Liste, und ein Abgleich des Ausgabe-Audits in Studio mit den Protokollen der Ziele (CloudTrail und vergleichbare Protokolle zeigen den Namen aus <code>sub</code>). Zum Vergleich: In Option B entspricht das dem Diebstahl des Haupt-Schlüssels des Secret-Speichers samt Datenbestand. Der Unterschied liegt darin, dass sich ein Signatur-Schlüssel in Minuten tauschen lässt, viele gespeicherte Schlüssel dagegen nur einzeln bei jedem Ziel.</p>
+
+<h3>Migration und Reihenfolge</h3>
+<p>Die Umstellung geschieht je Ziel und ohne Unterbrechung, nach dem Muster, das auch Anthropic für den Wechsel vom API-Key beschreibt: Föderation neben dem alten Schlüssel einrichten, prüfen, welcher Nachweis tatsächlich verwendet wird, den alten Schlüssel aus allen Umgebungen entfernen, dann beim Ziel löschen. Die meisten dauerhaften Schlüssel außerhalb von Studio verschwinden in den ersten zwei Stufen.</p>
+<figure class="media-breakout" id="abb-stufen"><svg class="diagram" viewBox="0 0 1120 300" role="img" aria-labelledby="stufen-title stufen-desc"><title id="stufen-title">Stufen W1 bis W5 vom heutigen Stand zur vollständigen Workload-Identität</title><desc id="stufen-desc">Fünf Stufen von links nach rechts. W1: Studio wird Aussteller, veröffentlicht seine öffentlichen Schlüssel und benennt Aufträge im SPIFFE-Format; Cloud-Deploy-Ziele bei AWS, Google Cloud, Azure und selbst betriebenes Kubernetes vertrauen ihm. W2: Modell-APIs von Anthropic und OpenAI per Föderation, VM-Ziele mit kurzlebigen SSH-Zertifikaten. W3: Das Inventar kennzeichnet jeden verbleibenden langlebigen Schlüssel mit Ablauf und Rotationsplan. W4: Runner- und Gate-Hosts erhalten kurzlebige Zertifikate statt dauerhafter Bearer-Tokens, Apps eine eigene Laufzeit-Identität. W5, optional für Firmen: SPIRE oder Vault als Aussteller und Föderation mit dem Vertrauensbereich der Firma. Die ersten zwei Stufen entfernen den größten Teil der dauerhaften Schlüssel außerhalb von Studio.</desc>
+<defs><marker id="stufen-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead-muted"/></marker></defs>
+<rect class="focus" x="16" y="40" width="200" height="220" rx="10"/><text class="zone-label" x="32" y="70">W1</text><text class="label" x="32" y="98">Aussteller</text><text class="label" x="32" y="118">und Cloud-Ziele</text><text class="sub" x="32" y="146">Signatur-Schlüssel, JWKS</text><text class="sub" x="32" y="166">öffentlich, SPIFFE-Namen</text><text class="sub" x="32" y="186">AWS, Google Cloud, Azure,</text><text class="sub" x="32" y="206">eigenes Kubernetes</text><text class="edge-label" x="32" y="240">größter Gewinn</text>
+<rect class="focus" x="238" y="40" width="200" height="220" rx="10"/><text class="zone-label" x="254" y="70">W2</text><text class="label" x="254" y="98">Modell-APIs</text><text class="label" x="254" y="118">und VM-Ziele</text><text class="sub" x="254" y="146">Anthropic und OpenAI</text><text class="sub" x="254" y="166">per Föderation</text><text class="sub" x="254" y="186">SSH-Zertifikate,</text><text class="sub" x="254" y="206">5 Minuten gültig</text><text class="edge-label" x="254" y="240">zweiter großer Gewinn</text>
+<rect class="node" x="460" y="40" width="200" height="220" rx="10"/><text class="zone-label" x="476" y="70">W3</text><text class="label" x="476" y="98">Rest sichtbar</text><text class="label" x="476" y="118">machen</text><text class="sub" x="476" y="146">jeder langlebige Schlüssel</text><text class="sub" x="476" y="166">mit Ablauf, Halter und</text><text class="sub" x="476" y="186">Rotationsplan im Inventar</text><text class="sub" x="476" y="206">kann parallel zu W1 laufen</text>
+<rect class="node" x="682" y="40" width="200" height="220" rx="10"/><text class="zone-label" x="698" y="70">W4</text><text class="label" x="698" y="98">Hosts und Apps</text><text class="sub" x="698" y="146">Runner und Gate mit</text><text class="sub" x="698" y="166">kurzlebigem Zertifikat</text><text class="sub" x="698" y="186">Apps mit Laufzeit-</text><text class="sub" x="698" y="206">Identität, 24 Stunden</text>
+<rect class="ext" x="904" y="40" width="200" height="220" rx="10"/><text class="zone-label" x="920" y="70">W5 · optional</text><text class="label" x="920" y="98">Firmen-Anschluss</text><text class="sub" x="920" y="146">SPIRE oder Vault/OpenBao</text><text class="sub" x="920" y="166">als Aussteller</text><text class="sub" x="920" y="186">SPIFFE-Föderation mit</text><text class="sub" x="920" y="206">dem Bereich der Firma</text>
+<path class="edge-muted" d="M216 150 H234" marker-end="url(#stufen-arrow)"/><path class="edge-muted" d="M438 150 H456" marker-end="url(#stufen-arrow)"/><path class="edge-muted" d="M660 150 H678" marker-end="url(#stufen-arrow)"/><path class="edge-muted" d="M882 150 H900" marker-end="url(#stufen-arrow)"/>
+</svg>
+<figcaption>Abbildung 3 · Stufen der Einführung. W1 und W2 ersetzen die Schlüssel, die heute außerhalb von Studio am meisten Schaden anrichten können. W5 braucht nur, wer bereits SPIRE, Vault oder eine eigene Identitäts-Infrastruktur betreibt.</figcaption></figure>
+
+<table>
+  <thead><tr><th>Stufe</th><th>Inhalt</th><th>Entfernt</th></tr></thead>
+  <tbody>
+    <tr><td><b>W1</b></td><td>Aussteller, Veröffentlichung, Namen im SPIFFE-Format; Föderation zu AWS, Google Cloud (der Cloud-Run-Adapter erwartet das Token bereits), Azure und selbst betriebenem Kubernetes</td><td>Cloud-Schlüssel, kubeconfig-Tokens, das hinterlegte Subject-Token für Cloud Run</td></tr>
+    <tr><td><b>W2</b></td><td>Modell-APIs per Föderation für Konten mit API-Abrechnung; SSH-Zertifikate der Host-CA für Deploys auf Server</td><td>Modell-Keys in Läufen, SSH-Deploy-Schlüssel</td></tr>
+    <tr><td><b>W3</b></td><td>Inventar: jeder verbleibende dauerhafte Schlüssel mit Halter, Ablauf, Rotationsplan und Warnung; kann parallel zu W1 laufen</td><td>nichts, macht den Rest sichtbar</td></tr>
+    <tr><td><b>W4</b></td><td>Kurzlebige Zertifikate für Runner- und Gate-Hosts (mTLS statt Bearer); Laufzeit-Identität für gehostete Apps</td><td>30-Tage-Bearer der Hosts; Weitergabe von App-Geheimnissen durch den Deploy</td></tr>
+    <tr><td><b>W5</b></td><td>Optional: SPIRE oder Vault/OpenBao als Aussteller, SPIFFE-Föderation mit dem Bereich einer Firma</td><td>nichts Neues; Anschluss an Firmen-Infrastruktur</td></tr>
+  </tbody>
+</table>
+<p>Was in keiner Stufe verschwindet: der private Schlüssel der GitHub App (GitHub nimmt keine fremden Ausweise an, er gehört in einen geschützten Signierer, siehe SM-12), persönliche Abo-Anmeldungen der CLIs, Passwörter selbst betriebener Datenbanken und API-Keys von Drittanbietern ohne Föderation. Für sie gilt Option B mit Inventar und Rotation.</p>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+<h2><span class="number">08</span> Empfehlung</h2>
+<div class="callout" data-tone="accent">
+  <h3>IP-D10 bei A belassen und als A1 schärfen</h3>
+  <p>Studio wird selbst Aussteller kurzlebiger, signierter Ausweise und benennt Aufträge, Deploys, Hosts und Apps ab dem ersten Tag im SPIFFE-Format. Föderation kommt zuerst zu den Cloud-Deploy-Zielen, dann zu den Modell-APIs, zusammen mit SSH-Zertifikaten für Server. Zertifikate für Hosts und Identitäten für laufende Apps folgen in W4; SPIRE oder Vault nur als Adapter für Firmen, die sie schon betreiben. Gespeicherte Schlüssel bleiben erlaubt, wo ein Ziel keine Föderation kann, aber immer sichtbar mit Ablauf und Rotationsplan.</p>
+</div>
+<p><b>Warum.</b> A1 nimmt die gefährlichsten dauerhaften Schlüssel (Produktion in der Cloud, Modell-Zugänge in jedem Lauf) mit dem geringsten Aufwand heraus. Es nutzt, was es schon gibt: die Lease-Bindung des Secret-Providers, die Host-CA, das JWKS-Muster und den Cloud-Run-Adapter, dem nur ein Aussteller fehlt. Es braucht auf dem Einzelplatz keinen weiteren Dienst, und es teilt sein Ausfallrisiko mit Studio, statt ein neues hinzuzufügen. Die SPIFFE-Namen halten den Weg zu A2 und zur Föderation mit Firmen offen, ohne SPIRE heute betreiben zu müssen.</p>
+<p><b>Was es nicht löst.</b> Den Schlüssel der GitHub App, persönliche CLI-Anmeldungen, Passwörter eigener Datenbanken und einen gestohlenen Signatur-Schlüssel. Die ersten drei bleiben im Inventar (W3), der vierte braucht die Verwahrung aus WI-D4 und das Ausgabe-Audit.</p>
+<p><b>Arbeitsannahmen für die Teilentscheidungen</b>, falls keine andere Antwort kommt: Reihenfolge Cloud-Ziele zuerst (WI-D2), Veröffentlichung über die Edge oder statisch mit Upload als Rückfall (WI-D3), Verwahrung wie der Haupt-Schlüssel des Secret-Speichers mit KMS-Adapter (WI-D4), kurze Laufzeiten (WI-D5), gespeicherte Schlüssel als sichtbarer Rückfall (WI-D6), App-Geheimnisse zunächst per Deploy (WI-D7).</p>
+</section>
+<section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+<h2><span class="number">09</span> Belege</h2>
+<p>Beobachtet heißt: im Code oder in einer Herstellerdokumentation am 16. November 2026 nachgelesen. Gefolgert und vorgeschlagen sind als solche gekennzeichnet. Dieses Dossier macht keine Aussage über eine sichtbare Oberfläche von Studio; seine Belege sind Code, Repository-Dokumentation und Herstellerdokumentation. Deshalb enthält es keine Bildschirmfotos.</p>
+<div class="evidence-list">
+  <a class="evidence" href="#heute"><span class="evidence-class" data-evidence-class="observed">Beobachtet</span><span><b>Alle Maschinen-Verbindungen nutzen Bearer-Geheimnisse</b><small>Task Server und Studio speichern Runner-, Dienst- und API-Tokens nur als Hash; Hosts halten sie in Dateien mit Modus 0600. Kein mTLS zwischen Hosts und Server; <code>docs/operations/remote-task-server-local-studio.md</code> hält fest, dass Bearer für den ersten Ausbau gegenüber mTLS gewählt wurde.</small></span></a>
+  <a class="evidence" href="#heute"><span class="evidence-class" data-evidence-class="observed">Beobachtet</span><span><b>Modell-Logins sind dauerhaft und gehen als Umgebungsvariable in jeden Lauf</b><small><code>ProviderAuthProvisioning.cs</code> legt <code>CLAUDE_CODE_OAUTH_TOKEN</code> oder <code>ANTHROPIC_API_KEY</code> in <code>/etc/agent-runner/provider-auth.env</code>; <code>ProviderAuthEnvironment.cs</code> reicht sie an die CLI weiter. Das SM-11-Protokoll im Security-model-Dossier nennt Tokens je Versuch für Anbieter als offen.</small></span></a>
+  <a class="evidence" href="#heute"><span class="evidence-class" data-evidence-class="observed">Beobachtet</span><span><b>Cloud Run nutzt schon Föderation, aber ohne Aussteller in Studio</b><small><code>runner/DeployAdapters/CloudRunDeployAdapter.cs</code> schreibt eine <code>external_account</code>-Datei für <code>sts.googleapis.com</code> und liest das Subject-Token aus einem gespeicherten Geheimnis. Die Deploy-Adapter werden außerhalb der Tests nicht aufgerufen; der Live-Deploy nutzt <code>DeployHostCommand.cs</code> mit den SSH-Schlüsseln des Hosts.</small></span></a>
+  <a class="evidence" href="#heute"><span class="evidence-class" data-evidence-class="observed">Beobachtet</span><span><b>Bausteine für einen Aussteller bestehen</b><small><code>SecretWorkloadBinding.cs</code> bindet Deploy-Job, Lease-Token und Host beziehungsweise Lauf und Lease an einen Workload; <code>HostCertificateAuthority.cs</code> signiert SSH-Zertifikate von höchstens 59 Minuten; <code>QualityStudioEndpoints.cs</code> veröffentlicht eine JWKS für einen Ed25519-Schlüssel; <code>KeyEncryptionKeySource.cs</code> zeigt, wie ein Haupt-Schlüssel außerhalb des Arbeitsbereichs verwahrt wird.</small></span></a>
+  <a class="evidence" href="https://platform.claude.com/docs/en/manage-claude/workload-identity-federation"><span class="evidence-class" data-evidence-class="observed">Beobachtet</span><span><b>Anthropic und OpenAI bieten Workload Identity Federation</b><small>Anthropic: Aussteller, Dienstkonto und Regel; Austausch nach RFC 7523; Token-Laufzeit 60 bis 86.400 Sekunden, Standard 3.600; Aussteller öffentlich per HTTPS auf Port 443 oder Schlüsselliste direkt hinterlegt; Tokens mit <code>jti</code> nur einmal verwendbar; <code>ANTHROPIC_API_KEY</code> hat Vorrang. OpenAI nimmt OIDC-Tokens und SPIFFE-JWT-SVIDs an.</small></span></a>
+  <a class="evidence" href="https://learn.microsoft.com/en-us/graph/api/resources/federatedidentitycredentials-overview"><span class="evidence-class" data-evidence-class="observed">Beobachtet</span><span><b>Ziele vergleichen Namen unterschiedlich</b><small>Azure: Aussteller, <code>sub</code> und Audience exakt, ohne Platzhalter, höchstens 20 Einträge je Identität. AWS: Bedingungen auf <code>sub</code> und <code>aud</code> in der Rollen-Richtlinie, öffentlich erreichbarer Aussteller. Google: Zuordnung und Bedingung auf beliebige Angaben, JWKS auch hochladbar.</small></span></a>
+  <a class="evidence" href="#option-a"><span class="evidence-class" data-evidence-class="inferred">Gefolgert</span><span><b>Der Deploy-Name endet bei der Umgebung</b><small>Weil Azure exakt und AWS nur über <code>sub</code> und <code>aud</code> vergleicht, muss alles, was ein Ziel unterscheiden soll, stabil im Namen stehen; Release und Karte gehören in Zusatzangaben.</small></span></a>
+  <a class="evidence" href="#vergleich"><span class="evidence-class" data-evidence-class="inferred">Gefolgert</span><span><b>Der Aussteller fügt für Aufträge kein neues Ausfallrisiko hinzu</b><small>Läufe und Deploys werden von Studio vergeben; ohne Studio starten sie ohnehin nicht. Neues Risiko entsteht nur für Dinge, die ohne Studio laufen sollen, also für App-Laufzeit-Identitäten (W4), daher deren 24-Stunden-Laufzeit.</small></span></a>
+  <a class="evidence" href="#recommendation"><span class="evidence-class" data-evidence-class="proposed">Vorgeschlagen</span><span><b>A1 mit Stufen W1 bis W5</b><small>Aussteller in Studio, SPIFFE-Namen ab dem ersten Tag, Föderation zuerst zu Cloud-Zielen, dann Modell-APIs und SSH-Zertifikate, Hosts und Apps später, SPIRE und Vault als Adapter.</small></span></a>
+</div>
+</section>
+
+<section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+<h2><span class="number">10</span> Offene Entscheidungen</h2>
+<p>WI-D1 stellt IP-D10 mit den geschärften Optionen neu. WI-D2 bis WI-D7 sind Teilentscheidungen. Jede Frage hat eine vorausgewählte Empfehlung; Umsetzungskarten arbeiten mit ihr, solange keine andere Antwort festgehalten ist.</p>
+
+<div class="decision" data-decision-id="wi-modell" data-decision-kind="single" data-decision-label="WI-D1 Workload-Identität (IP-D10 neu gestellt)">
+  <h3>WI-D1 · Wie weisen sich Aufträge, Hosts und Apps aus?</h3>
+  <label data-option-id="a1-stufenweise" data-option-label="A1 · Studio als Aussteller kurzlebiger JWT-SVIDs, SPIFFE-Namen ab Tag eins, Föderation wo das Ziel sie kann, SSH-Zertifikate für Server, mTLS und App-Identität später (Empfehlung)"><input type="radio" name="wi-modell" value="a1-stufenweise" checked><span><b>A1 · Studio als Aussteller, schrittweise (Empfehlung)</b><span class="d">Größter Gewinn je Aufwand, kein weiterer Dienst auf dem Einzelplatz, Weg zu SPIRE bleibt offen.</span></span></label>
+  <label data-option-id="a2-spire" data-option-label="A2 · Volle SPIFFE-Infrastruktur mit SPIRE sofort"><input type="radio" name="wi-modell" value="a2-spire"><span><b>A2 · SPIRE sofort</b><span class="d">Vollständig, mit mTLS intern; zwei weitere Dienste je Installation und laufende Nachführung der Registrierungen.</span></span></label>
+  <label data-option-id="b-gespeichert" data-option-label="B · Gespeicherte Schlüssel je Ziel, mit Schutz und Rotation"><input type="radio" name="wi-modell" value="b-gespeichert"><span><b>B · Gespeicherte Schlüssel</b><span class="d">Wenig Bauaufwand; jeder Schlüssel muss rotiert und geschützt werden, der Aufwand wächst mit jedem Ziel.</span></span></label>
+  <label data-option-id="c-extern" data-option-label="C · Externer Aussteller (Vault/OpenBao oder Firmen-IdP) als Pflicht"><input type="radio" name="wi-modell" value="c-extern"><span><b>C · Externer Aussteller als Pflicht</b><span class="d">Ausgereift; jede Installation muss den Dienst betreiben, zusätzliche Ausfallursache.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="wi-reihenfolge" data-decision-kind="single" data-decision-label="WI-D2 Reihenfolge der Einführung">
+  <h3>WI-D2 · In welcher Reihenfolge?</h3>
+  <label data-option-id="cloud-zuerst" data-option-label="Cloud-Deploy-Ziele zuerst (W1), dann Modell-APIs und SSH-Zertifikate (W2), Inventar parallel (W3), Hosts und Apps später (W4) (Empfehlung)"><input type="radio" name="wi-reihenfolge" value="cloud-zuerst" checked><span><b>Cloud-Ziele zuerst (Empfehlung)</b><span class="d">Produktion verliert zuerst ihre dauerhaften Schlüssel; der Cloud-Run-Adapter wartet bereits auf einen Aussteller.</span></span></label>
+  <label data-option-id="modelle-zuerst" data-option-label="Modell-APIs zuerst, dann Cloud-Ziele"><input type="radio" name="wi-reihenfolge" value="modelle-zuerst"><span><b>Modell-APIs zuerst</b><span class="d">Trifft jeden Lauf heute; hängt aber davon ab, ob die CLIs den Austausch unterstützen, und hilft nur bei Konten mit API-Abrechnung.</span></span></label>
+  <label data-option-id="hosts-zuerst" data-option-label="Host-Zertifikate und mTLS zuerst"><input type="radio" name="wi-reihenfolge" value="hosts-zuerst"><span><b>Hosts zuerst</b><span class="d">Ersetzt die 30-Tage-Bearer; SM-9 hat diese bereits gebunden und befristet, der Zusatzgewinn ist kleiner.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="wi-veroeffentlichung" data-decision-kind="single" data-decision-label="WI-D3 Veröffentlichung der öffentlichen Schlüssel">
+  <h3>WI-D3 · Wo veröffentlicht Studio seine öffentlichen Schlüssel?</h3>
+  <label data-option-id="edge-oder-statisch" data-option-label="Über die Edge der Installation, ohne öffentliche Adresse als zwei statische Dateien bei einem HTTPS-Host nach Wahl; Upload der Schlüsselliste, wo das Ziel es erlaubt (Empfehlung)"><input type="radio" name="wi-veroeffentlichung" value="edge-oder-statisch" checked><span><b>Edge oder statisch, Upload als Rückfall (Empfehlung)</b><span class="d">Funktioniert für alle Ziele, auch auf dem Einzelplatz hinter NAT; enthält nur öffentliche Schlüssel.</span></span></label>
+  <label data-option-id="nur-upload" data-option-label="Nur Upload der Schlüsselliste bei jedem Ziel"><input type="radio" name="wi-veroeffentlichung" value="nur-upload"><span><b>Nur Upload</b><span class="d">Nichts öffentlich; AWS und Azure bleiben außen vor, jeder Schlüsselwechsel muss zu jedem Ziel.</span></span></label>
+  <label data-option-id="nur-oeffentlich" data-option-label="Föderation nur für Installationen mit eigener öffentlicher Adresse"><input type="radio" name="wi-veroeffentlichung" value="nur-oeffentlich"><span><b>Nur mit öffentlicher Adresse</b><span class="d">Einfacher; der Einzelplatz ohne Adresse bleibt bei gespeicherten Schlüsseln.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="wi-verwahrung" data-decision-kind="single" data-decision-label="WI-D4 Verwahrung des Signatur-Schlüssels">
+  <h3>WI-D4 · Wo liegt der Signatur-Schlüssel?</h3>
+  <label data-option-id="wie-kek-plus-kms" data-option-label="Wie der Haupt-Schlüssel des Secret-Speichers (Schlüsselspeicher des Betriebssystems oder Datei außerhalb des Arbeitsbereichs), mit Adapter für KMS, HSM oder Vault Transit (Empfehlung)"><input type="radio" name="wi-verwahrung" value="wie-kek-plus-kms" checked><span><b>Wie der Haupt-Schlüssel, KMS als Adapter (Empfehlung)</b><span class="d">Einzelplatz ohne weiteren Dienst; Firmen geben die Signatur an ihr KMS ab und Studio sieht den Schlüssel nie.</span></span></label>
+  <label data-option-id="immer-kms" data-option-label="Immer in einem externen KMS oder HSM"><input type="radio" name="wi-verwahrung" value="immer-kms"><span><b>Immer extern</b><span class="d">Stärkster Schutz; jede Installation braucht ein KMS.</span></span></label>
+  <label data-option-id="datei" data-option-label="Als Datei im Datenverzeichnis von Studio"><input type="radio" name="wi-verwahrung" value="datei"><span><b>Datei bei den Daten</b><span class="d">Am einfachsten; mit jeder Sicherung oder Übernahme des Servers liegt er offen.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="wi-laufzeiten" data-decision-kind="single" data-decision-label="WI-D5 Laufzeiten">
+  <h3>WI-D5 · Wie lange gelten Ausweise und Zugänge?</h3>
+  <label data-option-id="kurz" data-option-label="Ausweis 5 bis 10 Minuten, Ziel-Zugang höchstens 1 Stunde, SSH-Zertifikat für Deploys 5 Minuten, App-Identität 24 Stunden mit Erneuerung ab der Hälfte, Signatur-Schlüssel alle 90 Tage (Empfehlung)"><input type="radio" name="wi-laufzeiten" value="kurz" checked><span><b>Kurz (Empfehlung)</b><span class="d">Ein gestohlener Ausweis ist nach Minuten wertlos; Apps überstehen einen halben Tag ohne Studio.</span></span></label>
+  <label data-option-id="mittel" data-option-label="Ausweis 1 Stunde, Ziel-Zugang 8 Stunden, SSH-Zertifikat 1 Stunde, App-Identität 7 Tage"><input type="radio" name="wi-laufzeiten" value="mittel"><span><b>Mittel</b><span class="d">Weniger Austausch und mehr Spielraum bei Ausfällen; ein gestohlener Zugang wirkt einen Arbeitstag lang.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="wi-rueckfall" data-decision-kind="single" data-decision-label="WI-D6 Gespeicherte Schlüssel als Rückfall">
+  <h3>WI-D6 · Was gilt für gespeicherte Schlüssel?</h3>
+  <label data-option-id="sichtbar-mit-ablauf" data-option-label="Erlaubt, wo ein Ziel keine Föderation kann; im Inventar als dauerhaft markiert, mit Halter, Ablauf, Rotationsplan und Warnung (Empfehlung)"><input type="radio" name="wi-rueckfall" value="sichtbar-mit-ablauf" checked><span><b>Sichtbarer Rückfall (Empfehlung)</b><span class="d">Nichts bricht; der Rest an dauerhaften Schlüsseln ist bekannt und hat einen Plan.</span></span></label>
+  <label data-option-id="gesperrt-bei-foederation" data-option-label="Für Ziele mit Föderation gesperrt, sonst erlaubt"><input type="radio" name="wi-rueckfall" value="gesperrt-bei-foederation"><span><b>Gesperrt, wo Föderation geht</b><span class="d">Erzwingt den Umstieg; ein Ziel ohne erreichbaren Aussteller lässt sich dann nicht mehr bedienen.</span></span></label>
+  <label data-option-id="frei" data-option-label="Frei wählbar ohne Kennzeichnung"><input type="radio" name="wi-rueckfall" value="frei"><span><b>Frei</b><span class="d">Kein Aufwand; dauerhafte Schlüssel bleiben unsichtbar.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="wi-app-laufzeit" data-decision-kind="single" data-decision-label="WI-D7 Geheimnisse gehosteter Apps">
+  <h3>WI-D7 · Wie kommen gehostete Apps an ihre Geheimnisse?</h3>
+  <label data-option-id="erst-lieferung" data-option-label="Zunächst per Deploy wie in IP-D7 und Lieferweg 7.7; eigene Laufzeit-Identität der App in W4 (Empfehlung)"><input type="radio" name="wi-app-laufzeit" value="erst-lieferung" checked><span><b>Erst per Deploy, Identität in W4 (Empfehlung)</b><span class="d">Apps hängen im Betrieb nicht von Studio ab; der Deploy sieht die Werte weiterhin.</span></span></label>
+  <label data-option-id="sofort-identitaet" data-option-label="Apps bekommen sofort eine eigene Laufzeit-Identität und holen ihre Werte selbst"><input type="radio" name="wi-app-laufzeit" value="sofort-identitaet"><span><b>Sofort eigene Identität</b><span class="d">Der Deploy sieht keine Werte mehr; jede App braucht dafür Unterstützung im Code oder einen Begleitprozess.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+</section>
+<section id="quellen">
+<h2><span class="number">11</span> Quellen</h2>
+<p>Alle Links zuletzt geprüft am 16. November 2026. Bei Herstellerdokumentation zählt die jeweils aktuelle Fassung.</p>
+<h3>Spezifikationen</h3>
+<ul>
+  <li id="q-spiffe">SPIFFE-Standards: <a href="https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE.md">SPIFFE</a>, <a href="https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md">SPIFFE-ID</a>, <a href="https://github.com/spiffe/spiffe/blob/main/standards/X509-SVID.md">X509-SVID</a>, <a href="https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md">JWT-SVID</a>, <a href="https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE_Workload_API.md">Workload API</a>, <a href="https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE_Trust_Domain_and_Bundle.md">Trust Domain and Bundle</a>, <a href="https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE_Federation.md">SPIFFE Federation</a>.</li>
+  <li id="q-spire">SPIRE, die Referenz-Umsetzung: <a href="https://spiffe.io/docs/latest/spire-about/">spiffe.io/docs/latest/spire-about</a>; <a href="https://github.com/spiffe/spire/blob/main/support/oidc-discovery-provider/README.md">SPIRE OIDC Discovery Provider</a>.</li>
+  <li>OpenID Connect: <a href="https://openid.net/specs/openid-connect-core-1_0.html">OpenID Connect Core 1.0</a>, <a href="https://openid.net/specs/openid-connect-discovery-1_0.html">OpenID Connect Discovery 1.0</a>.</li>
+  <li>IETF: <a href="https://www.rfc-editor.org/rfc/rfc7519">RFC 7519 JSON Web Token</a>, <a href="https://www.rfc-editor.org/rfc/rfc7517">RFC 7517 JSON Web Key</a>, <a href="https://www.rfc-editor.org/rfc/rfc7523">RFC 7523 JWT Profile for OAuth 2.0 Client Authentication and Authorization Grants</a>, <a href="https://www.rfc-editor.org/rfc/rfc8693">RFC 8693 OAuth 2.0 Token Exchange</a>, <a href="https://www.rfc-editor.org/rfc/rfc8705">RFC 8705 OAuth 2.0 Mutual-TLS</a>.</li>
+  <li>OpenSSH-Zertifikate: <a href="https://man.openbsd.org/ssh-keygen#CERTIFICATES">ssh-keygen(1), Abschnitt CERTIFICATES</a>; <a href="https://man.openbsd.org/sshd_config#TrustedUserCAKeys">sshd_config(5), TrustedUserCAKeys</a>.</li>
+  <li>Einordnung: <a href="https://csrc.nist.gov/pubs/sp/800/207/a/final">NIST SP 800-207A</a> (Zero Trust für Cloud-native Anwendungen, Workload-Identität und SPIFFE); <a href="https://owasp.org/www-project-non-human-identities-top-10/">OWASP Non-Human Identities Top 10</a>.</li>
+</ul>
+<h3>Herstellerdokumentation</h3>
+<ul>
+  <li>GitHub: <a href="https://docs.github.com/en/actions/concepts/security/openid-connect">OpenID Connect in GitHub Actions</a>; <a href="https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app">Installations-Tokens einer GitHub App</a>.</li>
+  <li>AWS: <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc.html">OIDC-Anbieter in IAM anlegen</a>; <a href="https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithWebIdentity.html">AssumeRoleWithWebIdentity</a>; <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html">IAM Best Practices</a> (Rollen statt Zugangsschlüssel).</li>
+  <li>Google Cloud: <a href="https://cloud.google.com/iam/docs/workload-identity-federation">Workload Identity Federation</a>; <a href="https://cloud.google.com/iam/docs/troubleshooting-workload-identity-federation">Fehlersuche, öffentlich erreichbarer Aussteller oder hochgeladene JWKS</a>; <a href="https://cloud.google.com/resource-manager/docs/organization-policy/restricting-service-accounts">Einschränkung von Dienstkonto-Schlüsseln</a>.</li>
+  <li>Microsoft: <a href="https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation">Workload Identity Federation</a>; <a href="https://learn.microsoft.com/en-us/graph/api/resources/federatedidentitycredentials-overview">Federated identity credentials, exakter Abgleich und Grenze von 20 Einträgen</a>; <a href="https://learn.microsoft.com/en-us/entra/workload-id/workload-identities-flexible-federated-identity-credentials">Flexible federated identity credentials</a>.</li>
+  <li>Kubernetes: <a href="https://kubernetes.io/docs/concepts/security/service-accounts/">Service Accounts</a>; <a href="https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/">gebundene Dienstkonto-Tokens</a>; <a href="https://kubernetes.io/docs/reference/access-authn-authz/authentication/">Authentifizierung, JWT-Aussteller in der strukturierten Konfiguration</a>; <a href="https://kubernetes.io/blog/2024/04/25/structured-authentication-moves-to-beta/">Structured Authentication Configuration moves to beta (1.30)</a>.</li>
+  <li id="q-anthropic-wif">Anthropic: <a href="https://platform.claude.com/docs/en/manage-claude/workload-identity-federation">Workload Identity Federation</a>; <a href="https://platform.claude.com/docs/en/manage-claude/wif-providers/spiffe">WIF mit SPIFFE</a>.</li>
+  <li id="q-openai-wif">OpenAI: <a href="https://developers.openai.com/api/docs/guides/workload-identity-federation">Workload identity federation</a>.</li>
+  <li>HashiCorp: <a href="https://developer.hashicorp.com/vault/docs/auth/jwt">Vault JWT/OIDC-Anmeldung</a>; <a href="https://developer.hashicorp.com/vault/docs/secrets/identity/identity-token">Vault Identity Tokens</a>; <a href="https://developer.hashicorp.com/vault/docs/secrets/ssh/signed-ssh-certificates">Vault SSH, signierte Zertifikate</a>; <a href="https://openbao.org/docs/">OpenBao</a>.</li>
+</ul>
+<h3>Repository</h3>
+<ul>
+  <li>Dossiers: <a href="../operations/integrierte-plattform/index.html">Integrierte Plattform</a> (AGT-W81, IP-D7 bis IP-D10, §9), Security model, <code>docs/security-model/index.html</code> (AGT-3353, SM-6, SM-9, SM-11, SM-12), Credentials and logins, <code>docs/credentials-and-logins/index.html</code> (AGT-2968).</li>
+  <li>Code, Stand 16. November 2026: die in <a href="#heute">Heutiger Stand</a> genannten Dateien unter <code>backend/</code>, <code>runner/</code>, <code>task-server/</code>, <code>contracts/</code> und <code>cli-hosting/</code>; Dokumentation <code>docs/operations/security/secret-provider.md</code>, <code>docs/operations/security/overview.md</code>, <code>docs/operations/setup/linux-runner-host.md</code>, <code>docs/operations/remote-task-server-local-studio.md</code>, <code>docs/system/domains/runner.md</code>.</li>
+</ul>
+</section>
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">12</span> Umsetzung</h2>
+    <p>Die Umsetzung ist in <code>workbench.json</code> in acht Scheiben geschnitten (WI-1 bis WI-8), in Lieferreihenfolge und mit Abhängigkeiten. Umsetzungs-Scheiben tragen ihren Stand hier ein; der Entscheidungsteil oben bleibt unverändert.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

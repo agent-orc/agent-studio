@@ -25,6 +25,8 @@ public sealed record RemoteGateInvocation(
     public int GateSlots { get; init; } = 1;
     public int ProcessorCount { get; init; } = 2;
     public string InstallationId { get; init; } = "";
+    /// <summary>AGT-3866: age in hours after which the worker prunes host caches; 0 is the default.</summary>
+    public int CachePruneAgeHours { get; init; }
 }
 
 public sealed record RemoteGateResponse(

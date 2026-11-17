@@ -96,6 +96,7 @@ public sealed class TaskIntegrationStatusService
     private readonly GenerationSingleFlightCache<IReadOnlyList<string>> _pathCache;
     private readonly ConcurrentDictionary<string, (long Version, IntegrationVerificationRecord? Record)> _verificationRecords
         = new(FileSystemPathComparer.Instance);
+    private readonly ConcurrentDictionary<string, string> _netChangeSources = new(StringComparer.OrdinalIgnoreCase);
     private int _computationCount;
     private int _lookupCount;
 
@@ -231,12 +232,34 @@ public sealed class TaskIntegrationStatusService
                             && string.Equals(receipt.TestLevel, TestExecutionLevels.Full, StringComparison.OrdinalIgnoreCase));
                 publications.Add(new(gate.TreeSha, parent, gate.Describe(), fullSuite));
             }
+            // A fresh integration whose diff has no applicable gate records that
+            // policy decision on its card instead of publishing a passed gate.
+            // The exact published tree is still a valid later publication for
+            // earlier cards. Do not infer this from the current profile: its
+            // commands may have changed since the merge was made.
+            var laterCards = _scanner?.GetResidentIdentityFacts()
+                .Where(source => string.Equals(source.ProjectName, job.ProjectName, StringComparison.Ordinal)
+                    && FileSystemPathComparer.Instance.Equals(source.WatchPath, job.WatchPath))
+                .ToArray() ?? [];
+            foreach (var source in laterCards)
+            {
+                var recorded = IntegrationVerificationStore.Read(source.FolderPath);
+                if (recorded is not { State: IntegrationVerificationStates.Verified,
+                    Evidence: IntegrationVerificationEvidence.GateNotApplicable, GateFailed: false }
+                    || !ReviewSubjectStore.IsValidResultSha(recorded.Sha)
+                    || !laterBySha.TryGetValue(recorded.Sha!, out var parent)
+                    || !IntegrationVerificationProjection.SameBranch(recorded.IntegrationBranch, branch))
+                    continue;
+                publications.Add(new(recorded.Sha!, parent,
+                    $"No gate applied to {source.TaskKey} on published tree {recorded.Sha}"));
+            }
             var batches = _batchGates;
             var currentProfile = BatchGatePilotService.GateProfile(
                 _settings.Get(job.ProjectName).BuildProfile, root);
             var uncountedBaseChecks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var failedBaseChecks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var verdict in batches.ListBaseVerdicts(job.ProjectName))
+            var baseVerdicts = batches.ListBaseVerdicts(job.ProjectName);
+            foreach (var verdict in baseVerdicts)
             {
                 if (!laterBySha.TryGetValue(verdict.BaseSha, out var parent)) continue;
                 if (verdict.Outcome != "pass")
@@ -343,12 +366,22 @@ public sealed class TaskIntegrationStatusService
                         + $"between the verified tree {Short(verification.Sha!)} and it"
                     : uncountedBatches.TryGetValue(hole, out var batchWhy) ? batchWhy
                     : "no batch publication covering it";
+                var batchDetails = _settings.Get(job.ProjectName).BatchGate.Enabled;
+                var sourceCard = laterCards.FirstOrDefault(source =>
+                    string.Equals(IntegrationVerificationStore.Read(source.FolderPath)?.Sha, hole,
+                        StringComparison.OrdinalIgnoreCase)
+                    || AttributedCommits(source).Contains(hole, StringComparer.OrdinalIgnoreCase));
+                var owner = sourceCard is null
+                    ? _git.GetCommitAuthor(root, hole) is { } author ? $"Commit author: {author}. " : string.Empty
+                    : $"Card: {sourceCard.TaskKey} ({sourceCard.Title}). ";
                 return status with { Verification = UnverifiedAcceptance(tip,
-                    $"The later publication {hole} has no passed gate on the first-parent integration line. "
+                    $"The later publication {hole} has no recorded verification on the first-parent integration line. "
                     + $"First uncovered commit after verified tree {Short(verification.Sha!)} up to {Short(tip!)}: {named}; "
-                    + $"{gateAnswer}; {baseAnswer}; {batchAnswer}. "
-                    + "A passed per-task gate on that published tree or a full-suite batch base verdict "
-                    + "for the current gate profile with its evidence would cover it.") with
+                    + owner + gateAnswer
+                    + (batchDetails ? $"; {baseAnswer}; {batchAnswer}" : string.Empty) + ". "
+                    + (batchDetails
+                        ? "A passed gate on the published tree or a full-suite batch base verdict with its evidence would cover it."
+                        : "Ask the project owner to review this commit and record its integration verification.")) with
                 {
                     UncoveredPublication = named,
                 } };
@@ -472,7 +505,7 @@ public sealed class TaskIntegrationStatusService
                     IntegrationBranch = ConfiguredIntegrationBranch(job),
                     Detail = "The delivery contract expects no repository change.",
                 }
-                : ClassifyRepositories(job, card, reaches);
+                : WithServerCheckoutReplay(job, ClassifyRepositories(job, card, reaches));
             var fingerprint = string.Join("|", card.Groups.Select(group => group.Key)
                 .Append(card.PrimaryKey)
                 .Where(key => key is not null)
@@ -502,6 +535,59 @@ public sealed class TaskIntegrationStatusService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// AGT-3810: integration verdicts of delivered cards whose project names no
+    /// server checkout. The Git state index never runs for such a project, so
+    /// every cache-only card read carries no verdict, and the card lost the
+    /// recorded failure code (for example <c>server-checkout-missing</c>) that
+    /// selects its remedy. The failed merge step is a local file, so this reads
+    /// it without starting Git. Cards with a checkout, outside the delivered
+    /// lanes, or without a recorded failure are absent from the result.
+    /// </summary>
+    public Dictionary<string, TaskIntegrationStatus> BuildRecordedFailuresWithoutCheckout(
+        IEnumerable<TaskInfo> jobs)
+    {
+        var result = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
+        var checkout = new Dictionary<string, bool>(FileSystemPathComparer.Instance);
+        foreach (var job in jobs)
+        {
+            if (!DeliveredLanes.Contains(job.State)) continue;
+            var watchPath = job.WatchPath ?? string.Empty;
+            if (!checkout.TryGetValue(watchPath, out var configured))
+                checkout[watchPath] = configured = _git.HasConfiguredRepository(job.WatchPath);
+            if (configured || ReadIntegrationFailure(job) is null) continue;
+            var status = ClassifyNotIntegrated(job,
+                TaskIntegrationBranch.Resolve(job, ConfiguredIntegrationBranch(job)));
+            if (status.Failure is not null) result[job.TaskKey] = status;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// AGT-3810: once the missing server checkout exists, the reviewed delivery
+    /// itself can be merged again, so Retry integration may replay it. Runs
+    /// only on the Git-derived lookup; the cache-only card reads stay free of
+    /// Git processes.
+    /// </summary>
+    private TaskIntegrationStatus WithServerCheckoutReplay(TaskInfo job, TaskIntegrationStatus status)
+        => status.Failure is { Code: AcceptedIntegrationFailureCodes.ServerCheckoutMissing, ReplayAvailable: false } failure
+           && HasServerCheckout(job)
+            ? status with { Failure = failure with { ReplayAvailable = true } }
+            : status;
+
+    /// <summary>
+    /// The same probe the integration worktree provider makes before it refuses
+    /// with <c>server-checkout-missing</c>: a resolvable repository root that is
+    /// a Git checkout.
+    /// </summary>
+    private bool HasServerCheckout(TaskInfo job)
+    {
+        if (!_git.HasConfiguredRepository(job.WatchPath)) return false;
+        var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
+        return !string.IsNullOrWhiteSpace(root) && Directory.Exists(root)
+            && (Directory.Exists(Path.Combine(root, ".git")) || File.Exists(Path.Combine(root, ".git")));
     }
 
     /// <summary>
@@ -915,6 +1001,18 @@ public sealed class TaskIntegrationStatusService
                                     AncestorSetContains(subjectReach.ReleaseAncestors, sha)),
                             };
                 }
+                // AGT-3883: develop carries a net-change publication of the
+                // result, not the result itself, and stays integrated when
+                // develop moves on. Integrating it again would publish a
+                // second, empty net change.
+                if (NetChangePublication(job, subject.ResultSha, subjectKey.Root, subjectReach) is { } netChange)
+                    return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
+                        DeliveryRefFor(job), $"current-result-net-change via {Short(netChange)}")
+                        with
+                        {
+                            Repositories = CurrentResultRepositories(job, card, reaches, subject),
+                            CurrentResultReleased = AncestorSetContains(subjectReach.ReleaseAncestors, netChange),
+                        };
                 if (AncestorSetContains(subjectReach.DevelopAncestors, subject.ResultSha))
                     return MergedLocally(subjectReach.IntegrationBranch, DeliveryRefFor(job),
                         "current result is present locally", [Short(subject.ResultSha)]);
@@ -1116,6 +1214,42 @@ public sealed class TaskIntegrationStatusService
                 () => ReadOnlyGitConcurrencyLimiter.Run(() => _git.GetCommitPathsAtRoot(group.Key.Root, commit.Sha)));
             return commit with { Files = paths.ToList() };
         }).ToList();
+    }
+
+    /// <summary>
+    /// AGT-3883: the published commit whose <c>Agent-Studio-Net-Change-Of</c>
+    /// trailer names <paramref name="resultSha"/>. Only commits the card itself
+    /// recorded are candidates: its verified tree and the commit its mechanical
+    /// attribution replaced the result with. Ancestry is answered from the
+    /// cached published set; a trailer read is one immutable <c>git show</c>.
+    /// </summary>
+    private string? NetChangePublication(TaskInfo job, string resultSha, string root, RepoIntegration reach)
+    {
+        if (!reach.IntegrationReachSucceeded) return null;
+        var record = ReadVerificationRecord(job.FolderPath);
+        var candidates = new[] { record?.Sha }
+            .Concat(record?.DeliveryShas ?? [])
+            .Concat((job.Commits ?? [])
+                .Where(commit => string.Equals(commit.Sha, resultSha, StringComparison.OrdinalIgnoreCase))
+                .Select(commit => commit.SupersededBySha))
+            .Where(sha => ReviewSubjectStore.IsValidResultSha(sha)
+                && !string.Equals(sha, resultSha, StringComparison.OrdinalIgnoreCase)
+                && AncestorSetContains(reach.PublishedAncestors, sha!))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        return candidates.FirstOrDefault(sha => string.Equals(NetChangeSource(root, sha!), resultSha,
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string? NetChangeSource(string root, string sha)
+    {
+        var key = root + "\0" + sha;
+        if (_netChangeSources.TryGetValue(key, out var known)) return known;
+        var source = ReadOnlyGitConcurrencyLimiter.Run(() => _git.GetNetChangeSource(root, sha));
+        // A trailer never changes; a failed read is asked again next time.
+        if (source is null) return null;
+        if (_netChangeSources.Count > 4096) _netChangeSources.Clear();
+        _netChangeSources[key] = source;
+        return source;
     }
 
     private bool IsIntegratedByContent(string root, RepoIntegration reach, string sha)

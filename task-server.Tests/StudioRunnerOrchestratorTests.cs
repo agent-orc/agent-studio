@@ -9,13 +9,12 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class StudioRunnerOrchestratorTests
+public sealed class StudioRunnerOrchestratorTests(StudioClassFixture fixture) : IClassFixture<StudioClassFixture>
 {
     [Fact]
     public async Task ContextKey_chat_round_trips_for_global_project_and_task_shapes()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
 
@@ -82,8 +81,7 @@ public sealed class StudioRunnerOrchestratorTests
     [Fact]
     public async Task Mode_put_is_versioned_and_start_stop_are_idempotent()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Mode WS"), "test", default);
@@ -130,8 +128,7 @@ public sealed class StudioRunnerOrchestratorTests
     [Fact]
     public async Task Orchestrator_log_lists_entries_and_accepts_a_human_override()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Log WS"), "test", default);
@@ -161,8 +158,7 @@ public sealed class StudioRunnerOrchestratorTests
     [Fact]
     public async Task Pending_decisions_inserted_directly_round_trip_over_http()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Decisions WS"), "test", default);
@@ -187,8 +183,7 @@ public sealed class StudioRunnerOrchestratorTests
     [Fact]
     public async Task Orchestrator_session_endpoints_filter_by_project_and_list_globally()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Session WS"), "test", default);
@@ -215,8 +210,7 @@ public sealed class StudioRunnerOrchestratorTests
     [Fact]
     public async Task Token_summary_math_is_correct_and_cached_aggregate_honors_ttl()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Token WS"), "test", default);
@@ -286,8 +280,7 @@ public sealed class StudioRunnerOrchestratorTests
     [Fact]
     public async Task Auto_review_queue_projects_in_flight_review_attempts()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Queue WS"), "test", default);
@@ -323,7 +316,7 @@ public sealed class StudioRunnerOrchestratorTests
         }
 
         var queue = await client.GetFromJsonAsync<AutoReviewQueueResponse>("/api/v1/studio/runner/auto-review-queue");
-        var entry = Assert.Single(queue!.Entries);
+        var entry = Assert.Single(queue!.Entries, item => item.AttemptId == "rat_queue_1");
         Assert.Equal("rat_queue_1", entry.AttemptId);
         Assert.Equal(task.TaskId, entry.TaskId);
         Assert.Equal(project.ProjectId, entry.ProjectId);
@@ -333,8 +326,7 @@ public sealed class StudioRunnerOrchestratorTests
     [Fact]
     public async Task Orchestrator_feed_merges_log_entries_and_chat_turns_newest_first()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Feed WS"), "test", default);
@@ -358,8 +350,7 @@ public sealed class StudioRunnerOrchestratorTests
     [Fact]
     public async Task Queue_starvation_counts_ready_tasks_with_no_recent_run()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Starvation WS"), "test", default);

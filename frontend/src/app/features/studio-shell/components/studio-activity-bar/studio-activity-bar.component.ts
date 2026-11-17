@@ -34,7 +34,13 @@ export class StudioActivityBarComponent {
   readonly openWorkbenchesRequest = output<void>();
 
   badgeLabel(item: StudioActivityBarItem, count: number): string {
-    if (item.key === 'activity') return `${count} fresh ${count === 1 ? 'alert' : 'alerts'}`;
-    return `${count} ${count === 1 ? 'filter' : 'filters'} active`;
+    const shown = count > 99 ? 'More than 99' : String(count);
+    if (item.key === 'activity') return `${shown} fresh ${count === 1 ? 'alert' : 'alerts'}`;
+    return `${shown} ${count === 1 ? 'filter' : 'filters'} active`;
+  }
+
+  /** The badge number is visible text, so the name carries it too (WCAG 2.5.3). */
+  buttonLabel(item: StudioActivityBarItem, count: number | undefined): string {
+    return count ? `${item.label}, ${this.badgeLabel(item, count)}` : item.label;
   }
 }

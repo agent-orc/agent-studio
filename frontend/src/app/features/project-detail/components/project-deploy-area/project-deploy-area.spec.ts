@@ -1,11 +1,14 @@
 import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/testing';
 import { BehaviorSubject, Subject, map, of, type Observable } from 'rxjs';
 import { vi } from 'vitest';
 import { ProjectDeployAreaComponent } from './project-deploy-area';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
+import { ServerCheckoutStore } from '../../../server-checkout';
+import { urlProject } from '../../../server-checkout/testing/server-checkout.fixtures';
+import type { RegistryProjectSummary } from '../../../../models/task.model';
 import { DEPLOY_CLOCK, type DeployPanel } from '../../state/deploy-area.model';
 import {
   ARTIFACT_B,
@@ -137,6 +140,7 @@ class FakeDeployData {
 describe('ProjectDeployAreaComponent', () => {
   let fixture: ComponentFixture<ProjectDeployAreaComponent>;
   let data: FakeDeployData;
+  const checkoutProject = signal<RegistryProjectSummary | null>(null);
   const host = () => fixture.nativeElement as HTMLElement;
   const byTestId = (id: string) => host().querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
   const text = (id: string) => byTestId(id)?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
@@ -156,6 +160,7 @@ describe('ProjectDeployAreaComponent', () => {
 
   beforeEach(async () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
+    checkoutProject.set(null);
     data = new FakeDeployData();
     await TestBed.configureTestingModule({
       imports: [ProjectDeployAreaComponent],
@@ -164,6 +169,9 @@ describe('ProjectDeployAreaComponent', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         { provide: ProjectDeployDataService, useValue: data },
+        { provide: ServerCheckoutStore, useValue: {
+          projectFor: () => checkoutProject(), statusFor: () => null,
+        } },
         { provide: DEPLOY_CLOCK, useValue: () => DEPLOY_FIXTURE_NOW },
       ],
     }).compileComponents();
@@ -174,6 +182,24 @@ describe('ProjectDeployAreaComponent', () => {
   });
 
   afterEach(() => { host().remove(); vi.unstubAllGlobals(); });
+
+  it('shows one checkout state for a URL project and skips deploy reads until its checkout exists', async () => {
+    checkoutProject.set(urlProject({ id: 'PROJ-2', displayName: 'Tally Library' }));
+    fixture.componentRef.setInput('projectName', 'Tally Library');
+    await settle();
+    const requests = data.requests.length;
+    expect(byTestId('deploy-checkout-missing')?.textContent).toContain('server checkout');
+    expect(byTestId('deploy-source-notices')).toBeNull();
+    await click('deploy-tab-pipeline');
+    await click('deploy-tab-steps');
+    await click('deploy-refresh');
+    expect(data.requests).toHaveLength(requests);
+
+    checkoutProject.set(urlProject({ id: 'PROJ-2', displayName: 'Tally Library', repositoryPath: '/srv/tally' }));
+    await settle();
+    expect(byTestId('deploy-checkout-missing')).toBeNull();
+    expect(data.requests.length).toBeGreaterThan(requests);
+  });
 
   it('shows no preview or fixture data while sources load', () => {
     expect(host().textContent).not.toContain('Preview data');

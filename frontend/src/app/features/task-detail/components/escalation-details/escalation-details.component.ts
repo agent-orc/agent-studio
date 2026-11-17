@@ -116,7 +116,9 @@ export class EscalationDetailsComponent {
     void navigator.clipboard?.writeText(value);
   }
 
-  disclosureChanged(): void {
+  disclosureChanged(open = true): void {
     this.disclosureVersion.update(value => value + 1);
+    // The maximize button lives in the open content; closing restores the section.
+    if (!open) this.followUpMaximized.set(false);
   }
 }

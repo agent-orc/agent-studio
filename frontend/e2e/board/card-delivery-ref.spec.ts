@@ -130,8 +130,8 @@ test.describe('Review card delivery ref projection', () => {
 
       const integration = card.getByTestId('integration-status-badge');
       await expect(integration).toHaveAttribute('data-integration-status', 'pending');
-      await expect(integration).toContainText('NICHT integriert');
-      await expect(integration).not.toContainText('kein Branch');
+      await expect(integration).toContainText('Not integrated');
+      await expect(integration).not.toContainText('No branch');
 
       const context = card.getByTestId('task-card-change-context');
       await expect(context).toContainText(DELIVERY_REF);

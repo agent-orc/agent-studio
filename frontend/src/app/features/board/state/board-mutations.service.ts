@@ -7,6 +7,7 @@ import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
 import { UndoController } from '../../../services/undo.service';
 import { TaskSelectionService } from '../../task-detail/state/task-selection.service';
+import { AcceptanceRefusalActions } from '../../task-detail/runtime';
 import { laneLabelFor } from '../../task-detail/state/triage-actions.model';
 import { NotificationService } from '../../../services/notification.service';
 import { describeMoveRefusal, laneMoveRefusal, laneMoveRefusalText } from '../../../models/lane-move-guard';
@@ -37,6 +38,7 @@ export class BoardMutationsService {
   private readonly jobSelection = inject(TaskSelectionService);
   private readonly undo = inject(UndoController);
   private readonly notifications = inject(NotificationService);
+  private readonly acceptanceRefusals = inject(AcceptanceRefusalActions);
 
   // ---------- drag-and-drop move ----------
 
@@ -86,8 +88,13 @@ export class BoardMutationsService {
    * AGT-3624: a lane guard refusal (409) is an expected outcome. It reads as
    * one plain sentence and the next action; the raw payload stays behind
    * Technical details. Any other failure keeps the error dialog.
+   *
+   * AGT-3873: an Accept the owner may override opens the card with the
+   * written-reason form focused instead; a refusal no override can admit
+   * keeps the dialog, which says what to do instead.
    */
   private reportMoveFailure(err: unknown, job: TaskInfo | undefined, targetState: string, jobId: string): void {
+    if (job && targetState === TaskState.Completed && this.acceptanceRefusals.acceptRefusedOnBoard(job, err)) return;
     const refusal = job ? describeMoveRefusal(err, job, targetState) : null;
     this.errorDialog.show(err, {
       title: refusal ? `Cannot move to ${laneName(targetState)}` : 'Failed to move task',

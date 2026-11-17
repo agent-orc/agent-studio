@@ -19,7 +19,9 @@ An app declares persistent data in its repository under
 ```
 
 The JSON above is the `data` portion of a complete environment declaration.
-The database is supplied by the operator. Studio stores and displays only the
+The database is supplied by the operator. Since the owner chose IP-D5 option B
+on 16 November 2026, the run zone can also provision a managed database; see
+[managed databases](../managed-databases/README.md). Studio stores and displays only the
 AGT-3222 secret reference, never the connection value. The reference must name
 the same project and environment as the deploy job. Its secret name joins the
 job's allowlist for workload resolution. This option does not provision or back

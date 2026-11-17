@@ -308,6 +308,24 @@ describe('ResultViewComponent', () => {
     expect(el.textContent).not.toContain('agent-studio:operator-result-backfill');
   });
 
+  it('states a merged, reviewed delivery before saying the report was generated (AGT-3873)', async () => {
+    const fixture = await build(detail(SCAFFOLD, {
+      key: 'AGT-3534',
+      lastActivity: '2026-11-09T09:35:24.000Z',
+      integration: { status: 'integrated', integrationBranch: 'develop' },
+      reviewProjection: { latestOutcome: 'Pass' },
+    } as never), verdict());
+    const notice = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="result-scaffold-notice"]');
+    expect(notice?.querySelector('[data-testid="result-scaffold-delivery"]')?.textContent)
+      .toBe('The delivery is merged into develop and its review passed.');
+    expect(notice?.textContent).toContain('This report was generated automatically from task.json and the artifacts.');
+  });
+
+  it('adds no delivery sentence to a generated report of an unmerged delivery', async () => {
+    const fixture = await build(detail(SCAFFOLD, { key: 'AGT-2514' }), verdict());
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="result-scaffold-delivery"]')).toBeNull();
+  });
+
   it('opens the task artifacts from the scaffold link', async () => {
     const fixture = await build(detail(SCAFFOLD, {
       key: 'AGT-2514',

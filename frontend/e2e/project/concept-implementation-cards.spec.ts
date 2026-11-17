@@ -64,6 +64,7 @@ const PLAN = {
   targetState: '1-preparation',
   watchPath: WATCH_PATH,
   projectName: PROJECT,
+  route: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
 };
 
 interface Captured {
@@ -174,6 +175,11 @@ async function installMocks(page: Page): Promise<Captured> {
     workbench: workbench(),
     html: DOSSIER_HTML, branch: 'develop', revision: '0123456789abcdef',
     workingTreeModified: false, fingerprint: 'a'.repeat(64), entryFingerprint: 'entry-a',
+    // The server offers promotion only for a reviewed concept Dossier (AGT-3875).
+    promotion: {
+      available: true, reason: null, message: null, sourceTaskKey: CONCEPT_KEY, sourceJobId: 'delivery-flow-concept',
+      sourceTitle: 'Delivery flow concept', sourceLane: '5-human-review', proposalCount: ITEMS.length,
+    },
     cards: {
       projectName: PROJECT, dossierKey: WORKBENCH_KEY, dossierPath: 'docs/delivery-flow/index.html',
       implementationSlices: ITEMS.length, completedSlices: 0,
@@ -245,6 +251,10 @@ test.describe('AGT-3701 create implementation cards', () => {
       .toContainText('Delivery mode: A · Queued (recommended)');
     await expect(promotion.getByTestId('concept-promotion-slice-decision-2'))
       .toContainText('No linked decision');
+    await expect(promotion.getByTestId('concept-promotion-slice-route-1'))
+      .toHaveText('Codex · gpt-6-sol · high');
+    await expect(promotion.getByTestId('concept-promotion-slice-route-2'))
+      .toHaveText('Codex · gpt-6-sol · high');
     await expect(promotion.getByTestId('concept-promotion-confirm')).toHaveText('Create all 3 cards');
     await shot(page, 'dossier-create-implementation-cards-light--mocked.png');
 

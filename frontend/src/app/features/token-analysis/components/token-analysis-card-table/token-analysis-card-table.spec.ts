@@ -25,6 +25,25 @@ describe('TokenAnalysisCardTableComponent', () => {
     expect(root.querySelector('[data-testid="token-analysis-table-total"]')?.textContent).toContain('2.6K');
   });
 
+  it('renders projectless one-shot usage as its own row', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TokenAnalysisCardTableComponent], providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TokenAnalysisCardTableComponent);
+    const data = fixtureResponse();
+    fixture.componentRef.setInput('cards', []);
+    fixture.componentRef.setInput('remainders', [{
+      project: 'Unattributed one-shot jobs', totalTokens: 25, costUsd: 0.01,
+      slices: [{ ...data.remainders[0].slices[0], kind: 'enrichment', input: 25,
+        output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0.01 }],
+    }]);
+    fixture.componentRef.setInput('kinds', ['enrichment']);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="token-analysis-row-rest"]')?.textContent)
+      .toContain('Unattributed one-shot jobs');
+  });
+
   it('sorts by cost by default, shows usage kinds in USD, and switches to tokens from the header (AGT-3805)', async () => {
     await TestBed.configureTestingModule({
       imports: [TokenAnalysisCardTableComponent],

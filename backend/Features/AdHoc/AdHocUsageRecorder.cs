@@ -108,6 +108,7 @@ public sealed class AdHocUsageRecorder
                 var usage = new OrchestratorTokenUsage
                 {
                     Model = record.Model,
+                    CliType = record.CliType,
                     InputTokens = (int)record.InputTokens,
                     OutputTokens = (int)record.OutputTokens,
                     CacheReadTokens = (int)record.CacheReadTokens,

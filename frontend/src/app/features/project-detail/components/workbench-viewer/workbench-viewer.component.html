@@ -48,6 +48,11 @@
           </button>
         </div>
       }
+      @if (documentationBlockedReason(); as reason) {
+        <p class="workbench-viewer__documentation-blocked" data-testid="workbench-documentation-blocked">
+          {{ reason }}
+        </p>
+      }
       @if (documentationError(); as message) {
         <p class="workbench-viewer__documentation-error" role="alert">{{ message }}</p>
       }
@@ -61,6 +66,14 @@
         [taskRef]="source"
         [projectName]="projectName()"
         (promoted)="refreshDecision()"
+      />
+    } @else if (promotionBlocked(); as promotion) {
+      <app-dossier-promotion-notice
+        class="workbench-viewer__promotion"
+        [projectName]="projectName()"
+        [document]="doc"
+        [promotion]="promotion"
+        [readOnly]="readOnly()"
       />
     }
     <div
