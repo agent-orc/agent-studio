@@ -80,6 +80,43 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
     }
 
     [Fact]
+    public void DeploymentSummary_LeavesStudioStableHistoryOutOfAnotherProject()
+    {
+        var (service, workspace, repo) = BuildDeploymentStack(createRepo: true, studio: false);
+        var headBefore = RevParse(repo, "HEAD");
+        Commit(repo, "deployed.txt", "deployed", "Deploy payload");
+        var logs = Path.Combine(workspace, "logs");
+        Directory.CreateDirectory(logs);
+        File.WriteAllText(Path.Combine(logs, "stable-restarts.jsonl"), JsonSerializer.Serialize(new
+        {
+            ts = "2026-07-11T08:42:11Z", @event = "restart", status = "ok", jobsSinceLastRestart = 1,
+            headBefore, headAfter = RevParse(repo, "HEAD"), durationSeconds = 5, reviewCountAfter = 1,
+        }) + Environment.NewLine);
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"), """
+            schemaVersion: 2
+            deploy:
+              - step: container
+                artifact: app
+                target: run-host
+                environments: [staging]
+              - step: container
+                artifact: app
+                target: prod-host
+                environments: [production]
+            """);
+
+        var result = service.Build("Demo")!;
+
+        Assert.False(result.StableBaseline);
+        Assert.False(result.Available);
+        Assert.Null(result.LastDeployment);
+        Assert.Empty(result.History);
+        Assert.Empty(result.Targets);
+        Assert.Equal(2, result.PipelineDeploySteps);
+    }
+
+    [Fact]
     public void DeploymentSummary_ProjectsLatestRestartIntoDeployedAndPendingRanges()
     {
         var (service, workspace, repo) = BuildDeploymentStack(createRepo: true);
@@ -108,6 +145,7 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
 
         Assert.NotNull(result);
         Assert.True(result!.Available, result.Reason);
+        Assert.True(result.StableBaseline);
         Assert.Null(result.Reason);
         Assert.NotNull(result.LastDeployment);
         Assert.Equal("ok", result.LastDeployment!.Status);
@@ -197,7 +235,7 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
     [Fact]
     public void DeploymentSummary_DerivesRunnableDescriptorWithoutHistory()
     {
-        var (service, _, repo) = BuildDeploymentStack(createRepo: true);
+        var (service, _, repo) = BuildDeploymentStack(createRepo: true, studio: false);
         var descriptor = Path.Combine(repo, "docs", "deployments", "docs-site");
         Directory.CreateDirectory(descriptor);
         File.WriteAllText(Path.Combine(descriptor, "deployment.json"), """
@@ -228,7 +266,8 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
         Assert.Equal(new[] { "secret-ref", "branch" }, target.Parameters.Select(parameter => parameter.Type));
     }
 
-    private (ProjectDeploymentSummaryService Service, string Workspace, string Repo) BuildDeploymentStack(bool createRepo)
+    private (ProjectDeploymentSummaryService Service, string Workspace, string Repo) BuildDeploymentStack(bool createRepo,
+        bool studio = true)
     {
         var workspace = Path.Combine(_root, Guid.NewGuid().ToString("N"), "workspace");
         var watchPath = Path.Combine(workspace, "projects", "demo");
@@ -242,6 +281,12 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
             Git(repo, "config", "user.name", "Test User");
             Git(repo, "config", "commit.gpgsign", "false");
             Commit(repo, "initial.txt", "initial", "Initial");
+            if (studio)
+            {
+                // The stable restart script marks Studio's own repository (F19).
+                Directory.CreateDirectory(Path.Combine(repo, "scripts", "supervisor"));
+                Commit(repo, "scripts/supervisor/restart-stable-after-batch.sh", "#!/bin/sh\n", "Stable restart");
+            }
         }
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
