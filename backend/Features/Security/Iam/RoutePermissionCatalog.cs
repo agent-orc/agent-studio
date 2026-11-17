@@ -288,6 +288,8 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/release-gate",
             "/api/projects/{}/deploy/runbooks", "/api/projects/{}/deploy/runbooks/runs",
             "/api/projects/{}/deploy/runbooks/runs/{}", "/api/projects/{}/deploy/runbooks/runs/{}/log");
+        // Release notes are product copy, written like project documentation.
+        Add("PUT", IamPermissions.ProjectDocsWrite, "/api/projects/{}/deploy/releases/{}/notes/{}");
         Environment("POST", IamPermissions.EnvironmentDeploy,
             "/api/projects/{}/deploy/environments/{}/runbooks/{}/runs", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
