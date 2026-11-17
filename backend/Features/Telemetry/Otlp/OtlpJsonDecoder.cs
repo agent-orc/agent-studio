@@ -138,6 +138,25 @@ internal static class OtlpJsonDecoder
         point.Sum = Double(element, "sum");
         point.Min = Double(element, "min");
         point.Max = Double(element, "max");
+        if (kind == MetricKind.Histogram)
+        {
+            foreach (var bucket in Array(element, "bucketCounts"))
+            {
+                if (point.BucketCounts.Count >= 129) break;
+                var value = bucket.ValueKind == JsonValueKind.String ? bucket.GetString() : bucket.GetRawText();
+                if (!ulong.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed))
+                    throw Malformed("bucketCounts");
+                point.BucketCounts.Add(parsed);
+            }
+            foreach (var bound in Array(element, "explicitBounds"))
+            {
+                if (point.ExplicitBounds.Count >= 128) break;
+                var value = bound.ValueKind == JsonValueKind.String ? bound.GetString() : bound.GetRawText();
+                if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+                    || !double.IsFinite(parsed)) throw Malformed("explicitBounds");
+                point.ExplicitBounds.Add(parsed);
+            }
+        }
         return point;
     }
 

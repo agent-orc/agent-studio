@@ -170,6 +170,44 @@ and follow the Studio session and project-membership rules.
 Attribute values are compared as text. Resource attributes, record
 attributes, and the instrumentation scope name (`otel.scope.name`) are merged.
 
+## Project Operations mapping
+
+The project Deploy > Operations tab reads the built-in per-environment store.
+Set `Telemetry:Enabled=false` only when deliberately disabling that store; in
+that case the tab shows the unavailable state. A store read failure returns a
+named `Operations telemetry store read failed.` error instead of an empty state.
+
+The 30-day view reads hourly buckets. Request count is the observation count of
+`http.server.request.duration` (or `http.server.duration`); when neither is
+present, it uses `http.server.request.count` or `http.server.requests`. Error
+rate counts requests whose `http.response.status_code` is 500 or greater
+(`http.status_code` is accepted for older senders). A missing status is not
+treated as an error. Duration units `s` and `ms` are rendered in milliseconds.
+For newly ingested `http.server.request.duration` histograms, intake also keeps
+each explicit OTLP bucket as an internal `.bucket` series with an
+`otel.histogram.bound` attribute. The displayed p50 and p95 interpolate within
+those bucket boundaries, both over the window and per hour for the trend. Old
+data without bucket series falls back to the count-weighted mean for p50 and
+the observed maximum for p95; the store cannot recover exact quantiles from
+old count, sum, minimum, and maximum alone. Routes in top endpoints come only
+from `http.route` and omit any query string.
+
+CPU selects the first present convention among `process.cpu.utilization`,
+`container.cpu.utilization`, `system.cpu.utilization`, `process.cpu.time`, and
+`container.cpu.usage`. Utilization is shown in cores; CPU time and usage are
+converted from seconds per hourly bucket. Memory selects `process.memory.usage`,
+`container.memory.usage`, then `system.memory.usage`. Disk selects
+`system.filesystem.usage`, then `container.filesystem.usage`. Used-state gauge
+series are summed within the latest bucket. `system.network.io`,
+`container.network.io`, or `process.network.io` supplies network bytes when
+present. Unreported reserved capacity, sessions, active users, and restarts
+remain absent.
+
+Log search reads the environment's stored, masked records newest first. Time,
+exact severity group, release (`service.version` or `release.id`), and body text
+can be combined. `nextCursor` lets the tab request the next page beyond 100
+lines; changing a filter starts a new search.
+
 ## Export hooks
 
 `ITelemetryExportSink` receives every committed batch after masking. A failing

@@ -26,7 +26,7 @@ export interface ProjectOperations {
   project: string; since: string; until: string; environments: EnvironmentOperations[]; dora: DoraSummary;
 }
 export interface OperationsLogLine { at: string; level: string; message: string; releaseId: string | null }
-export interface OperationsLogResult { telemetryAvailable: boolean; lines: OperationsLogLine[] }
+export interface OperationsLogResult { telemetryAvailable: boolean; lines: OperationsLogLine[]; nextCursor?: string | null }
 
 export function metric(value: number | null | undefined, unit = ''): string {
   return value === null || value === undefined ? 'No data' : `${Number(value.toFixed(1)).toLocaleString('en-US')}${unit}`;

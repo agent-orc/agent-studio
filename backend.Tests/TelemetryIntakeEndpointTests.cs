@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Clients;
+using AgentStudio.Projects;
 using AgentStudio.Security;
 using AgentStudio.Telemetry;
 using Microsoft.AspNetCore.Builder;
@@ -34,6 +35,32 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     // Five minutes after the fixtures' 2026-10-16T12:00:00Z, so they are inside the admission window.
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 16, 12, 5, 0, TimeSpan.Zero));
     private readonly List<WebApplication> _apps = [];
+
+    [Fact]
+    public async Task Otlp_json_intake_feeds_operations_metrics_and_logs()
+    {
+        var harness = await Start();
+        var token = (await CreateToken(harness)).Secret;
+        var now = _clock.GetUtcNow();
+        var time = TelemetryAdmissionPolicy.UnixNanos(now.AddMinutes(-1)).ToString();
+        var metricBody = """
+            {"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"http.server.request.duration","unit":"s","histogram":{"aggregationTemporality":1,"dataPoints":[{"timeUnixNano":"__TIME__","count":"2","sum":0.06,"min":0.01,"max":0.05,"bucketCounts":["1","1"],"explicitBounds":[0.02],"attributes":[{"key":"http.response.status_code","value":{"stringValue":"500"}}]}]}}]}]}]}
+            """.Replace("__TIME__", time);
+        var logBody = """
+            {"resourceLogs":[{"resource":{"attributes":[{"key":"service.version","value":{"stringValue":"v2"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"__TIME__","severityNumber":17,"body":{"stringValue":"upstream timeout"}}]}]}]}
+            """.Replace("__TIME__", time);
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Metrics, Encoding.UTF8.GetBytes(metricBody), token, "application/json")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, Encoding.UTF8.GetBytes(logBody), token, "application/json")).StatusCode);
+        Assert.Equal(4, await harness.Writer.DrainOnceAsync(CancellationToken.None));
+        var reader = new StoreOperationsTelemetryReader(harness.Services.GetRequiredService<TelemetryStore>(),
+            harness.Services.GetRequiredService<TelemetryOptions>());
+        var result = reader.ReadMetrics("shop", "stage", now.AddHours(-1), now)!;
+        Assert.Equal(2, result.Requests);
+        Assert.Equal(1, result.ErrorRate);
+        Assert.Equal(20, result.ResponseP50Ms);
+        Assert.Equal("upstream timeout", Assert.Single(reader.SearchLogs(new("shop", "stage", now.AddHours(-1),
+            now, "ERROR", "v2", "timeout", 100, null))!.Lines).Message);
+    }
 
     public async ValueTask DisposeAsync()
     {

@@ -3,7 +3,7 @@
   <a [href]="'#/projects/' + projectSlug() + '/operations/structure'">Structure · project partial picture</a>
   <header class="project-operations__head">
     <div><p>Operations</p><h2 id="project-operations-title">Monitoring, usage and load</h2><p>Last 30 days by application environment.</p></div>
-    <button type="button" (click)="load(projectName())">Refresh</button>
+    <button type="button" [appPendingButton]="loading()" pendingLabel="Refreshing…" (click)="load(projectName())">Refresh</button>
   </header>
   @if (error(); as message) { <p role="alert">{{ message }}</p> }
   @if (snapshot(); as state) {
@@ -88,9 +88,10 @@
         <label>Release ID <input type="text" data-testid="operations-log-release" [value]="release()"
           (input)="changeFilter(release, $any($event.target).value)" placeholder="Any release ID"></label>
         <label>Text <input type="search" [value]="searchText()" (input)="changeFilter(searchText, $any($event.target).value)" placeholder="Search text"></label>
-        <button type="button" data-testid="operations-search-logs" (click)="search()">Search logs</button>
+        <button type="button" data-testid="operations-search-logs" [appPendingButton]="logLoading()" pendingLabel="Searching…" (click)="search()">Search logs</button>
       </div>
       @if (logError(); as message) { <p role="alert">{{ message }}</p> }
+      @if (logLoading() && !logs()) { <app-loading-surface kind="list" label="Searching application logs…" /> }
       @if (logs(); as result) {
         @if (!result.telemetryAvailable) { <p role="status" data-testid="operations-logs-empty">Application logs are not available until the telemetry intake store is connected.</p> }
         @else if (!result.lines.length) { <p role="status">No logs match these filters.</p> }
@@ -99,6 +100,7 @@
             @if (line.releaseId) { <button type="button" (click)="openRelease.emit(line.releaseId)">Release {{ line.releaseId }}</button> }
           </li>
         }</ol> }
+        @if (result.nextCursor) { <button type="button" data-testid="operations-more-logs" [appPendingButton]="logLoading()" pendingLabel="Loading…" (click)="search(true)">Load more logs</button> }
       }
     </section>
   } @else if (!error()) { <app-loading-surface kind="list" label="Loading operations…" /> }
