@@ -10,6 +10,7 @@ import {
 } from '../../state/deploy-area.model';
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
@@ -19,7 +20,7 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [DatePipe, StatusIndicatorComponent, DeploySecretGapsComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,6 +30,8 @@ export class DeployEnvironmentCardComponent {
   readonly now = input.required<number>();
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  /** F14: open the binding panel on this environment. */
+  readonly openSecrets = output<string>();
 
   readonly headingId = computed(() => `deploy-environment-${this.environment().id}-title`);
   readonly release = computed(() => {

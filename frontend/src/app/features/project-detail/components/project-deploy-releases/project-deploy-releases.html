@@ -67,6 +67,23 @@
                 <dt>Artifacts</dt>
                 <dd><ul class="releases__digests">@for (digest of release.artifactDigests; track digest) { <li><code>{{ digest }}</code></li> }</ul></dd>
                 <dt>Running in</dt><dd data-testid="deploy-release-live-in">{{ liveIn().length ? liveIn().join(', ') : 'No environment' }}</dd>
+                <dt>Secrets</dt>
+                <dd data-testid="deploy-release-secrets">
+                  @switch (secrets().status) {
+                    @case ('loading') { <span class="releases__muted">Checking secret bindings…</span> }
+                    @case ('unavailable') { <span class="releases__muted">This server does not check secret bindings.</span> }
+                    @case ('error') { <span class="releases__muted">{{ secrets().message }}</span> }
+                    @default {
+                      @if (secretGaps().length) {
+                        <div class="releases__secret-gaps">
+                          @for (gap of secretGaps(); track gap.environmentId) {
+                            <app-deploy-secret-gaps [readiness]="gap" [named]="true" (bind)="openSecrets.emit($event)" />
+                          }
+                        </div>
+                      } @else { Every environment has its secrets bound }
+                    }
+                  }
+                </dd>
               </dl>
               @defer (on immediate) { <app-project-deploy-release-notes [release]="release" /> }
             </article>

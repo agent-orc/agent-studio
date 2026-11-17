@@ -720,6 +720,7 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.DeploySecretReadiness>();
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityReleaseRangeVerdictClient>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();

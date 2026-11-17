@@ -34,6 +34,7 @@
       Awaiting approval: {{ approval.subject }}@if (approval.requestedBy) { <span class="env-card__muted">, requested by {{ approval.requestedBy }}</span> }
     </p>
   }
+  <app-deploy-secret-gaps [readiness]="environment().secrets" (bind)="openSecrets.emit($event)" />
   @if (environment().intervention; as intervention) {
     <button type="button" class="env-card__note" data-testid="deploy-environment-intervention"
             (click)="openRun.emit(intervention.deploymentId)">

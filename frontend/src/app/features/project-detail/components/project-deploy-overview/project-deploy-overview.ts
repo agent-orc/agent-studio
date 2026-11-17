@@ -20,6 +20,7 @@ export class ProjectDeployOverviewComponent {
   readonly now = input.required<number>();
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  readonly openSecrets = output<string>();
 
   readonly errorBody = computed(() => {
     const panel = this.panel();
