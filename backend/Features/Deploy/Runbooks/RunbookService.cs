@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Projects;
 
 namespace AgentStudio.Deploy;
 
@@ -7,7 +8,8 @@ public sealed record RunbookRun(
     string Id, string Name, string EnvironmentId, string State, string RequestedBy,
     string? ApprovedBy, DateTime CreatedAtUtc, DateTime? StartedAtUtc, DateTime? FinishedAtUtc,
     IReadOnlyList<DeploymentStep> Steps, IReadOnlyDictionary<string, string> Variables,
-    IReadOnlyDictionary<string, string> SecretVariables, string? JobId, string DefinitionCommit);
+    IReadOnlyDictionary<string, string> SecretVariables, string? JobId, string DefinitionCommit,
+    string? IncidentId = null, string? IncidentCardId = null, string? ReleaseId = null);
 
 public sealed record RunbookRunResponse(
     string Id, string Name, string EnvironmentId, string State, string RequestedBy,
@@ -24,9 +26,11 @@ public sealed class RunbookService
     private readonly ProjectSettingsService _settings;
     private readonly TimeProvider _clock;
     private readonly ILogger<RunbookService> _logger;
+    private readonly IncidentActions? _incidentActions;
 
     public RunbookService(ProjectEnvironmentService environments, DeployStore store, GitService git,
-        ProjectSettingsService settings, TimeProvider clock, ILogger<RunbookService> logger)
+        ProjectSettingsService settings, TimeProvider clock, ILogger<RunbookService> logger,
+        IncidentActions? incidentActions = null)
     {
         _environments = environments;
         _store = store;
@@ -34,6 +38,7 @@ public sealed class RunbookService
         _settings = settings;
         _clock = clock;
         _logger = logger;
+        _incidentActions = incidentActions;
     }
 
     public IReadOnlyList<ProjectRunbookDefinition>? Definitions(string project)
@@ -96,6 +101,12 @@ public sealed class RunbookService
             var run = new RunbookRun(id, name, environmentId,
                 protectedEnvironment ? DeploymentStates.AwaitingApproval : DeploymentStates.Queued,
                 actor.Id, null, now, null, null, steps, plain, secrets, null, source.Value.Commit);
+            var incident = _incidentActions?.Open(project, environmentId);
+            var currentRelease = _store.ReadDeployments(project)
+                .Where(item => item.EnvironmentId == environmentId && item.State == DeploymentStates.Succeeded)
+                .OrderByDescending(item => item.FinishedAtUtc).FirstOrDefault()?.ReleaseId;
+            run = run with { IncidentId = incident?.IncidentId, IncidentCardId = incident?.CardId,
+                ReleaseId = currentRelease };
             if (!protectedEnvironment)
             {
                 var job = _environments.QueueRunbook(project, declarations.First(item => item.Id == environmentId),
@@ -275,9 +286,30 @@ public sealed class RunbookService
     private void Persist(string project, IReadOnlyList<RunbookRun> runs,
         IReadOnlyList<DeploymentLogEntry> log, IReadOnlyList<DeployAuditEntry> audit)
     {
+        var before = _store.ReadRunbookRuns(project).ToDictionary(item => item.Id, StringComparer.Ordinal);
+        var linkedRuns = runs.Select(run =>
+        {
+            if (run.IncidentId is not null) return run;
+            if (before.TryGetValue(run.Id, out var stored))
+                return run with { IncidentId = stored.IncidentId, IncidentCardId = stored.IncidentCardId,
+                    ReleaseId = run.ReleaseId ?? stored.ReleaseId };
+            var incident = _incidentActions?.At(project, run.EnvironmentId, run.CreatedAtUtc);
+            return run with { IncidentId = incident?.IncidentId, IncidentCardId = incident?.CardId };
+        }).ToArray();
         _store.AppendLog(project, log);
         _store.AppendAudit(project, audit);
-        _store.SaveRunbookRuns(project, runs);
+        _store.SaveRunbookRuns(project, linkedRuns);
+        var changedLinkedRuns = linkedRuns.Where(item => item.IncidentId is not null
+            && (!before.TryGetValue(item.Id, out var previous) || previous.State != item.State)).ToArray();
+        var releases = changedLinkedRuns.Length > 0 ? _store.ReadReleases(project).ToDictionary(item => item.Id, StringComparer.Ordinal)
+            : new Dictionary<string, Release>(StringComparer.Ordinal);
+        foreach (var run in changedLinkedRuns)
+        {
+            _incidentActions?.Report(project, run.IncidentCardId, run.IncidentId, run.Id,
+                $"Runbook {run.Name}", run.RequestedBy,
+                run.ReleaseId is null ? null : releases.GetValueOrDefault(run.ReleaseId)?.Version ?? run.ReleaseId,
+                run.State);
+        }
     }
 
     private static string LogRef(string project, string id, string step)

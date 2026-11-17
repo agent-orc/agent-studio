@@ -14,6 +14,8 @@ public sealed record DeploymentRecord
     public required string ReleaseId { get; init; }
     public required string EnvironmentId { get; init; }
     public string? Tenant { get; init; }
+    public string? IncidentId { get; init; }
+    public string? IncidentCardId { get; init; }
     public required string State { get; init; }
     public required string Trigger { get; init; }
     /// <summary><c>publish-static</c> or <c>start-container</c>, from the environment template.</summary>

@@ -15,7 +15,7 @@ public sealed record ProjectOperationsView(string Project, DateTimeOffset Since,
 public sealed record OperationsLogResult(bool TelemetryAvailable, IReadOnlyList<OperationsLogLine> Lines);
 
 public sealed class ProjectOperationsService(DeployService deploy, TaskScannerService scanner,
-    IOperationsTelemetryReader telemetry, TimeProvider clock)
+    IOperationsTelemetryReader telemetry, TimeProvider clock, HealthCheckStore health)
 {
     public ProjectOperationsView? Read(string project)
     {
@@ -37,7 +37,8 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
                 CompletedMarkers(environment.Id, deployments, releaseById, since, until));
         }).ToArray();
         return new(project, since, until, rows,
-            DoraMetrics.Calculate(environments, releases, deployments, cards, since, until));
+            DoraMetrics.Calculate(environments, releases, deployments, cards, since, until,
+                health.Load(project).Environments.Values.SelectMany(item => item.IncidentHistory).ToArray()));
     }
 
     public static IReadOnlyList<OperationsMarker> CompletedMarkers(string environmentId,
