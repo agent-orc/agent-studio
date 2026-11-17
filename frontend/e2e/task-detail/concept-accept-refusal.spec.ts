@@ -519,6 +519,24 @@ async function fullShot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: path.join(dir, name) });
 }
 
+/**
+ * The mocked install has no first-run proof, so the shell may open its
+ * checklist first. A phone shows only the active tab; the Board tab then
+ * sits in the tab overflow menu.
+ */
+async function showBoardTab(page: Page): Promise<void> {
+  const tab = page.getByRole('tab', { name: /Board/ }).first();
+  const overflow = page.getByTestId('studio-tab-overflow');
+  await expect(tab.or(overflow).first()).toBeVisible({ timeout: 30_000 });
+  if (await tab.isVisible()) {
+    await tab.click();
+    return;
+  }
+  await overflow.click();
+  await page.locator('[data-testid^="studio-tab-overflow-menu-item-"]').filter({ hasText: 'Board' }).first().click();
+  await expect(tab).toBeVisible();
+}
+
 type Box = { x: number; y: number; width: number; height: number };
 const overlaps = (a: Box, b: Box) =>
   a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -599,8 +617,7 @@ test.describe('Refused Accept offers its next step where it is named (AGT-3873)'
       await page.goto('/#/board', { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await dismissDevErrorDialog(page);
       await theme(page, value);
-      // The mocked install has no first-run proof, so the shell may open its checklist first.
-      await page.getByRole('tab', { name: /Board/ }).first().click();
+      await showBoardTab(page);
       // A phone shows one lane at a time.
       if (width < 600) await page.getByLabel('Board lane').selectOption('5-human-review');
 
