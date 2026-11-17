@@ -16,7 +16,7 @@ test.use({ serviceWorkers: 'block', timezoneId: 'UTC' });
  * the session window as a small gauge. When 100% is forecast before the reset
  * it names the configured fallback and whether it is armed.
  *
- * Quota calls are mocked; the isolated backend serves the remaining API.
+ * Quota responses are mocked; other read endpoints use the isolated test backend.
  */
 
 const resultsDir = process.env.JOB_RESULTS_DIR ?? path.join(process.cwd(), 'test-results');
@@ -127,6 +127,7 @@ async function openCliManagement(page: Page): Promise<void> {
 async function installRoutes(page: Page, now: number): Promise<void> {
   const json = (body: unknown) => (route: Route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => undefined);
+  await page.route('**/api/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/tasks/grouped**', json({

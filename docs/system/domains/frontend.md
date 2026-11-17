@@ -3,6 +3,11 @@
 Version: 2026-11-14
 Status: System-of-record map for frontend changes.
 
+Needs you shows a review-host row when a differing release claims review work.
+The status-bar trigger shows a compact Review host cue while the row is open;
+the row opens the affected Execution Hosts detail and its Update review host
+panel.
+
 Concept cards and detail views show the dossier and review state without code
 delivery indicators. They omit build and test evidence, delivery integration,
 and checkout context. Concept acceptance remains available when a stale
@@ -700,6 +705,12 @@ occur. It is not a claim about tunnel transfer time.
   is not the status `currentRelease` resolves its release with one `limit=1`
   read. Runs named by `/status` open without being on a loaded page; any other
   run is read from `/deployments/<id>`. The unpaged routes remain for existing clients.
+  The Deploy card, Operations overview, and deployment tools resolve the
+  environment release through the same running-release projection. A failed
+  deploy or rollback makes the running release uncertain until a later
+  successful host report confirms an artifact. The last successful release
+  remains the lifecycle baseline for promotion and rollback decisions; it is
+  not presented as the running release while host state is uncertain.
   Each source has its own loading or error state, so a failed deploy route
   leaves declared environment cards visible. A route 404 without an error body
   means the route is unavailable; a 404 with `{ error }` is shown as a server

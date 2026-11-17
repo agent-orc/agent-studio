@@ -90,6 +90,9 @@
                 </td>
               }
             </tr>
+            @if (w.start; as start) {
+              <tr><td colspan="5" class="usage-detail__note" data-testid="usage-detail-provider-week-period">Provider week: {{ w.startEstimated ? 'estimated start' : 'start' }} {{ start.utc }}; reset {{ w.reset?.utc }}.</td></tr>
+            }
             @if (w.suspiciousReason) {
               <tr><td colspan="5" class="usage-detail__note">Unverified: {{ w.suspiciousReason }}</td></tr>
             }

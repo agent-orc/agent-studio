@@ -191,6 +191,8 @@ export interface UsageDetailWindowView {
   /** What is left of the window, `None left` at or above 100% used, or `N/A`. */
   remaining: string;
   reported: boolean;
+  start: UsageInstantView | null;
+  startEstimated: boolean;
   reset: UsageInstantView | null;
   /** Provider wording when no reset instant is reported. */
   resetLabel: string | null;
@@ -244,6 +246,10 @@ export function formatRemainingPct(usedPct: number | null | undefined): string |
 
 function windowDetail(window: UsageCliWindow, timeZone: string, now: number): UsageDetailWindowView {
   const pct = formatUsedPct(window.usedPct);
+  const weekly = /week|7\s*d/i.test(window.label);
+  const resetMs = window.resetAtUtc ? Date.parse(window.resetAtUtc) : NaN;
+  const startUtc = weekly && Number.isFinite(resetMs)
+    ? window.startAtUtc ?? new Date(resetMs - 7 * 86_400_000).toISOString() : null;
   return {
     id: window.id,
     label: window.label,
@@ -251,6 +257,8 @@ function windowDetail(window: UsageCliWindow, timeZone: string, now: number): Us
     remaining: formatRemainingPct(window.usedPct) ?? NOT_AVAILABLE,
     reported: pct != null,
     reset: instantView(window.resetAtUtc, timeZone),
+    start: instantView(startUtc, timeZone),
+    startEstimated: !!startUtc && !window.startAtUtc,
     resetLabel: window.resetAtUtc ? null : window.resetLabel,
     countdown: formatCountdown(window.resetAtUtc, now),
     suspiciousReason: window.suspiciousReason,
