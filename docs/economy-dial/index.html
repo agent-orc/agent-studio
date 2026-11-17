@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Economy dial: one control from frugal to strong | Concept Dossier</title>
+<style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<style>
+  nav.contents { margin: 24px 0 36px; font: 0.82rem/1.8 var(--article-sans); }
+  .diagram text { font-family: var(--article-sans); }
+  .diagram .zone { fill: none; stroke: var(--article-line); stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .diagram .zone-label { fill: var(--article-faint); font-size: 13px; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase; }
+  .diagram .node { fill: var(--article-surface); stroke: var(--article-line); }
+  .diagram .focus { fill: var(--article-link-soft); stroke: var(--article-link); }
+  .diagram .ext { fill: var(--article-surface-strong); stroke: var(--article-line); }
+  .diagram .gap { fill: var(--article-warn-soft); stroke: var(--article-warn); }
+  .diagram .label { fill: var(--article-ink); font-size: 15px; font-weight: 650; }
+  .diagram .sub { fill: var(--article-muted); font-size: 12.5px; }
+  .diagram .warn-label { fill: var(--article-warn); font-size: 12px; font-weight: 650; }
+  .diagram .edge { fill: none; stroke: var(--article-link); stroke-width: 2; }
+  .diagram .edge-warn { fill: none; stroke: var(--article-warn); stroke-width: 2; }
+  .diagram .edge-muted { fill: none; stroke: var(--article-faint); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .diagram .arrowhead { fill: var(--article-link); }
+  .diagram .step { fill: var(--article-link); }
+  .diagram .step-text { fill: var(--article-paper); font-size: 12px; font-weight: 750; }
+  #fig-cost .focus { fill: var(--article-link); stroke: none; }
+  table caption { caption-side: top; margin-bottom: 6px; text-align: left; font-size: 0.78rem; }
+  .decision { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.9rem/1.6 var(--article-sans); }
+  .decision h3 { margin: 0 0 8px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; margin: 8px 0; padding: 9px 10px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); cursor: pointer; }
+  .decision label input { margin-top: 5px; }
+  .decision label b { display: block; }
+  .decision label .d { display: block; color: var(--article-muted); font-size: 0.86rem; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; padding: 8px; border: 1px solid var(--article-line); border-radius: 6px; background: var(--article-paper); color: var(--article-ink); font: 0.86rem/1.5 var(--article-sans); }
+  .yes { color: var(--article-good); font-weight: 650; }
+  .no { color: var(--article-bad); font-weight: 650; }
+  .mid { color: var(--article-warn); font-weight: 650; }
+</style>
+</head>
+<body>
+<main class="article">
+<header class="page">
+  <p class="kicker">Concept Dossier · AGT-3951 · 17 November 2026</p>
+  <h1>Economy dial: one control from frugal to strong</h1>
+  <p class="lede">Today nine separate controls decide which CLI, model and reasoning level a run uses, and an operator script re-pins dozens of cards whenever one provider's weekly window runs short. This Dossier proposes one workspace control with five positions. Each position selects, per task kind, a rung from the provider-neutral ladder that Token Economy delivers. Usage and cost follow from the position; the dial is not a weekly budget target. Explicit pins, correctness floors and quota admission keep their current meaning.</p>
+  <div class="meta"><span><b>Status</b> decision pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-3951</span><span><b>Related</b> AGT-2815, model selection and fallback (MS-1 to MS-8), Token Economy card "Economy dial: one value from frugal to strong"</span></div>
+</header>
+
+<nav class="contents" aria-label="Contents"><a href="#occasion">Occasion</a> · <a href="#current-state">Current state</a> · <a href="#dial">The dial</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#surface">Surface</a> · <a href="#measurement">Measurement plan</a> · <a href="#migration">Migration</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#slices">Slices</a> · <a href="#sources">Sources</a> · <a href="#implementation">Implementation</a></nav>
+
+<section id="occasion">
+<h2><span class="number">01</span> Occasion</h2>
+<p>Robert asked on 17 November 2026 for one control that steers cost and usage. The following points are already decided and are inputs to this Dossier, not open questions:</p>
+<ul>
+  <li>The control is called, in substance, <b>Frugal to Strong</b>. Its position selects model and reasoning level per task kind directly from the ladder that Token Economy delivers (Token Economy card "Economy dial: one value from frugal to strong").</li>
+  <li>Usage is a consequence of the position. A weekly budget target is explicitly <b>not</b> the semantics.</li>
+  <li>The standard rung for normal cards is <code>medium</code>. <code>high</code> is for hard cards only, <code>xhigh</code> is used deliberately.</li>
+  <li>Reviews stay on Claude Opus 5.5 at <code>low</code> for now.</li>
+</ul>
+<p>The operator switched new work between Claude and Codex about 15 times in 2026, each time following whichever weekly window was tighter. Each switch meant a script run that re-pinned cards, adjusted client defaults and touched pipeline steps. This Dossier answers the seven questions of the brief as decision cards D1 to D12, each with a recommended working option, and prepares eight implementation slices. It contains no implementation.</p>
+</section>
+
+<section id="current-state">
+<h2><span class="number">02</span> Current state</h2>
+<p>The code map below was taken from the repository at <code>2adbb4f5d</code> on 17 November 2026. Nine sources contribute to the route a run uses. They apply at different moments, and most of them only at card creation.</p>
+
+<table>
+  <thead><tr><th>Control</th><th>Where it is set</th><th>When it applies</th><th>Scope</th></tr></thead>
+  <tbody>
+    <tr><td>Client defaults (CLI, model, level)</td><td><code>PUT /api/clients/{id}/defaults</code>, permission <code>workspace.settings.write</code>; header defaults control</td><td>Card creation only (<code>TaskMutationService.cs:2108</code>). The create form sends <code>modelExplicit:false</code>, so the policy recommendation replaces the model; the default CLI still chooses the vendor catalogue.</td><td>Per client identity</td></tr>
+    <tr><td>Project registry defaults</td><td>Project settings (<code>CliDefault</code>, <code>ModelDefault</code>)</td><td>Card creation; the form treats a project model default as explicit</td><td>Per project</td></tr>
+    <tr><td>Economy mode</td><td><code>PUT /api/cli/model-routing/economy-mode</code>; toggle on CLI Management</td><td>Card creation, the create preview and run-time qualification; lowers one tier, never below the correctness or economy floor (<code>ModelRoutingPolicyRegistry.cs:131</code>)</td><td>Workspace, boolean</td></tr>
+    <tr><td>Consumer policy primary and fallbacks</td><td><code>PUT /api/model-selection/policy/consumers/{consumer}</code></td><td>At launch through <code>ModelSelectionService</code>, for cards without an explicit pin</td><td>Workspace, per consumer class</td></tr>
+    <tr><td>Project model selection overrides and step pins</td><td><code>PUT /api/projects/{name}/model-selection-overrides/{consumer}</code>, <code>PUT /api/projects/{name}/pipeline-step</code></td><td>At launch; step override, then catalogue step model, then project orchestrator model, then runtime default (<code>PipelineStepConfigResolver.cs:20</code>)</td><td>Per project, pipeline type, step</td></tr>
+    <tr><td>Step "Economy model" checkbox</td><td>Pipeline step setting <code>EconomyModel</code></td><td>Aspect steps only; picks a live Codex spark model when no step model is set</td><td>Per step</td></tr>
+    <tr><td>Quota fallback profiles and "prefer fallback now"</td><td><code>/api/cli/quota/model-routes</code>, <code>/quota/fallback-preference</code></td><td>At launch when the primary is near its cap; one launch only; equivalence from Token Economy</td><td>Workspace, per CLI</td></tr>
+    <tr><td>Orchestrator model</td><td><code>PUT /api/projects/{name}/orchestrator-model</code>, <code>PUT /api/workspaces/{id}/orchestrator-model</code></td><td>Orchestrator runs; project, then workspace, then platform default (Haiku family). The orchestrator composer accepts GPT models only (<code>OrchestratorChat.cs:645</code>).</td><td>Project or workspace</td></tr>
+    <tr><td>Card pins</td><td><code>PUT /api/tasks/{key}/cli-type</code>, <code>/model</code>, <code>/thinking-level</code></td><td>Later attempts; <code>preference</code> by default, <code>hard</code> waits instead of switching. The UI never sends <code>pinMode</code>, so UI pins are preference pins.</td><td>Per card</td></tr>
+  </tbody>
+</table>
+
+<figure class="media-breakout" id="fig-today"><svg class="diagram" viewBox="0 0 1120 470" role="img" aria-labelledby="today-title today-desc"><title id="today-title">Where the route of a run comes from today</title><desc id="today-desc">Left, five creation-time sources: client defaults, project defaults, economy mode, the policy recommendation from task type and text, and the operator script that re-pins cards. They write model and level onto the card when it is created. Right, four launch-time sources: card pins, project and step overrides, the consumer policy and quota fallback. At launch the runner takes the route from selection first and the stamped card model second; run-time qualification only wins when the card has no model at all. A change of economy mode therefore does not reach cards that already wait in Ready.</desc>
+  <text x="40" y="34" class="zone-label">At card creation</text>
+  <rect x="24" y="48" width="330" height="394" rx="12" class="zone"/>
+  <rect x="44" y="66" width="290" height="54" rx="9" class="node"/><text x="60" y="90" class="label">Client defaults</text><text x="60" y="110" class="sub">CLI, model, level per client identity</text>
+  <rect x="44" y="132" width="290" height="54" rx="9" class="node"/><text x="60" y="156" class="label">Project defaults</text><text x="60" y="176" class="sub">CliDefault, ModelDefault</text>
+  <rect x="44" y="198" width="290" height="54" rx="9" class="node"/><text x="60" y="222" class="label">Economy mode</text><text x="60" y="242" class="sub">boolean, one tier down</text>
+  <rect x="44" y="264" width="290" height="54" rx="9" class="node"/><text x="60" y="288" class="label">Policy recommendation</text><text x="60" y="308" class="sub">task type plus text floors</text>
+  <rect x="44" y="330" width="290" height="54" rx="9" class="gap"/><text x="60" y="354" class="label">Operator script</text><text x="60" y="374" class="warn-label">re-pins dozens of cards per switch</text>
+  <rect x="420" y="190" width="250" height="96" rx="12" class="focus"/><text x="440" y="222" class="label">Card stores model</text><text x="440" y="244" class="sub">and level, explicit or</text><text x="440" y="264" class="sub">stamped recommendation</text>
+  <path d="M334 93 C 380 93, 380 220, 420 228" class="edge-muted"/>
+  <path d="M334 159 C 380 159, 380 228, 420 234" class="edge-muted"/>
+  <path d="M334 225 L 420 238" class="edge-muted"/>
+  <path d="M334 291 L 420 246" class="edge-muted"/>
+  <path d="M334 357 C 380 357, 380 262, 420 256" class="edge-warn"/>
+  <text x="736" y="34" class="zone-label">At launch</text>
+  <rect x="720" y="48" width="376" height="394" rx="12" class="zone"/>
+  <rect x="740" y="66" width="336" height="54" rx="9" class="node"/><text x="756" y="90" class="label">Card pins</text><text x="756" y="110" class="sub">preference by default, hard opt-in</text>
+  <rect x="740" y="132" width="336" height="54" rx="9" class="node"/><text x="756" y="156" class="label">Project, step and orchestrator overrides</text><text x="756" y="176" class="sub">per consumer, pipeline type, step</text>
+  <rect x="740" y="198" width="336" height="54" rx="9" class="node"/><text x="756" y="222" class="label">Consumer policy</text><text x="756" y="242" class="sub">primary per consumer class</text>
+  <rect x="740" y="264" width="336" height="54" rx="9" class="node"/><text x="756" y="288" class="label">Quota admission and fallback</text><text x="756" y="308" class="sub">equivalent route, one launch only</text>
+  <rect x="740" y="350" width="336" height="72" rx="9" class="ext"/><text x="756" y="376" class="label">runModel = route ?? qualification ?? card</text><text x="756" y="398" class="sub">ProjectRunner.cs:2957</text>
+  <path d="M670 238 C 700 238, 700 380, 740 384" class="edge"/>
+  <path d="M908 318 L 908 350" class="edge-muted"/>
+  <text x="430" y="330" class="warn-label">Economy mode changes</text>
+  <text x="430" y="348" class="warn-label">do not reach waiting cards</text>
+</svg>
+<figcaption><span class="figure-claim"><b>Figure 1.</b> Five sources act at card creation and four at launch. The stamped card model is what usually runs, which is why a provider switch needs a re-pin script today.</span></figcaption></figure>
+
+<p>Figures 5 to 8 in Evidence show the CLI Management, pipeline and header surfaces as they read today. Seven findings shape the design:</p>
+<ol>
+  <li><b>The route is decided at creation.</b> <code>TaskCrudEndpoints.cs:1141-1172</code> stamps the recommendation onto a card without a pin. At launch <code>ProjectRunner.cs:2957</code> takes <code>route?.Model ?? qualification?.SelectedModel ?? info.Model</code>; the route is normally present, so qualification only decides when the card has no model. A control that should take effect for waiting work must resolve at claim time.</li>
+  <li><b>The Claude side of the ladder still points at Sonnet and Haiku.</b> The registry's <code>vendorOverrides</code> map <code>sol-medium</code> to Claude Sonnet 5 at <code>medium</code> and <code>luna-medium</code> to Claude Haiku 4.5. Robert's decision (Opus 5.5 at <code>medium</code> as the Claude standard) and the 17 November research (Sonnet 5.5 is not a cheap Opus) both contradict that mapping.</li>
+  <li><b>Economy mode saves little.</b> It lowers one tier; for features and bugs that lands on Terra/medium, which the policy itself rates at 0 percent savings against GPT-6 Sol/medium.</li>
+  <li><b>The weighted score is documentation only.</b> The six-criterion score in the routing policy is not implemented. Code uses a fixed intake score per task type (chore 15, feature and bug 51) plus text-based floors (P0, fencing, security and data loss force <code>sol-xhigh</code>; protocols, migrations and three or more subsystems force at least <code>sol-medium</code>).</li>
+  <li><b>Task kind is narrow.</b> <code>TaskTypes</code> knows bug, feature and chore. <code>TaskModes</code> (coding, planning, research, concept) selects the pipeline, not the model. Fix rounds are a usage kind; the reissue escalation rule exists only in documentation.</li>
+  <li><b>Cost per accepted card is review-scoped.</b> <code>ReviewStatisticsFold</code> already computes tokens and USD per accepted card, but over review rows. There is no full-lifecycle figure per model and rung, and no Codex credits probe; <code>CodexQuotaProbe</code> reads weekly percent left from <code>/status</code>.</li>
+  <li><b>Defaults diverge from the decision.</b> Aspect steps default to a Codex GPT Mini model at <code>high</code> (<code>PipelineStepModelDefaults.cs</code>); review on Opus 5.5 at <code>low</code> therefore comes from configured overrides, not from the code default.</li>
+</ol>
+</section>
+
+<section id="dial">
+<h2><span class="number">03</span> The dial</h2>
+<h3>Positions and rungs</h3>
+<p>The dial has five positions: <b>Frugal</b>, <b>Lean</b>, <b>Balanced</b>, <b>Thorough</b> and <b>Strong</b>. Balanced is the default and encodes the decisions of 17 November. A position does not name a model. It names, for every task kind, a <b>rung</b> on a provider-neutral ladder. Token Economy owns the ladder: which concrete model and reasoning level each rung means on each provider, versioned like its price snapshots. Studio owns the matrix from position and task kind to rung, the floors and the resolution.</p>
+
+<table>
+  <thead><tr><th>Rung</th><th>Claude</th><th>Codex</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>light</code></td><td>Claude Haiku 5.5, <code>medium</code></td><td><code>gpt-6-luna</code>, <code>medium</code></td><td>Bounded tasks with a parseable output only</td></tr>
+    <tr><td><code>low</code></td><td>Claude Opus 5.5, <code>low</code></td><td><code>gpt-6.1-sol</code>, <code>low</code></td><td>Replaces <code>sonnet-low</code> as the economy floor for coding work</td></tr>
+    <tr><td><code>medium</code></td><td>Claude Opus 5.5, <code>medium</code></td><td><code>gpt-6.1-sol</code>, <code>medium</code></td><td>Standard for normal cards (decided)</td></tr>
+    <tr><td><code>high</code></td><td>Claude Opus 5.5, <code>high</code></td><td><code>gpt-6.1-sol</code>, <code>high</code></td><td>Hard cards (decided)</td></tr>
+    <tr><td><code>xhigh</code></td><td>Claude Opus 5.5, <code>xhigh</code></td><td><code>gpt-6.1-sol</code>, <code>xhigh</code></td><td>Correctness-critical work (decided: deliberate use)</td></tr>
+  </tbody>
+</table>
+<p class="dim">This is the proposed first ladder revision. Sonnet 5.5 is not on it: at the same level it is clearly weaker and uses more tokens (Terminal-Bench 22.22 USD per attempt against 14.30 for Opus). <code>gpt-6.1-sol</code> replaces <code>gpt-6-sol</code> at the same list price. A level a model does not offer runs at the highest offered rung below it, as the existing ladder rule already does.</p>
+
+<h3>Matrix</h3>
+<p>Each cell is the rung a task kind gets at a position. A floor is the lowest rung the task kind may ever run on; the dial cannot go below it. Balanced is the column the operator decided on 17 November.</p>
+<table id="matrix" class="breakout">
+  <thead><tr><th>Task kind</th><th>Frugal</th><th>Lean</th><th>Balanced</th><th>Thorough</th><th>Strong</th><th>Floor</th></tr></thead>
+  <tbody>
+    <tr><td>Enrichment: auto-tag, summaries, classification</td><td>light</td><td>light</td><td>light</td><td>light</td><td>low</td><td>light</td></tr>
+    <tr><td>Chore</td><td>light</td><td>light</td><td>low</td><td>medium</td><td>medium</td><td>light</td></tr>
+    <tr><td>Standard card (feature)</td><td>low</td><td>medium</td><td><b>medium</b></td><td>medium</td><td>high</td><td>low</td></tr>
+    <tr><td>Standard card (bug)</td><td>medium</td><td>medium</td><td><b>medium</b></td><td>medium</td><td>high</td><td>medium</td></tr>
+    <tr><td>Hard card</td><td>medium</td><td>medium</td><td><b>high</b></td><td>high</td><td>xhigh</td><td>medium</td></tr>
+    <tr><td>Correctness-critical (P0, fencing, leases, security, data loss)</td><td>xhigh</td><td>xhigh</td><td><b>xhigh</b></td><td>xhigh</td><td>xhigh</td><td>xhigh</td></tr>
+    <tr><td>Research, concept, planning</td><td>low</td><td>medium</td><td>medium</td><td>high</td><td>high</td><td>low</td></tr>
+    <tr><td>Follow-up and fix round</td><td colspan="5">Keeps the card's current route; a semantic failure raises the next fresh attempt one rung (existing reissue rule)</td><td>card floor</td></tr>
+    <tr><td>Review aspect and grade</td><td colspan="5">Claude Opus 5.5 <code>low</code> at every position until the review measurement exists (decided 17 November)</td><td>same capability class</td></tr>
+    <tr><td>Deep review</td><td>medium</td><td>medium</td><td>medium</td><td>high</td><td>high</td><td>medium; xhigh for P0</td></tr>
+    <tr><td>Merge resolution</td><td>medium</td><td>medium</td><td>medium</td><td>medium</td><td>high</td><td>medium</td></tr>
+    <tr><td>Orchestrator chat and orchestrator decisions</td><td>low</td><td>low</td><td>medium</td><td>medium</td><td>high</td><td>low</td></tr>
+  </tbody>
+</table>
+
+<h3>Resolution</h3>
+<figure class="media-breakout" id="fig-resolution"><svg class="diagram" viewBox="0 0 1120 330" role="img" aria-labelledby="res-title res-desc"><title id="res-title">How a route is resolved with the dial</title><desc id="res-desc">Six steps from left to right at claim or launch time. Step one: an explicit card pin wins and is shown as a deviation; a preference pin may still switch under quota at step six, a hard pin waits. Step two: an expert override for the project, pipeline type or step wins next and is also shown as a deviation. Step three: otherwise the task kind and the dial position select a rung from the matrix. Step four: the rung is raised to the task kind's floor and to any text or plan floor. Step five: the provider preference picks Claude or Codex, and Token Economy's ladder turns rung and provider into model and level. Step six: quota admission checks the route; if the provider is at its cap, the same rung on the other provider is used, otherwise the run waits.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead"/></marker></defs>
+  <g>
+    <rect x="20" y="70" width="160" height="150" rx="10" class="node"/><circle cx="44" cy="96" r="13" class="step"/><text x="40" y="100" class="step-text">1</text><text x="64" y="101" class="label">Card pin</text><text x="36" y="134" class="sub">explicit pin wins</text><text x="36" y="154" class="sub">shown as deviation</text><text x="36" y="174" class="sub">from the dial</text>
+    <rect x="200" y="70" width="160" height="150" rx="10" class="node"/><circle cx="224" cy="96" r="13" class="step"/><text x="220" y="100" class="step-text">2</text><text x="244" y="101" class="label">Expert override</text><text x="216" y="134" class="sub">project, pipeline type</text><text x="216" y="154" class="sub">or step route</text><text x="216" y="174" class="sub">shown as deviation</text>
+    <rect x="380" y="70" width="180" height="150" rx="10" class="focus"/><circle cx="404" cy="96" r="13" class="step"/><text x="400" y="100" class="step-text">3</text><text x="424" y="101" class="label">Dial</text><text x="396" y="134" class="sub">position and task kind</text><text x="396" y="154" class="sub">select a rung</text><text x="396" y="174" class="sub">from the matrix</text>
+    <rect x="580" y="70" width="160" height="150" rx="10" class="node"/><circle cx="604" cy="96" r="13" class="step"/><text x="600" y="100" class="step-text">4</text><text x="624" y="101" class="label">Floor</text><text x="596" y="134" class="sub">raise to the task kind</text><text x="596" y="154" class="sub">floor and text or plan</text><text x="596" y="174" class="sub">floors; never lower</text>
+    <rect x="760" y="70" width="160" height="150" rx="10" class="node"/><circle cx="784" cy="96" r="13" class="step"/><text x="780" y="100" class="step-text">5</text><text x="804" y="101" class="label">Provider</text><text x="776" y="134" class="sub">preference picks</text><text x="776" y="154" class="sub">Claude or Codex; ladder</text><text x="776" y="174" class="sub">gives model and level</text>
+    <rect x="940" y="70" width="160" height="150" rx="10" class="node"/><circle cx="964" cy="96" r="13" class="step"/><text x="960" y="100" class="step-text">6</text><text x="984" y="101" class="label">Admission</text><text x="956" y="134" class="sub">at cap: same rung on</text><text x="956" y="154" class="sub">the other provider,</text><text x="956" y="174" class="sub">otherwise wait</text>
+    <path d="M180 145 L 198 145" class="edge" marker-end="url(#arrow)"/>
+    <path d="M360 145 L 378 145" class="edge" marker-end="url(#arrow)"/>
+    <path d="M560 145 L 578 145" class="edge" marker-end="url(#arrow)"/>
+    <path d="M740 145 L 758 145" class="edge" marker-end="url(#arrow)"/>
+    <path d="M920 145 L 938 145" class="edge" marker-end="url(#arrow)"/>
+    <text x="20" y="44" class="zone-label">Evaluated at claim or launch, for every attempt</text>
+    <text x="20" y="262" class="sub">A preference pin skips steps 2 to 5 and may still switch at step 6 under quota; a hard pin waits at 6 instead. An expert override skips step 3 only.</text>
+    <text x="20" y="284" class="sub">A same-session resume keeps the session's route. Every non-dial outcome is a selection-ledger entry with rule pin, override, floor, quota-cap or same-rung.</text>
+  </g>
+</svg>
+<figcaption><span class="figure-claim"><b>Figure 2.</b> Proposed resolution order. The dial is one rule inside the existing model selection service, between overrides and floors.</span></figcaption></figure>
+<p>The dial does not create pins and does not rewrite cards. A card without an explicit pin is resolved at each fresh claim, so moving the dial reaches every waiting card at its next start. A running process keeps its route, and a same-session resume keeps the session's route, as today.</p>
+
+<h3>What stays outside</h3>
+<ul>
+  <li>Deterministic pipeline steps, builds, gates and quota probes. They use no model.</li>
+  <li>Controlled measurement batches and Token Economy A/B runs. They pin explicitly because they measure one route.</li>
+  <li>Host acceptance probes, which must test a specific model.</li>
+  <li>Interactive sessions a person starts with a chosen model, such as an operator one-shot with an explicit model.</li>
+  <li>The quota caps and wait policy themselves. The dial decides what runs; admission still decides whether and where it can run now.</li>
+</ul>
+</section>
+
+<section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+<h2><span class="number">04</span> Alternatives</h2>
+<p>Four ways to reach one control were compared.</p>
+<div class="variant-grid">
+  <article class="variant"><h3>A · Rung dial over the selection service</h3><p>Five positions, a matrix from position and task kind to a provider-neutral rung, Token Economy's ladder turns the rung into model and level. Resolved at claim time as one rule inside <code>ModelSelectionService</code>. Existing overrides become expert settings shown as deviations. Provider choice is separate and quota fallback means "same rung, other provider".</p></article>
+  <article class="variant"><h3>B · Named presets</h3><p>Each position is a complete route set authored by the operator: one concrete model and level per consumer and provider, stored as a policy file. Simple to read. Every model release or ladder change requires editing five presets by hand, and quota fallback still needs a separate equivalence table.</p></article>
+  <article class="variant"><h3>C · Weekly budget target</h3><p>The operator sets a target such as "70 percent of the Claude week". A controller moves the position up or down to hit it. Robert excluded this semantics; it is listed so the reason is recorded. Cost per card would change mid-week without anyone moving anything, and a card's rung would depend on when it started rather than what it is.</p></article>
+  <article class="variant"><h3>D · Keep the levers, add a bulk switch</h3><p>Keep the nine controls and turn the operator scripts into a product action that re-pins all waiting cards and rewrites defaults for one provider. Least new code. It keeps creation-time stamping, turns every switch into many explicit pins and leaves the per-task-kind question unanswered.</p></article>
+</div>
+
+<table>
+  <thead><tr><th>Criterion</th><th>A Rung dial</th><th>B Presets</th><th>C Budget target</th><th>D Bulk switch</th></tr></thead>
+  <tbody>
+    <tr><td>One control for cost and usage</td><td class="yes">yes</td><td class="yes">yes</td><td class="mid">indirect</td><td class="no">no</td></tr>
+    <tr><td>Matches the decided semantics (position selects model and level)</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no</td><td class="no">no</td></tr>
+    <tr><td>Reaches waiting cards without re-pinning</td><td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no, writes pins</td></tr>
+    <tr><td>Survives a model release without hand edits</td><td class="yes">yes, ladder update</td><td class="no">five presets</td><td class="yes">yes</td><td class="no">script edit</td></tr>
+    <tr><td>Provider switch as one action</td><td class="yes">same rung</td><td class="mid">needs a table</td><td class="mid">automatic</td><td class="mid">bulk rewrite</td></tr>
+    <tr><td>Predictable cost per card</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">drifts in the week</td><td class="yes">yes</td></tr>
+    <tr><td>Effort</td><td class="mid">medium</td><td class="yes">small</td><td class="no">large</td><td class="yes">small</td></tr>
+  </tbody>
+</table>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+<h2><span class="number">05</span> Recommendation</h2>
+<div class="callout" data-tone="accent"><h3>Recommended default</h3><p>Build alternative A. One workspace dial with five positions, Balanced as the default, optional per-project position. Resolve it at claim time inside the existing model selection service, after pins and expert overrides and before floors. Take the ladder from Token Economy, with a versioned Studio mirror until the Token Economy card ships. Make the provider a separate preference that follows weekly headroom with the existing hysteresis, sticky within a card, and let quota fallback mean the same rung on the other provider. Show position, matrix, expected cost per accepted card and expected weekly percent per provider on CLI Management. Replace economy mode and the operator scripts; keep step, project and orchestrator routes as expert settings.</p></div>
+<p>The main reason is the first finding: the cost of today's setup is not the number of controls but that the route is fixed when a card is created. Only a claim-time rule lets one change reach every waiting card. The rung abstraction is the second reason: a provider switch and a quota fallback become the same operation, and a model release is a ladder update instead of a migration.</p>
+<p>At Balanced the dial reproduces the 17 November decisions exactly: normal cards at <code>medium</code>, hard cards at <code>high</code>, <code>xhigh</code> only through the correctness floor, reviews on Opus 5.5 <code>low</code>. Turning the dial on is therefore not itself a behaviour change for normal cards; it removes the stamped Sonnet and Haiku routes on the Claude side and moves Codex from <code>gpt-6-sol</code> to <code>gpt-6.1-sol</code>.</p>
+</section>
+
+<section id="surface">
+<h2><span class="number">06</span> Surface</h2>
+<p>The dial replaces the economy mode toggle at the top of CLI Management (<code>#/workspace/settings/caps</code>). It adds no new header element: the header usage cockpit decided against a global model chip because concurrent runs use different routes, and a dial position chip would carry the same problem. The usage sheet names the position in one line.</p>
+<figure class="media-breakout" id="fig-mockup"><svg class="diagram" viewBox="0 0 1120 560" role="img" aria-labelledby="mock-title mock-desc"><title id="mock-title">Proposed dial section on CLI Management</title><desc id="mock-desc">A section titled Economy dial. A five-stop control with Frugal, Lean, Balanced, Thorough and Strong; Balanced is selected. Next to it the provider preference reads Follow headroom, currently Claude. Below, a table lists task kinds with the route at the current position, expected cost per accepted card and the share of the week. Standard card: Opus 5.5 medium, 4.57 USD measured. Hard card: Opus 5.5 high, 9.65 USD measured. Enrichment: Haiku 5.5 medium, estimate. Review: Opus 5.5 low, held by decision. To the right, expected weekly percent per provider at this position as placeholder bars, Claude labelled estimate and Codex computed from credits. At the bottom, a deviations line with example counts of card pins, step overrides and projects at another position, and a history line with actor, time and note.</desc>
+  <rect x="20" y="20" width="1080" height="520" rx="12" class="node"/>
+  <text x="44" y="58" class="label">Economy dial</text><text x="44" y="80" class="sub">Workspace position. Applies to every card without a pin at its next start.</text>
+  <line x1="64" y1="128" x2="584" y2="128" class="edge-muted"/>
+  <circle cx="64" cy="128" r="9" class="node"/><circle cx="194" cy="128" r="9" class="node"/><circle cx="324" cy="128" r="13" class="focus"/><circle cx="454" cy="128" r="9" class="node"/><circle cx="584" cy="128" r="9" class="node"/>
+  <text x="40" y="164" class="sub">Frugal</text><text x="176" y="164" class="sub">Lean</text><text x="294" y="164" class="label">Balanced</text><text x="426" y="164" class="sub">Thorough</text><text x="562" y="164" class="sub">Strong</text>
+  <rect x="680" y="100" width="396" height="64" rx="9" class="ext"/><text x="700" y="126" class="label">Provider: follow headroom</text><text x="700" y="148" class="sub">now Claude · switches with 10-point hysteresis</text>
+  <text x="44" y="210" class="zone-label">At this position</text>
+  <text x="44" y="240" class="sub">Task kind</text><text x="300" y="240" class="sub">Route</text><text x="520" y="240" class="sub">Cost per accepted card</text>
+  <line x1="44" y1="250" x2="660" y2="250" class="edge-muted"/>
+  <text x="44" y="276" class="label">Standard card</text><text x="300" y="276" class="sub">Opus 5.5 · medium</text><text x="520" y="276" class="sub">4.57 USD · measured</text>
+  <text x="44" y="306" class="label">Hard card</text><text x="300" y="306" class="sub">Opus 5.5 · high</text><text x="520" y="306" class="sub">9.65 USD · measured</text>
+  <text x="44" y="336" class="label">Critical</text><text x="300" y="336" class="sub">Opus 5.5 · xhigh</text><text x="520" y="336" class="sub">floor · not dial</text>
+  <text x="44" y="366" class="label">Enrichment</text><text x="300" y="366" class="sub">Haiku 5.5 · medium</text><text x="520" y="366" class="sub">estimate</text>
+  <text x="44" y="396" class="label">Review aspect</text><text x="300" y="396" class="sub">Opus 5.5 · low</text><text x="520" y="396" class="sub">held by decision</text>
+  <text x="44" y="420" class="sub">… seven more task kinds</text>
+  <text x="700" y="210" class="zone-label">Expected week at this position</text>
+  <rect x="700" y="232" width="376" height="18" rx="4" class="ext"/><rect x="700" y="232" width="233" height="18" rx="4" class="focus"/><text x="700" y="272" class="sub">Claude · n % · estimate until weights are measured</text>
+  <rect x="700" y="296" width="376" height="18" rx="4" class="ext"/><rect x="700" y="296" width="68" height="18" rx="4" class="focus"/><text x="700" y="336" class="sub">Codex · n % · credits = list price × 25</text>
+  <line x1="44" y1="448" x2="1076" y2="448" class="edge-muted"/>
+  <text x="44" y="476" class="label">Deviations</text><text x="160" y="476" class="sub">4 card pins · 2 step overrides · 1 project at Strong</text>
+  <text x="44" y="510" class="label">History</text><text x="160" y="510" class="sub">Lean → Balanced · actor · time · optional note</text>
+</svg>
+<figcaption><span class="figure-claim"><b>Figure 3.</b> Proposed surface, not a capture of the product. Cost figures are the 17 November medians; weekly bars, deviation counts and the history line are placeholders.</span></figcaption></figure>
+<p>The section shows:</p>
+<ul>
+  <li><b>Position</b> and the provider preference, both editable by a holder of <code>workspace.settings.write</code>.</li>
+  <li><b>What runs per task kind</b> at this position on the preferred provider, with the rung and the concrete model and level.</li>
+  <li><b>Expected cost per accepted card</b> per task kind: the median from our ledger when the cell has at least ten accepted cards in 28 days, otherwise a Token Economy estimate labelled "estimate".</li>
+  <li><b>Expected weekly percent per provider</b> at this position: the last four weeks' mix of task kinds, times cost per accepted card, converted to percent of the week (Codex: credits at list price times 25; Claude: measured weights, see the measurement plan).</li>
+  <li><b>Deviations</b>: counts of card pins, expert overrides and project positions that differ from the dial, each linking to its list.</li>
+  <li><b>History</b>: who moved the dial or the provider preference, when, from where to where, with an optional note. The same events go to the selection ledger.</li>
+</ul>
+<p>A card whose pin differs from the dial shows the existing model chip with a second line, for example "Pinned Opus 5.5 high · dial: medium". Hovering over a position shows its column of the matrix and the expected week before the operator commits.</p>
+</section>
+
+<section id="measurement">
+<h2><span class="number">07</span> Measurement plan</h2>
+<p>Codex is computable: OpenAI states that credits equal list price times 25, so a run's credit cost follows from its token counters and the Token Economy price snapshot. The plan's weekly allowance is not published per account; it is calibrated by comparing computed credits with the change in the weekly percent that <code>CodexQuotaProbe</code> reads over the same interval.</p>
+<p>Claude is not computable. Anthropic only states the direction ("Opus costs several times more per turn than Sonnet, and Sonnet more than Haiku"). To show real subscription cost the dial needs a measured weight per model: weekly percentage points per accepted card.</p>
+<ol>
+  <li><b>Cells.</b> Opus 5.5 at <code>low</code>, <code>medium</code> and <code>high</code>; Haiku 5.5 at <code>medium</code>; Sonnet 5.5 at <code>medium</code> as the reference that justifies its absence from the ladder. Five cells.</li>
+  <li><b>Fixtures.</b> Twelve comparable cards per cell, drawn from the Token Economy task data set, each with a deterministic acceptance check. The same twelve cards run in every cell.</li>
+  <li><b>Isolation.</b> A measurement lease holds the Claude account for the batch: quota admission sends every other Claude launch to Codex or makes it wait while the lease is held. Batches run in a quiet window, one cell per window.</li>
+  <li><b>Readings.</b> The Claude weekly percent from <code>ClaudeQuotaProbe</code> before the first and after the last card of the batch, plus each card's four token counters (input, cache write, cache read, output) from the ledger. A batch must move the weekly figure by at least five points so that whole-percent rounding stays below ten percent of the signal.</li>
+  <li><b>Fit.</b> Per model, a least-squares weight per token class so that the sum over the batch's tokens reproduces the measured points; from it, points per accepted card with an interval. Repeat each cell twice to see stability.</li>
+  <li><b>Publication.</b> A versioned weight table with date, sample and interval. The dial shows Claude weekly percent from this table and labels cells without a measured weight "estimate". Re-measure each quarter, and after any Anthropic plan or model change.</li>
+</ol>
+<p>Budget: 60 cards per round, two rounds. At the 17 November medians (about 4.57 USD per accepted Opus medium card as list-price equivalent) that is in the order of 500 to 1,000 USD list-price equivalent, spent inside the subscription during quiet windows.</p>
+</section>
+
+<section id="migration">
+<h2><span class="number">08</span> Migration</h2>
+<table>
+  <thead><tr><th>Control today</th><th>With the dial</th><th>Migration</th></tr></thead>
+  <tbody>
+    <tr><td>Economy mode</td><td>Replaced</td><td>On becomes Lean, off becomes Balanced, once. The endpoint stays readable for one release and reports the derived state.</td></tr>
+    <tr><td>Client default model and level</td><td>Retired for routing</td><td>No longer stamped onto new cards. The default CLI remains as a personal hint in the create form only.</td></tr>
+    <tr><td>Project registry model default</td><td>Expert setting</td><td>Kept, shown as a deviation; no longer treated as an explicit card pin at creation.</td></tr>
+    <tr><td>Consumer policy primary</td><td>Generated from the dial</td><td>A row equal to the dial's Balanced result becomes inherited; a different row stays as an expert override.</td></tr>
+    <tr><td>Pipeline step and project overrides</td><td>Expert setting</td><td>Same rule as the AGT-3479 migration: values equal to the dial result become inherited, others stay explicit and appear as deviations.</td></tr>
+    <tr><td>Step "Economy model" checkbox</td><td>Retired</td><td>Reviews are held at Opus 5.5 <code>low</code>; the flag is read for one release and then ignored.</td></tr>
+    <tr><td>Quota fallback profiles</td><td>Replaced by same-rung</td><td>Explicit profiles that differ from same-rung stay as expert routes; <code>gpt-6-sol:xhigh</code> to Opus <code>xhigh</code> becomes a same-rung case.</td></tr>
+    <tr><td>Orchestrator model</td><td>Expert setting</td><td>Unset values follow the dial row; set values stay. The GPT-only composer restriction becomes a provider rule of that row.</td></tr>
+    <tr><td>Card pins</td><td>Unchanged</td><td>A dry-run inventory classifies pins whose task history shows a script actor or a bulk pattern; the operator confirms before they are cleared. Human pins stay.</td></tr>
+    <tr><td>Stamped recommendations on unpinned cards</td><td>Ignored at claim</td><td>Cards with <code>modelExplicit=false</code> are resolved by the dial at their next fresh claim. Cards in Progress, Auto Review or Human Review are not touched.</td></tr>
+    <tr><td>Operator re-pin scripts</td><td>Retired</td><td>Replaced by the provider preference and the dial; documented as removed.</td></tr>
+  </tbody>
+</table>
+<p>Nothing is rewritten for a running card. A card mid-round keeps its route until its next fresh claim, and a same-session resume keeps the session's route. The migration writes one <code>dial-migrated</code> event to the selection ledger with the counts.</p>
+</section>
+
+<section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+<h2><span class="number">09</span> Evidence</h2>
+<figure class="media-breakout" id="fig-cost"><svg class="diagram" viewBox="0 0 1120 330" role="img" aria-labelledby="cost-title cost-desc"><title id="cost-title">Median list-price cost per accepted card by route</title><desc id="cost-desc">Horizontal bars, cost in USD on one axis from 0 to 16. Opus 5.5 medium 4.57 USD with 98 percent first-review pass. Opus 5.5 high 9.65 USD, 91 percent. gpt-6-sol medium 8.25 USD, 99 percent. gpt-6-sol high 10.80 USD, 85 percent. gpt-6-sol xhigh 14.53 USD, 75 percent. Selection of cards per route was not random.</desc>
+  <g class="axis">
+    <line x1="260" y1="40" x2="260" y2="270" class="edge-muted"/>
+    <text x="256" y="292" class="sub">0</text><text x="420" y="292" class="sub">4</text><text x="580" y="292" class="sub">8</text><text x="740" y="292" class="sub">12</text><text x="900" y="292" class="sub">16 USD</text>
+  </g>
+  <g>
+    <text x="24" y="66" class="label">Opus 5.5 medium</text><rect x="260" y="50" width="183" height="24" rx="4" class="focus"><title>Opus 5.5 medium: 4.57 USD per accepted card, 98 % first-review pass</title></rect><text x="452" y="68" class="sub">4.57 USD · 98 % first-review pass</text>
+    <text x="24" y="110" class="label">Opus 5.5 high</text><rect x="260" y="94" width="386" height="24" rx="4" class="focus"><title>Opus 5.5 high: 9.65 USD, 91 %</title></rect><text x="655" y="112" class="sub">9.65 USD · 91 %</text>
+    <text x="24" y="154" class="label">gpt-6-sol medium</text><rect x="260" y="138" width="330" height="24" rx="4" class="focus"><title>gpt-6-sol medium: 8.25 USD, 99 %</title></rect><text x="599" y="156" class="sub">8.25 USD · 99 %</text>
+    <text x="24" y="198" class="label">gpt-6-sol high</text><rect x="260" y="182" width="432" height="24" rx="4" class="focus"><title>gpt-6-sol high: 10.80 USD, 85 %</title></rect><text x="701" y="200" class="sub">10.80 USD · 85 %</text>
+    <text x="24" y="242" class="label">gpt-6-sol xhigh</text><rect x="260" y="226" width="581" height="24" rx="4" class="focus"><title>gpt-6-sol xhigh: 14.53 USD, 75 %</title></rect><text x="850" y="244" class="sub">14.53 USD · 75 %</text>
+  </g>
+  <text x="24" y="318" class="sub">Higher levels cost more per accepted card and passed first review less often. Harder cards went to higher levels, so the pass rates are not a causal comparison.</text>
+</svg>
+<figcaption><span class="figure-claim"><b>Figure 4.</b> Median list-price cost per accepted card and first-review pass rate per route, from the operator's research of 17 November 2026. Selection was not random.</span></figcaption></figure>
+
+<table>
+  <caption class="dim">Table view of Figure 4</caption>
+  <thead><tr><th>Route</th><th>Median USD per accepted card</th><th>First-review pass</th></tr></thead>
+  <tbody>
+    <tr><td>Opus 5.5 medium</td><td>4.57</td><td>98 %</td></tr>
+    <tr><td>Opus 5.5 high</td><td>9.65</td><td>91 %</td></tr>
+    <tr><td>gpt-6-sol medium</td><td>8.25</td><td>99 %</td></tr>
+    <tr><td>gpt-6-sol high</td><td>10.80</td><td>85 %</td></tr>
+    <tr><td>gpt-6-sol xhigh</td><td>14.53</td><td>75 %</td></tr>
+  </tbody>
+</table>
+
+<div class="evidence-list">
+  <a class="evidence" href="#current-state"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-stamp">The route is stamped at creation</b><small><code>TaskCrudEndpoints.cs:1141-1172</code> writes the recommendation onto unpinned cards; <code>ProjectRunner.cs:2957</code> prefers the selection route, which starts from the card model. Economy mode reaches waiting cards only through run-time qualification, which rarely decides.</small></span></a>
+  <a class="evidence" href="#current-state"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-vendor">Claude routes point at Sonnet and Haiku</b><small><code>backend/Policies/model-routing-policy.v1.json</code> version 2026-10-11: <code>sol-medium</code> maps to Claude Sonnet 5 <code>medium</code>, <code>luna-medium</code> to Claude Haiku 4.5, <code>sol-xhigh</code> to Claude Opus 5 <code>xhigh</code>. No tier uses Opus 5.5.</small></span></a>
+  <a class="evidence" href="#current-state"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-economy">Economy mode is one boolean and one step</b><small><code>economyMode.downgradeSteps = 1</code>; the policy rates Terra/medium, the downgrade target for features and bugs, at 0 percent savings against GPT-6 Sol/medium.</small></span></a>
+  <a class="evidence" href="#occasion"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-spend">Where the money goes</b><small>Research of 17 November: about 12,500 USD list-price equivalent in 28 days, 98 percent coding runs, <code>gpt-6-sol</code> at <code>high</code> alone 38 percent; about three quarters of <code>gpt-6-sol</code> cost is cache reads.</small></span></a>
+  <a class="evidence" href="#dial"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-61">gpt-6.1-sol is better and cheaper</b><small>Terminal-Bench 4.1: 60.9 percent at 1.92 USD per attempt against 50.3 percent at 4.40 USD for <code>gpt-6-sol</code>; same list price, cache read 0.10 instead of 0.20 USD per MTok. Running on the hosts since 17 November with codex-cli 0.166.0.</small></span></a>
+  <a class="evidence" href="#dial"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-sonnet">Sonnet 5.5 is not a cheap Opus</b><small>At the same level clearly weaker and higher token volume; Terminal-Bench 22.22 USD per attempt against 14.30 for Opus. Haiku 5.5 and Luna suit bounded tasks only.</small></span></a>
+  <a class="evidence" href="#recommendation"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-cache">Moving Codex to gpt-6.1-sol cuts its cost by about a third</b><small>If three quarters of Sol cost is cache reads and the cache-read price halves at equal token volume, Sol cost falls to about 62.5 percent. On the 38 percent share of Sol/high that is roughly 1,800 USD list-price equivalent per 28 days. Token volumes per card may differ between versions.</small></span></a>
+  <a class="evidence" href="#recommendation"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-medium">Medium as the standard halves Claude cost per card</b><small>Opus medium at 4.57 USD against Opus high at 9.65 USD per accepted card, with a higher first-review pass rate. The cohorts are not randomised, so the saving is an upper estimate.</small></span></a>
+  <a class="evidence" href="#measurement"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-ledger">No full-lifecycle cost per card, no Codex credits probe</b><small><code>ReviewStatisticsFold</code> computes USD per accepted card over review rows; <code>CodexQuotaProbe</code> reads weekly percent left only.</small></span></a>
+  <a class="evidence" href="#dial"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-ladder">Provider-neutral rungs</b><small>Five rungs with one concrete model and level per provider, owned by Token Economy. A quota fallback and a provider switch become the same operation.</small></span></a>
+</div>
+
+<h3>Current surfaces</h3>
+<p>The captures below come from the isolated pinned demo workspace, not from a production installation. They prove where the controls are and how they read today; the demo seed's route values are not the operator's live configuration.</p>
+
+<figure class="evidence-figure media-breakout" id="fig-consumer-policy">
+  <div class="evidence-captures">
+    <div class="evidence-capture">
+      <span class="capture-theme">Light</span>
+      <img src="assets/cli-management-consumer-policy-light--pinned.png" alt="The table Model selection by consumer with rows coding, review-aspect, review-deep, review-grade, concept-fit, chat, one-shot, merge-resolver, card-creation and persona; each row has a primary route field, an ordered fallback field and the effective route.">
+      <span class="figure-annotation">Ten consumer rows, each edited separately</span>
+    </div>
+    <div class="evidence-capture">
+      <span class="capture-theme">Dark</span>
+      <img src="assets/cli-management-consumer-policy-dark--pinned.png" alt="The same consumer table in the dark theme.">
+    </div>
+  </div>
+  <figcaption>
+    <span class="figure-claim"><b>Figure 5.</b> CLI Management sets the route per consumer class in ten separate rows, each with its own primary and fallback; there is no single value that moves them together.</span>
+    <span class="figure-as-of">
+      <span><b>Light:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the isolated pinned demo workspace (worktree test stack, commit 2adbb4f5d, route <code>#/workspace/settings/caps</code>), Playwright Chromium at 1440 by 1000.</span>
+      <span><b>Dark:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the same stack and route.</span>
+    </span>
+  </figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout" id="fig-economy-toggle">
+  <div class="evidence-captures">
+    <div class="evidence-capture">
+      <span class="capture-theme">Light</span>
+      <img src="assets/cli-management-economy-mode-toggle-light--pinned.png" alt="The panel Automatic task routing with the text Policy derives the default tier from task type. Correctness floors still apply, and a checkbox Economy mode off with the hint Lower eligible tiers by one step.">
+    </div>
+    <div class="evidence-capture">
+      <span class="capture-theme">Dark</span>
+      <img src="assets/cli-management-economy-mode-toggle-dark--pinned.png" alt="The same Economy mode checkbox in the dark theme.">
+    </div>
+  </div>
+  <figcaption>
+    <span class="figure-claim"><b>Figure 6.</b> Today's economy control is one checkbox, "Economy mode off", whose only effect is "Lower eligible tiers by one step".</span>
+    <span class="figure-as-of">
+      <span><b>Light:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the isolated pinned demo workspace (commit 2adbb4f5d, <code>#/workspace/settings/caps</code>).</span>
+      <span><b>Dark:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the same stack and route.</span>
+    </span>
+  </figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout" id="fig-step-route">
+  <div class="evidence-captures">
+    <div class="evidence-capture">
+      <span class="capture-theme">Light</span>
+      <img src="assets/project-pipeline-step-setting-vs-effective-route-light--pinned.png" alt="Post steps of the Demo App pipeline. Each row shows its own model chip. Conflict resolution reads Runs claude claude-opus-5, Step setting codex gpt-5.6-luna, Consumer policy, reason not recorded. Code-review quality grade reads Runs claude claude-opus-5, Step setting codex gpt-6-sol.">
+      <span class="figure-annotation">Step setting and running route differ</span>
+    </div>
+  </div>
+  <figcaption>
+    <span class="figure-claim"><b>Figure 7.</b> Every pipeline step carries its own model setting, and the route that runs can differ from it: Conflict resolution is set to codex gpt-5.6-luna and runs claude-opus-5, with "reason not recorded".</span>
+    <span class="figure-as-of">
+      <span><b>Light:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the isolated pinned demo workspace (commit 2adbb4f5d, Demo App, <code>#/projects/PROJ-001/deploy?view=steps</code>, Post steps group).</span>
+    </span>
+  </figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout" id="fig-header-defaults">
+  <div class="evidence-captures">
+    <div class="evidence-capture">
+      <span class="capture-theme">Light</span>
+      <img src="assets/header-task-defaults-model-picker-light--pinned.png" alt="The header chip No model opened as the popover Defaults for new tasks, with CLI choices Claude Code, Codex and Gemini and a model list starting with CLI default, Claude Sonnet 5.5, Claude Haiku 5.5 and Claude Fable 5.">
+    </div>
+  </div>
+  <figcaption>
+    <span class="figure-claim"><b>Figure 8.</b> A third place to choose CLI and model sits in the header: "Defaults for new tasks", stored per client identity.</span>
+    <span class="figure-as-of">
+      <span><b>Light:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the isolated pinned demo workspace (commit 2adbb4f5d), header defaults control opened on <code>#/workspace/settings/caps</code>.</span>
+    </span>
+  </figcaption>
+</figure>
+
+</section>
+
+<section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+<h2><span class="number">10</span> Open decisions</h2>
+<p>Each question has a preselected recommendation. Implementation cards work with it unless another answer is recorded.</p>
+
+<div class="decision" data-decision-id="ed-scope" data-decision-kind="single" data-decision-label="D1 Scope">
+  <h3>D1 · Where does the dial apply?</h3>
+  <label data-option-id="workspace-project" data-option-label="Workspace dial with an optional project position (Recommendation)"><input type="radio" name="ed-scope" value="workspace-project" checked><span><b>Workspace with optional project position (Recommendation)</b><span class="d">One value for everyday steering; a project with different stakes, for example a public product repository, can sit at another position and is listed as a deviation.</span></span></label>
+  <label data-option-id="workspace-only" data-option-label="Workspace only"><input type="radio" name="ed-scope" value="workspace-only"><span><b>Workspace only</b><span class="d">Simplest. Projects that need more strength fall back to step and override pins, which is the scatter this Dossier removes.</span></span></label>
+  <label data-option-id="project-only" data-option-label="Per project only"><input type="radio" name="ed-scope" value="project-only"><span><b>Per project only</b><span class="d">Fine-grained; a provider switch again means visiting every project.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-positions" data-decision-kind="single" data-decision-label="D2 Positions">
+  <h3>D2 · How many positions?</h3>
+  <label data-option-id="five" data-option-label="Five named positions: Frugal, Lean, Balanced, Thorough, Strong; Balanced is the default (Recommendation)"><input type="radio" name="ed-positions" value="five" checked><span><b>Five named positions (Recommendation)</b><span class="d">Two steps either side of the decided default; each step changes a few rows of the matrix, so the effect of a move is readable.</span></span></label>
+  <label data-option-id="three" data-option-label="Three positions: Frugal, Balanced, Strong"><input type="radio" name="ed-positions" value="three"><span><b>Three positions</b><span class="d">Easier to explain; each move changes many rows at once.</span></span></label>
+  <label data-option-id="continuous" data-option-label="Continuous value from 0 to 100"><input type="radio" name="ed-positions" value="continuous"><span><b>Continuous 0 to 100</b><span class="d">Looks precise, but the ladder has five rungs, so most values change nothing.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-governs" data-decision-kind="single" data-decision-label="D3 What the dial governs">
+  <h3>D3 · Which runs does the dial govern?</h3>
+  <label data-option-id="all-llm" data-option-label="Every model consumer: new cards, follow-up rounds, review aspects and grade, deep review, research and concept, enrichment, orchestrator chat and decisions, merge resolution; outside: deterministic steps, measurement and A/B runs, host acceptance probes, interactive sessions with a chosen model (Recommendation)"><input type="radio" name="ed-governs" value="all-llm" checked><span><b>Every model consumer, with the listed exclusions (Recommendation)</b><span class="d">One control for all spend. Reviews are held at Opus 5.5 low by a row that does not move until the review measurement exists.</span></span></label>
+  <label data-option-id="coding-only" data-option-label="Coding runs only"><input type="radio" name="ed-governs" value="coding-only"><span><b>Coding runs only</b><span class="d">Covers 98 percent of spend; review, enrichment and chat stay on separate controls.</span></span></label>
+  <label data-option-id="coding-review" data-option-label="Coding runs and reviews"><input type="radio" name="ed-governs" value="coding-review"><span><b>Coding and reviews</b><span class="d">Middle ground; contradicts the decision to hold reviews for now unless the review row is fixed.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-pins" data-decision-kind="single" data-decision-label="D4 Card pins">
+  <h3>D4 · How do card pins relate to the dial?</h3>
+  <label data-option-id="pin-wins-visible" data-option-label="An explicit pin wins and is shown as a deviation on the card and in the dial's deviation count; a pin below the task kind's floor needs hard mode and shows a warning (Recommendation)"><input type="radio" name="ed-pins" value="pin-wins-visible" checked><span><b>Pin wins, deviation visible (Recommendation)</b><span class="d">Keeps today's pin semantics, including preference pins switching under quota, and makes every exception countable.</span></span></label>
+  <label data-option-id="dial-wins-preference" data-option-label="The dial overrides preference pins; only hard pins win"><input type="radio" name="ed-pins" value="dial-wins-preference"><span><b>Dial overrides preference pins</b><span class="d">Stronger control; every pin set in the UI today is a preference pin and would silently stop working.</span></span></label>
+  <label data-option-id="pin-expires" data-option-label="Pins expire when the dial moves"><input type="radio" name="ed-pins" value="pin-expires"><span><b>Pins expire on a dial move</b><span class="d">Clears script pins automatically; also clears deliberate human pins.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-floors" data-decision-kind="single" data-decision-label="D5 Floors per task kind">
+  <h3>D5 · May the dial go below a floor?</h3>
+  <label data-option-id="never" data-option-label="Never: each task kind has a floor (bug medium, hard medium, critical xhigh, coding and research low); text and plan floors raise further (Recommendation)"><input type="radio" name="ed-floors" value="never" checked><span><b>Never (Recommendation)</b><span class="d">Matches the routing policy: quota and cost never lower a correctness floor. Frugal saves on routine work only.</span></span></label>
+  <label data-option-id="frugal-warn" data-option-label="At Frugal, floors except critical may drop one rung with a visible warning"><input type="radio" name="ed-floors" value="frugal-warn"><span><b>Frugal may drop one rung with a warning</b><span class="d">More saving at the bottom; spends correctness margin, which the policy forbids.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-provider" data-decision-kind="single" data-decision-label="D6 Provider choice and quota fallback">
+  <h3>D6 · How is the provider chosen, and what does quota fallback do?</h3>
+  <label data-option-id="headroom-same-rung" data-option-label="Separate provider preference with three values: Claude first, Codex first, follow headroom; default follow headroom with the existing 10-point, 30-minute hysteresis, sticky within a card; quota fallback uses the same rung on the other provider (Recommendation)"><input type="radio" name="ed-provider" value="headroom-same-rung" checked><span><b>Follow headroom, same-rung fallback (Recommendation)</b><span class="d">Removes the roughly 15 manual switches a year. Sticky per card keeps sessions and caches; the hysteresis prevents flapping.</span></span></label>
+  <label data-option-id="manual-same-rung" data-option-label="Manual preference (Claude first or Codex first), same-rung fallback"><input type="radio" name="ed-provider" value="manual-same-rung"><span><b>Manual preference, same-rung fallback</b><span class="d">The operator still decides each switch, but as one action instead of a script.</span></span></label>
+  <label data-option-id="split-kind" data-option-label="Fixed provider per task kind, part of the matrix"><input type="radio" name="ed-provider" value="split-kind"><span><b>Provider per task kind</b><span class="d">Lets each provider do what it measures best at; doubles the matrix and moves the switch question into every row.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-kind" data-decision-kind="single" data-decision-label="D7 Task kind">
+  <h3>D7 · How is a card's task kind determined?</h3>
+  <label data-option-id="derive-then-plan" data-option-label="Now: derive from consumer class, task type, mode and the existing text floors; hard means a raised floor or an explicit hard flag at creation; later the AGT-2815 plan step sets the kind and requalifies (Recommendation)"><input type="radio" name="ed-kind" value="derive-then-plan" checked><span><b>Derive now, plan step later (Recommendation)</b><span class="d">Works with today's data; the complexity estimate of AGT-2815 replaces the hard flag when it ships, without changing the matrix.</span></span></label>
+  <label data-option-id="wait-2815" data-option-label="Wait for the AGT-2815 complexity estimate before shipping the dial"><input type="radio" name="ed-kind" value="wait-2815"><span><b>Wait for AGT-2815</b><span class="d">Better kinds from day one; delays the dial by the whole analysis and plan pipeline.</span></span></label>
+  <label data-option-id="manual-kind" data-option-label="Manual task kind field on every card"><input type="radio" name="ed-kind" value="manual-kind"><span><b>Manual field</b><span class="d">Explicit; one more thing to set on every card, often wrong for generated cards.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-followup" data-decision-kind="single" data-decision-label="D8 Follow-up and fix rounds">
+  <h3>D8 · What do follow-up and fix rounds run on?</h3>
+  <label data-option-id="sticky-escalate" data-option-label="Keep the card's current route; after a semantic failure the next fresh attempt goes one rung up; after two failures at the stronger rung, stop escalating (Recommendation)"><input type="radio" name="ed-followup" value="sticky-escalate" checked><span><b>Sticky, one rung up after a semantic failure (Recommendation)</b><span class="d">Keeps session and cache; implements the reissue rule that today exists only in documentation.</span></span></label>
+  <label data-option-id="re-resolve" data-option-label="Re-resolve with the current dial on every round"><input type="radio" name="ed-followup" value="re-resolve"><span><b>Re-resolve each round</b><span class="d">Dial moves take effect faster; a provider change mid-card loses the session.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-surface" data-decision-kind="single" data-decision-label="D9 Surface">
+  <h3>D9 · Where does the dial live in the product?</h3>
+  <label data-option-id="cli-management" data-option-label="Top section of CLI Management replacing the economy toggle; position named in the usage sheet; no new header element; card chip shows pin deviations (Recommendation)"><input type="radio" name="ed-surface" value="cli-management" checked><span><b>CLI Management, no header element (Recommendation)</b><span class="d">Keeps the header usage cockpit decision against a global model chip; the dial sits next to the selection log and quota caps it interacts with.</span></span></label>
+  <label data-option-id="header" data-option-label="Compact dial in the header"><input type="radio" name="ed-surface" value="header"><span><b>Header control</b><span class="d">Always reachable; invites frequent moves and contradicts the header decision.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-cost" data-decision-kind="single" data-decision-label="D10 Expected cost and weekly percent">
+  <h3>D10 · Which figures does the dial show?</h3>
+  <label data-option-id="ledger-first" data-option-label="Cost per accepted card from our ledger when a cell has at least ten accepted cards in 28 days, otherwise a Token Economy estimate labelled estimate; weekly percent per provider from the last four weeks' task mix (Recommendation)"><input type="radio" name="ed-cost" value="ledger-first" checked><span><b>Own ledger first, labelled estimates otherwise (Recommendation)</b><span class="d">Shows what our cards actually cost; never presents an estimate as a measurement.</span></span></label>
+  <label data-option-id="te-only" data-option-label="Token Economy estimates only"><input type="radio" name="ed-cost" value="te-only"><span><b>Token Economy only</b><span class="d">Consistent across installations; ignores our cache behaviour, which is three quarters of Sol cost.</span></span></label>
+  <label data-option-id="no-figures" data-option-label="No figures, only routes"><input type="radio" name="ed-cost" value="no-figures"><span><b>Routes only</b><span class="d">Nothing to measure; the operator cannot see what a move costs.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-measure" data-decision-kind="single" data-decision-label="D11 Claude weight measurement">
+  <h3>D11 · How is the Claude weight per model measured?</h3>
+  <label data-option-id="controlled" data-option-label="Controlled batches: five cells, twelve fixture cards each, measurement lease on the Claude account, weekly percent before and after, least-squares weight per token class, quarterly repeat (Recommendation)"><input type="radio" name="ed-measure" value="controlled" checked><span><b>Controlled batches (Recommendation)</b><span class="d">The only way to separate one model's weight from parallel runs; costs two quiet windows per round.</span></span></label>
+  <label data-option-id="passive" data-option-label="Passive regression over production runs"><input type="radio" name="ed-measure" value="passive"><span><b>Passive regression</b><span class="d">No extra runs; parallel runs of different models in the same window make the weights unstable.</span></span></label>
+  <label data-option-id="direction" data-option-label="Use list-price ratios as a proxy"><input type="radio" name="ed-measure" value="direction"><span><b>List-price proxy</b><span class="d">Free; Anthropic gives no number, so the dial would show invented subscription costs.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-migration" data-decision-kind="single" data-decision-label="D12 Migration">
+  <h3>D12 · How do today's controls migrate?</h3>
+  <label data-option-id="replace-keep-expert" data-option-label="Replace economy mode, client default model and level, the step economy checkbox, quota profiles equal to same-rung, and the re-pin scripts; keep step, project and orchestrator routes as expert settings; inherit values equal to the dial; dry-run pin inventory with operator confirmation; no change to running cards (Recommendation)"><input type="radio" name="ed-migration" value="replace-keep-expert" checked><span><b>Replace the levers, keep expert routes (Recommendation)</b><span class="d">One control in daily use, nothing lost for special cases, no surprise for cards in flight.</span></span></label>
+  <label data-option-id="remove-all" data-option-label="Remove every other control"><input type="radio" name="ed-migration" value="remove-all"><span><b>Remove everything else</b><span class="d">Cleanest; loses legitimate exceptions such as a cheaper model for one bounded step.</span></span></label>
+  <label data-option-id="layer-only" data-option-label="Add the dial and keep every existing control unchanged"><input type="radio" name="ed-migration" value="layer-only"><span><b>Add only</b><span class="d">No migration work; ten controls instead of nine.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+</section>
+
+<section id="slices">
+<h2><span class="number">11</span> Slices</h2>
+<p>Eight implementation slices are prepared in <code>workbench.json</code>. They are promoted after the decisions above are recorded; each uses the recommended option unless another is recorded.</p>
+<table>
+  <thead><tr><th>Slice</th><th>Scope</th><th>Depends on</th></tr></thead>
+  <tbody>
+    <tr><td>ED-1</td><td>Ladder and dial policy: rung ladder (Token Economy with a versioned Studio mirror), positions, matrix, floors, position store for workspace and project, history, API</td><td>none</td></tr>
+    <tr><td>ED-2</td><td>Task kind resolution from consumer, task type, mode, text floors and a hard flag</td><td>ED-1</td></tr>
+    <tr><td>ED-3</td><td>Claim-time resolution: dial as a selection rule, unpinned cards resolved at each fresh claim, same-rung fallback, sticky follow-ups, reissue escalation</td><td>ED-1, ED-2</td></tr>
+    <tr><td>ED-4</td><td>Provider preference: Claude first, Codex first, follow headroom with hysteresis, sticky per card</td><td>ED-3</td></tr>
+    <tr><td>ED-5</td><td>Cost and usage projection: full-lifecycle cost per accepted card per task kind and route, Codex credits, weekly percent per provider per position</td><td>ED-1</td></tr>
+    <tr><td>ED-6</td><td>Dial surface on CLI Management, deviations, card chip second line, history</td><td>ED-3, ED-5</td></tr>
+    <tr><td>ED-7</td><td>Claude weight measurement: batch harness, measurement lease, weight table</td><td>ED-5</td></tr>
+    <tr><td>ED-8</td><td>Migration of the scattered controls and documentation update</td><td>ED-3, ED-4, ED-6</td></tr>
+  </tbody>
+</table>
+</section>
+
+<section id="sources">
+<h2><span class="number">12</span> Sources</h2>
+<ul>
+  <li>Operator brief AGT-3951, 17 November 2026, with the research figures quoted in Evidence.</li>
+  <li><a href="../system/domains/model-routing-policy.md">Model routing policy</a>: tiers, intake convention, floors, economy mode, consumer policy and API contract.</li>
+  <li><a href="../model-selection-and-fallback/index.html">Central model selection and fallback</a> (MS-1 to MS-8): planner, selection ledger, pins as preferences, hysteresis, cost guard.</li>
+  <li><a href="../model-routing-by-complexity/index.html">Model routing by assessed complexity</a> (AGT-2815): analysis and plan steps as the later source of task kind.</li>
+  <li><a href="../header-usage-cockpit/index.html">Header usage cockpit</a>: no global model chip in the header.</li>
+  <li><a href="../system/domains/cli.md">CLI domain</a>: quota admission, caps, probes and fallback receipts.</li>
+  <li><code>backend/Policies/model-routing-policy.v1.json</code>, <code>backend/Features/Tasks/TaskCrudEndpoints.cs</code>, <code>backend/Features/Runner/ProjectRunner.cs</code>, <code>backend/Features/Pipeline/ModelRoutingPolicyRegistry.cs</code>, <code>backend/Features/Cli/Selection/ModelSelectionService.cs</code>, <code>backend/Features/Tokens/Aggregation/ReviewStatisticsFold.cs</code> at <code>2adbb4f5d</code>.</li>
+</ul>
+</section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">13</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>
