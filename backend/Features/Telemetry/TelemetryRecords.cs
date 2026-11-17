@@ -99,6 +99,22 @@ public sealed class TelemetryAttributes
         return mapped is null ? this : new(mapped, IsShared);
     }
 
+    /// <summary>Masks both names and values before telemetry reaches durable storage.</summary>
+    public TelemetryAttributes MapText(Func<string, string> map)
+    {
+        KeyValuePair<string, string>[]? mapped = null;
+        for (var index = 0; index < _items.Length; index++)
+        {
+            var (key, value) = _items[index];
+            var maskedKey = map(key);
+            var maskedValue = map(value);
+            if (mapped is null && maskedKey == key && maskedValue == value) continue;
+            mapped ??= (KeyValuePair<string, string>[])_items.Clone();
+            mapped[index] = KeyValuePair.Create(maskedKey, maskedValue);
+        }
+        return mapped is null ? this : From(mapped, IsShared);
+    }
+
     private string Render()
     {
         var buffer = new ArrayBufferWriter<byte>();
