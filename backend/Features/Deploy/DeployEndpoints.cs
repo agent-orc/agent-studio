@@ -115,6 +115,19 @@ public static class DeployEndpoints
             }
         });
 
+        // AGT-3891: what creates the next release, what blocks it, and the
+        // one action that creates the release of the gated integration tip.
+        project.MapGet("/integration-release", async (string projectName, IntegrationReleaseService releases,
+            CancellationToken ct) =>
+            await releases.StatusAsync(projectName, ct) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        // The route catalog requires environment.deploy on Stage, as for a release request.
+        project.MapPost("/integration-release", async (HttpContext context, string projectName,
+            IntegrationReleaseService releases, CancellationToken ct) =>
+            await releases.CreateAsync(projectName, Actor(context, projectName).Id, automatic: false, ct) is { } value
+                ? Results.Ok(value) : UnknownProject(projectName))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
         project.MapPost("/releases/{releaseId}/deployments", (HttpContext context, string projectName,
             string releaseId, DeploymentRequest request, DeployService deploy,
             ProjectEnvironmentService environments) =>

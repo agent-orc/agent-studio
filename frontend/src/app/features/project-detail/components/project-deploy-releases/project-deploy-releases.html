@@ -3,6 +3,18 @@
     <h2 id="deploy-releases-title">Releases</h2>
     <p>Immutable snapshots from green integration builds.</p>
   </header>
+  @if (nextRelease(); as next) {
+    <section class="releases__next" data-testid="deploy-next-release" [attr.data-state]="next.state" aria-label="Next release">
+      <app-status-indicator [tone]="nextTone()!.tone" [label]="nextTone()!.label" [compact]="true" testId="deploy-next-release-state" />
+      <p data-testid="deploy-next-release-message">{{ next.message }}</p>
+      @if (next.nextStep) { <p class="releases__muted" data-testid="deploy-next-release-step">{{ next.nextStep }}</p> }
+      @if (next.canCreate) {
+        <button type="button" class="releases__create" data-testid="deploy-next-release-create" [disabled]="creating()" (click)="create()">
+          {{ creating() ? 'Creating release…' : 'Create release' }}</button>
+      }
+      @if (createError(); as error) { <p role="alert" data-testid="deploy-next-release-error">{{ error }}</p> }
+    </section>
+  }
   @switch (panel().status) {
     @case ('loading') { <app-loading-surface kind="list" label="Loading releases…" /> }
     @case ('error') {
@@ -15,7 +27,7 @@
     @default {
       @if (releases().length === 0) {
         <app-empty-state icon="archive" title="No releases yet" testid="deploy-releases-empty"
-          body="The next green build of the integration branch creates the first release." />
+          [body]="nextRelease() ? 'The first release appears here as soon as it exists; what creates it is shown above.' : 'A release is created after a card is integrated and the project gate passes on the integration branch.'" />
       } @else {
         <div class="releases__layout">
           <ul class="releases__list" aria-label="Releases, newest first">

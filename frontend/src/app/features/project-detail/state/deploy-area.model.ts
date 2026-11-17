@@ -15,6 +15,20 @@ export interface DeployEnvironment {
   kind: string;
 }
 
+/**
+ * AGT-3891: what creates the next release of the project and what blocks it
+ * now (GET /api/projects/{p}/deploy/integration-release).
+ */
+export interface IntegrationReleaseStatus {
+  project: string;
+  state: 'unconfigured' | 'promotion-train' | 'waiting-for-gate' | 'ready' | 'released' | 'blocked';
+  message: string;
+  nextStep: string | null;
+  commit: string | null;
+  releaseId: string | null;
+  canCreate: boolean;
+}
+
 export interface Release {
   id: string;
   projectId: string;
