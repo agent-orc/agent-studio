@@ -97,8 +97,10 @@ public static class UsageCockpitProjection
         return TimeZoneInfo.ConvertTimeToUtc(wall, zone);
     }
 
-    public static UsageCostProjection Cost(ITokenPricing pricing,UsageCalendar calendar, IReadOnlyList<UsageCostInput> sources)
+    public static UsageCostProjection Cost(ITokenPricing pricing, UsageCalendar calendar,
+        IReadOnlyList<UsageCostInput> sources, DateTime readAtUtc)
     {
+        var readAt = AsUtc(readAtUtc);
         var children = new List<UsageProjectCost>(sources.Count);
         var oneShotCalls = new List<(string Source, DateTime At, decimal Cost)>();
         foreach (var source in sources)
@@ -106,19 +108,18 @@ public static class UsageCockpitProjection
             var available = source.Freshness.Status != "unavailable";
             decimal today = 0, week = 0;
             var unpriced = false;
+            var unpricedModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var unpricedTodayRuns = 0;
             var unpricedWeekRuns = 0;
             var unpricedWeekIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var unpricedTodayIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var legacyUnknown = false;
-            DateTime? newest = null;
             foreach (var entry in source.Entries)
             {
                 var at = AsUtc(entry.Ts);
                 if (at < calendar.WeekStartUtc || at >= calendar.WeekEndUtc) continue;
                 var usage = entry.TokenUsage;
                 if (usage is null) continue;
-                newest = newest is null || at > newest ? at : newest;
                 // The merged reader already normalized legacy bus rows and durable
                 // receipts. Subtracting cache here would charge it twice.
                 TokenCostEstimate estimate;
@@ -129,6 +130,7 @@ public static class UsageCockpitProjection
                 }
                 catch (Exception) {
                     unpriced = true;
+                    unpricedModels.Add(usage.Model ?? "Unknown model");
                     var runId = entry.JobId ?? $"receipt:{at.Ticks}";
                     if (unpricedWeekIds.Add(runId)) unpricedWeekRuns++;
                     if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;
@@ -136,6 +138,7 @@ public static class UsageCockpitProjection
                 }
                 if (!estimate.ModelKnown) {
                     unpriced = true;
+                    unpricedModels.Add(usage.Model ?? "Unknown model");
                     var runId = entry.JobId ?? $"receipt:{at.Ticks}";
                     if (unpricedWeekIds.Add(runId)) unpricedWeekRuns++;
                     if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;
@@ -153,17 +156,12 @@ public static class UsageCockpitProjection
                 : source.Freshness.Status == "partial" || unpriced || legacyUnknown ? "partial" : "complete";
             var reason = string.Join(" ", new[] {
                 source.Freshness.Warning,
-                unpriced ? "Some models have no historical USD price." : null,
+                unpriced ? $"No historical USD price for {string.Join(", ", unpricedModels.Order(StringComparer.OrdinalIgnoreCase))}." : null,
                 legacyUnknown ? "Some legacy OpenAI receipts lack normalization provenance." : null
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
-            var sourceAsOf = DateTime.TryParse(source.Freshness.AsOf, out var parsedAsOf)
-                ? AsUtc(parsedAsOf) : (DateTime?)null;
-            var observedAt = sourceAsOf is null ? newest
-                : newest is null ? sourceAsOf : sourceAsOf.Value > newest.Value ? sourceAsOf : newest;
             children.Add(new UsageProjectCost(source.ProjectId, source.Name,
                 available ? today : null, available ? week : null,
-                new UsageSourceState(status, observedAt,
-                    source.ProjectId is null ? 0 : ProjectTokenLedger.SnapshotTtlSeconds,
+                new UsageSourceState(status, readAt, ProjectTokenLedger.SnapshotTtlSeconds,
                     reason.Length == 0 ? null : reason),
                 source.LatestReceiptAt is { } receiptAt ? AsUtc(receiptAt) : null,
                 unpricedTodayRuns, unpricedWeekRuns));
@@ -175,9 +173,11 @@ public static class UsageCockpitProjection
             known.Count == 0 ? null : known.Sum(child => child.TodayUsd ?? 0m),
             known.Count == 0 ? null : known.Sum(child => child.WeekUsd ?? 0m),
             children, new UsageSourceState(overall,
-                children.Select(child => child.Coverage.ObservedAt).Max(),
+                readAt,
                 ProjectTokenLedger.SnapshotTtlSeconds,
-                overall == "complete" ? null : "Known totals may omit unavailable or unpriced usage."),
+                overall == "complete" ? null : string.Join(" ", children
+                    .Where(child => child.Coverage.Status != "complete")
+                    .Select(child => $"{child.Name}: {child.Coverage.Reason ?? "Ledger unavailable."}"))),
             TokenEconomyPriceProvider.Version,
             ProviderUsageNormalization.OpenAiInputIncludesCachedV1,
             "/api/projects/{project}/token-usage/summary",

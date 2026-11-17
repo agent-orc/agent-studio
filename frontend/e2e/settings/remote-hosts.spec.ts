@@ -486,10 +486,7 @@ test.describe('Execution Hosts settings section', () => {
       const panel = page.getByTestId('remote-hosts-panel');
       await expect(panel).toBeVisible();
       if (width === 1280) await expect(page.getByTestId('studio-sidebar')).toBeVisible();
-      else {
-        await page.getByTestId('studio-ab-explorer').click();
-        await expect(page.getByTestId('studio-sidebar')).toBeHidden();
-      }
+      else await expect(page.getByTestId('studio-sidebar')).toBeHidden();
       const header = panel.locator('app-environment-header');
       await header.scrollIntoViewIfNeeded();
       await expect(header).toBeInViewport();
@@ -1151,6 +1148,34 @@ test.describe('Execution Hosts settings section', () => {
         hosts: [entry('agent-runner-01', false), entry('agent-runner-01-review', true)],
       }),
     }));
+    // The mocked server keeps the drain and the recorded switch start, so a
+    // reload resumes at the same step (AGT-3852).
+    let statusReads = 0;
+    let drainRequestedAt: string | null = null;
+    let switchStartedAt: string | null = null;
+    const drainStatus = () => {
+      const busy = statusReads === 1;
+      return { draining: !!drainRequestedAt, drained: !!drainRequestedAt && !busy, drainRequestedAt, switchStartedAt,
+        running: busy ? [{ kind: 'review', attemptId: 'review-active', taskKey: 'AGT-3648' }] : [] };
+    };
+    await page.route('**/api/clients/agent-runner-01-review/drain', route => {
+      drainRequestedAt ??= new Date().toISOString();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.route('**/api/clients/agent-runner-01-review/resume', route => {
+      drainRequestedAt = null;
+      switchStartedAt = null;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => {
+      if (drainRequestedAt) statusReads++;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(drainStatus()) });
+    });
+    await page.route('**/api/clients/agent-runner-01-review/deploy-switch', route => {
+      switchStartedAt ??= new Date().toISOString();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(drainStatus()) });
+    });
+
     await page.goto('/#/workspace/settings/execution-hosts');
     await dismissDevErrorDialog(page);
 
@@ -1200,33 +1225,6 @@ test.describe('Execution Hosts settings section', () => {
       }
     }
 
-    // The mocked server keeps the drain and the recorded switch start, so a
-    // reload resumes at the same step (AGT-3852).
-    let statusReads = 0;
-    let drainRequestedAt: string | null = null;
-    let switchStartedAt: string | null = null;
-    const drainStatus = () => {
-      const busy = statusReads === 1;
-      return { draining: !!drainRequestedAt, drained: !!drainRequestedAt && !busy, drainRequestedAt, switchStartedAt,
-        running: busy ? [{ kind: 'review', attemptId: 'review-active', taskKey: 'AGT-3648' }] : [] };
-    };
-    await page.route('**/api/clients/agent-runner-01-review/drain', route => {
-      drainRequestedAt ??= new Date().toISOString();
-      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-    });
-    await page.route('**/api/clients/agent-runner-01-review/resume', route => {
-      drainRequestedAt = null;
-      switchStartedAt = null;
-      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-    });
-    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => {
-      if (drainRequestedAt) statusReads++;
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(drainStatus()) });
-    });
-    await page.route('**/api/clients/agent-runner-01-review/deploy-switch', route => {
-      switchStartedAt ??= new Date().toISOString();
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(drainStatus()) });
-    });
     await update.getByTestId('review-host-update-start').click();
     await expect(update).toHaveAttribute('data-stage', 'blocked');
     await expect(update.getByTestId('review-host-update-message')).toContainText('Review AGT-3648 is still active');
@@ -1294,6 +1292,9 @@ test.describe('Execution Hosts settings section', () => {
           heartbeatStale: false, expectedImageRef: expected }],
       }),
     }));
+    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ draining: false, drained: false, running: [] }),
+    }));
     await page.goto('/#/workspace/settings/execution-hosts');
     await dismissDevErrorDialog(page);
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
@@ -1310,6 +1311,19 @@ test.describe('Execution Hosts settings section', () => {
           animations: 'disabled' });
       }
     }
+    await page.route('**/api/clients/agent-runner-01-review/drain-status', route => route.fulfill({
+      status: 404, contentType: 'application/json', body: '{"error":"client-not-found"}',
+    }));
+    await page.reload();
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
+    const unavailable = page.getByTestId('review-host-update');
+    await expect(unavailable).toHaveAttribute('data-stage', 'unavailable');
+    await expect(unavailable.getByTestId('review-host-update-start')).toHaveCount(0);
+    await expect(unavailable.getByTestId('review-host-update-message')).toContainText('no registered client identity');
+    await expect(unavailable.getByTestId('review-host-update-alternative')).toBeVisible();
+    await unavailable.screenshot({ path: join(SHOT_DIR, 'execution-hosts-missing-review-identity-390-dark.png'),
+      animations: 'disabled' });
   });
 
   for (const order of ['drift-first', 'capability-first'] as const) {

@@ -515,7 +515,7 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     weekStart: instantView(calendar.weekStartUtc, zone),
     weekEnd: instantView(calendar.weekEndUtc, zone),
     timeZone: zone,
-    latestReceipt: instantView(cost.latestReceiptAt ?? cost.coverage?.observedAt, zone),
+    latestReceipt: instantView(cost.latestReceiptAt, zone),
     pricingVersion: cost.pricingVersion,
     projects,
     oneShotSources: (cost.oneShotSources ?? []).map(row => ({

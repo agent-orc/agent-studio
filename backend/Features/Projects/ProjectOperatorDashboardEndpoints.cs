@@ -280,17 +280,25 @@ public static class ProjectOperatorDashboardEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         // IP-1 run-target role: the host polls; Studio never dials in.
-        app.MapGet("/api/deploy/run-targets/{hostId}/desired-state", (HttpContext context, string hostId,
-            ProjectEnvironmentService environments, IConfiguration configuration) =>
-            RunTargetCallerDenied(context, hostId, configuration)
-                ? RunTargetForbidden() : Results.Ok(environments.DesiredState(hostId)))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+        // AGT-3877: managed database credentials exist before the host may resolve them.
+        app.MapGet("/api/deploy/run-targets/{hostId}/desired-state", async (HttpContext context, string hostId,
+            ProjectEnvironmentService environments, ManagedDatabaseCredentials credentials,
+            IConfiguration configuration, CancellationToken ct) =>
+        {
+            if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
+            await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.EnsureForHostAsync(hostId, ct));
+            return Results.Ok(environments.DesiredState(hostId));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
-        app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", (HttpContext context, string hostId,
-            RunTargetObservedReport report, ProjectEnvironmentService environments, IConfiguration configuration) =>
-            RunTargetCallerDenied(context, hostId, configuration)
-                ? RunTargetForbidden() : Results.Ok(new { accepted = environments.RecordObserved(hostId, report) }))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+        app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", async (HttpContext context, string hostId,
+            RunTargetObservedReport report, ProjectEnvironmentService environments,
+            ManagedDatabaseCredentials credentials, IConfiguration configuration, CancellationToken ct) =>
+        {
+            if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
+            var accepted = environments.RecordObserved(hostId, report);
+            await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.RetireDeletedAsync(ct));
+            return Results.Ok(new { accepted });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/log", (string project, string jobId,
             DeployStepLogRequest request, DeployService deploy) =>

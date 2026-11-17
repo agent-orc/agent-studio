@@ -204,4 +204,10 @@ describe('live runs and models', () => {
     expect(view.clis[0].stateReason).toBe('Provider: delayed');
     expect(view.cost.coverageReason).toBe('Pricing: incomplete');
   });
+
+  it('does not present ledger read time as a receipt when no receipt exists', () => {
+    const base = snapshot();
+    const cost = { ...base.cost, latestReceiptAt: null };
+    expect(buildUsageDetailView({ ...base, cost }, NOW).cost.latestReceipt).toBeNull();
+  });
 });

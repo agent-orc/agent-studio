@@ -44,6 +44,22 @@ without a flight uses its recovery retry time, and other batches name the next
 pilot tick. These are observation deadlines, not a promise of publication.
 The batch panel shows these facts beside the flight queue and batch history.
 
+The state read also reports `laneIdle` (AGT-3857): how long a formed batch
+waited while the project ran no batch gate, by cause. `per-task-holder` means a
+direct integration held the project reservation, an approved per-task push was
+pending, or per-task gates held the gate slots. `restart-recovery` means the
+server restarted, or a previous process's flight claim or batch was still being
+recovered. `planner` means nothing held the lane and the planner had not
+started the batch yet. Each pilot tick observes the lane. The open interval is
+stored in the batch store, so a restarted process closes it at the last
+observation and records the downtime as `restart-recovery`. The response gives
+the current cause, minutes per cause for the last 24 hours and 7 days, and the
+20 latest intervals, each naming its cause. The batch panel shows the current
+cause and the 24-hour split. A flight claim owner records its process start
+time, so a server that comes back under the same process id (PID 1 in a
+container) expires the previous owner's claim on its first tick. It does not
+wait for the two-minute heartbeat.
+
 An interrupted deterministic red batch ends as `Paused` with reason
 `isolation interrupted` on the next pilot tick when unresolved members remain.
 The pilot derives any child findings, releases the parent members to planning,

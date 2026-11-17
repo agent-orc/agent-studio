@@ -14,6 +14,12 @@ public static class MonolithTransitionAdapter
     public static AutoReviewStrandingAction AutoReviewBatchRoute(AutoReviewStrandingAction decided,
         AutoReviewStrandingFacts facts, AutoReviewBatchRouteFacts route)
         => AutoReviewStrandingPolicy.RouteBatch(decided, facts, route);
+    public static EngineDeliveryIntegrationAction EngineDeliveryIntegration(EngineDeliveryIntegrationFacts facts)
+        => EngineDeliveryIntegrationPolicy.Decide(facts);
+    public static bool EngineDeliveryIntegrationRetryable(string? integrationOutcome)
+        => EngineDeliveryIntegrationPolicy.IsRetryableOutcome(integrationOutcome);
+    public static bool EngineDeliveryIntegrationPublished(string? integrationOutcome)
+        => EngineDeliveryIntegrationPolicy.IsPublishedOutcome(integrationOutcome);
 
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)

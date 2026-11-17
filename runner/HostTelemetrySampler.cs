@@ -8,7 +8,12 @@ namespace AgentRunner;
 public sealed class HostTelemetrySampler
 {
     private readonly RunnerOptions? _options;
-    public HostTelemetrySampler(RunnerOptions? options = null) => _options = options;
+    private readonly IHostFilesystemProbe _probe;
+    public HostTelemetrySampler(RunnerOptions? options = null, IHostFilesystemProbe? probe = null)
+    {
+        _options = options;
+        _probe = probe ?? HostFilesystemProbes.Default;
+    }
     private CpuCounters? _previousCpu;
     private (long InPages, long OutPages, DateTime At)? _previousSwap;
     private DateTime _nextAt = DateTime.MinValue;
@@ -48,9 +53,9 @@ public sealed class HostTelemetrySampler
             paths.Add(("salvage", _options.SalvageDir));
         foreach (var containerPath in new[] { "/var/lib/docker", "/var/lib/containers" }.Where(Directory.Exists))
             paths.Add(("container storage", containerPath));
-        var filesystems = HostFilesystemProbe.Measure(paths);
+        var filesystems = _probe.Measure(paths);
         if (HostDiskPressurePolicy.Decide(filesystems, new HostDiskPressureThresholds()).Level != HostDiskPressureLevel.Healthy)
-            filesystems = HostFilesystemProbe.Measure(paths,
+            filesystems = _probe.Measure(paths,
                 [("runner worktrees", _options?.WorkDir ?? Environment.CurrentDirectory),
                  ("logs", _options?.StateDir ?? Environment.CurrentDirectory),
                  ("result archives", _options?.SalvageDir ?? Environment.CurrentDirectory)]);

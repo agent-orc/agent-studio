@@ -1,0 +1,47 @@
+<section class="managed-databases" aria-labelledby="managed-databases-title" data-testid="managed-databases-panel">
+  <header><div><h2 id="managed-databases-title">Managed databases</h2>
+    <p>PostgreSQL that the run zone provisions from project.yml. Data stays until an owner deletes it.</p></div>
+    <button type="button" (click)="load(projectName())">Refresh databases</button></header>
+  @if (error(); as message) { <p role="alert">{{ message }}</p> }
+  @if (notice(); as message) { <p role="status">{{ message }}</p> }
+  @if (loading()) { <p role="status">Loading managed databases…</p> }
+  @for (environment of withDatabases(); track environment.id) {
+    <article [attr.data-testid]="'managed-databases-' + environment.id">
+      <h3>{{ environment.name }}</h3>
+      @for (database of environment.databases; track key(database)) {
+        <div class="managed-databases__row" [attr.data-testid]="'managed-database-' + environment.id + '-' + database.name">
+          <div class="managed-databases__head">
+            <strong>{{ database.name }}</strong>
+            <app-status-indicator [tone]="state(database.state).tone" [label]="state(database.state).label" [compact]="true"
+              testId="managed-database-state" />
+          </div>
+          <dl>
+            <div><dt>Engine</dt><dd>PostgreSQL {{ database.runningVersion ?? database.version }}
+              @if (database.runningVersion && database.runningVersion !== database.version) { (declared {{ database.version }}) }</dd></div>
+            <div><dt>Size</dt><dd>{{ database.size }} · {{ database.resources.cpus }} CPU · {{ database.resources.memoryMb }} MB</dd></div>
+            <div><dt>Volume</dt><dd>{{ database.state === 'deleted' ? 'Deleted' : bytes(database.volumeBytes) }}</dd></div>
+            <div><dt>Connection</dt><dd><code>{{ database.variable }}_FILE</code> from <code>{{ database.credentialReference }}</code></dd></div>
+          </dl>
+          @if (database.message) { <p class="managed-databases__note">{{ database.message }}</p> }
+          @if (database.deletedAt) { <small>Deleted {{ database.deletedAt | date:'medium':'UTC' }} UTC, requested by {{ database.deletionRequestedBy }}</small> }
+          @else if (database.deletionRequestedAt) { <small>Deletion requested by {{ database.deletionRequestedBy }} {{ database.deletionRequestedAt | date:'medium':'UTC' }} UTC</small> }
+          @if (database.state === 'retained') {
+            @if (confirming() === key(database)) {
+              <div class="managed-databases__confirm" data-testid="managed-database-confirm">
+                <label><span>Type <code>{{ database.name }}</code> to delete its data permanently</span>
+                  <input type="text" autocomplete="off" [value]="typed()" (input)="type($event)" data-testid="managed-database-confirm-name" /></label>
+                <button type="button" class="managed-databases__danger" [disabled]="busy() || typed() !== database.name"
+                  (click)="confirmDeletion(database)">Delete data permanently</button>
+                <button type="button" class="managed-databases__ghost" (click)="cancelDeletion()">Cancel</button>
+              </div>
+            } @else {
+              <button type="button" class="managed-databases__danger" [disabled]="busy()" (click)="startDeletion(database)">Delete data</button>
+            }
+          }
+        </div>
+      }
+    </article>
+  } @empty {
+    @if (!loading() && !error()) { <p>No managed databases. Declare them under <code>databases</code> in project.yml.</p> }
+  }
+</section>
