@@ -53,7 +53,8 @@ public static class DeployJobReleaseBinding
         if (expected.Template != job.Template || expected.Destination != job.Destination
             || expected.HealthUrl != job.HealthUrl || expected.ContainerPort != job.ContainerPort
             || JsonSerializer.Serialize(expected.Data) != JsonSerializer.Serialize(job.Data)
-            || JsonSerializer.Serialize(expected.SshSteps) != JsonSerializer.Serialize(job.SshSteps)
+            || JsonSerializer.Serialize(ProjectEnvironmentService.OnHost(expected.SshSteps, job.HostId))
+                != JsonSerializer.Serialize(job.SshSteps)
             || !SameVariables(plain, job.ResolvedVariables)
             || !SameVariables(secrets, job.SecretVariableRefs)
             || !expectedSecretRefs.SetEquals(job.SecretRefs)) return null;
