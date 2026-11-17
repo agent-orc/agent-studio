@@ -2871,6 +2871,14 @@ operator changes cause the step to fail before its writer runs.
   and timeline event remain the detailed evidence. Every merge `Error` names a
   typed code (AGT-2995); the code table and the Error sites are in
   [rebase-merge-and-integration-invariants.md](../../concepts/platform-architecture/rebase-merge-and-integration-invariants.md#typed-codes-of-an-error-outcome-agt-2995).
+- A merge-only continuation is attributed when its earlier non-merge delivery
+  commits name the card (or carry its runner attribution trailer) and each new
+  merge imports a parent already on the integration branch. The run result SHA
+  receives a `commits[]` entry with that run's attempt id. A passing review
+  escalated solely for missing attribution can be restored to Auto Review by
+  the integration-history repair sweep, then admitted to a batch without a new
+  review. Other missing attribution escalations name the affected commits and
+  the required next-round action.
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.
