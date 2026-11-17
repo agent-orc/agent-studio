@@ -37,7 +37,7 @@
     <app-workspace-token-timeline [scope]="ledgerScope()" />
   }
   @if (page() === 'workspace') {
-    <app-unpriced-models />
+    <app-unpriced-models [workspaceId]="ledgerScope()?.workspaceId ?? null" />
     <header class="token-usage__page-head">
       <span class="token-usage__eyebrow">Workspace level</span>
       <h2>Workspace and project usage</h2>
