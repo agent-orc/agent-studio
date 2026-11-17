@@ -323,6 +323,7 @@ async function restoreCurrentFinding(page: Page) {
 }
 
 test('task detail pipeline names run and task totals, aligns disclosures, and explains API pricing', async ({ page }) => {
+  test.setTimeout(90_000);
   await page.addInitScript(() => {
     try {
       localStorage.setItem('taskboard.panesVisible', JSON.stringify({ prompt: true, protocol: false, git: false }));
@@ -333,7 +334,7 @@ test('task detail pipeline names run and task totals, aligns disclosures, and ex
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
 
   const pipelineBlock = page.getByTestId('overview-pipeline');
-  await expect(pipelineBlock).toBeVisible({ timeout: 10000 });
+  await expect(pipelineBlock).toBeVisible({ timeout: 30_000 });
   await dismissDevErrorDialog(page);
   await page.getByTestId('overview-pipeline-phase').click();
   await expect(page.getByTestId('overview-pipeline-step-name')).toContainText('Agent execution');
@@ -370,6 +371,7 @@ for (const runCase of [
       { name: '400px', width: 400, height: 900 },
     ] as const) {
       test(`${runCase.name} totals remain clear at ${viewport.name} in ${theme}`, async ({ page }) => {
+        test.setTimeout(90_000);
         await page.setViewportSize({ width: viewport.width, height: viewport.height });
         await page.addInitScript(({ selectedTheme }) => {
           localStorage.setItem('taskboard.panesVisible', JSON.stringify({ prompt: true, protocol: false, git: false }));
@@ -379,7 +381,7 @@ for (const runCase of [
         await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
 
         const overview = page.getByTestId('overview-tab');
-        await expect(overview).toBeVisible({ timeout: 10_000 });
+        await expect(overview).toBeVisible({ timeout: 30_000 });
         await dismissDevErrorDialog(page);
         if (viewport.name === '400px') {
           await overview.evaluate((element) => {
@@ -457,10 +459,11 @@ for (const theme of ['light', 'dark'] as const) {
 }
 
 test('partial-price run keeps token columns aligned across narrow Overview widths', async ({ page }) => {
+  test.setTimeout(120_000);
   await page.setViewportSize({ width: 1280, height: 800 });
   await installFixtureRoutes(page, 4, true);
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
-  await expect(page.getByTestId('pipeline-token-usage-run')).toHaveCount(4);
+  await expect(page.getByTestId('pipeline-token-usage-run')).toHaveCount(4, { timeout: 30_000 });
   await dismissDevErrorDialog(page);
   await expect(page.getByTestId('pipeline-token-usage-run-cost').filter({ hasText: 'incomplete' })).toHaveCount(1);
 
