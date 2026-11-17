@@ -170,10 +170,11 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
         var undone = await watchdog.UndoParkAsync(record.Id, "operator");
         Assert.True(undone.Undone, undone.Message);
         _time.Advance(TimeSpan.FromSeconds(30));
-        Assert.Equal(1, await watchdog.RunOnceAsync());
-        var reparked = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
-        Assert.DoesNotContain("no active owner for 0 minutes", reparked.ParkedBlocker!.Reason,
-            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, await watchdog.RunOnceAsync());
+        var restored = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, restored.State);
+        Assert.Null(restored.ParkedBlocker);
+        Assert.Single(factory.Services.GetRequiredService<StallInterventionStore>().All());
     }
 
     [Fact]
