@@ -62,3 +62,18 @@ for (const theme of ['light', 'dark'] as const) {
     await page.screenshot({ path: join(shots, `usage-ledger-destination-${theme}.png`) });
   });
 }
+
+test('quota reset table names a UTC workspace once', async ({ page }) => {
+  await installRoutes(page);
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: {
+    ...structuredClone(SNAPSHOT), timeZone: 'UTC',
+  } }));
+  await page.goto('/');
+  await dismissDevErrorDialog(page);
+  await expect(page.getByTestId('footer-usage-claude')).toBeVisible();
+  await page.getByTestId('footer-usage-cost').click();
+  const table = page.getByTestId('usage-detail-windows-claude');
+  await expect(table.locator('thead th')).toHaveText(['Window', 'Used', 'Left', 'Resets (UTC)']);
+  await expect(table.getByTestId('usage-detail-reset-utc')).toHaveCount(0);
+  await expect(table.getByTestId('usage-detail-reset-local').first()).not.toContainText('UTC');
+});

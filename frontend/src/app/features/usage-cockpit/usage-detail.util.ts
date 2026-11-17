@@ -1,4 +1,4 @@
-import { formatInZone, formatZonedTime, formatZonedWithUtc, usageTimeZone } from '../../services/usage-time.util';
+import { formatInZone, formatZonedWithUtc, usageTimeZone } from '../../services/usage-time.util';
 import type {
   UsageCalendar,
   UsageCli,
@@ -45,7 +45,7 @@ export const UNKNOWN = 'Unknown';
 export type UsageDetailFocus = { kind: 'cli'; cliId: string } | { kind: 'capacity' } | { kind: 'cost' };
 
 export interface UsageInstantView {
-  /** `Mon 29 Sept, 09:00 Europe/Berlin`, in the workspace zone with its name. */
+  /** `Mon 29 Sept, 09:00`, in the workspace zone named by the table header. */
   local: string;
   /** `Mon 29 Sept, 07:00 UTC`. */
   utc: string;
@@ -62,7 +62,7 @@ export function instantView(iso: string | null | undefined, timeZone: string | n
   if (Number.isNaN(date.getTime())) return null;
   const zone = usageTimeZone(timeZone);
   return {
-    local: formatZonedTime(date, zone)!,
+    local: formatInZone(date, zone),
     utc: `${formatInZone(date, 'UTC')} UTC`,
     text: formatZonedWithUtc(date, zone)!,
     iso: date.toISOString(),
