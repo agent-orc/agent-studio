@@ -1011,9 +1011,19 @@ occur. It is not a claim about tunnel transfer time.
   `sourceTaskKeys`, `relatedTaskKeys`, and decision receipts retained as
   compatibility bridges. The compact viewer head shows every resolved card as
   a live lane dot. While a decision-pending or decided Workbench has at least
-  one reference beyond Ready and not every reference is terminal, it also shows
-  the derived `In implementation` summary marker. This is a live read-model
-  marker and does not add a descriptor lifecycle state.
+  one implementation card beyond Ready and not every implementation card is
+  terminal, it also shows the derived `In implementation` summary marker, and
+  the header status reads `In implementation`; otherwise a decided Dossier
+  reads `Decided`. Implementation cards are the resolved references plus the
+  Dossier's own member cards (`cards`), without the concept card that wrote it
+  (`sourceTaskKeys` and `revisionCard`), so a concept card in Human Review
+  does not mark the Dossier as in implementation (AGT-3649-D13). This is a
+  live read-model marker and does not add a descriptor lifecycle state. The
+  review tag and `Record relevance review` action name the operator's
+  relevance review; concept-fit reviews of the concept card are a separate
+  gate and do not set it. The promotion bar loads the slice plan when it
+  renders and states `n of m slices have cards`; a decision label never
+  repeats `(recommended)` that the authored option label already carries.
   Once every referenced card is in `6-completed` or `7-archive`, the catalogue
   projects a quiet `Ready to document` suggestion in the viewer header and list
   surfaces. `POST /api/projects/{projectName}/workbenches/{id}/document`

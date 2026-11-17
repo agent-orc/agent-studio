@@ -7,6 +7,7 @@ import {
   input,
   output,
   signal,
+  untracked,
 } from '@angular/core';
 import type { PromoteConceptResponse, PromotedConceptTask } from '../../models/task.model';
 import { TaskService } from '../../services/task.service';
@@ -15,6 +16,7 @@ import { StatusIndicatorComponent } from '../status-indicator/status-indicator.c
 import {
   cardLabel,
   promotionErrorMessage,
+  promotionProgressLabel,
   promotionSlices,
 } from './concept-promotion.util';
 
@@ -73,16 +75,23 @@ export class ConceptPromotionComponent {
       ? `Create all ${count} cards`
       : `Create ${count} card${count === 1 ? '' : 's'}`;
   });
+  /** The collapsed bar says whether cards already exist (AGT-3649-D13). */
+  readonly progressLabel = computed(() => promotionProgressLabel(this.slices()));
   readonly cardLabel = cardLabel;
 
   private readonly reset = effect(() => {
     void this.taskRef();
-    this.open.set(false);
-    this.plan.set(null);
-    this.created.set([]);
-    this.lastCreated.set([]);
-    this.loadError.set(null);
-    this.createError.set(null);
+    void this.watchPath();
+    void this.projectName();
+    untracked(() => {
+      this.open.set(false);
+      this.plan.set(null);
+      this.created.set([]);
+      this.lastCreated.set([]);
+      this.loadError.set(null);
+      this.createError.set(null);
+      this.load();
+    });
   });
 
   constructor() {
@@ -162,6 +171,7 @@ export class ConceptPromotionComponent {
       },
       error: error => {
         this.loading.set(false);
+        this.plan.set(null);
         this.loadError.set(promotionErrorMessage(error, 'Could not read the Dossier implementation slices.'));
       },
     });

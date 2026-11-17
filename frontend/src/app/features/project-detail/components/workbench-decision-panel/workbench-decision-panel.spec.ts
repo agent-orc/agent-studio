@@ -801,7 +801,10 @@ describe('decision panel status tones', () => {
     expect(decisionStageTone('later', false)).toBe('neutral');
     expect(decisionOutcomeTone('feature-spawn')).toBe('success');
     expect(decisionOutcomeTone('archive')).toBe('neutral');
-    expect(decisionOutcomeTone('rework')).toBe('warning');
+    expect(decisionOutcomeTone('rework')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'succeeded')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'failed')).toBe('danger');
+    expect(decisionOutcomeTone('feature-spawn', 'pending')).toBe('running');
     expect(decisionOutcomeTone(null)).toBe('neutral');
   });
 });
