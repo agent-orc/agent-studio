@@ -10,7 +10,7 @@ using AgentStudio.Tasks;
 namespace AgentStudio.Tokens;
 
 public sealed record UsageCliWindow(string Id, string Label, double? UsedPct, DateTime? ResetAtUtc,
-    string? ResetLabel, string? SuspiciousReason);
+    string? ResetLabel, string? SuspiciousReason, DateTime? StartAtUtc = null);
 public sealed record UsageCli(string CliId, bool Primary, string? Plan, string? Source,
     IReadOnlyList<UsageCliWindow> Windows, DateTime? FetchedAt, int TtlSeconds,
     bool Suspicious, string? SuspiciousReason, DateTime? ProbeFailedAt,
@@ -120,7 +120,7 @@ public static class UsageCockpitEndpoints
                     if (current.ProjectId is null) continue;
                     costInputs[index] = current with { Entries = workspaceUsage.MergeInto(current.ProjectId, current.Entries) };
                 }
-                costInputs.Add(new UsageCostInput(null, "Unattributed", unattributed,
+                costInputs.Add(new UsageCostInput(null, "Unattributed one-shot jobs", unattributed,
                     new ProjectTokenDataFreshness
                     {
                         Status = unassignedCount == 0 ? "complete" : "partial",
@@ -131,7 +131,7 @@ public static class UsageCockpitEndpoints
             }
             catch (Exception)
             {
-                costInputs.Add(new UsageCostInput(null, "Unattributed", [],
+                costInputs.Add(new UsageCostInput(null, "Unattributed one-shot jobs", [],
                     new ProjectTokenDataFreshness { Status = "unavailable",
                         Warning = "The workspace token bus could not be read." }));
             }
@@ -264,7 +264,7 @@ public static class UsageCockpitEndpoints
             windowIds[key] = ordinal + 1;
             return new UsageCliWindow(ordinal == 0 ? key : $"{key}-{ordinal + 1}",
                 window.Label, window.UsedPct, window.ResetAt, window.ResetLabel,
-                window.ProjectionSuspiciousReason);
+                window.ProjectionSuspiciousReason, window.ObservedStartAt);
         }).ToList();
         return new UsageCli(snapshot.CliType, primary, snapshot.Plan, snapshot.Source,
             windows,

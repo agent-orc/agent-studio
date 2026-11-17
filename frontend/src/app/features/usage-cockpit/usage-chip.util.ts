@@ -141,10 +141,13 @@ function windowView(window: UsageCliWindow | null, kind: UsageWindowKind, timeZo
     };
   }
   const reset = formatLocalWithUtc(window?.resetAtUtc, timeZone) ?? window?.resetLabel ?? null;
+  const resetMs = window?.resetAtUtc ? Date.parse(window.resetAtUtc) : NaN;
+  const weeklyStart = kind === 'weekly' && Number.isFinite(resetMs)
+    ? formatLocalWithUtc(window?.startAtUtc ?? new Date(resetMs - 7 * 86_400_000).toISOString(), timeZone) : null;
   return {
     kind, tag, value: pct, reported: true,
       spoken: `${spokenName} ${percentSpoken(pct)} used`,
-    detail: `${providerLabel}: ${pct} used${reset ? `, resets ${reset}` : ''}`,
+    detail: `${providerLabel}: ${pct} used${reset ? `, resets ${reset}` : ''}${weeklyStart ? `; provider week ${weeklyStart} to ${reset}` : ''}`,
   };
 }
 

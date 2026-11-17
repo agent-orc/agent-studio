@@ -22,7 +22,7 @@ public static class PullGateEndpoints
         {
             var principal = GatePrincipal(context, security);
             return principal is null ? Results.Unauthorized()
-                : Results.Ok(store.Claim(principal.RunnerId));
+                : ClaimResult(store.Claim(principal.RunnerId));
         });
         gates.MapPost("/runs/{runId}/heartbeat", (HttpContext context, string runId,
             PullGateHeartbeat request, PullGateStore store, AccessSecurityStore security) =>
@@ -88,6 +88,10 @@ public static class PullGateEndpoints
                 ? Results.File(path, "application/octet-stream", name)
                 : Results.NotFound());
     }
+
+    // An idle claim has no body, so the worker never parses a JSON null (AGT-3649-D12).
+    internal static IResult ClaimResult(PullGateClaim? claim)
+        => claim is null ? Results.NoContent() : Results.Ok(claim);
 
     private static RunnerPrincipal? GatePrincipal(HttpContext context, AccessSecurityStore security)
     {

@@ -83,6 +83,7 @@ interface CapturedCalls {
   steerBodies: Record<string, unknown>[];
   deletedTaskIds: string[];
   landRevision: () => void;
+  settleUnchanged: () => void;
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -166,9 +167,11 @@ async function installMocks(
   page: Page, descriptor: DescriptorState = DECISION_READY, failFirstConfirm = false,
 ): Promise<CapturedCalls> {
   let revisionLanded = false;
+  let revisionUnchanged = false;
   const captured: CapturedCalls = {
     taskBodies: [], decisionBodies: [], steerBodies: [], deletedTaskIds: [],
     landRevision: () => { revisionLanded = true; },
+    settleUnchanged: () => { revisionUnchanged = true; },
   };
   let taskCreated = false;
   let decision: Record<string, unknown> | null = null;
@@ -512,6 +515,11 @@ async function installMocks(
       workingTreeModified: false, fingerprint,
       entryFingerprint: revisionLanded ? 'entry-b' : 'entry-a',
       revisionCard: REVISION_CARD,
+      revisionRound: revisionLanded || revisionUnchanged ? {
+        status: revisionLanded ? 'updated' : 'unchanged',
+        taskKey: REVISION_CARD.key, title: REVISION_CARD.title,
+        queueReason: null, detail: null,
+      } : null,
     }),
   );
 
@@ -942,6 +950,33 @@ test('inline Dossier decision requests rework through its orchestrator session',
   });
 });
 
+test('unchanged revision round restores Dossier decisions and links its card', async ({ page, devBackend }) => {
+  expect(devBackend.port).toBeGreaterThan(0);
+  const captured = await installMocks(page);
+  await seedWorkbench(page);
+  await page.goto('/');
+  const inline = page.getByTestId('workbench-inline-decision-action');
+  await expect(inline.getByTestId('workbench-decision-rework')).toBeVisible({ timeout: 30_000 });
+  await page.frameLocator('[data-testid="workbench-viewer-frame"]')
+    .locator('[data-option-id="option-b"] input').check();
+  await inline.getByTestId('workbench-decision-rework').click();
+  await inline.getByTestId('workbench-decision-rework-request').fill('Check the naming choice again.');
+  await inline.getByTestId('workbench-decision-confirm-rework').click();
+  await expect(inline.getByTestId('workbench-decision-receipt')).toBeVisible();
+
+  captured.settleUnchanged();
+  await page.reload();
+  await expect(inline.getByTestId('workbench-decision-revision-round')).toContainText('unchanged');
+  await expect(inline.getByTestId('workbench-decision-rework')).toBeVisible();
+  await expect(inline.getByTestId('workbench-decision-start')).toBeVisible();
+  await expect(inline.getByTestId('workbench-decision-start')).toBeEnabled();
+  await expect(inline.getByTestId('workbench-decision-open-revision-card')).toHaveText('Open round AGT-2600');
+  mkdirSync(RESULTS, { recursive: true });
+  await page.screenshot({ path: resolve(RESULTS, 'agt-3843-unchanged-rework-round.png'), fullPage: true });
+  await inline.getByTestId('workbench-decision-open-revision-card').click();
+  await expect(page.getByRole('tab', { name: 'Naming concept' })).toContainText('AGT-2600');
+});
+
 test('rework on a Codex concept card shows and records a switch to Claude (AGT-3838)', async ({ page, devBackend }) => {
   expect(devBackend.port).toBeGreaterThan(0);
   mkdirSync(RESULTS, { recursive: true });
@@ -1105,7 +1140,9 @@ for (const variant of [
     await expect(frame.locator('[data-option-id="option-b"] input')).toBeChecked();
     await expect(frame.locator('[data-option-id="option-a"] input')).not.toBeChecked();
     await expect(page.getByTestId('workbench-inline-decision-action')
-      .getByTestId('workbench-decision-receipt')).toHaveCount(0);
+      .getByTestId('workbench-decision-revision-round')).toContainText('updated');
+    await expect(page.getByTestId('workbench-inline-decision-action')
+      .getByTestId('workbench-decision-rework')).toBeVisible();
     await page.screenshot({
       path: resolve(RESULTS, `agt-3703-revision-keeps-owner-choice--${variant.name}.png`),
       fullPage: variant.width > 400,

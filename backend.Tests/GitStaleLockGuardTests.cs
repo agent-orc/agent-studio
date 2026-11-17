@@ -82,6 +82,23 @@ public sealed class GitStaleLockGuardTests : IDisposable
         Assert.Equal(0, Git(repo, "add", "README.md").Code);
     }
 
+    [Theory]
+    [InlineData("shallow.lock")]
+    [InlineData("objects/info/commit-graphs/commit-graph-chain.lock")]
+    [InlineData("objects/info/commit-graph.lock")]
+    [InlineData("objects/maintenance.lock")]
+    public void Server_guard_covers_fetch_and_maintenance_locks(string relative)
+    {
+        var repo = SeedRepo("fetch-lock-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(repo, ".git", relative);
+        PlantLock(path, TimeSpan.FromMinutes(2));
+
+        var result = Guard(new FixedProbe(GitLockOwnership.None)).EnsureWritable(repo);
+
+        Assert.False(File.Exists(path));
+        Assert.Equal(path, Assert.Single(result.Cleared).Path);
+    }
+
     [Fact]
     public void Minute_old_lock_held_by_a_writer_that_started_just_after_its_write_time_is_kept()
     {

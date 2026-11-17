@@ -39,6 +39,8 @@ The CLI account page reads `QuotaWindow.WindowHours` from the shared backend quo
 
 `QuotaEfficiencyFold` splits each `.runtime/quota-history` window series at resets and divides the CLI's workspace tokens inside a window by the percentage points it consumed. The quota chart shares the time axis with the token chart and never its y axis.
 
+The CLI account's current provider week is `GET /api/workspace/tokens/subscription-week?cli=&subscriptionKey=`. The quota snapshot supplies the used percentage, observed cycle start and reset. `SubscriptionWeekFold` filters the reconciled analysis items to that half-open interval and reports captured receipts and pipeline measurements by card, usage kind and model. The provider percentage is in account quota units; captured tokens cannot be converted to a share of that percentage. When several sign-ins use one CLI, receipts have no subscription key, so the endpoint withholds account-specific receipt attribution. The cockpit `UsageCliWindow.startAtUtc` carries the observed start to the footer tooltip; when absent, the displayed start is seven days before reset. Workspace cost weeks and admission weeks retain their own documented calendars.
+
 Workspace-scope ad-hoc rows used to land in the cockpit's "Unattributed" bucket even when the call knew its project. `TokenUsageAttribution` now resolves a row by its bus project, then the `project:<name>` tag that `AdHocUsageRecorder` writes, then the project that owns its job id. Rows stay in the workspace scope, so `BusAdHocUsageReader` is unchanged. Bus rows and task receipts also carry `reasoningOutput` / `ReasoningTokens` when the CLI reports it (Codex `reasoning_output_tokens`); it is a subset of output and null means not reported.
 
 ## Completed migrations
@@ -59,7 +61,7 @@ for recording and attribution rules.
 |---|---|
 | Read | `Ledger/ProjectTokenLedger.cs`, `Ledger/ProjectTokenReceiptReader.cs`, `Ledger/BusTokenEntryConverter.cs`, `Ledger/BusAdHocUsageReader.cs`, `Ledger/ChatUsageFallbackReceipts.cs` |
 | Identity | `Identity/ModelIdentity.cs`, `Identity/TokenParticipants.cs`, `Identity/TokenUsageHost.cs`, `Identity/TokenUsageAttribution.cs` |
-| Card analysis | `Analysis/TokenAnalysisService.cs`, `Analysis/TokenAnalysisFold.cs`, `Analysis/TokenUsageKindPolicy.cs`, `Analysis/QuotaEfficiencyFold.cs`, `Analysis/TokenAnalysisEndpoints.cs` |
+| Card analysis | `Analysis/TokenAnalysisService.cs`, `Analysis/TokenAnalysisFold.cs`, `Analysis/TokenUsageKindPolicy.cs`, `Analysis/QuotaEfficiencyFold.cs`, `Analysis/SubscriptionWeekFold.cs`, `Analysis/TokenAnalysisEndpoints.cs` |
 | Price | `Pricing/TokenPricing.cs`, `Pricing/TokenEconomyPriceProvider.cs`, `Pricing/RunModelPricing.cs`, `Pricing/PricedTokenEntry.cs` |
 | Aggregate | `Aggregation/ModelUsageFold.cs`, `Aggregation/TokenSummaryFold.cs`, `Aggregation/ProjectTokenUsageFold.cs`, `Aggregation/ProjectTokenJobFold.cs`, `Aggregation/WorkspaceTimelineFold.cs`, `Aggregation/AdHocUsageFold.cs`, `Aggregation/CliWindowAttributionFold.cs` |
 | Project | `TokenAggregationService.cs`, `ITokenAggregator.cs`, token endpoints and cache stores |

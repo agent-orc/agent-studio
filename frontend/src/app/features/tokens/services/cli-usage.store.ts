@@ -20,6 +20,7 @@ import type {
  */
 export interface CliUsageQuotaRow {
   cliType: CliType;
+  subscriptionKey?: string | null;
   icon: string;
   label: string;
   plan: string | null;
@@ -258,6 +259,7 @@ export class CliUsageStore {
     const primaryPct = primary?.usedPct == null ? null : Math.round(primary.usedPct);
     return {
       cliType: s.cliType as CliType,
+      subscriptionKey: s.subscriptionKey ?? null,
       icon: cliTypeIcon(s.cliType as CliType),
       label: this.cliLabel(s.cliType),
       plan: s.plan,

@@ -56,8 +56,8 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
     public IReadOnlyList<WatcherSignalObservation> Collect(string workspaceRoot, DateTime nowUtc)
     {
         var thresholds = WatcherOptions.FromConfiguration(_configuration).OperationalThresholds;
-        var clients = UseLegacyClientIdentities(_configuration)
-            ? _clients.ListAll().Where(x => x.RunnerDaemonState is not null).ToArray() : [];
+        var allClients = _clients.ListAll().Where(x => x.RunnerDaemonState is not null).ToArray();
+        var clients = UseLegacyClientIdentities(_configuration) ? allClients : [];
         var allReviewHosts = _reviewHosts.ListCapabilitySnapshots();
         var reviewHosts = allReviewHosts
             .Where(x => nowUtc - x.LastSeenAt <= TimeSpan.FromMinutes(10)
@@ -272,10 +272,15 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
         var deployments = drift.Hosts.Where(x => x.State == HostReleaseDriftStates.Behind && !x.HeartbeatStale)
             .Select(x => new DeployStallFact(x.HostId, x.Role, drift.Stable.Version,
                 x.Release?.Version, x.LastSeenAt, x.Reason)).ToArray();
+        var projectPreflights = allClients.SelectMany(client => client.RunnerProjectPreflights
+            .Where(preflight => preflight.Status == "failed" && preflight.FirstFailedAt is not null)
+            .Select(preflight => new ProjectPreflightStallFact(client.DisplayName,
+                preflight.ProjectName, preflight.ProjectId, preflight.Detail,
+                preflight.FirstFailedAt!.Value))).ToArray();
 
         return OperationalStallDetector.Detect(new OperationalStallSnapshot(hostFacts, capacity,
             claims, providers, gateFacts, lanes, deployments, heartbeats,
-            legacyModelHosts, fleetClaims), thresholds, nowUtc);
+            legacyModelHosts, fleetClaims, projectPreflights), thresholds, nowUtc);
     }
 
     /// <summary>True when the review host's admitted capabilities satisfy the attempt's plan.</summary>

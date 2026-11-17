@@ -8,6 +8,7 @@ import type {
   WorkspaceExpensiveJobsResponse,
 } from '../models/tokens.model';
 import type { UsageLedgerScope } from '../../usage-cockpit';
+import type { SubscriptionWeek } from '../models/subscription-week.model';
 
 export interface CliWindowAttribution {
   fromUtc: string;
@@ -35,6 +36,12 @@ export interface CliWindowAttribution {
 export class TokensApiService {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = '/api';
+
+  getSubscriptionWeek(cli: string, subscriptionKey?: string | null) {
+    let params = new HttpParams().set('cli', cli);
+    if (subscriptionKey) params = params.set('subscriptionKey', subscriptionKey);
+    return this.http.get<SubscriptionWeek>(`${this.baseUrl}/workspace/tokens/subscription-week`, { params });
+  }
 
   getCliWindowAttribution(cliType: 'claude' | 'codex', label: string, resetAt: string | null) {
     let params = new HttpParams().set('cliType', cliType).set('label', label);

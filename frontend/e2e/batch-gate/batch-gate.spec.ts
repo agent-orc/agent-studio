@@ -295,6 +295,48 @@ for (const width of [1280, 390]) {
   });
 }
 
+test('F14: the lane pill and the panel lead with the red batch at 1280 light, 390 and dark', async ({ page }) => {
+  const red = { ...state, batches: [{ ...state.batches[1], batchId: 'batch-9', parentBatchId: null, formationReason: null, exclusions: [] },
+    state.batches[0]],
+  isolationFindings: [{ parentBatchId: 'batch-7', taskKey: 'AGT-2', status: 'proven-red', evidencePath: 'gate-evidence.jsonl',
+    recordedAtUtc: '2026-10-11T13:05:00Z', provingBatchId: 'batch-7', provingRunId: 'run-7', failures: [], evidenceAvailable: true }] };
+  const other = { ...task, id: 'DEMO-1', key: 'DEMO-1', taskKey: '/tmp/demo-app::DEMO-1', title: 'Demo task',
+    projectName: 'Demo App', watchPath: '/tmp/demo-app', folderPath: '/tmp/demo-app/tasks/DEMO-1' };
+  await routeBoard(page, red, undefined, { ...grouped, autoReview: [other, task] });
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  const evidence = process.env.JOB_RESULTS_DIR;
+  for (const [width, theme] of [[1280, 'light'], [390, 'light'], [1280, 'dark']] as const) {
+    await page.setViewportSize({ width, height: 850 });
+    await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    if (width === 390) await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Post Processing' });
+    const pill = page.getByTestId('batch-lane-indicator').filter({ hasText: 'Demo App' }).first();
+    await expect(pill).toBeVisible();
+    const alert = pill.getByTestId('batch-lane-alert');
+    await expect(alert).toHaveText('Batch batch-7 red');
+    await expect(pill.getByTestId('batch-lane-culprits')).toHaveText('AGT-2 proven red');
+    const box = (await pill.boundingBox())!;
+    for (const part of [alert, pill.getByTestId('batch-lane-culprits')]) {
+      const inner = (await part.boundingBox())!;
+      expect(inner.x + inner.width).toBeLessThanOrEqual(box.x + box.width + 1);
+      expect(inner.y + inner.height).toBeLessThanOrEqual(box.y + box.height + 1);
+      expect(await part.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    }
+    if (evidence) await pill.screenshot({ path: nodePath.join(evidence, `f14-batch-pill-${width}-${theme}.png`) });
+    await pill.click();
+    const panel = page.getByTestId('batch-panel');
+    const active = panel.getByTestId('batch-active');
+    await expect(active).toBeVisible();
+    expect(await panel.getByTestId('batch-panel-body').evaluate(body => body.firstElementChild?.getAttribute('data-testid'))).toBe('batch-active');
+    const redCard = active.locator('#batch-batch-7');
+    await expect(redCard).toBeInViewport();
+    await expect(redCard.getByTestId('batch-phase')).toContainText('red');
+    if (evidence) await panel.screenshot({ path: nodePath.join(evidence, `f14-batch-panel-${width}-${theme}.png`) });
+    await panel.getByRole('button', { name: 'Close batch panel' }).click();
+    await expect(panel).toHaveCount(0);
+  }
+});
+
 test('recovered batch shows members, interrupted run and detached deadline in both themes and at 390px', async ({ page }) => {
   const evidence = process.env.JOB_RESULTS_DIR;
   const members = [1, 2, 3, 4].map(index => ({ taskKey: `AGT-${index}`, replay: 'applied', released: false }));

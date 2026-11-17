@@ -21,6 +21,12 @@ describe('CliWindowAnalysisComponent', () => {
     }] }]);
     fixture.detectChanges();
     const http = TestBed.inject(HttpTestingController);
+    http.expectOne(request => request.url === '/api/workspace/tokens/subscription-week'
+      && request.params.get('cli') === 'codex').flush({
+      cli: 'codex', subscriptionKey: null, startUtc: null, resetAtUtc: null,
+      usedPct: null, observedAt: null, totalTokens: 0, receiptCount: 0,
+      cards: [], kinds: [], models: [], receipts: [], notice: 'No current provider week.',
+    });
     http.expectOne(request => request.url === '/api/workspace/tokens/cli-window'
       && request.params.get('cliType') === 'codex').flush({
       fromUtc: new Date(Date.parse(resetAt) - 5 * 3_600_000).toISOString(),

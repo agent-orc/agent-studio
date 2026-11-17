@@ -1,0 +1,56 @@
+:host { display: block; min-width: 0; }
+
+// AGT-3845: a quiet list (R4); the actionable notice is on each card.
+.off-stable-grades {
+  margin-block: var(--studio-spacing-2);
+  border-top: 1px solid var(--studio-border);
+}
+
+.off-stable-grades h4 {
+  margin: var(--studio-spacing-3) 0 var(--studio-spacing-2);
+  font-size: var(--studio-font-size-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.off-stable-grades__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.off-stable-grades__row {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr) 9rem 9rem;
+  align-items: center;
+  gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) 0;
+  border-bottom: 1px solid var(--studio-border);
+  font-variant-numeric: tabular-nums;
+}
+
+.off-stable-grades__row a { color: var(--studio-accent-3-strong); }
+.off-stable-grades__row a:focus-visible {
+  outline: 2px solid var(--studio-accent-3);
+  outline-offset: 2px;
+}
+
+.off-stable-grades__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.off-stable-grades__lane,
+.off-stable-grades__row time { color: var(--studio-fg-dim); }
+
+.off-stable-grades__notice {
+  grid-column: 1 / -1;
+  color: var(--studio-fg-muted);
+  font-size: var(--studio-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .off-stable-grades__row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .off-stable-grades__title { grid-column: 1 / -1; grid-row: 2; }
+}

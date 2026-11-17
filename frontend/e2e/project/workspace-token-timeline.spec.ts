@@ -205,6 +205,10 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
       costUsd: 2.18,
       allModelsPriced: true,
     }],
+    oneShotSources: [
+      { source: 'auto-tag', calls: 2, tokens: 120, costUsd: 0.02 },
+      { source: 'title-generation', calls: 1, tokens: 80, costUsd: 0.01 },
+    ],
     fetchedAt: new Date().toISOString(),
     disclaimer: 'Theoretical API cost based on Anthropic\'s published rates. Your CLI subscription is billed separately.',
   };
@@ -266,6 +270,8 @@ test.describe('Workspace token timeline', () => {
     const view = page.getByTestId('workspace-token-timeline');
     await expect(view).toBeVisible();
     await expect(page.getByTestId('wtt-chart')).toBeVisible();
+    await expect(page.getByTestId('wtt-one-shot-sources')).toContainText('auto-tag');
+    await expect(page.getByTestId('wtt-one-shot-sources')).toContainText('title-generation');
     await dismissDevErrorDialog(page);
 
     // The default 24 h window should render cells from the stubbed payload.

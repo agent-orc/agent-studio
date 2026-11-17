@@ -2,6 +2,9 @@
   @if (!open()) {
     <div class="promotion__bar">
       <span class="promotion__label">Implementation cards</span>
+      @if (progressLabel(); as progress) {
+        <span class="promotion__progress" data-testid="concept-promotion-progress">{{ progress }}</span>
+      }
       <span class="promotion__hint">One card per Dossier slice. The concept card keeps its lane.</span>
       <button type="button" class="promotion__button" data-testid="concept-promotion-open"
               (click)="openPanel()">Create implementation cards</button>

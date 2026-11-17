@@ -398,6 +398,7 @@ export interface UsageCostDetailView {
   latestReceipt: UsageInstantView | null;
   pricingVersion: string;
   projects: UsageProjectRowView[];
+  oneShotSources: { source: string; today: string; week: string }[];
   reconcile: UsageReconcileView;
   liveRuns: UsageLiveRunView[];
   slots: UsageSlotDetailView[];
@@ -465,7 +466,7 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     const status = p.coverage?.status;
     return {
       key: p.projectId ?? UNATTRIBUTED_KEY,
-      name: unattributed ? 'Unattributed' : p.name,
+      name: unattributed ? 'Unattributed one-shot jobs' : p.name,
       unattributed,
       today: formatUsdExact(p.todayUsd) ?? NOT_AVAILABLE,
       week: formatUsdExact(p.weekUsd) ?? NOT_AVAILABLE,
@@ -517,6 +518,10 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     latestReceipt: instantView(cost.latestReceiptAt, zone),
     pricingVersion: cost.pricingVersion,
     projects,
+    oneShotSources: (cost.oneShotSources ?? []).map(row => ({
+      source: row.source, today: usd(row.todayUsd) ?? NOT_AVAILABLE,
+      week: usd(row.weekUsd) ?? NOT_AVAILABLE,
+    })),
     reconcile: {
       todayRemainder: todayRemainder == null ? null : centsText(cents(todayRemainder)),
       weekRemainder: weekRemainder == null ? null : centsText(cents(weekRemainder)),
