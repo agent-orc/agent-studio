@@ -32,12 +32,24 @@
       @if (refusal.nextStep) { <p data-testid="deploy-release-refusal-next">Next step: {{ refusal.nextStep }}</p> }
     </section>
   }
+  @if (rollback.state().error; as error) {
+    <p class="deploy-area__rollback-error" role="alert" data-testid="deploy-rollback-error">{{ error }}</p>
+  }
+  <ng-template #incidentRollback let-environmentId>
+    @for (offer of rollback.offers(); track offer.environmentId) {
+      @if (offer.environmentId === environmentId) {
+        <app-rollback-offer [offer]="offer" [now]="now()" [busy]="rollback.state().environmentId === offer.environmentId"
+          (rollback)="rollback.request($event)" />
+      }
+    }
+  </ng-template>
   <div class="deploy-area__body" [class.deploy-area__body--drawer]="selectedRun()">
     <div class="deploy-area__main">
       @switch (view()) {
         @case ('overview') {
           <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()"
-            (openRun)="openRun($event)" (openTools)="show('tools')" />
+            [rollbackOffers]="rollback.offers()" [rollbackBusy]="rollback.state().environmentId"
+            (openRun)="openRun($event)" (openTools)="show('tools')" (rollback)="rollback.request($event)" />
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
             (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
@@ -52,7 +64,7 @@
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" (openFlowHealth)="show('flow')" /> }
         @case ('runbooks') { @defer { <app-project-environment-overview [projectName]="projectName()" heading="Runbooks" (openDeploy)="show('overview')" /> } @placeholder { <p>Loading runbooks…</p> } }
         @case ('operations') {
-          <app-environment-health-panel [projectName]="projectName()" />
+          <app-environment-health-panel [projectName]="projectName()" [incidentAction]="incidentRollback" />
           @defer { <app-project-operations [projectName]="projectName()" (openRelease)="openRelease($event)" (openCard)="openCard($event)" /> }
           @placeholder { <p>Loading operations…</p> }
           @defer (on idle) { <app-managed-databases-panel [projectName]="projectName()" /> }
@@ -69,13 +81,15 @@
         }
         @case ('tools') {
           <section class="deploy-section"><button type="button" (click)="show('overview')">Back to overview</button><h2>Deployment tools</h2></section>
-          <app-project-deployment-panel [projectName]="projectName()" />
+          <app-project-deployment-panel [projectName]="projectName()" [rollbackOffers]="rollback.offers()"
+            [rollbackBusy]="rollback.state().environmentId" [now]="now()" (rollback)="rollback.request($event)" />
         }
       }
     </div>
     @if (selectedRun(); as run) {
       @defer { <app-deploy-run-drawer class="deploy-area__drawer" [run]="run" [log]="logPanel()" [action]="actionState()"
-        (act)="act($event)" (skip)="act('skip', $event)" (closeRequest)="closeRun()" /> }
+        [rollbackOffer]="rollback.drawerOffer()" [rollbackBusy]="rollback.state().environmentId === run.environmentId" [now]="now()"
+        (act)="act($event)" (skip)="act('skip', $event)" (closeRequest)="closeRun()" (rollback)="rollback.request($event)" /> }
       @placeholder { <p>Loading run details…</p> }
     } @else if (fetchedRun()?.status === 'loading') { <p class="deploy-muted" role="status" data-testid="deploy-run-fetching">Loading run details…</p> }
   </div>

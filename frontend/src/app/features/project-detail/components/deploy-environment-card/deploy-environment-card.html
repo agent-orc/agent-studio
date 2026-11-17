@@ -46,6 +46,9 @@
       Open run
     </button>
   }
+  @if (rollbackOffer(); as offer) {
+    <app-rollback-offer [offer]="offer" [now]="now()" [busy]="rollbackBusy()" (rollback)="rollback.emit($event)" />
+  }
   <div class="env-card__actions">
     @if (environment().lastRun?.deploymentId; as runId) {
       <button type="button" data-testid="deploy-environment-open-run"

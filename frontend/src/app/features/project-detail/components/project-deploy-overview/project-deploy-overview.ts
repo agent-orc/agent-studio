@@ -3,6 +3,7 @@ import { EmptyStateComponent } from '../../../../components/empty-state/empty-st
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { DeployEnvironmentCardComponent } from '../deploy-environment-card/deploy-environment-card';
 import type { DeployPanel, EnvironmentCardView } from '../../state/deploy-area.model';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
 
 /** Overview: one status card per declared environment. */
 @Component({
@@ -20,6 +21,11 @@ export class ProjectDeployOverviewComponent {
   readonly now = input.required<number>();
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  readonly rollbackOffers = input<readonly RollbackOffer[]>([]);
+  /** The environment whose rollback request is on its way. */
+  readonly rollbackBusy = input<string | null>(null);
+  readonly rollback = output<string>();
+  readonly offers = computed(() => new Map(this.rollbackOffers().map(offer => [offer.environmentId, offer])));
 
   readonly errorBody = computed(() => {
     const panel = this.panel();

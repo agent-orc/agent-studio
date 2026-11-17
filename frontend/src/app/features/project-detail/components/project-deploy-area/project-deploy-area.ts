@@ -21,6 +21,8 @@ import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../
 import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
 import { LocalOwnerSessionService } from '../../../../services/local-owner-session.service';
 import { LocalOwnerDialogComponent } from '../../../../components/local-owner-dialog/local-owner-dialog';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import { DeployRollbackFlow } from '../../state/deploy-rollback-flow';
 import { serverCheckoutMissing } from '../../../server-checkout/server-checkout.model';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import {
@@ -31,11 +33,9 @@ import {
   environmentNames,
   ready,
   ALL_DEPLOY_RUNS,
-  type DeployPanel,
-  type DeployRunAction,
+  type DeployPanel, type DeployRunAction,
   type Deployment,
-  type DeploymentLogLine,
-  type EnvironmentStatus,
+  type DeploymentLogLine, type EnvironmentStatus,
   type Release,
   type DeployRunFilter,
   type ArtifactReleaseLookup,
@@ -54,8 +54,9 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent, LocalOwnerDialogComponent,
+    FlowHealthPageComponent, LocalOwnerDialogComponent, RollbackOfferComponent,
   ],
+  providers: [DeployRollbackFlow],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -118,7 +119,6 @@ export class ProjectDeployAreaComponent {
   readonly actionState = signal<DeployRunActionState>(IDLE);
   readonly selectedRunId = signal<string | null>(null);
   readonly highlightedReleaseId = signal<string | null>(null);
-
   openRelease(id: string): void {
     this.highlightedReleaseId.set(id);
     this.show('releases');
@@ -182,6 +182,8 @@ export class ProjectDeployAreaComponent {
   readonly environmentOptions = computed(() => this.cards().map(card => ({ id: card.id, name: card.name })));
   readonly selectedRun = computed(() => [...this.runs(), ...this.historyRuns(), ...this.statusRuns(), ...this.fetchedRuns()]
     .find(run => run.id === this.selectedRunId()) ?? null);
+  /** F13: one confirmed lifecycle rollback behind every entry point. */
+  readonly rollback = inject(DeployRollbackFlow).attach(this);
   readonly notices = computed(() => {
     const notice = (name: string, panel: DeployPanel<unknown>) => panel.status === 'error' ? [`${name}: ${panel.message}`] : [];
     return [

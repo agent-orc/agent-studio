@@ -2933,10 +2933,6 @@ export class TaskService {
     return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/promotions/${action}`, { artifact });
   }
 
-  rollbackProjectEnvironment(projectName: string, environmentId: string) {
-    return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/rollback`, {});
-  }
-
   /** Project-wide planned/running/completed test-run pipeline with derived card attachments. */
   getProjectTestRuns(projectName: string) {
     return this.http.get<ProjectTestRunsResponse>(

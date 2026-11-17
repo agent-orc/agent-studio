@@ -169,7 +169,8 @@ public static class DeployEndpoints
         project.MapPost("/environments/{environmentId}/rollback", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             QuotaRefusable(() => Respond(deploy.Rollback(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName), request?.Tenant, request?.GuidedFailure), accepted: true)))
+                Actor(context, projectName), request?.Tenant, request?.GuidedFailure,
+                request?.AcceptIncidentTarget == true), accepted: true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/deploy/matrix", (HttpContext context, string? tenant, DeployService deploy, ProjectRegistry projects) =>

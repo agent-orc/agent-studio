@@ -119,7 +119,20 @@ public sealed record EnvironmentStatus(
     InterventionSummary? Intervention = null)
 {
     public string? Tenant { get; init; }
+    /// <summary>The release a rollback runs now, or null when the environment has none.</summary>
+    public RollbackTarget? RollbackTarget { get; init; }
 }
+
+/// <summary>
+/// The release a rollback of one environment picks (F13): its last deploy
+/// there and its runtime health while it ran (<see cref="ReleaseRuntimeHealthPolicy"/>).
+/// <see cref="SkippedVersions"/> are newer older releases passed over because
+/// they had an incident while running. A target whose
+/// <see cref="RuntimeHealth"/> is <c>incident</c> runs only when the request
+/// accepts it explicitly.
+/// </summary>
+public sealed record RollbackTarget(Release Release, DateTime? DeployedAtUtc, string RuntimeHealth,
+    ReleaseRuntimeIncident? Incident, IReadOnlyList<string> SkippedVersions);
 
 public sealed record InterventionSummary(string DeploymentId, string FailedStep, DateTime? ExpiresAtUtc,
     string? Decision, string? DecidedBy);
@@ -152,7 +165,9 @@ public sealed record DeploymentRequest(string EnvironmentId, bool Approve = fals
     public string? Tenant { get; init; }
 }
 
-public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null)
+/// <param name="AcceptIncidentTarget">A rollback may target a release that had an incident while running.</param>
+public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null,
+    bool AcceptIncidentTarget = false)
 {
     public string? Tenant { get; init; }
 }

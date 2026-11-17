@@ -270,8 +270,22 @@ stays the only executor; releases and runs describe and steer it.
   failed deploy gets no automatic rollback when a newer job already waits for
   the environment, so the rollback cannot replace that newer release.
 - **Redeploy and rollback.** Redeploy runs the environment's current release
-  again. Rollback runs the latest successful release older than the current one.
-  Both follow the same approval rule. When the environment's first release has
+  again. Rollback runs the latest successful release older than the current one
+  that had no incident while it ran in that environment; the releases it skips
+  are named. The runtime health ledger (`release-runtime-health.json`, written
+  by `ReleaseRuntimeHealthPolicy`) records a release as `incident` when a
+  health-check incident started while it was current, or when the host
+  reported a crash loop or crash rollback of its artifact, and as `healthy`
+  after a passing probe. The deploy-time health step alone never marks a
+  release healthy. When every older release had an incident, the target is
+  the release before the current one, marked as such, and the rollback runs
+  only with `acceptIncidentTarget`; the UI asks the owner to type its version.
+  `GET /deploy/status` names the target per environment (`rollbackTarget`).
+  The UI offers the rollback on the environment card, in the run drawer, on an
+  open health incident and in deployment tools, always through the lifecycle
+  route after a confirmation that names current and target release. For
+  Production the confirmation is the Owner or Maintainer approval
+  (`approve: true`). Both follow the same approval rule. When the environment's first release has
   no older release to return to, the AGT-3176 rollback route falls back to the
   artifact history (the artifact deployed before releases existed), only while
   the environment is idle and only when the history target belongs to no

@@ -58,6 +58,7 @@ public sealed class DeployService
     private readonly DeliveryVerificationIndex _deliveryVerifications;
     private readonly Action<TimeSpan>? _deliveryLockHoldObserved;
     private readonly Action? _deliveryVerificationCaptured;
+    private readonly AgentStudio.Projects.HealthCheckStore? _health;
 
     /// <summary>
     /// Ancestry answers between release commits. Commits are immutable, so a
@@ -83,7 +84,8 @@ public sealed class DeployService
         Func<IReadOnlyList<TaskInfo>>? qualityTaskScan = null,
         Func<string, IntegrationVerificationRecord?>? deliveryVerificationRead = null,
         Action<TimeSpan>? deliveryLockHoldObserved = null,
-        Action? deliveryVerificationCaptured = null)
+        Action? deliveryVerificationCaptured = null,
+        AgentStudio.Projects.HealthCheckStore? health = null)
     {
         _environments = environments;
         _store = store;
@@ -102,6 +104,7 @@ public sealed class DeployService
             deliveryVerificationRead ?? IntegrationVerificationStore.Read);
         _deliveryLockHoldObserved = deliveryLockHoldObserved;
         _deliveryVerificationCaptured = deliveryVerificationCaptured;
+        _health = health;
     }
 
     /// <summary>
@@ -577,9 +580,15 @@ public sealed class DeployService
             var releases = tenant is null ? snapshot.Releases : snapshot.Records.Values
                 .Where(record => record.Tenants.Any(item => item.Name == tenant))
                 .Select(record => record.Release).ToArray();
-            return EnvironmentStatusProjection.Project(selected, releases,
-                snapshot.Deployments(project).Where(item => item.Tenant == tenant).ToArray(), hostHealth)
-                .Select(item => item with { Tenant = tenant })
+            var tenantRuns = snapshot.Deployments(project).Where(item => item.Tenant == tenant).ToArray();
+            return EnvironmentStatusProjection.Project(selected, releases, tenantRuns, hostHealth)
+                .Select(item => item with
+                {
+                    Tenant = tenant,
+                    RollbackTarget = ReleaseRuntimeHealthPolicy.Target(
+                        tenantRuns.Where(run => run.EnvironmentId == item.Environment.Id), snapshot.ReleaseById,
+                        snapshot.RuntimeHealth),
+                })
                 .Concat(tenant is null ? previews : []).ToArray();
         }
     }
@@ -807,9 +816,14 @@ public sealed class DeployService
         string? tenant = null, bool? guidedFailure = null)
         => StartForEnvironment(project, environmentId, DeployIntent.Redeploy, approve, actor, tenant, guidedFailure);
 
+    /// <param name="acceptIncidentTarget">
+    /// The caller showed that the target had an incident while running (F13);
+    /// without it a rollback to such a release is refused.
+    /// </param>
     public DeployOutcome<Deployment> Rollback(string project, string environmentId, bool approve, DeployActor actor,
-        string? tenant = null, bool? guidedFailure = null)
-        => StartForEnvironment(project, environmentId, DeployIntent.Rollback, approve, actor, tenant, guidedFailure);
+        string? tenant = null, bool? guidedFailure = null, bool acceptIncidentTarget = false)
+        => StartForEnvironment(project, environmentId, DeployIntent.Rollback, approve, actor, tenant, guidedFailure,
+            acceptIncidentTarget);
 
     /// <summary>
     /// Approves a waiting run. The lifecycle decides again, because another
@@ -1014,9 +1028,9 @@ public sealed class DeployService
             var snapshot = SyncLocked(project);
             if (snapshot is null) return DeployOutcome<Deployment?>.NotFound($"Unknown project '{project}'.");
             var environment = snapshot.Environments.FirstOrDefault(item => item.Id == environmentId);
-            if (environment is not null && EnvironmentStatusProjection.PreviousRelease(
+            if (environment is not null && ReleaseRuntimeHealthPolicy.Target(
                     snapshot.Deployments(project).Where(item => item.EnvironmentId == environmentId),
-                    snapshot.ReleaseById) is not null)
+                    snapshot.ReleaseById, snapshot.RuntimeHealth) is not null)
             {
                 var queued = Rollback(project, environmentId, approve: true, actor);
                 return new(queued.Kind, queued.Value, queued.Error);
@@ -1039,7 +1053,7 @@ public sealed class DeployService
     }
 
     private DeployOutcome<Deployment> StartForEnvironment(string project, string environmentId, DeployIntent intent,
-        bool approve, DeployActor actor, string? tenant, bool? guidedFailure = null)
+        bool approve, DeployActor actor, string? tenant, bool? guidedFailure = null, bool acceptIncidentTarget = false)
     {
         lock (_gate)
         {
@@ -1049,9 +1063,16 @@ public sealed class DeployService
             if (environment is null) return DeployOutcome<Deployment>.NotFound($"Unknown environment '{environmentId}'.");
             var runs = snapshot.Deployments(project).Where(item => item.EnvironmentId == environmentId
                 && item.Tenant == tenant).ToArray();
+            var target = intent == DeployIntent.Rollback
+                ? ReleaseRuntimeHealthPolicy.Target(runs, snapshot.ReleaseById, snapshot.RuntimeHealth) : null;
             var release = intent == DeployIntent.Rollback
-                ? EnvironmentStatusProjection.PreviousRelease(runs, snapshot.ReleaseById)
+                ? target?.Release
                 : EnvironmentStatusProjection.CurrentRelease(runs, snapshot.ReleaseById);
+            if (target?.RuntimeHealth == ReleaseRuntimeHealthPolicy.Incident && !acceptIncidentTarget)
+                return DeployOutcome<Deployment>.Conflict(
+                    $"Release {target.Release.Version} had an incident while it ran in {environment.Name}"
+                    + (target.Incident is { } incident ? $" ({incident.Detail})" : "")
+                    + ". Confirm the rollback to this release explicitly.");
             if (release is null)
                 return DeployOutcome<Deployment>.Conflict(intent == DeployIntent.Rollback
                     ? $"{environment.Name} has no previous release to roll back to."
@@ -1148,7 +1169,7 @@ public sealed class DeployService
         return new(intent, environment, actor, approve,
             prerequisite is null || EnvironmentStatusProjection.SucceededIn(tenantDeployments, release.Id, prerequisite.Id),
             EnvironmentStatusProjection.Position(release, EnvironmentStatusProjection.CurrentRelease(here, snapshot.ReleaseById)),
-            EnvironmentStatusProjection.PreviousRelease(here, snapshot.ReleaseById)?.Id == release.Id,
+            ReleaseRuntimeHealthPolicy.Target(here, snapshot.ReleaseById, snapshot.RuntimeHealth)?.Release.Id == release.Id,
             here.Any(item => item.ReleaseId == release.Id && DeploymentStates.IsActive(item.State)),
             here.Any(item => item.State is DeploymentStates.Queued or DeploymentStates.Running)) { Phases = phases };
     }
@@ -1421,7 +1442,7 @@ public sealed class DeployService
         var records = _store.ReadReleaseRecords(project);
         var result = DeploymentReconciler.Reconcile(new(environments, records, _store.ReadDeployments(project),
             view.Jobs, view.Promotions, _clock.GetUtcNow().UtcDateTime));
-        return new Snapshot(environments, records, result.Deployments, view);
+        return new Snapshot(environments, records, result.Deployments, view, _store.ReadRuntimeHealth(project));
     }
 
     private Snapshot? SyncLocked(string project)
@@ -1434,7 +1455,8 @@ public sealed class DeployService
             view.Jobs, view.Promotions, _clock.GetUtcNow().UtcDateTime));
         if (result.Changed) Persist(project, result.Deployments, result.Log, result.Audit);
         CreateProductionFailureCards(project, environments, records, result.Deployments);
-        var snapshot = new Snapshot(environments, records, result.Deployments, view);
+        var snapshot = new Snapshot(environments, records, result.Deployments, view,
+            ObserveRuntimeHealth(project, view, records, result.Deployments));
         foreach (var run in result.Deployments.Where(item => item.InterventionDecision is "abort" or "skip" or "timeout"
                      && DeploymentStates.IsFinished(item.State) && item.JobId is not null))
             if (view.Jobs.FirstOrDefault(item => item.Id == run.JobId) is { GuidedResolved: false })
@@ -1457,6 +1479,50 @@ public sealed class DeployService
             }
         }
         return snapshot;
+    }
+
+    private static readonly HashSet<string> CrashEvents = new(StringComparer.Ordinal) { "crash-loop", "crash-rollback" };
+
+    /// <summary>
+    /// F13: records in the runtime health ledger what the health checks and
+    /// the deploy hosts report now, so a release keeps its incident after
+    /// the next one replaced it in the environment.
+    /// </summary>
+    private IReadOnlyList<ReleaseRuntimeHealthRecord> ObserveRuntimeHealth(string project, ProjectEnvironmentsResponse view,
+        IReadOnlyList<ReleaseRecord> records, IReadOnlyList<DeploymentRecord> runs)
+    {
+        var existing = _store.ReadRuntimeHealth(project);
+        AgentStudio.Projects.ProjectHealthState? checks = null;
+        try { checks = _health?.Load(project); }
+        catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "Cannot read the health-check state of {Project} for release runtime health", project);
+        }
+        var observations = view.Environments.Select(environment =>
+        {
+            var id = environment.Declaration.Id;
+            var prefix = AgentStudio.Projects.HealthCheckStore.Key(id, "");
+            var states = checks?.Checks.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal))
+                .Select(item => item.Value).ToArray() ?? [];
+            var incidents = states.SelectMany(state => new[] { state.OpenIncident, state.LastIncident })
+                .OfType<AgentStudio.Projects.HealthIncident>()
+                .Select(item => new RuntimeIncidentObservation(ReleaseRuntimeHealthPolicy.HealthCheckSource,
+                    item.StartedAt.UtcDateTime, $"health check {item.CheckId}: {item.FirstError}"))
+                .Concat((environment.Observed?.Events ?? []).Where(item => CrashEvents.Contains(item.Kind)
+                        && item.Artifact is not null)
+                    .Select(item => new RuntimeIncidentObservation(ReleaseRuntimeHealthPolicy.CrashLoopSource,
+                        item.At, $"the host reported {item.Kind}", item.Artifact)))
+                .ToArray();
+            var healthy = states.Length > 0 && states.All(state => state.OpenIncident is null)
+                ? states.Where(state => state.LastSample is { Ok: true }).Select(state => state.LastSample!.At.UtcDateTime)
+                    .DefaultIfEmpty().Max() : default;
+            return new RuntimeHealthObservation(id, incidents, healthy == default ? null : healthy);
+        }).ToArray();
+        var releaseById = records.ToDictionary(item => item.Release.Id, item => item.Release, StringComparer.Ordinal);
+        var (observed, changed) = ReleaseRuntimeHealthPolicy.Observe(existing,
+            runs.Select(item => ToContract(project, item)).ToArray(), releaseById, observations);
+        if (changed) _store.SaveRuntimeHealth(project, observed);
+        return observed;
     }
 
     /// <summary>
@@ -1541,8 +1607,10 @@ public sealed class DeployService
     private static string ShortSha(string commit) => commit.Length > 7 ? commit[..7] : commit;
 
     private sealed class Snapshot(IReadOnlyList<DeployEnvironment> environments, IReadOnlyList<ReleaseRecord> records,
-        IReadOnlyList<DeploymentRecord> runs, ProjectEnvironmentsResponse view)
+        IReadOnlyList<DeploymentRecord> runs, ProjectEnvironmentsResponse view,
+        IReadOnlyList<ReleaseRuntimeHealthRecord> runtimeHealth)
     {
+        public IReadOnlyList<ReleaseRuntimeHealthRecord> RuntimeHealth { get; } = runtimeHealth;
         public IReadOnlyList<DeployEnvironment> Environments { get; } = environments;
         public IReadOnlyDictionary<string, ReleaseRecord> Records { get; } =
             records.ToDictionary(item => item.Release.Id, StringComparer.Ordinal);

@@ -1,10 +1,37 @@
+/* eslint-disable @angular-eslint/component-max-inline-declarations -- a spec host that lends the panel a template */
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { EnvironmentHealthPanelComponent, healthStatusTone } from './environment-health-panel.component';
 import { healthResponse } from '../../../../../testing/environment-health';
 
+@Component({
+  standalone: true,
+  imports: [EnvironmentHealthPanelComponent],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `<ng-template #action let-environmentId><button type="button" data-testid="incident-action">Roll back {{ environmentId }}</button></ng-template>
+    <app-environment-health-panel projectName="Demo Project" [incidentAction]="action" />`,
+})
+class IncidentActionHost {}
+
 describe('EnvironmentHealthPanelComponent', () => {
+  it('renders the host action on an open incident only, with the environment id (F13)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [IncidentActionHost],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(IncidentActionHost);
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne('/api/projects/Demo%20Project/environments/health').flush(healthResponse);
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const actions = Array.from(element.querySelectorAll('[data-testid="incident-action"]'));
+    expect(actions.map(action => action.textContent?.trim())).toEqual(['Roll back production']);
+    expect(element.querySelector('[data-testid="environment-health-production"] [data-testid="incident-action"]')).not.toBeNull();
+  });
+
   it('shows uptime windows, latency, the open incident and a close certificate expiry', async () => {
     await TestBed.configureTestingModule({
       imports: [EnvironmentHealthPanelComponent],

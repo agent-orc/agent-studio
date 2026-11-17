@@ -10,6 +10,8 @@ import {
 } from '../../state/deploy-area.model';
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
@@ -19,7 +21,7 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [DatePipe, StatusIndicatorComponent, RollbackOfferComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,6 +31,10 @@ export class DeployEnvironmentCardComponent {
   readonly now = input.required<number>();
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  /** F13: the environment's rollback target, when it has one. */
+  readonly rollbackOffer = input<RollbackOffer | null>(null);
+  readonly rollbackBusy = input(false);
+  readonly rollback = output<string>();
 
   readonly headingId = computed(() => `deploy-environment-${this.environment().id}-title`);
   readonly release = computed(() => {

@@ -13,7 +13,8 @@
         <div class="deploy-overview__grid">
           @for (card of cards(); track card.id) {
             <app-deploy-environment-card [environment]="card" [now]="now()"
-              (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" />
+              [rollbackOffer]="offers().get(card.id) ?? null" [rollbackBusy]="rollbackBusy() === card.id"
+              (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" (rollback)="rollback.emit($event)" />
           }
         </div>
       } @else {

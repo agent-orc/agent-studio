@@ -2,6 +2,8 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { ProjectDeploymentPanelComponent } from './project-deployment-panel.component';
+import { DEPLOY_FIXTURE_NOW, RELEASE_1, productionRollbackFixture } from '../../testing/deploy-fixtures';
+import { buildRollbackOffers } from '../../state/rollback-offer.model';
 
 describe('ProjectDeploymentPanelComponent', () => {
   it('renders the shared baseline, pending delta, and newest-first history', async () => {
@@ -78,6 +80,39 @@ describe('ProjectDeploymentPanelComponent', () => {
     create.flush({ id: 'AGT-3000' });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-created"]').textContent).toContain('AGT-3000');
+  });
+
+  it('rolls back only through the Deploy offer and never calls the older rollback route (F13)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDeploymentPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDeploymentPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Website');
+    fixture.componentRef.setInput('now', DEPLOY_FIXTURE_NOW);
+    const emitted: string[] = [];
+    fixture.componentInstance.rollback.subscribe(id => emitted.push(id));
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const scenario = productionRollbackFixture();
+    http.expectOne('/api/projects/Website/environments').flush(scenario.environments);
+    http.expectOne('/api/watch-paths').flush([]);
+    http.expectOne('/api/projects/Website/deployment/summary').flush({ project: 'Website', available: false, reason: null,
+      source: 'none', pendingCount: null, defaultEvidenceRun: null, pendingCommits: [], lastDeployment: null, history: [], targets: [] });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    // Staging has four history rows, but without a lifecycle target there is no rollback button.
+    expect(host.querySelector('[data-testid="environment-stage"] button')).toBeNull();
+
+    fixture.componentRef.setInput('rollbackOffers', buildRollbackOffers(scenario.statuses));
+    fixture.detectChanges();
+    const offer = host.querySelector('[data-testid="environment-production"] [data-testid="rollback-offer-production"]');
+    expect(offer?.textContent).toContain(`Release ${RELEASE_1.version}`);
+    (offer!.querySelector('[data-testid="rollback-offer-button"]') as HTMLButtonElement).click();
+    expect(emitted).toEqual(['production']);
+    http.expectNone(request => request.url.endsWith('/rollback'));
+    http.verify();
   });
 
   it('accepts false as a provided value for ordinary required yes-no parameters', async () => {

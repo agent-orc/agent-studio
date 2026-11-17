@@ -22,8 +22,9 @@
             <p>Version: <code>{{ environment.deployedArtifact || 'Not deployed' }}</code></p>
             <p>Health: <app-status-indicator [tone]="environmentHealthTone(environment.health)" [label]="environment.health" testId="environment-health-state" /></p>
             @if (environment.pendingArtifact) { <p>Queued: <code>{{ environment.pendingArtifact }}</code></p> }
-            @if (environment.history.length > 1) {
-              <button type="button" (click)="rollbackEnvironment(environment.declaration.id)">Roll back</button>
+            @if (offers().get(environment.declaration.id); as offer) {
+              <app-rollback-offer [offer]="offer" [now]="now()" [busy]="rollbackBusy() === offer.environmentId"
+                (rollback)="rollback.emit($event)" />
             }
             <details><summary>History ({{ environment.history.length }})</summary>
               <ol>@for (entry of environment.history; track entry.at + entry.artifact) {
