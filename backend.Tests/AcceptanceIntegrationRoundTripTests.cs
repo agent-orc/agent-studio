@@ -2021,6 +2021,55 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             row => row.Kind == TimelineEventKinds.ContentReviewRequested);
     }
 
+    [Fact]
+    public async Task FullScopeReview_RequestsEveryAspectAgainForTheSameDeliveryRun()
+    {
+        // AGT-3845: a card a non-Stable review host graded offers a fresh
+        // review on the current build, not only the brief-fit aspect.
+        var deliverySha = PublishDelivery("release-review.txt", "delivered result\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, briefVersion: "brief-v1");
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _tempDir,
+                    ["WatchPaths:0:Name"] = Project,
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _repo,
+                    ["WatchPaths:0:RepositoryPath"] = _repo,
+                    ["DeliveryChain:Guarded"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<ProjectSettingsService>();
+                services.AddSingleton(deps.Settings);
+                services.RemoveAll<AttemptAuthorityService>();
+                services.AddSingleton(deps.Authority);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var response = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/content-review?scope=full&watchPath={Uri.EscapeDataString(_watchPath)}", new { });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var review = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(review);
+        Assert.Equal(run.AttemptId, review.SourceRunAttemptId);
+        Assert.Contains(review.Subject.Plan!.Commands, command => command.Aspect != "requirement-fit");
+        Assert.Null(review.Subject.Plan.VerifyReuseFromAttemptIds);
+        Assert.Equal(TaskStates.AutoReview, factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(Slug, _watchPath)!.State);
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(
+                factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!.FolderPath),
+            row => row.Kind == TimelineEventKinds.ContentReviewRequested
+                && row.Details?.GetValueOrDefault("scope") == "full");
+    }
+
     /// <summary>
     /// Automated moves use the same completion contract and cannot land
     /// without a claim, even when the legacy delivery guard is disabled.

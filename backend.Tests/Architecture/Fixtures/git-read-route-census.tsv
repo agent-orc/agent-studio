@@ -444,6 +444,7 @@
 /api/v1/management/environment	free	-	-	-
 /api/v1/management/github-app/	free	-	-	-
 /api/v1/management/host-releases	free	-	-	-
+/api/v1/management/host-releases/off-stable-grades	free	-	-	-
 /api/v1/management/links	free	-	-	-
 /api/v1/management/provider-refusals	free	-	-	-
 /api/v1/management/remote-hosts	free	-	-	-

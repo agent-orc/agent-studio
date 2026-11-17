@@ -939,6 +939,11 @@ export interface TaskInfo {
    * each parsing their own subset of review artifacts. Never persisted.
    */
   reviewProjection?: ReviewProjectionView | null;
+  /**
+   * AGT-3845: the current Remote Review attempt is settled but its grade
+   * report is not written yet, so `reviewProjection` does not carry it yet.
+   */
+  reviewEvidencePending?: boolean;
 
   /**
    * ASS-1751: read-time run-activity classification for `3-progress` cards,
