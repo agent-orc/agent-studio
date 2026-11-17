@@ -139,6 +139,7 @@
           }</ol>
         </section>
       }
+      <app-batch-lane-admission [lane]="data.laneAdmission" [refusals]="data.suiteRefusals" />
       @if (data.detachedFlights?.length) {
         <section aria-label="Detached flights" data-testid="batch-detached-flights">
           <h3>Detached flights</h3>

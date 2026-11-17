@@ -84,7 +84,6 @@ import { AttentionControlComponent } from './components/attention-control/attent
 import { StudioTabOverflowComponent } from './components/studio-tab-overflow/studio-tab-overflow';
 import type { MagazineChild } from '../magazine/magazine-view/magazine-view';
 import { cliColorFor, normalizeStorage } from './studio-shell.utils';
-
 /**
  * Top-level "Agent Software Studio" shell — the VS-Code-inspired chrome
  * that replaces the legacy single-pane layout. Behind the `vsCodeLayout`
@@ -124,16 +123,13 @@ export class StudioShellComponent {
   /** Backend WatchPaths feeding the rename-stable `projectStorageByName` join
    *  (a row's storage == registry `storageLocation`, stable across rename). */
   readonly projectWatchPaths = input<readonly WatchPathEntry[]>([]);
-
   /**
    * Host-computed badge for the Filters activity-bar item. The host owns the distinction between
    * real filters and view/scope state; this shell owns the rail button that renders the count.
    */
   readonly filterBadgeCount = input<number | null>(null);
-
   /** Emitted after a delete so the host re-pulls WatchPaths + refreshes. */
   readonly projectDeleted = output<void>();
-
   private readonly featureFlags = inject(FeatureFlagsService);
   private readonly tabState = inject(StudioTabStateService);
   private readonly projectHubUrls = inject(ProjectHubUrlService);
@@ -160,7 +156,6 @@ export class StudioShellComponent {
     if (scope.startsWith('workspace:')) return this.registryProjects().filter(project => project.workspaceId === scope.slice(10)).map(project => ({ scope: `project:${project.id}`, label: project.displayName }));
     return [];
   }
-
   readonly tabs = this.tabState.tabs;
   readonly activeKey = this.tabState.activeKey;
   readonly tabOverflowEntries = computed(() => this.tabs().map(tab => ({ key: this.tabKey(tab), label: this.tabLabel(tab) })));
@@ -190,19 +185,15 @@ export class StudioShellComponent {
     event.preventDefault();
     this.projectHubUrls.navigateDocumentHistory(event.key === 'ArrowLeft' ? -1 : 1);
   }
-
   /** Keep every newly activated editor tab inside the horizontally scrolling
    *  strip without moving the page or disturbing an already visible tab. */
   private readonly keepActiveTabVisibleFx = effect(() => this.keepActiveTabVisible('smooth'));
-
   @HostListener('window:resize')
   onViewportResize(): void { this.keepActiveTabVisible('auto'); }
-
   private keepActiveTabVisible(behavior: ScrollBehavior): void {
     const activeKey = this.activeKey();
     const tabs = this.tabs();
     if (tabs.length <= 1 || !activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
-
     const activeElement = this.tabElements()
       .find(ref => ref.nativeElement.dataset['tabKey'] === activeKey)
       ?.nativeElement;
@@ -300,6 +291,11 @@ export class StudioShellComponent {
     this.closePickerMenu();
     if (name === null) { this.openBoard('__all__'); return; }
     if (openHub) { this.openHub(name); return; }
+    const active = this.activeTab();
+    if (active?.kind === 'hub') {
+      this.tabState.open({ kind: 'hub', projectName: name, section: active.section });
+      return;
+    }
     this.openBoard(name);
   }
 
@@ -706,6 +702,10 @@ export class StudioShellComponent {
 
   /** Open or focus a Project URL preview as a shell tab. */
   openUrlPreview(e: { projectName: string; urlId: string }): void {
+    if (e.urlId === 'repo') {
+      this.tabState.open({ kind: 'hub', projectName: e.projectName, section: 'git' });
+      return;
+    }
     this.tabState.open({ kind: 'url-preview', projectName: e.projectName, urlId: e.urlId });
   }
 

@@ -14,11 +14,12 @@ import { TaskReferenceNavigationService } from '../../../services/task-reference
 import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
 import { BatchQuarantineComponent } from '../batch-quarantine/batch-quarantine';
 import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
+import { BatchLaneAdmissionComponent } from '../batch-lane-admission/batch-lane-admission';
 
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
-  imports: [PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent],
+  imports: [PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent, BatchLaneAdmissionComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',

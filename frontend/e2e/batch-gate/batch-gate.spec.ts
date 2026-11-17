@@ -725,6 +725,46 @@ test('review concern fix wait is visible on the card and batch gate', async ({ p
   await captureThemes(page, evidence, 'batch-review-fix-wait');
 });
 
+test('refused per-card suite and a suite held for the batch lane are visible on the card and batch panel', async ({ page }) => {
+  const evidence = process.env.JOB_RESULTS_DIR;
+  if (evidence) fs.mkdirSync(evidence, { recursive: true });
+  const reason = '1 batch partner waits: the next batch gates this card instead of a per-card suite';
+  await routeBoard(page, {
+    ...state,
+    suiteRefusals: [{ taskKey: 'AGT-2', reviewAttemptId: 'review-1', rule: 'planner-per-task', reason,
+      refusedAtUtc: '2026-11-16T10:00:00Z' }],
+    laneAdmission: { batchGates: 1, companionSuites: 1, limit: 1, waiting: [{ runId: 'run-x', project: 'other',
+      gateId: 'merge-into-develop-build-gate', cards: ['WEB-40'], sinceUtc: '2026-11-16T10:01:00Z',
+      reason: 'a batch gate runs and one other full suite already shares the gate host' }] },
+    members: { 'AGT-2': { status: 'pending', reason: 'per-task-suite-refused', reasonDetail: reason } },
+  }, () => undefined, grouped);
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
+  await expect(card.getByTestId('batch-member-badge')).toContainText('Batch pending · per-card suite not started');
+  await expect(card.getByTestId('batch-member-badge')).toHaveAttribute('title', reason);
+  if (evidence) {
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await card.screenshot({ path: nodePath.join(evidence, `batch-suite-refusal-card-${theme}.png`) });
+    }
+  }
+  await page.getByTestId('batch-lane-indicator').first().click();
+  const lane = page.getByTestId('batch-lane-admission');
+  await expect(lane).toContainText('While a batch gate runs, at most 1 other full suite runs. Running now: 1 batch, 1 other.');
+  await expect(lane.getByTestId('batch-lane-waiting')).toContainText('WEB-40');
+  await expect(lane.getByTestId('batch-lane-waiting')).toContainText('one other full suite already shares the gate host');
+  await expect(lane.getByTestId('batch-suite-refusal')).toContainText('AGT-2');
+  await expect(lane.getByTestId('batch-suite-refusal')).toContainText(reason);
+  if (evidence) {
+    await lane.scrollIntoViewIfNeeded();
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await lane.screenshot({ path: nodePath.join(evidence, `batch-lane-admission-section-${theme}.png`) });
+    }
+  }
+});
+
 test('red, abandoned and running batches show truthful status and evidence at desktop and mobile widths', async ({ page }) => {
   const batchState = {
     ...state,
