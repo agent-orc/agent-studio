@@ -1039,10 +1039,48 @@ describe('RemoteHostsService client registry hydration', () => {
     svc.reprobe('agent-runner-01');
     expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBe('reprobe');
     http.expectOne('/api/clients/agent-runner-01/runner-project-preflights/invalidate').flush({ id: 'agent-runner-01' });
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBeNull();
     http.expectOne('/api/clients').flush([]);
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
     flushHostHydration(http);
     flushRunnerInfrastructureFailures(http);
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBeNull();
+
+    svc.reprobe('agent-runner-01');
+    http.expectOne('/api/clients/agent-runner-01/runner-project-preflights/invalidate').flush({ id: 'agent-runner-01' });
+    http.expectOne('/api/clients').flush([]);
+    http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    flushHostHydration(http);
+    flushRunnerInfrastructureFailures(http);
+    http.verify();
+  });
+
+  it('frees the role after an accepted capability re-probe so another key can be re-probed', () => {
+    TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
+    const svc = TestBed.inject(RemoteHostsService);
+    svc.hosts.set([seedRemoteHosts(0)[0], knownRunner()]);
+    const http = TestBed.inject(HttpTestingController);
+    const url = '/api/v1/management/remote-hosts/agent-runner-01/capabilities/reprobe';
+    const flushReload = () => {
+      http.expectOne('/api/clients').flush([]);
+      http.expectOne('/api/v1/management/remote-hosts').flush([]);
+      flushHostHydration(http);
+      flushRunnerInfrastructureFailures(http);
+    };
+    svc.reload();
+    flushReload();
+
+    svc.reprobeCapability('agent-runner-01', 'git');
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBe('reprobe');
+    const first = http.expectOne(url);
+    expect(first.request.body).toEqual({ capability: 'git' });
+    first.flush(null, { status: 202, statusText: 'Accepted' });
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBeNull();
+    flushReload();
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBeNull();
+
+    svc.reprobeCapability('agent-runner-01', 'node');
+    expect(http.expectOne(url).request.body).toEqual({ capability: 'node' });
     http.verify();
   });
 });

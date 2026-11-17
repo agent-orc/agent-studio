@@ -96,12 +96,15 @@ public static class StepCostMeasurement
 
         if (tokens > 0 || (modelBacked && hasModel && !explicitlyDeterministic && Ran(row.Status)))
         {
+            // Price legacy OpenAI usage as exclusive input, but keep the recorded
+            // counters intact for telemetry, review evidence and run history.
+            var pricedUsage = PipelineStoredUsageNormalization.Normalize(row);
             var estimate = pricing.Estimate(
-                row.Model,
-                row.InputTokens,
-                row.OutputTokens,
-                row.CacheReadTokens,
-                row.CacheCreationTokens,
+                pricedUsage.Model,
+                pricedUsage.InputTokens,
+                pricedUsage.OutputTokens,
+                pricedUsage.CacheReadTokens,
+                pricedUsage.CacheCreationTokens,
                 row.StartedAt ?? row.CompletedAt);
             return row with
             {
@@ -236,6 +239,8 @@ public static class StepCostMeasurement
             OutputTokens = dropTokens ? 0 : row.OutputTokens,
             CacheReadTokens = dropTokens ? 0 : row.CacheReadTokens,
             CacheCreationTokens = dropTokens ? 0 : row.CacheCreationTokens,
+            InputIncludesCached = row.InputIncludesCached,
+            UsageNormalization = row.UsageNormalization,
             CostBasis = stamped.CostBasis,
             EstimatedCostUsd = dropTokens ? null : stamped.EstimatedCostUsd,
             ModelPriced = stamped.ModelPriced,
