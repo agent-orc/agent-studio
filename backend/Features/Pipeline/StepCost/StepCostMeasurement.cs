@@ -88,8 +88,6 @@ public static class StepCostMeasurement
     {
         if (!IsTerminal(row.Status)) return row;
 
-        row = PipelineStoredUsageNormalization.Normalize(row);
-
         var tokens = Tokens(row);
         var hasModel = !string.IsNullOrWhiteSpace(row.Model);
         var modelBacked = IsModelBacked(row.StepId, row.Kind);
@@ -98,12 +96,15 @@ public static class StepCostMeasurement
 
         if (tokens > 0 || (modelBacked && hasModel && !explicitlyDeterministic && Ran(row.Status)))
         {
+            // Price legacy OpenAI usage as exclusive input, but keep the recorded
+            // counters intact for telemetry, review evidence and run history.
+            var pricedUsage = PipelineStoredUsageNormalization.Normalize(row);
             var estimate = pricing.Estimate(
-                row.Model,
-                row.InputTokens,
-                row.OutputTokens,
-                row.CacheReadTokens,
-                row.CacheCreationTokens,
+                pricedUsage.Model,
+                pricedUsage.InputTokens,
+                pricedUsage.OutputTokens,
+                pricedUsage.CacheReadTokens,
+                pricedUsage.CacheCreationTokens,
                 row.StartedAt ?? row.CompletedAt);
             return row with
             {
@@ -209,8 +210,8 @@ public static class StepCostMeasurement
     /// </summary>
     public static IReadOnlyList<PipelineStepRunSummary> Executions(ITokenPricing pricing, PipelineStepExecution row)
     {
-        var list = new List<PipelineStepRunSummary>((row.EarlierRuns ?? []).Select(PipelineStoredUsageNormalization.Normalize));
-        if (Executed(row)) list.Add(Summarize(pricing, PipelineStoredUsageNormalization.Normalize(row), keepTokens: true));
+        var list = new List<PipelineStepRunSummary>(row.EarlierRuns ?? []);
+        if (Executed(row)) list.Add(Summarize(pricing, row, keepTokens: true));
         return list;
     }
 
@@ -220,7 +221,6 @@ public static class StepCostMeasurement
 
     private static PipelineStepRunSummary Summarize(ITokenPricing pricing, PipelineStepExecution row, bool keepTokens = false)
     {
-        row = PipelineStoredUsageNormalization.Normalize(row);
         var stamped = Stamp(pricing, row);
         var dropTokens = !keepTokens && AccumulatesInPlace(row.Kind);
         return new PipelineStepRunSummary

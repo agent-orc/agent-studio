@@ -163,7 +163,7 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
             // repeated decision) keeps each earlier execution; the row's cost
             // is the sum of every execution, each priced at its own model.
             var executions = s.EarlierRuns is { Count: > 0 }
-                ? StepCostMeasurement.Executions(pricing, normalized)
+                ? PipelineStoredUsageNormalization.CostExecutions(pricing, normalized)
                 : null;
             var est = executions is null
                 ? pricing.Estimate(
@@ -305,7 +305,7 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
                     continue;
                 }
 
-                foreach (var run in StepCostMeasurement.Executions(pricing, step))
+                foreach (var run in PipelineStoredUsageNormalization.CostExecutions(pricing, step))
                 {
                     var tokens = StepCostMeasurement.Tokens(run);
                     acc.AddExecution(step.Kind, tokens, tokens <= 0

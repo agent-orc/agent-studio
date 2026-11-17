@@ -5,6 +5,11 @@ namespace AgentStudio.Pipeline;
 /// <summary>Read compatibility for pipeline counters captured before input provenance existed.</summary>
 internal static class PipelineStoredUsageNormalization
 {
+    /// <summary>Cost-only view of executions; shared telemetry readers keep recorded counters.</summary>
+    public static IReadOnlyList<PipelineStepRunSummary> CostExecutions(
+        ITokenPricing pricing, PipelineStepExecution step)
+        => StepCostMeasurement.Executions(pricing, step).Select(Normalize).ToList();
+
     public static PipelineStepExecution Normalize(PipelineStepExecution step)
     {
         if (!NeedsNormalization(step.Model, step.InputTokens, step.CacheReadTokens,
