@@ -90,6 +90,24 @@ describe('DetailKeyboardSurfaceDirective', () => {
     board.remove();
   });
 
+  // AGT-3873: a refused Accept reopens the card with its override form focused.
+  it('leaves focus in an open dialog when the detail mounts', async () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const field = document.createElement('textarea');
+    dialog.appendChild(field);
+    document.body.appendChild(dialog);
+    field.focus();
+    const fixture = TestBed.createComponent(SurfaceHostComponent);
+    document.body.appendChild(fixture.nativeElement);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(document.activeElement).toBe(field);
+    fixture.nativeElement.remove();
+    dialog.remove();
+  });
+
   it('focuses the visible pane when the phone layout hides Result', async () => {
     const board = document.createElement('button');
     document.body.appendChild(board);

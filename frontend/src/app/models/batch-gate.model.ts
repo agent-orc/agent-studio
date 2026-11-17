@@ -35,7 +35,26 @@ export interface BatchGateConfiguration {
   limits: { hardMaximumSize: number };
 }
 
+/** AGT-3857: why a formed batch waits while the project runs no batch gate. */
+export type BatchLaneIdleCause = 'per-task-holder' | 'restart-recovery' | 'planner';
+
+export interface BatchLaneIdleTotals {
+  perTaskHolderMinutes: number;
+  restartRecoveryMinutes: number;
+  plannerMinutes: number;
+}
+
+export interface BatchLaneIdle {
+  current?: { cause: BatchLaneIdleCause; detail: string; batchId?: string | null;
+    sinceUtc: string; minutes: number } | null;
+  last24Hours: BatchLaneIdleTotals;
+  last7Days: BatchLaneIdleTotals;
+  intervals: { cause: BatchLaneIdleCause; detail: string; batchId?: string | null;
+    startedAtUtc: string; endedAtUtc?: string | null; minutes: number }[];
+}
+
 export interface BatchGateState {
+  laneIdle?: BatchLaneIdle | null;
   oldestFormed?: { batchId: string; formedAtUtc: string; ageMinutes: number } | null;
   flightClaim?: { batchId: string; stage: string; stageDeadlineUtc: string; end?: unknown | null } | null;
   ejectRequests?: { project: string; taskKey: string; actor: string; reason: string;
@@ -44,6 +63,11 @@ export interface BatchGateState {
     batchId?: string | null; reason: string; running: boolean; host?: string | null;
     startedAtUtc?: string | null; slotCapacity?: number;
     startEstimateUnavailableReason?: string | null; lastProgressAtUtc?: string | null }[];
+  /** AGT-3856: per-card suites not started because a batch gates the card anyway, newest first. */
+  suiteRefusals?: { taskKey: string; reviewAttemptId: string; rule: string; reason: string; refusedAtUtc: string }[];
+  /** AGT-3856: full suites of this host that wait while a batch gate and one other full suite run. */
+  laneAdmission?: { batchGates: number; companionSuites: number; limit: number;
+    waiting: { runId: string; project?: string | null; gateId: string; cards: string[]; sinceUtc: string; reason: string }[] } | null;
   /** Gate processes detached at a lease deadline and still exiting. */
   detachedFlights?: { batchId: string; project: string; startedAtUtc: string; detachedAtUtc: string;
     deadlineMinutes: number; reason: string }[];
@@ -51,6 +75,7 @@ export interface BatchGateState {
     phaseMinutes?: Record<string, { p50: number | null; p90: number | null; cards: number }>;
     diagnosticRerunShare?: number | null;
     preCheckYield?: { runs: number; red: number; cardsKeptOut: number; costMinutes: number } | null;
+    perCardSuites?: { greenSuites: number; followedByBatchGate: number; share: number | null } | null;
     /** AGT-3858: minutes spent gating already gated code, by purpose. */
     sameCodeRerunMinutesByPurpose?: Record<string, number> | null;
   } | null;
@@ -81,12 +106,15 @@ export interface BatchGateState {
     lastProgressAtUtc?: string | null;
     claimAgeMinutes?: number | null;
     reservationWaitMinutes?: number | null;
-    nextAction?: { action: string; dueAtUtc: string } | null;
+    nextAction?: BatchNextAction | null;
     liveFlight?: boolean;
     recoveryStatus?: { reason: string; nextRetryAtUtc: string } | null;
     phaseReason?: string | null;
     isolationActive?: boolean;
+    /** The pilot tick still has to end this red batch's interrupted isolation. */
     isolationPending?: boolean;
+    /** F13: members a red batch still holds; they wait on its isolation. */
+    heldTaskKeys?: string[];
     phaseHistory?: { phase: string; reason?: string | null; atUtc: string }[];
     /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
     queuePosition?: number | null;
@@ -161,7 +189,32 @@ export interface BatchQuarantinedRecord {
   nextStep: string;
 }
 
+/**
+ * F13: who acts next on a batch, and what. An owner action names the cards it
+ * acts on. A due time is a stored deadline, or absent.
+ */
+export interface BatchNextAction {
+  actor?: 'planner' | 'owner' | 'none' | string;
+  action: string;
+  dueAtUtc?: string | null;
+  taskKeys?: string[] | null;
+}
+
 export type BatchGateBatch = BatchGateState['batches'][number];
+
+/**
+ * Batch views read every time in one zone, UTC, the zone of the gate hosts and
+ * their evidence. A view names the zone once with {@link BATCH_TIME_ZONE_NOTE};
+ * the individual time lines do not repeat it.
+ */
+export const BATCH_TIME_ZONE_NOTE = 'Times in UTC';
+
+/** Date and time of a batch event in UTC, without a zone suffix. */
+export function batchDateTime(value?: string | null): string {
+  const stamp = value ? Date.parse(value) : NaN;
+  if (!Number.isFinite(stamp)) return 'Unknown';
+  return new Date(stamp).toLocaleString('en-GB', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' });
+}
 
 /** UTC phase start and elapsed time, shared by the panel and card. */
 export function batchTimeLine(start?: string | null, end?: string | null, now = Date.now()): string {
@@ -170,16 +223,20 @@ export function batchTimeLine(start?: string | null, end?: string | null, now = 
   const minutes = Math.max(0, Math.floor(((end ? Date.parse(end) : now) - started) / 60_000));
   const elapsed = minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
   const clock = new Date(started).toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' });
-  return `since ${clock} UTC, ${elapsed}`;
+  return `since ${clock}, ${elapsed}`;
 }
 
 const ACTIVE_BATCH_PHASES = new Set(['formed', 'assembling', 'assembled', 'running']);
 
-/** Pending records can remain in the snapshot after their cards joined a batch. */
+/**
+ * Pending records can remain in the snapshot after their cards joined a batch.
+ * A member a red batch holds waits on that batch, not for a new one (F13).
+ */
 export function batchWaitingCards(state: BatchGateState | null): BatchGateState['pending'] {
   if (!state) return [];
-  const assigned = new Set(state.batches.filter(batch => ACTIVE_BATCH_PHASES.has(batch.phase))
-    .flatMap(batch => batch.members.map(member => member.taskKey)));
+  const assigned = new Set([...state.batches.filter(batch => ACTIVE_BATCH_PHASES.has(batch.phase))
+    .flatMap(batch => batch.members.map(member => member.taskKey)),
+  ...state.batches.filter(batch => batch.phase === 'red').flatMap(batch => batch.heldTaskKeys ?? [])]);
   const perTask = new Set((state.perTaskGates ?? []).map(gate => gate.reviewAttemptId));
   return state.pending.filter(item => !assigned.has(item.taskKey) && !perTask.has(item.reviewAttemptId));
 }
@@ -228,6 +285,8 @@ export interface BatchAlert {
   state: 'red' | 'isolating';
   batchId: string;
   culprits: string[];
+  /** F13: the cards that wait on this batch. */
+  held: string[];
 }
 
 export interface BatchGatePushWait {
@@ -484,11 +543,12 @@ export function batchAlert(state: BatchGateState | null): BatchAlert | null {
     const children = batches.filter(child => child.parentBatchId === batch.batchId);
     const culprits = [...latestFindings(state, batch.batchId).values()]
       .filter(finding => finding.status === 'proven-red').map(finding => finding.taskKey);
+    const held = batch.heldTaskKeys ?? [];
     if (batch.isolationActive ?? children.some(child => ACTIVE_PHASES.has(child.phase)))
-      return { state: 'isolating', batchId: batch.batchId, culprits };
+      return { state: 'isolating', batchId: batch.batchId, culprits, held };
     // Batches arrive newest first: a published newer batch means the project moved on.
     if (roots.slice(0, index).some(newer => newer.phase === 'published')) return null;
-    return { state: 'red', batchId: batch.batchId, culprits };
+    return { state: 'red', batchId: batch.batchId, culprits, held };
   }
   return null;
 }

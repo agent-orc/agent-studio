@@ -6,7 +6,7 @@ import type { PromoteConceptResponse, PromoteConceptTasksResponse } from '../../
 import { TaskService } from '../../services/task.service';
 import { ActionPanelCoordinator } from '../../services/action-panel-coordinator.service';
 import { ConceptPromotionComponent } from './concept-promotion.component';
-import { decisionLabel, promotionSlices } from './concept-promotion.util';
+import { decisionLabel, promotionProgressLabel, promotionSlices } from './concept-promotion.util';
 
 const PLAN: PromoteConceptResponse = {
   source: {
@@ -29,6 +29,7 @@ const PLAN: PromoteConceptResponse = {
   targetState: '1-preparation',
   watchPath: '/tasks',
   projectName: 'Demo',
+  route: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
   promoted: [{ jobId: 'ui-card', taskKey: 'DEM-12', title: 'Implement delivery UI', itemIndex: 1, state: '1-preparation' }],
 };
 
@@ -49,6 +50,18 @@ describe('promotionSlices', () => {
     expect(decisionLabel('mode', [{ id: 'mode', label: 'Mode', optionId: 'b', optionLabel: 'B',
       operatorSelected: true, isWorkingAssumption: true }])).toBe('Mode: B (operator choice)');
     expect(decisionLabel('missing', [])).toBe('missing');
+  });
+
+  it('does not repeat a recommendation the authored option label already states', () => {
+    expect(decisionLabel('mode', [{ id: 'mode', label: 'Mode', optionId: 'a', optionLabel: 'A: queued (recommended)',
+      operatorSelected: false, isWorkingAssumption: true }])).toBe('Mode: A: queued (recommended)');
+    expect(decisionLabel('mode', [{ id: 'mode', label: 'Mode', optionId: 'a', optionLabel: 'A (Recommended)',
+      operatorSelected: true, isWorkingAssumption: true }])).toBe('Mode: A (operator choice)');
+  });
+
+  it('counts the slices that already have cards', () => {
+    expect(promotionProgressLabel(promotionSlices(PLAN))).toBe('1 of 3 slices have cards');
+    expect(promotionProgressLabel([])).toBeNull();
   });
 });
 
@@ -82,6 +95,13 @@ describe('ConceptPromotionComponent', () => {
     render();
   });
 
+  it('says on the collapsed bar how many slices already have cards', async () => {
+    await fixture.whenStable();
+    render();
+    expect(byTestId('concept-promotion-panel')).toBeNull();
+    expect(byTestId('concept-promotion-progress')?.textContent).toContain('1 of 3 slices have cards');
+  });
+
   it('claims the view\'s one action panel and closes when another panel opens (AGT-3875)', () => {
     const panels = TestBed.inject(ActionPanelCoordinator);
     byTestId<HTMLButtonElement>('concept-promotion-open')!.click();
@@ -107,6 +127,7 @@ describe('ConceptPromotionComponent', () => {
     expect(service.getPromoteConcept).toHaveBeenCalledWith('DEM-7', undefined, 'Demo');
     expect(byTestId('concept-promotion-slice-1')?.textContent).toContain('Implement delivery API');
     expect(byTestId('concept-promotion-slice-1')?.textContent).toContain('Delivery mode: A: queued');
+    expect(byTestId('concept-promotion-slice-1')?.textContent).toContain('Codex · gpt-6-sol · high');
     expect(byTestId('concept-promotion-slice-2')?.textContent).toContain('Created DEM-12');
     expect(byTestId<HTMLInputElement>('concept-promotion-slice-check-2')!.disabled).toBe(true);
     expect(byTestId('concept-promotion-confirm')?.textContent).toContain('Create all 2 cards');

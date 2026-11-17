@@ -7,7 +7,7 @@
                           [label]="v.lead + ' ' + v.route"
                           [detail]="v.detail"
                           [testId]="'pipeline-step-effective-route-' + stepId()" />
-    <span class="effective__configured">configured {{ v.configured }}</span>
+    <span class="effective__configured">Step setting: {{ v.configured }}</span>
     <span class="effective__rule" [attr.data-testid]="'pipeline-step-effective-rule-' + stepId()">{{ v.ruleLabel }}</span>
     <span class="effective__reason"
           [class.effective__reason--missing]="!v.reasonRecorded"

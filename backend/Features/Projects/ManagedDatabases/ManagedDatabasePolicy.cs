@@ -32,14 +32,58 @@ public sealed record ManagedDatabaseRecord(string EnvironmentId, string Name, st
 
     /// <summary>True once Studio removed the generated credential after the host deleted the data.</summary>
     public bool CredentialRetired { get; init; }
+
+    /// <summary>The host's last readiness check (AGT-3878); null before the first one.</summary>
+    public bool? Ready { get; init; }
+    public int? Connections { get; init; }
+    public int? MaxConnections { get; init; }
+
+    /// <summary>When the host first reported the database running; the backup schedule is due from there.</summary>
+    public DateTime? RunningSince { get; init; }
+
+    /// <summary>The dumps the host keeps, oldest first, as it last reported them.</summary>
+    public IReadOnlyList<RunTargetBackupRecord> Backups { get; init; } = [];
+    public DateTime? LastBackupAttemptAt { get; init; }
+    public string? LastBackupError { get; init; }
+
+    /// <summary>Backup and volume alerts with the card each one raised; a closed one stays until its kind opens again.</summary>
+    public IReadOnlyList<ManagedDatabaseAlert> Alerts { get; init; } = [];
+
+    public DateTime? LastBackupAt => Backups.Count == 0 ? null : Backups.Max(item => item.TakenAt);
 }
+
+/// <summary>One open alert of a database (AGT-3878): <c>backup-overdue</c>, <c>backup-failed</c> or <c>volume-threshold</c>.</summary>
+public sealed record ManagedDatabaseAlert(string Kind, DateTime Since, string Summary, string? CardId = null,
+    bool OpenedReported = false, DateTime? ClosedAt = null);
 
 /// <summary>One database as the Bereitstellung area shows it. Holds the credential reference, never a value.</summary>
 public sealed record ManagedDatabaseView(
     string EnvironmentId, string Name, string Engine, string Version, string? RunningVersion, string Size,
     ProjectDatabaseResources Resources, string Variable, string CredentialReference, string State, bool Declared,
     long? VolumeBytes, DateTime? ObservedAt, string? Message,
-    string? DeletionRequestedBy, DateTime? DeletionRequestedAt, DateTime? DeletedAt);
+    string? DeletionRequestedBy, DateTime? DeletionRequestedAt, DateTime? DeletedAt)
+{
+    public string EnvironmentKind { get; init; } = "";
+    public bool? Ready { get; init; }
+    public int? Connections { get; init; }
+    public int? MaxConnections { get; init; }
+    public ManagedDatabaseBackupPolicyView BackupPolicy { get; init; } = new(24, 7, 3);
+    public long VolumeAlertBytes { get; init; }
+    public DateTime? LastBackupAt { get; init; }
+
+    /// <summary><c>ok</c>, <c>overdue</c>, <c>failed</c>, or <c>none</c> when no dump is expected.</summary>
+    public string BackupStatus { get; init; } = "none";
+    public string? LastBackupError { get; init; }
+    public DateTime? LastBackupAttemptAt { get; init; }
+
+    /// <summary>Newest first.</summary>
+    public IReadOnlyList<RunTargetBackupRecord> Backups { get; init; } = [];
+
+    /// <summary>The newest operations that read or replace this database, newest first.</summary>
+    public IReadOnlyList<ManagedDatabaseOperationView> Operations { get; init; } = [];
+}
+
+public sealed record ManagedDatabaseBackupPolicyView(int IntervalHours, int RetentionDays, int MinimumKept);
 
 public sealed record ManagedDatabaseDeletionRequest(string? Confirm);
 
@@ -63,19 +107,25 @@ public static partial class ManagedDatabasePolicy
     [GeneratedRegex(@"\A[1-9][0-9]?(?:\.[0-9]{1,3}){0,2}\z")]
     private static partial Regex ReportedVersion();
 
+    [GeneratedRegex(@"\A[0-9]{8}T[0-9]{6}Z-(?:scheduled|manual|pre-restore)\z")]
+    public static partial Regex BackupId();
+
+    /// <summary>The host keeps far fewer; more is a hostile or broken report.</summary>
+    public const int MaxReportedBackups = 1000;
+
     /// <summary>The <c>secret://</c> reference of the database password, in the environment's own scope.</summary>
     public static string CredentialReference(string project, string environmentId, string database)
         => new SecretReference(SecretScope.ForEnvironment(project, environmentId),
             ProjectDatabaseVocabulary.CredentialName(database)).ToString();
 
     public static IReadOnlyList<RunTargetDatabaseSpec> Specs(string project, string environmentId,
-        IReadOnlyList<ProjectDatabaseDefinition> databases)
+        IReadOnlyList<ProjectDatabaseDefinition> databases, ManagedDatabaseEnvironmentPolicy policy)
         => databases.Select(item =>
         {
             var limits = ProjectDatabaseVocabulary.ResourcesFor(item.Size);
             return new RunTargetDatabaseSpec(item.Name, item.Engine, item.Version, item.Size,
                 new RunTargetResources(limits.Cpus, limits.MemoryMb, limits.PidsLimit), item.Variable,
-                CredentialReference(project, environmentId, item.Name));
+                CredentialReference(project, environmentId, item.Name), policy.Wire);
         }).ToArray();
 
     /// <summary>
@@ -147,17 +197,47 @@ public static partial class ManagedDatabasePolicy
             record with { DeletionRequestedAt = now, DeletionRequestedBy = actor });
     }
 
-    /// <summary>The host's report is untrusted: closed state vocabulary, a version shape, and a bounded size.</summary>
+    /// <summary>
+    /// The host's report is untrusted: closed state vocabulary, a version shape,
+    /// bounded sizes and counts, backup ids of the host's own shape, no time in
+    /// the future, and a short single-line error text.
+    /// </summary>
     public static RunTargetDatabaseObservation? Sanitize(RunTargetDatabaseObservation observation, DateTime receivedAt)
     {
         if (!RunTargetVocabulary.DatabaseStates.Contains(observation.State)
             || !ProjectDatabaseVocabulary.Name().IsMatch(observation.Name ?? "")) return null;
+        DateTime Past(DateTime value) => value > receivedAt ? receivedAt : value;
+        int? Count(int? value) => value is { } count ? Math.Clamp(count, 0, 1_000_000) : null;
         return observation with
         {
             Version = observation.Version is { } version && ReportedVersion().IsMatch(version) ? version : null,
             VolumeBytes = observation.VolumeBytes is { } bytes ? Math.Clamp(bytes, 0, long.MaxValue / 2) : null,
-            ObservedAt = observation.ObservedAt > receivedAt ? receivedAt : observation.ObservedAt,
+            ObservedAt = Past(observation.ObservedAt),
+            Connections = Count(observation.Connections),
+            MaxConnections = Count(observation.MaxConnections),
+            Backups = observation.Backups?.Take(MaxReportedBackups)
+                .Where(item => item is not null && BackupId().IsMatch(item.Id ?? "")
+                    && RunTargetVocabulary.BackupKinds.Contains(item.Kind ?? ""))
+                .DistinctBy(item => item.Id)
+                .Select(item => item with
+                {
+                    TakenAt = Past(item.TakenAt), Bytes = Math.Clamp(item.Bytes, 0, long.MaxValue / 2),
+                    VerifiedAt = item.VerifiedAt is { } verified ? Past(verified) : null,
+                    VerifiedTables = item.VerifiedTables is { } tables ? Math.Clamp(tables, 0, 1_000_000) : null,
+                })
+                .OrderBy(item => item.TakenAt).ToArray(),
+            LastBackupAttemptAt = observation.LastBackupAttemptAt is { } attempt ? Past(attempt) : null,
+            LastBackupError = HostText(observation.LastBackupError),
         };
+    }
+
+    /// <summary>Host text shown in Studio: one line, at most 300 characters, credential-shaped text masked.</summary>
+    public static string? HostText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var line = new string(text.Select(character => char.IsControl(character) ? ' ' : character).ToArray()).Trim();
+        line = AgentStudio.Security.CredentialRedactor.Redact(line);
+        return line.Length <= 300 ? line : line[..300];
     }
 
     /// <summary>
@@ -169,8 +249,11 @@ public static partial class ManagedDatabasePolicy
     {
         if (observation.State == "deleted")
             return record.DeletionRequestedAt is null ? record : record with { State = "deleted", DeletedAt = now, VolumeBytes = null };
+        var backups = observation.Backups ?? record.Backups;
         var unchanged = record.State == observation.State && (observation.Version ?? record.RunningVersion) == record.RunningVersion
-            && (observation.VolumeBytes ?? record.VolumeBytes) == record.VolumeBytes;
+            && (observation.VolumeBytes ?? record.VolumeBytes) == record.VolumeBytes
+            && observation.Ready == record.Ready && (observation.Connections ?? record.Connections) == record.Connections
+            && backups.SequenceEqual(record.Backups) && observation.LastBackupError == record.LastBackupError;
         if (unchanged && record.ObservedAt is { } seen && observation.ObservedAt - seen < RunTargetDesiredStatePolicy.ObservedRefresh)
             return record;
         return record with
@@ -180,23 +263,55 @@ public static partial class ManagedDatabasePolicy
             VolumeBytes = observation.VolumeBytes ?? record.VolumeBytes,
             ObservedAt = observation.ObservedAt,
             Message = observation.State == "running" ? null : record.Message,
+            Ready = observation.Ready,
+            Connections = observation.Connections ?? record.Connections,
+            MaxConnections = observation.MaxConnections ?? record.MaxConnections,
+            RunningSince = record.RunningSince ?? (observation.State == "running" ? observation.ObservedAt : null),
+            Backups = backups,
+            LastBackupAttemptAt = observation.LastBackupAttemptAt ?? record.LastBackupAttemptAt,
+            LastBackupError = observation.LastBackupError,
         };
     }
 
-    public static ManagedDatabaseView View(string project, ManagedDatabaseRecord record)
-        => new(record.EnvironmentId, record.Name, record.Engine, record.Version, record.RunningVersion, record.Size,
-            ProjectDatabaseVocabulary.ResourcesFor(record.Size), record.Variable,
+    public static ManagedDatabaseView View(string project, ManagedDatabaseRecord record, string environmentKind,
+        ManagedDatabaseEnvironmentPolicy policy, IReadOnlyList<ManagedDatabaseOperationRecord> operations, DateTime now)
+    {
+        return new ManagedDatabaseView(record.EnvironmentId, record.Name, record.Engine, record.Version, record.RunningVersion,
+            record.Size, ProjectDatabaseVocabulary.ResourcesFor(record.Size), record.Variable,
             CredentialReference(project, record.EnvironmentId, record.Name),
             record.DeletionRequestedAt is not null && record.DeletedAt is null ? "deleting"
                 : !record.Declared && record.DeletedAt is null ? "retained"
                 : record.State,
             record.Declared, record.VolumeBytes, record.ObservedAt, record.Message,
-            record.DeletionRequestedBy, record.DeletionRequestedAt, record.DeletedAt);
+            record.DeletionRequestedBy, record.DeletionRequestedAt, record.DeletedAt)
+        {
+            EnvironmentKind = environmentKind,
+            Ready = record.Ready,
+            Connections = record.Connections,
+            MaxConnections = record.MaxConnections,
+            BackupPolicy = new(policy.BackupIntervalHours, policy.BackupRetentionDays, policy.BackupsKept),
+            VolumeAlertBytes = policy.VolumeAlertFor(record.Size),
+            LastBackupAt = record.LastBackupAt,
+            BackupStatus = ManagedDatabaseAlertPolicy.BackupStatus(record, policy, now),
+            LastBackupError = record.LastBackupError,
+            LastBackupAttemptAt = record.LastBackupAttemptAt,
+            Backups = record.DeletedAt is null ? record.Backups.Reverse().ToArray() : [],
+            Operations = ManagedDatabaseOperationPolicy.Views(operations, record.EnvironmentId, record.Name),
+        };
+    }
 
     /// <summary>A database the current declaration has but no deploy has approved yet.</summary>
-    public static ManagedDatabaseView Pending(string project, string environmentId, ProjectDatabaseDefinition database)
-        => new(environmentId, database.Name, database.Engine, database.Version, null, database.Size,
+    public static ManagedDatabaseView Pending(string project, EnvironmentDeclaration environment, ProjectDatabaseDefinition database)
+    {
+        var policy = environment.EffectiveDatabasePolicy;
+        return new ManagedDatabaseView(environment.Id, database.Name, database.Engine, database.Version, null, database.Size,
             ProjectDatabaseVocabulary.ResourcesFor(database.Size), database.Variable,
-            CredentialReference(project, environmentId, database.Name), "pending-deploy", true,
-            null, null, null, null, null, null);
+            CredentialReference(project, environment.Id, database.Name), "pending-deploy", true,
+            null, null, null, null, null, null)
+        {
+            EnvironmentKind = environment.Kind,
+            BackupPolicy = new(policy.BackupIntervalHours, policy.BackupRetentionDays, policy.BackupsKept),
+            VolumeAlertBytes = policy.VolumeAlertFor(database.Size),
+        };
+    }
 }

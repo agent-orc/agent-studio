@@ -21,6 +21,7 @@ import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-n
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { reviewBuildTestsGap, taskFileHref } from '../../../test-evidence/components/test-evidence-status/test-evidence-status.component';
 import { AcceptanceNextStepsComponent } from '../../../acceptance-readiness/lazy';
+import { acceptanceRefusalFor } from '../../state/acceptance-refusal.model';
 
 /** Tri-state containment answer. `unknown` is a question, never a negative. */
 export type DeliveryIntegrationState =
@@ -278,6 +279,11 @@ export class DeliveryClaimPanelComponent {
   );
 
   readonly contentReview = computed(() => this.answer()?.contentReview ?? null);
+  /** F12: the integration hold, listed under the readiness reason in the next steps. */
+  readonly otherGaps = computed(() => {
+    const hold = acceptanceRefusalFor(this.job(), null, false)?.reason;
+    return hold ? [hold] : [];
+  });
   readonly contentPassed = computed(() => {
     const review = this.contentReview();
     return review?.contentStatus === 'pass'

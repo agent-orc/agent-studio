@@ -104,6 +104,12 @@
 .tup__table .tup__num {
   font-size: inherit;
 }
+.tup__table tfoot th,
+.tup__table tfoot td {
+  border-top: 1px solid var(--studio-tooltip-border);
+  padding-top: var(--studio-spacing-1);
+  font-weight: 700;
+}
 
 .tup__mismatch {
   margin-inline-start: var(--studio-spacing-1);

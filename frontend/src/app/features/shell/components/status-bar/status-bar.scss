@@ -198,3 +198,23 @@ app-status-bar {
     min-height: var(--studio-target-coarse-min);
   }
 }
+
+@media (max-width: 460px) {
+  .statusbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding-block: var(--studio-spacing-1);
+  }
+  .statusbar__group--left {
+    flex: 1 1 100%;
+    max-width: none;
+    height: var(--studio-target-coarse-min);
+  }
+  .statusbar__group--right {
+    flex: 1 1 100%;
+    max-width: none;
+    margin-inline-start: 0;
+    justify-content: space-between;
+  }
+  .statusbar__usage-session, .statusbar__age { display: none; }
+}

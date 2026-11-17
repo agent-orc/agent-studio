@@ -58,7 +58,6 @@ export interface ActiveExplorerWorkbench {
   projectName: string;
   workbenchId: string;
 }
-
 /**
  * F46 — Explorer two-level workspace → project tree. Purely presentational
  * over the shell's flat project rows, joined to
@@ -98,7 +97,6 @@ export class ExplorerWorkspaceTreeComponent {
   /** Experimental active-work visualization. Numbers remain the default. */
   readonly metricView = input<ExplorerTreeMetricView>('numbers');
   readonly projectAutoPickupByName = input<ReadonlyMap<string, ProjectAutoPickupIndicator>>(new Map());
-
   readonly showAll = output<void>();
   readonly toggleExpanded = output<string>();
   readonly openBoardRequest = output<string>();
@@ -116,27 +114,22 @@ export class ExplorerWorkspaceTreeComponent {
   /** Project row dropped onto a different real workspace; the shell PUTs
    *  /api/projects/{projectId} `{ workspaceId }` and reloads (no folder move). */
   readonly projectDrop = output<{ projectId: string; targetWorkspaceId: string }>();
-
   /** F46 — workspace-header inline rename committed from the editor; the shell
    *  PUTs /api/workspaces/{id} (registry metadata only, no folder move). */
   readonly renameWorkspace = output<{ id: string; displayName: string }>();
-
   /** F46 step 7 — registry-only project rename committed from the inline editor
    *  (shell PUTs `{ displayName }`; PROJ id + storage untouched). */
   readonly renameProject = output<{ projectId: string; displayName: string }>();
-
   /** F46 — destructive project delete from the right-click menu; the shell runs
    *  the two-stage typed confirm + DELETE. `shortCode` lets the confirm accept
    *  it as an alias for the display name. */
   readonly deleteProject = output<{ projectId: string; displayName: string; shortCode: string | null }>();
-
   readonly projectDrag = inject(ProjectDragDropService);
   readonly projectActions = inject(ExplorerProjectActionsService);
   /** Public so the template can read each URL row's live running/offline dot. */
   readonly urlProbe = inject(ProjectUrlProbeService);
   private readonly sections = inject(ExplorerSectionsService);
   private readonly modalStack = inject(ModalStackService);
-
   /** Id of the workspace header currently in inline-rename mode (null = none). */
   readonly renamingWsId = signal<string | null>(null);
   readonly renameDraft = signal('');
@@ -435,9 +428,16 @@ export class ExplorerWorkspaceTreeComponent {
   }
 
   urlTooltip(p: ExplorerProjectNode, url: RegistryProjectUrl): string {
+    if (url.id === 'repo') return [url.label, url.url, 'Opens Git View'].join('\n');
     const status = this.urlProbe.statusFor(p.projectId ?? '', url.id);
     const statusLabel = status === 'running' ? 'Running' : status === 'offline' ? 'Offline' : 'Status unknown';
     return [url.label, url.url, statusLabel].join('\n');
+  }
+
+  urlAriaLabel(p: ExplorerProjectNode, url: RegistryProjectUrl): string {
+    return url.id === 'repo'
+      ? `Repository, open Git View for ${p.displayLabel}`
+      : `${url.label}, opens ${url.url} as an embedded preview tab`;
   }
   onDragStart(p: ExplorerProjectNode): void {
     this.projectDrag.onDragStart({

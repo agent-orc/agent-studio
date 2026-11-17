@@ -11,6 +11,22 @@ public sealed class UsageCockpitContractTests
     private static readonly ProjectTokenDataFreshness Complete = new() { Status = "complete" };
 
     [Fact]
+    public void One_shot_sources_reconcile_with_cost_for_today_and_week()
+    {
+        var title = Entry(null, At, 100, 0) with { ParticipantId = "support:adhoc", Topic = "title-generation" };
+        var tag = Entry(null, At.AddDays(-1), 50, 0) with { ParticipantId = "support:adhoc", Topic = "auto-tag" };
+        var review = Entry(null, At, 200, 0) with { ParticipantId = "support:aspect", Topic = "aspect-quality" };
+        var cost = UsageCockpitProjection.Cost(TokenTestServices.Pricing(),
+            UsageCockpitProjection.Calendar(At, "Etc/UTC", DayOfWeek.Monday),
+            [new UsageCostInput(null, "Unattributed", [title, tag, review], Complete)], At);
+
+        Assert.Equal(2, cost.OneShotSources!.Count);
+        Assert.Equal(TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 100, 0, 0, 0, At).Total,
+            Assert.Single(cost.OneShotSources, row => row.Source == "title-generation").TodayUsd);
+        Assert.Equal(0, Assert.Single(cost.OneShotSources, row => row.Source == "auto-tag").TodayUsd);
+    }
+
+    [Fact]
     public void Idle_ledger_read_is_current_independently_of_latest_receipt()
     {
         var receiptAt = At.AddHours(-5);

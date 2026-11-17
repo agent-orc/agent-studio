@@ -1,0 +1,18 @@
+@if (lane()?.waiting?.length || refusals()?.length) {
+  <section class="lane-admission" aria-labelledby="batch-lane-admission-title" data-testid="batch-lane-admission">
+    <h3 id="batch-lane-admission-title">Held for the batch lane</h3>
+    @if (lane(); as lane) {
+      <p>While a batch gate runs, at most {{ lane.limit }} other full suite runs. Running now: {{ lane.batchGates }} batch, {{ lane.companionSuites }} other.</p>
+      @if (lane.waiting.length) {
+        <ul>@for (suite of lane.waiting; track suite.runId) {
+          <li data-testid="batch-lane-waiting">{{ suite.cards.length ? suite.cards.join(', ') : suite.gateId }} · waiting since {{ date(suite.sinceUtc) }} · {{ suite.reason }}</li>
+        }</ul>
+      }
+    }
+    @if (refusals()?.length) {
+      <ul>@for (refusal of refusals(); track refusal.reviewAttemptId) {
+        <li data-testid="batch-suite-refusal"><strong>{{ refusal.taskKey }}</strong> · per-card suite not started {{ date(refusal.refusedAtUtc) }} · {{ refusal.reason }}</li>
+      }</ul>
+    }
+  </section>
+}

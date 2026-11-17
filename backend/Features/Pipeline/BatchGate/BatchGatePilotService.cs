@@ -166,7 +166,7 @@ public sealed partial class BatchGatePilotService
     {
         if (!HasAttributedCurrentDelivery(task, sourceRun))
             throw new InvalidOperationException(
-                "Commit attribution is missing for this reviewed delivery. The card cannot enter a batch.");
+                MissingAttributionMessage(task, sourceRun));
         var priorOwnership = BatchGateOwnershipStore.Read(task.FolderPath);
         if (task.State == TaskStates.AutoReview
             && priorOwnership?.ReviewAttemptId == review.AttemptId
@@ -201,7 +201,7 @@ public sealed partial class BatchGatePilotService
         if (!HasAttributedCurrentDelivery(task, sourceRun))
         {
             await EscalateFallbackAsync(task, pending,
-                "Commit attribution is missing for this reviewed delivery. Check the run completion warning before retrying the batch.",
+                MissingAttributionMessage(task, sourceRun),
                 infrastructure: false, recordInStore: false, ct,
                 resolution: "release-unattributed").ConfigureAwait(false);
             return;
@@ -216,6 +216,38 @@ public sealed partial class BatchGatePilotService
         => sourceRun.ResultEnvelope is { } envelope && task.Commits.Any(commit =>
             string.Equals(commit.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
             && string.Equals(commit.ResultSha, envelope.ResultSha, StringComparison.OrdinalIgnoreCase));
+
+    private string MissingAttributionMessage(TaskInfo task, RunAttemptDto sourceRun)
+    {
+        var subject = ReviewSubjectStore.Read(task.FolderPath);
+        var envelope = sourceRun.ResultEnvelope;
+        var repo = _git.ResolveRepoRootForWatchPath(task.WatchPath);
+        var deliveryRef = subject?.ImmutableResultRef ?? subject?.ResultRef
+            ?? envelope?.ImmutableRemoteRef;
+        var resultSha = envelope?.ResultSha ?? subject?.ResultSha;
+        var missing = new List<string>();
+        if (!string.IsNullOrWhiteSpace(repo) && !string.IsNullOrWhiteSpace(deliveryRef)
+            && !string.IsNullOrWhiteSpace(resultSha))
+        {
+            var range = _git.InspectRemoteDeliveryCommitRange(repo, deliveryRef, resultSha,
+                subject?.IntegrationBranch ?? task.IntegrationBranch,
+                subject?.BaseSha, taskKey: task.Key ?? task.Id);
+            if (range.Success)
+                missing.AddRange(range.Commits.Where(commit => !task.Commits.Any(recorded =>
+                        string.Equals(recorded.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(recorded.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(recorded.ResultSha, resultSha, StringComparison.OrdinalIgnoreCase)))
+                    .Select(commit => $"{commit.ShortSha} ({commit.Subject})"));
+        }
+        if (missing.Count == 0 && !string.IsNullOrWhiteSpace(resultSha))
+            missing.Add(resultSha[..Math.Min(12, resultSha.Length)]);
+        if (missing.Count == 0)
+            missing.Add("result SHA unavailable");
+        return "Commit attribution is missing for this reviewed delivery. "
+            + $"Commits missing this delivery's attribution: {string.Join(", ", missing)}. "
+            + "The next round must publish task-owned commits that name this card and leave merging develop to the runner. "
+            + "The card cannot enter a batch until the result SHA has a commit entry for its run attempt.";
+    }
 
     public void ReportAdmissionFailure(TaskInfo task, ReviewAttemptDto review, string reason)
         => _healthAlerts?.BatchAdmissionFailed(task.ProjectName, task.WatchPath,
@@ -476,11 +508,12 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), Service<GateRunLedger>(), reviewFixWaits,
             Service<GateCapacitySettings>()?.Current(), DetachedFlights(project),
-            HasLiveFlight, RecoveryStatus,
+            HasLiveFlight, RecoveryStatus, LaneIdle(project),
             ActiveIsolationFlights(project), LeaseDeadlineDeferred()(project),
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
             _diskPauseReason, ConfiguredGateSlots(),
-            CodeBatchEnabled(project) ? _reservations?.GetBatchWait(project) : null);
+            CodeBatchEnabled(project) ? _reservations?.GetBatchWait(project) : null,
+            Service<BatchLaneAdmission>()?.Snapshot());
     }
 
     private IReadOnlySet<string> ActiveIsolationFlights(string project)
@@ -556,7 +589,11 @@ public sealed partial class BatchGatePilotService
                     _logger.LogWarning(error, "host-storage-retention-failed");
                 }
             }
-            if (DiskPressure().Level == HostDiskPressureLevel.Critical) return;
+            if (DiskPressure().Level == HostDiskPressureLevel.Critical)
+            {
+                ObserveLaneIdle("critical disk pressure pauses the batch gate");
+                return;
+            }
             var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
             if (_reservations is not null)
                 foreach (var project in _reservations.ProjectsWithPending())
@@ -794,6 +831,7 @@ public sealed partial class BatchGatePilotService
             }
             await RepackFormedBatchesAsync(ct).ConfigureAwait(false);
             StartClosedBatches(ct);
+            ObserveLaneIdle();
             if (WaitForFlightsInTick)
                 await WaitForFlightsAsync(includeFallbacks: true, ct).ConfigureAwait(false);
             RecordInvariants();
@@ -3040,6 +3078,13 @@ public sealed partial class BatchGatePilotService
                     FallbackStage(pending, PerTaskFallbackWaitKinds.BatchSlot);
                     await Task.Delay(250, ct).ConfigureAwait(false);
                 }
+                // AGT-3856: partners can arrive while the suite waits. A card a
+                // batch gates anyway returns to the batch queue instead.
+                if (recordInStore && PerTaskSuiteRefusal(pending, subject.BaseSha) is { } refusal)
+                {
+                    RefusePerTaskSuite(task, pending, refusal);
+                    return false;
+                }
                 FallbackStage(pending, PerTaskFallbackWaitKinds.GateRunning);
                 started = _time.GetUtcNow();
                 // AGT-3466: the per-task slot taken above already keeps the batch slot free.
@@ -3055,6 +3100,12 @@ public sealed partial class BatchGatePilotService
                         RequiredTestLevel = level,
                         ReserveBatchSlot = ConfiguredGateSlots() > 1,
                         TestExecution = _settings.Get(pending.Subject.Project).TestExecution,
+                        // AGT-3856: the suite waits while a batch gate and one other full suite run.
+                        OnBatchLaneWaiting = reason =>
+                        {
+                            FallbackStage(pending, PerTaskFallbackWaitKinds.BatchSlot);
+                            Lane(pending, "gate-token-waiting", level: level, reason: reason);
+                        },
                         OnMachineGateSlotWaiting = (busy, total) =>
                         {
                             FallbackStage(pending, PerTaskFallbackWaitKinds.MachineGateSlot);

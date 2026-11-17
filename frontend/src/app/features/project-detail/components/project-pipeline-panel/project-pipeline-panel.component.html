@@ -10,6 +10,7 @@
     </p>
   </header>
   <app-pipeline-health-block [projectName]="projectName()" (openFlowHealth)="openFlowHealth.emit()" />
+  <p data-testid="review-aspect-applicability">Visual review is available for projects with frontend changes. On library runs without template or style changes, it is skipped even when enabled.</p>
   <app-gate-slot-board [projectName]="projectName()" />
   @if (loadError(); as err) {
     <p class="pp__error" data-testid="pipeline-load-error">{{ err }}</p>

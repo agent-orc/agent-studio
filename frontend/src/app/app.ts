@@ -45,6 +45,7 @@ import {
   TaskDetailComponent,
   DetailLoadErrorComponent,
   TaskDetailLoadSectionsComponent,
+  TaskMoveRefusalComponent,
 } from './features/task-detail/lazy';
 import {
   TaskSelectionService,
@@ -184,6 +185,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     TaskDetailComponent,
     DetailLoadErrorComponent,
     TaskDetailLoadSectionsComponent,
+    TaskMoveRefusalComponent,
     OrchestratorSideSheetHostComponent,
     OrchestratorFeedComponent,
     ProjectOverlaysComponent,
@@ -829,6 +831,11 @@ export class App implements OnInit, OnDestroy {
         if ('requestIdleCallback' in window) window.requestIdleCallback(preload, { timeout: 1000 });
         else setTimeout(preload, 0);
       }));
+    });
+    // F12: the open Human Review card ranks its gaps by its readiness answer.
+    effect(() => {
+      const info = this.selectedJob()?.info;
+      if (info?.state === TaskState.HumanReview) untracked(() => void this.acceptanceReadiness.ensure(info));
     });
     effect(() => {
       if (this.shellAccess.operator() || !this.projectLookup.loaded()) return;

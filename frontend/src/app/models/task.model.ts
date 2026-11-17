@@ -939,6 +939,11 @@ export interface TaskInfo {
    * each parsing their own subset of review artifacts. Never persisted.
    */
   reviewProjection?: ReviewProjectionView | null;
+  /**
+   * AGT-3845: the current Remote Review attempt is settled but its grade
+   * report is not written yet, so `reviewProjection` does not carry it yet.
+   */
+  reviewEvidencePending?: boolean;
 
   /**
    * ASS-1751: read-time run-activity classification for `3-progress` cards,
@@ -1868,6 +1873,8 @@ export interface PromoteConceptResponse {
   targetState: string;
   watchPath: string;
   projectName: string;
+  /** Effective route used by each new implementation card. */
+  route?: { cliType: string; model: string | null; thinkingLevel: string | null } | null;
   /** Slices that already have a card from an earlier promotion. */
   promoted?: PromotedConceptTask[];
   recovery?: ConceptPromotionRecovery | null;

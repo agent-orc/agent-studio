@@ -233,9 +233,15 @@ not publish versioned binaries. It runs, in order:
 For a project with `delivery.fullSuite: required`, a production declaration
 defaults the setting to `required`; without production it defaults to
 `optional`. Explicit values are `required`, `optional`, and `off`. The release
-endpoint requires a green post-merge candidate before it accepts a release
-unless the setting is `off`. A red suite verdict always blocks; `required`
-also blocks a missing verdict. The Task Server stores the verdict by project,
+endpoint requires a green candidate before it accepts a release unless the
+setting is `off`. A green post-merge run on the candidate always counts. A
+project that is not in post-merge mode never gets a post-merge run, so there
+a green pre-main gate receipt or a batch gate publication on that exact SHA
+counts instead. `optional` also admits a candidate of
+a project that has no post-merge history at all. A red suite verdict always
+blocks; `required` also blocks a missing verdict. A refused release answers
+with an `error` and a `nextStep`, and the project Deploy area shows the last
+refusal until a release is created. The Task Server stores the verdict by project,
 candidate SHA, and a digest of the committed `project.yml` and gate script.
 On an exact green match the train records `gate=reused`, skips the .NET and
 frontend test suites, and still restores, builds, lints, audits, and packages

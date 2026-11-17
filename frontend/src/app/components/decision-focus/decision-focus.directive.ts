@@ -5,6 +5,13 @@ import { DecisionFocusRequestService, decisionTaskKey } from '../../services/dec
 export const DECISION_FOCUS_SELECTOR = '[data-decision-focus]';
 
 /**
+ * Where focus stays when a card mounts or asks for its decision area: that
+ * area, or an open dialog such as the written-reason override a refused
+ * Accept opened (AGT-3873).
+ */
+export const KEEPS_FOCUS_SELECTOR = `${DECISION_FOCUS_SELECTOR}, [role="dialog"]`;
+
+/**
  * Marks a card's decision area (the lane primary and its siblings). When the
  * card was opened to be decided on, the first visible area takes focus, so the
  * primary action is the next Tab stop (AGT-3833).
@@ -43,7 +50,7 @@ export class DecisionFocusDirective {
     const host = this.host.nativeElement;
     // A layout that hides this area (the phone tab bar, a collapsed header) leaves the request to a visible one.
     if (!host.isConnected || (typeof host.checkVisibility === 'function' && !host.checkVisibility())) return;
-    if (document.activeElement?.closest(DECISION_FOCUS_SELECTOR)) return;
+    if (document.activeElement?.closest(KEEPS_FOCUS_SELECTOR)) return;
     host.focus({ preventScroll: false });
   }
 }

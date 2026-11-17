@@ -13,6 +13,7 @@ import {
   parkedBlockerLabel,
   parkedForLabel,
   parkedOpenItems,
+  unrecordedParkReason,
   type ParkTimelineEvent,
 } from './parked-blocker-presentation';
 import type { ParkedBlockerStatus, TaskInfo } from './task.model';
@@ -58,6 +59,30 @@ describe('parked-blocker presentation', () => {
 
   const info = (parkedBlocker: ParkedBlockerStatus | null): Pick<TaskInfo, 'parkedBlocker'> =>
     ({ parkedBlocker }) as Pick<TaskInfo, 'parkedBlocker'>;
+
+  /**
+   * AGT-3873: AGT-3534 read "Operator decision · Parked 6 days ago · No reason
+   * was recorded for this park." while it simply waited for its owner's
+   * acceptance in Human Review. A park without a readable reason now says
+   * what it waits for, from its lane and blocker type.
+   */
+  it('says what a park without a recorded reason waits for, from its lane and blocker type', () => {
+    const ownerHold = park({ blockerType: 'operator-decision', lane: '5-human-review', reason: 'external-completion: codex-cloud',
+      decision: null, requiresDecisionCard: false, cause: 'external-completion', causeDetail: 'codex-cloud' });
+    const view = buildParkedBlockerView(info(ownerHold), NOW)!;
+    expect(view.reason).toBe("Held for the owner's decision in Human review.");
+    expect(view.reasonRecorded).toBe(false);
+    expect(view.chipTooltip).toContain("Held for the owner's decision in Human review.");
+    expect(view.chipTooltip).not.toContain(UNSTATED_REASON);
+
+    expect(unrecordedParkReason({ blockerType: 'agent-needs-input', lane: '5e-escalated' }))
+      .toBe('Waiting for the answer the agent asked for in Escalated.');
+    expect(unrecordedParkReason({ blockerType: 'review-subject-unmaterialisierbar', lane: '5e-escalated' }))
+      .toBe('Parked for review subject unavailable in Escalated.');
+    expect(unrecordedParkReason({ blockerType: '', lane: '' })).toBe('Parked.');
+    // A recorded reason is kept as written.
+    expect(buildParkedBlockerView(info(park()), NOW)!.reasonRecorded).toBe(true);
+  });
 
   it('renders nothing for a card that is not parked', () => {
     expect(buildParkedBlockerView(info(null))).toBeNull();

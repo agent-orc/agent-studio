@@ -325,7 +325,7 @@ export interface WorkbenchRevisionCard {
 
 /** What happened to the follow-up round a confirmed rework request asked for. */
 export interface WorkbenchRevisionRound {
-  status: 'started' | 'queued' | 'saved' | 'failed';
+  status: 'started' | 'queued' | 'saved' | 'failed' | 'updated' | 'unchanged';
   taskKey: string;
   title: string | null;
   queueReason: string | null;
@@ -537,6 +537,7 @@ export interface WorkbenchDocument {
   entryFingerprint?: string | null;
   cards?: DossierCardList | null;
   revisionCard?: WorkbenchRevisionCard | null;
+  revisionRound?: WorkbenchRevisionRound | null;
   /** Whether Create implementation cards can work for this Dossier (AGT-3875). */
   promotion?: WorkbenchPromotion | null;
 }

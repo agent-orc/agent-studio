@@ -96,6 +96,24 @@ export class AcceptanceReadinessStore {
     }
   }
 
+  /** Card keys and activity stamps {@link ensure} already asked for. */
+  private readonly asked = new Map<string, string>();
+
+  /**
+   * F12: the open card's readiness when no lane check covered it yet, so its
+   * toolbar and acceptance grounds rank their gaps by the same answer as the
+   * board note. Asked once per card activity, also after a failure; a lane
+   * check answers as well.
+   */
+  async ensure(job: TaskInfo): Promise<void> {
+    if (job.state !== TaskState.HumanReview) return;
+    const key = readinessKey(job);
+    const stamp = job.lastActivity ?? '';
+    if (this.items().has(key) || this.asked.get(key) === stamp) return;
+    this.asked.set(key, stamp);
+    await this.checkCard(job);
+  }
+
   /**
    * AGT-3867: checks one Human Review card, for its detail and toolbar, and
    * merges the answer without touching the lane's grouping state. A failed
@@ -108,7 +126,7 @@ export class AcceptanceReadinessStore {
         '/api/tasks/acceptance-readiness',
         { items: [{ jobId: job.id, watchPath: job.watchPath }] },
       ));
-      const item = report.items.find(entry => entry.jobId === job.id);
+      const item = Array.isArray(report?.items) ? report.items.find(entry => entry.jobId === job.id) : undefined;
       if (item) this.items.update(current => new Map(current).set(item.taskKey || item.jobId, item));
     } catch {
       // The board check and the server refusal still name the reason.

@@ -28,9 +28,14 @@ public sealed record TokenTimeline(
     /// </summary>
     public IReadOnlyList<TokenTimelineModelUsage> Models { get; init; } = [];
 
+    /// <summary>One-shot calls by source over this exact timeline interval.</summary>
+    public IReadOnlyList<TokenTimelineOneShotSource> OneShotSources { get; init; } = [];
+
     /// <summary>Read health of the merged usage ledger behind this response.</summary>
     public ProjectTokenDataFreshness Freshness { get; init; } = ProjectTokenDataFreshness.Empty;
 }
+
+public sealed record TokenTimelineOneShotSource(string Source, int Calls, long Tokens, decimal CostUsd);
 
 /// <summary>
 /// One (project, model, host) row. <see cref="Model"/> is the stored id;

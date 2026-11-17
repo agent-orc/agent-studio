@@ -43,6 +43,11 @@ export class BatchLaneIndicatorComponent {
     const culprits = alert.culprits.length ? `; proven red: ${alert.culprits.join(', ')}` : '';
     return `Batch ${alert.batchId} ${alert.state === 'red' ? 'is red' : 'is isolating the red member'}${culprits}`;
   }
+  /** F13: what waits on the red batch, so it never reads as "0 waiting" alone. */
+  heldLabel(alert: BatchAlert): string {
+    const count = alert.held.length;
+    return count ? `${count} ${count === 1 ? 'card waits' : 'cards wait'} on it` : 'blocks no cards';
+  }
   runningFor(project: string): number {
     return this.stateFor(project)?.batches.filter(batch => batch.phase === 'running').length ?? 0;
   }

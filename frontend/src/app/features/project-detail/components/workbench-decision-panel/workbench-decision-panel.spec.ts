@@ -123,6 +123,30 @@ describe('WorkbenchDecisionPanelComponent', () => {
 
   afterEach(() => http.verify());
 
+  it('returns actions and shows an unchanged round while retaining the rework receipt', () => {
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      entryFingerprint: 'a'.repeat(64),
+      workbench: { ...DOCUMENT.workbench, decision: {
+        outcome: 'rework', state: 'pending', operationId: 'rework-1',
+        sourceRevision: DOCUMENT.revision, sourceFingerprint: DOCUMENT.fingerprint,
+        sourceEntryFingerprint: 'a'.repeat(64),
+        preparedAt: '2026-11-15T10:00:00Z', preparedBy: 'Owner',
+        confirmedAt: '2026-11-15T10:00:00Z', confirmedBy: 'Owner',
+        decidedAt: null, reason: null, failure: null, spawnedTaskKeys: [],
+        responses: RESPONSES, taskDraft: null, revisionTaskKey: 'AGT-2300',
+      } },
+      revisionRound: { status: 'unchanged', taskKey: 'AGT-2300',
+        title: 'Concept: routing policy', queueReason: null, detail: null },
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-receipt"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-revision-round"]')?.textContent)
+      .toContain('unchanged');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-rework"]')).toBeTruthy();
+  });
+
   it('records one answer while leaving another explicitly open and does not create a card', () => {
     const partial = [RESPONSES[0], {
       decisionId: 'proof', kind: 'single', selectedOptionIds: [], comment: null,
@@ -777,7 +801,10 @@ describe('decision panel status tones', () => {
     expect(decisionStageTone('later', false)).toBe('neutral');
     expect(decisionOutcomeTone('feature-spawn')).toBe('success');
     expect(decisionOutcomeTone('archive')).toBe('neutral');
-    expect(decisionOutcomeTone('rework')).toBe('warning');
+    expect(decisionOutcomeTone('rework')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'succeeded')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'failed')).toBe('danger');
+    expect(decisionOutcomeTone('feature-spawn', 'pending')).toBe('running');
     expect(decisionOutcomeTone(null)).toBe('neutral');
   });
 });

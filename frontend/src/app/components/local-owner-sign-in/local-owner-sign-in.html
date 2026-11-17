@@ -1,0 +1,46 @@
+@if (user(); as signedInUser) {
+  <p class="local-owner__done" data-testid="local-owner-signed-in">Signed in as {{ signedInUser.displayName || signedInUser.username }}.</p>
+} @else if (!open()) {
+  <button type="button" class="local-owner__button local-owner__button--primary" data-testid="local-owner-open" (click)="opened.set(true)">
+    {{ bootstrap() ? 'Create owner account' : 'Sign in as owner' }}
+  </button>
+} @else {
+  <form class="local-owner" data-testid="local-owner-form" novalidate (submit)="$event.preventDefault(); submit()">
+    <p class="local-owner__hint">{{ bootstrap()
+      ? 'This installation has no owner yet. The account you create here becomes its Owner.'
+      : 'Sign in with the owner account of this installation.' }}</p>
+    <label>Username
+      <input name="username" autocomplete="username" data-testid="local-owner-username" required
+        [value]="username()" (input)="username.set($any($event.target).value)">
+    </label>
+    @for (message of fieldErrors()['username'] ?? []; track message) { <p class="local-owner__error" role="alert">{{ message }}</p> }
+    @if (bootstrap()) {
+      <label>Display name
+        <input name="displayName" autocomplete="name" data-testid="local-owner-display-name"
+          [value]="displayName()" (input)="displayName.set($any($event.target).value)">
+      </label>
+    }
+    <label>Password
+      <input name="password" type="password" data-testid="local-owner-password" required
+        [attr.autocomplete]="bootstrap() ? 'new-password' : 'current-password'"
+        [value]="password()" (input)="password.set($any($event.target).value)">
+    </label>
+    @if (bootstrap()) { <p class="local-owner__hint">Use 12 to 128 characters. Do not include the username.</p> }
+    @for (message of fieldErrors()['password'] ?? []; track message) { <p class="local-owner__error" role="alert">{{ message }}</p> }
+    @if (!bootstrap()) {
+      <label>Authenticator or recovery code, if the account has one
+        <input name="secondFactorCode" autocomplete="one-time-code" data-testid="local-owner-code"
+          [value]="secondFactorCode()" (input)="secondFactorCode.set($any($event.target).value)">
+      </label>
+    }
+    <div class="local-owner__actions">
+      <button type="submit" class="local-owner__button local-owner__button--primary" data-testid="local-owner-submit" [disabled]="submitting()">
+        {{ submitting() ? 'Working…' : bootstrap() ? 'Create owner' : 'Sign in' }}
+      </button>
+      @if (!startOpen()) {
+        <button type="button" class="local-owner__button local-owner__button--ghost" data-testid="local-owner-cancel" (click)="opened.set(false)">Cancel</button>
+      }
+    </div>
+    @if (error(); as message) { <p class="local-owner__error" role="alert" data-testid="local-owner-error">{{ message }}</p> }
+  </form>
+}

@@ -48,7 +48,7 @@ public static partial class RemoteCommitAttributionGuard
     // name but the fenced result SHA the caller already verified against the
     // branch tip (InspectRemoteDeliveryCommitRange), so the task-key suffix
     // rule must not apply to them - it rejected EVERY envelope delivery and
-    // left canonical remote cards without attributed commits ("kein Branch"
+    // left canonical remote cards without attributed commits ("No branch"
     // on reviewed cards, AGT-2434/AGT-2445).
     [GeneratedRegex(@"(^|/)results/run_[0-9a-f]{32}/(?:fence-[1-9][0-9]*/)?[0-9a-f]{40}$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
@@ -68,7 +68,9 @@ public static partial class RemoteCommitAttributionGuard
         string deliveryBranch,
         IReadOnlyList<GitCommitInfo> commits,
         string? repository = null,
-        IReadOnlyCollection<string>? referencedKeys = null)
+        IReadOnlyCollection<string>? referencedKeys = null,
+        IReadOnlyCollection<TaskCommitInfo>? previousCommits = null,
+        Func<string, bool>? mergeParentOnIntegration = null)
     {
         var expected = taskKey.Trim();
         var normalizedBranch = TaskIntegrationBranch.Name(deliveryBranch);
@@ -85,9 +87,33 @@ public static partial class RemoteCommitAttributionGuard
                 $"Remote commit attribution rejected: branch '{deliveryBranch}' does not belong to task '{expected}'.");
         }
 
+        // A continuation may add only integration merges. Its earlier task
+        // commits remain in the fenced range, but must still be task-owned.
+        // Check the actual second parents, never a merge's editable subject.
+        var previousShas = previousCommits?.Select(commit => commit.Sha)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        var newCommits = commits.Where(commit => !previousShas.Contains(commit.Sha)).ToList();
+        var mergeOnlyContinuation = previousShas.Count > 0 && newCommits.Count > 0
+            && newCommits.All(commit => commit.IsMerge);
+        if (mergeOnlyContinuation)
+        {
+            var missing = commits.Where(commit => !commit.IsMerge
+                && !IsOwnedFallbackCommit(commit, expected)
+                && !TaskKeyPattern().Matches(commit.Subject).Cast<Match>().Any(match =>
+                    string.Equals(match.Value, expected, StringComparison.OrdinalIgnoreCase)))
+                .Select(commit => $"{commit.ShortSha} ({commit.Subject})").ToList();
+            missing.AddRange(newCommits.Where(commit => commit.ParentShas.Count < 2
+                    || mergeParentOnIntegration is null
+                    || commit.ParentShas.Skip(1).Any(parent => !mergeParentOnIntegration(parent)))
+                .Select(commit => $"{commit.ShortSha} ({commit.Subject}; merge parent is not on the integration branch)"));
+            if (missing.Count > 0)
+                return Rejected($"Remote commit attribution rejected for '{expected}': commits lacking task attribution: {string.Join(", ", missing)}. The next round must publish task-owned commits without merging develop itself.");
+        }
+
         foreach (var commit in commits)
         {
             if (RunnerSalvageCommit.IsTeardownFor(commit.Body, expected)) continue;
+            if (mergeOnlyContinuation && commit.IsMerge) continue;
             if (ForeignKeyInSubject(commit.Subject, expected, referencedKeys) is { } foreign)
             {
                 return Rejected(
