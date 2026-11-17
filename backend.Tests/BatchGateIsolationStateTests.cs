@@ -160,6 +160,82 @@ public sealed class BatchGateIsolationStateTests : IDisposable
         Assert.Equal(Now.AddMinutes(1), ended.GetProperty("phaseAtUtc").GetDateTimeOffset());
     }
 
+    [Fact]
+    public void Red_batch_without_a_flight_names_the_planner_and_no_moving_deadline()
+    {
+        var parent = CloseParent();
+        foreach (var member in parent.Members.Take(2))
+            _store.Enqueue(new BatchGatePendingRecord("review-" + member.TaskKey, member, "/repo", null,
+                "/job", "linear", "default", Now));
+
+        var first = Single(State(Now.AddMinutes(1)));
+        var later = Single(State(Now.AddMinutes(2)));
+
+        var next = first.GetProperty("nextAction");
+        Assert.Equal("planner", next.GetProperty("actor").GetString());
+        Assert.Contains("next tick", next.GetProperty("action").GetString());
+        Assert.Equal(JsonValueKind.Null, next.GetProperty("dueAtUtc").ValueKind);
+        Assert.Equal(next.GetRawText(), later.GetProperty("nextAction").GetRawText());
+        Assert.True(first.GetProperty("isolationPending").GetBoolean());
+        Assert.Equal(["task-0", "task-1"], first.GetProperty("heldTaskKeys").EnumerateArray()
+            .Select(item => item.GetString()));
+    }
+
+    [Fact]
+    public void Red_batch_under_live_isolation_names_the_planner()
+    {
+        var parent = CloseParent();
+        var batch = Single(JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true), now: Now,
+            activeIsolationFlights: new HashSet<string> { parent.BatchId }),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        var next = batch.GetProperty("nextAction");
+        Assert.Equal("planner", next.GetProperty("actor").GetString());
+        Assert.Equal(JsonValueKind.Null, next.GetProperty("dueAtUtc").ValueKind);
+    }
+
+    [Fact]
+    public void Isolated_red_batch_hands_the_proven_red_cards_to_the_owner()
+    {
+        var parent = CloseParent();
+        foreach (var member in parent.Members)
+            _store.RecordIsolationFinding(new BatchGateIsolationFinding("project", parent.BatchId,
+                member.TaskKey, "run-1", Base, Base, member.TaskKey == "task-2" ? "proven-red" : "proven-green",
+                "", Now));
+
+        var batch = Single(State());
+
+        var next = batch.GetProperty("nextAction");
+        Assert.Equal("owner", next.GetProperty("actor").GetString());
+        Assert.Equal(["task-2"], next.GetProperty("taskKeys").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(JsonValueKind.Null, next.GetProperty("dueAtUtc").ValueKind);
+        Assert.Empty(batch.GetProperty("heldTaskKeys").EnumerateArray());
+        Assert.False(batch.GetProperty("isolationPending").GetBoolean());
+    }
+
+    [Fact]
+    public void Isolated_red_batch_without_a_proven_red_member_names_no_actor()
+    {
+        var parent = CloseParent();
+        foreach (var member in parent.Members)
+            _store.RecordIsolationFinding(new BatchGateIsolationFinding("project", parent.BatchId,
+                member.TaskKey, "run-1", Base, Base, "superseded", "", Now));
+
+        var next = Single(State()).GetProperty("nextAction");
+
+        Assert.Equal("none", next.GetProperty("actor").GetString());
+        Assert.Contains("holds no cards", next.GetProperty("action").GetString());
+    }
+
+    private static JsonElement Single(JsonElement state)
+        => Assert.Single(state.GetProperty("batches").EnumerateArray());
+
+    private JsonElement State(DateTimeOffset at)
+        => JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true), now: at),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
     private JsonElement State()
         => JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
             _store, "project", new BatchGateFormationOptions(Enabled: true), now: Now),

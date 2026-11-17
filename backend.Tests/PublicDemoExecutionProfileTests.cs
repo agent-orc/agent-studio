@@ -235,7 +235,10 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // three execute model work through runner hosts and receive that denial.
         // AGT-3877 adds an owner-confirmed managed database deletion on Start.
         // Provisioning runs through the existing run-target claim and report routes.
-        Assert.Equal(162, routes.Count);
+        // AGT-3878 adds managed database operations (backup, verification restore,
+        // restore) on Start and the Owner's approve and reject of a production
+        // restore on Continue.
+        Assert.Equal(165, routes.Count);
         foreach (var (routePath, path) in new[]
         {
             ("/api/tasks/{jobId}/content-review", ExecutionAdmissionPath.Review),
@@ -272,6 +275,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/deploy/gate-releases", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/environments/{environmentId}/run-target-removal/confirm", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/environments/{environmentId}/databases/{name}/deletion", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/environments/{environmentId}/databases/{name}/operations", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/environments/{environmentId}/databases/{name}/operations/{operationId}/approve", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/environments/{environmentId}/databases/{name}/operations/{operationId}/reject", ExecutionAdmissionPath.Continue),
             ("/api/deploy/jobs/{project}/{jobId}/log", ExecutionAdmissionPath.PostStep),
             ("/api/deploy/jobs/{project}/{jobId}/renew", ExecutionAdmissionPath.PostStep),
             ("/api/projects/{projectName}/deploy/releases/{releaseId}/deployments", ExecutionAdmissionPath.Start),
@@ -347,8 +353,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 14,
-                [ExecutionAdmissionPath.Start] = 37,
-                [ExecutionAdmissionPath.Continue] = 37,
+                [ExecutionAdmissionPath.Start] = 38,
+                [ExecutionAdmissionPath.Continue] = 39,
                 [ExecutionAdmissionPath.Review] = 10,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 32,

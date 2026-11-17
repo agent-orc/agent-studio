@@ -105,7 +105,7 @@
       </div>
     }
     <!-- AGT-3867: every refused acceptance offers the board's next steps here. -->
-    <app-acceptance-next-steps [job]="job()" [contentReview]="contentReview()" />
+    <app-acceptance-next-steps [job]="job()" [contentReview]="contentReview()" [otherGaps]="otherGaps()" />
   </section>
   <app-integration-dead-end
     [status]="job().integration"

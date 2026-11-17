@@ -49,6 +49,36 @@ public static partial class RunTargetNames
 
     public static bool IsDatabaseName(string? value) => value is not null && DatabaseName().IsMatch(value);
 
+    [GeneratedRegex(@"\A[0-9]{8}T[0-9]{6}Z-(?:scheduled|manual|pre-restore)\z")]
+    private static partial Regex BackupId();
+
+    /// <summary>
+    /// Where the environment's backup directory appears inside its database
+    /// containers (AGT-3878). It is a host directory outside every database
+    /// volume, so deleting or corrupting a volume leaves the dumps alone.
+    /// </summary>
+    public const string BackupMount = "/backups";
+
+    /// <summary>A dump id the host generated: its UTC time and kind, for example <c>20261116T020000Z-scheduled</c>.</summary>
+    public static bool IsBackupId(string? value) => value is not null && BackupId().IsMatch(value);
+
+    public static string NewBackupId(DateTime at, string kind)
+        => at.ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture) + "-" + kind;
+
+    /// <summary>Host directory that holds the dumps of every database of one environment; one subdirectory per database.</summary>
+    public static string BackupDirectory(string backupRoot, string appKey) => Path.Combine(backupRoot, appKey);
+
+    /// <summary>Path of a dump inside the database containers of the environment.</summary>
+    public static string BackupFile(string database, string backupId) => $"{BackupMount}/{database}/{backupId}.dump";
+
+    /// <summary>The throwaway container that restores a dump to prove it is readable; it has no network.</summary>
+    public static string VerifyContainer(string databaseKey) => "rt-verify-" + Hash(databaseKey, 16);
+
+    /// <summary>A database name that is free in the instance while a restore loads data next to the live database.</summary>
+    public static string RestoreStaging(string database, string operationId) => $"{database}_restore_{Hash(operationId, 8)}";
+
+    public static string RestoreRetired(string database, string operationId) => $"{database}_replaced_{Hash(operationId, 8)}";
+
     /// <summary>
     /// The network an environment's databases share with its app containers.
     /// The edge never joins it, so public traffic has no route to a database,
