@@ -40,7 +40,7 @@ interface DeployMocks {
   pipelineDefinition: Answer;
   health?: Answer;
   /** POST approve, reject, or cancel; records each call. */
-  act?: (action: string, deploymentId: string, body?: unknown) => Answer;
+  act?: (action: string, deploymentId: string, body?: unknown, csrf?: string) => Answer;
 }
 
 const json = (body: unknown, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -166,7 +166,7 @@ async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false)
   await page.route(new RegExp(`${DEPLOY}/deployments/[^/]+/(approve|reject|cancel|intervention)$`), route => {
     const [id, action] = route.request().url().split('/').slice(-2);
     return answer(route, route.request().method() === 'POST' && deploy.act
-      ? deploy.act(action, id, route.request().postDataJSON()) : MISSING);
+      ? deploy.act(action, id, route.request().postDataJSON(), route.request().headers()['x-csrf-token']) : MISSING);
   });
   await page.route(`**/api/projects/${PROJECT}/pipeline-definition`, route => answer(route, deploy.pipelineDefinition));
 }
@@ -197,6 +197,50 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('persists signed-in cookies across a browser restart and approves Production', async ({ browser, baseURL }) => {
+    const first = await browser.newContext({ baseURL });
+    const signInPage = await first.newPage();
+    await openDeploy(signInPage, fullMocks());
+    await signInPage.route('**/api/auth/login', route => route.fulfill({
+      ...json({ authenticated: true, csrfToken: 'restart-proof' }),
+      headers: { 'Set-Cookie': 'agentstudio-csrf=restart-proof; Path=/; Max-Age=604800; SameSite=Strict' },
+    }));
+    const loginStatus = await signInPage.evaluate(async () => (await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'owner', password: 'test-password' }),
+    })).status);
+    expect(loginStatus).toBe(200);
+    await first.addCookies([{ name: 'agentstudio-session', value: 'owner-session', url: baseURL!,
+      expires: Math.floor(Date.now() / 1000) + 604800, httpOnly: true, sameSite: 'Strict' }]);
+    const stored = await first.storageState();
+    expect(stored.cookies.find(cookie => cookie.name === 'agentstudio-session')?.expires).toBeGreaterThan(0);
+    expect(stored.cookies.find(cookie => cookie.name === 'agentstudio-csrf')?.expires).toBeGreaterThan(0);
+    await first.close();
+
+    let approved = false;
+    const restarted = await browser.newContext({ baseURL, storageState: stored });
+    try {
+      const page = await restarted.newPage();
+      let deployments = deployDeploymentsFixture();
+      const mocks = fullMocks({ act: (action, id, _body, csrf) => {
+        if (action !== 'approve') return MISSING;
+        approved = csrf === 'restart-proof';
+        if (!approved) return { status: 401, body: { error: 'Sign in again to approve.' } };
+        deployments = deployments.map(run => run.id === id ? { ...run, state: 'queued', approvedBy: 'owner' } : run);
+        return deployments.find(run => run.id === id);
+      } });
+      Object.defineProperty(mocks, 'deployments', { get: () => deployments });
+      await openDeploy(page, mocks);
+      await page.getByTestId('deploy-tab-history').click();
+      await page.getByTestId('deploy-run-open-run-c-production').click();
+      await page.getByTestId('deploy-run-approve').click();
+      await expect(page.getByTestId('deploy-run-action-error')).toHaveCount(0);
+      await expect(page.getByTestId('deploy-run-outcome')).toHaveText('Queued');
+      expect(approved).toBe(true);
+    } finally {
+      await restarted.close();
+    }
+  });
   test('URL project without checkout shows one Deploy state and stops checkout-dependent reads', async ({ page }) => {
     let reads = 0;
     page.on('request', request => {

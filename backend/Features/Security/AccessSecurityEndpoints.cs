@@ -525,14 +525,14 @@ public static class AccessSecurityEndpoints
     {
         // Local HTTP needs a fallback cookie name. Networked sessions always
         // use the Secure __Host- name, even if a proxy failed to mark HTTPS.
-        var https = context.Request.IsHttps
-            || SecurityProfiles.IsNetworked(context.RequestServices.GetRequiredService<IConfiguration>());
+        var configuration = context.RequestServices.GetRequiredService<IConfiguration>();
+        var https = context.Request.IsHttps || SecurityProfiles.IsNetworked(configuration);
         context.Response.Cookies.Append(
             https ? AccessSecurityStore.SessionCookieName : AccessSecurityStore.InsecureSessionCookieName,
-            token, SessionCookieOptions(https, context.RequestServices.GetRequiredService<IConfiguration>()));
+            token, SessionCookieOptions(https, configuration));
         context.Response.Cookies.Append(
             https ? "__Host-agentstudio-csrf" : "agentstudio-csrf",
-            csrfToken, CsrfCookieOptions(https));
+            csrfToken, CsrfCookieOptions(https, configuration));
         context.Response.Headers.CacheControl = "no-store";
     }
 
@@ -546,12 +546,13 @@ public static class AccessSecurityEndpoints
         MaxAge = configuration is null ? null : TimeSpan.FromMinutes(configuration.GetValue("Security:Session:AbsoluteMinutes", 10080))
     };
 
-    private static CookieOptions CsrfCookieOptions(bool https) => new()
+    private static CookieOptions CsrfCookieOptions(bool https, IConfiguration? configuration = null) => new()
     {
         HttpOnly = false,
         Secure = https,
         SameSite = SameSiteMode.Strict,
         IsEssential = true,
-        Path = "/"
+        Path = "/",
+        MaxAge = configuration is null ? null : TimeSpan.FromMinutes(configuration.GetValue("Security:Session:AbsoluteMinutes", 10080))
     };
 }
