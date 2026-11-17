@@ -40,8 +40,8 @@ import {
   type DeployRunFilter,
   type ArtifactReleaseLookup,
   type ReleaseGateStatus,
-  type SecretReadinessResponse,
 } from '../../state/deploy-area.model';
+import { DeployAreaSecrets, missingSecretsPrompt } from './deploy-area-secrets';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
 
@@ -75,8 +75,6 @@ export class ProjectDeployAreaComponent {
   private artifactReads = new Subscription();
   private mutations = new Subscription();
   private cardReads = new Subscription();
-  private secretReads = new Subscription();
-  private runSecretReads = new Subscription();
   private readGeneration = 0;
   private releaseGeneration = 0;
   private logGeneration = 0;
@@ -121,18 +119,7 @@ export class ProjectDeployAreaComponent {
   readonly actionState = signal<DeployRunActionState>(IDLE);
   readonly selectedRunId = signal<string | null>(null);
   readonly highlightedReleaseId = signal<string | null>(null);
-  /** F14: secrets the next run misses per environment, from the newest release. */
-  readonly secretPanel = signal<DeployPanel<SecretReadinessResponse>>({ status: 'loading' });
-  /** F14: secrets the selected run's release misses, keyed by run so another run's answer never shows. */
-  private readonly runSecretPanel = signal<{ runId: string; panel: DeployPanel<SecretReadinessResponse> } | null>(null);
-  readonly runSecrets = computed(() => {
-    const run = this.selectedRun();
-    const state = this.runSecretPanel();
-    const value = run && state?.runId === run.id ? ready(state.panel) : null;
-    return value?.environments.find(item => item.environmentId === run!.environmentId) ?? null;
-  });
-  /** The environment the binding panel opens on after a Bind action. */
-  readonly secretsEnvironment = signal<string | null>(null);
+  readonly secrets = new DeployAreaSecrets(this.data, this); // F14: secret gaps for the cards and the run drawer
 
   openRelease(id: string): void {
     this.highlightedReleaseId.set(id);
@@ -188,12 +175,7 @@ export class ProjectDeployAreaComponent {
     const fetched = panel ? ready(panel) : null;
     return fetched ? buildDeployRuns([fetched], environmentNames(this.sources()), this.knownReleases()) : [];
   });
-  readonly cards = computed(() => {
-    const secrets = ready(this.secretPanel())?.environments ?? [];
-    return buildEnvironmentCards(this.sources()).map(card => ({
-      ...card, secrets: secrets.find(item => item.environmentId === card.id) ?? null,
-    }));
-  });
+  readonly cards = computed(() => buildEnvironmentCards(this.sources()).map(card => ({ ...card, secrets: this.secrets.forEnvironment(card.id) })));
   /** The overview waits for the AGT-3176 environments, or for AGT-3201 status when those failed. */
   readonly overviewPanel = computed<DeployPanel<unknown>>(() => {
     const environments = this.environmentPanel();
@@ -225,8 +207,6 @@ export class ProjectDeployAreaComponent {
         this.releaseReads.unsubscribe();
         this.logReads.unsubscribe();
         this.cardReads.unsubscribe();
-        this.secretReads.unsubscribe();
-        this.runSecretReads.unsubscribe();
         this.runFetch.unsubscribe();
         this.artifactReads.unsubscribe();
         this.artifactReads = new Subscription();
@@ -261,12 +241,6 @@ export class ProjectDeployAreaComponent {
   }
 
   show(view: DeployView): void {
-    // A binding saved on the secrets view changes what the cards and the drawer list.
-    if (this.view() === 'secrets' && view !== 'secrets' && !this.checkoutMissing()) {
-      this.loadSecrets(this.projectName());
-      const runId = this.selectedRunId();
-      if (runId) this.loadRunSecrets(runId);
-    }
     if (!this.checkoutMissing() && view !== 'history' && this.historyFilter() !== ALL_DEPLOY_RUNS) {
       this.historyFilter.set(ALL_DEPLOY_RUNS);
       this.historyOffset.set(0);
@@ -274,12 +248,6 @@ export class ProjectDeployAreaComponent {
     }
     this.view.set(view);
     this.viewChange.emit(view);
-  }
-
-  /** F14: a Bind action opens the binding panel on the environment that needs it. */
-  openSecrets(environmentId: string): void {
-    this.secretsEnvironment.set(environmentId);
-    this.show('secrets');
   }
 
   refresh(): void { if (!this.checkoutMissing()) this.load(this.projectName(), false); }
@@ -295,14 +263,11 @@ export class ProjectDeployAreaComponent {
     this.actionState.set({ busy: this.mutationAction, error: null });
     this.fetchRunIfUnknown(runId);
     this.loadLog(runId);
-    this.loadRunSecrets(runId);
   }
 
   closeRun(): void {
     this.logReads.unsubscribe();
     this.runFetch.unsubscribe();
-    this.runSecretReads.unsubscribe();
-    this.runSecretPanel.set(null);
     this.logGeneration++;
     this.selectedRunId.set(null);
     this.fetchedRun.set(null);
@@ -319,27 +284,20 @@ export class ProjectDeployAreaComponent {
     const production = ready(this.statusPanel())?.some(item => item.environment.id === run.environmentId && item.environment.kind === 'production')
       || ready(this.environmentPanel())?.environments.some(item => item.declaration.id === run.environmentId && item.declaration.kind === 'production')
       || run.environmentName.toLowerCase() === 'production';
-    // F14: a Production approval without its secret bindings is confirmed with the names, or not sent.
-    const missingSecrets = action === 'approve' && this.runSecrets()?.requiresApproval
-      ? this.runSecrets()!.missing.map(item => item.name) : [];
     if ((action === 'cancel' && run.state === 'running') || action === 'abort' ||
-      (production && (action === 'approve' || action === 'reject')) || missingSecrets.length) {
+      (production && (action === 'approve' || action === 'reject')) || this.secrets.approvalGap(action).length) {
       // The server lets only a signed-in Owner or Maintainer decide production; ask for the account first.
       if (production && this.localOwner.missing() && (action === 'approve' || action === 'reject'))
         return this.localOwner.run('Production approval needs the owner account.', () => this.act(action, reason));
       const verb = action === 'cancel' || action === 'abort' ? 'Abort' : action === 'approve' ? 'Approve' : 'Reject';
-      const gap = missingSecrets.length
-        ? ` ${missingSecrets.length} secret ${missingSecrets.length === 1 ? 'binding is' : 'bindings are'} missing: ${missingSecrets.join(', ')}. The deploy host will refuse the job until they are bound.`
-        : '';
-      if (!window.confirm(`${verb} ${run.environmentName} run ${run.id}?${gap}`)) return;
+      if (!window.confirm(`${verb} ${run.environmentName} run ${run.id}?${missingSecretsPrompt(this.secrets.approvalGap(action))}`)) return;
     }
     const project = this.projectName();
     this.mutationAction = action;
     this.runReads.unsubscribe();
     this.readGeneration++;
     this.actionState.set({ busy: action, error: null });
-    this.mutations.add(this.data.act(project, runId, action, reason,
-      { confirmMissingSecrets: missingSecrets.length > 0 }).subscribe({
+    this.mutations.add(this.data.act(project, runId, action, reason, { confirmMissingSecrets: this.secrets.approvalGap(action).length > 0 }).subscribe({
       next: () => {
         this.mutationAction = null;
         this.actionState.set(IDLE);
@@ -353,8 +311,6 @@ export class ProjectDeployAreaComponent {
           ? { busy: null, error: serverMessage(error) ?? 'The deploy service did not accept the request.' } : IDLE);
         this.reloadRuns(project, true);
         this.refetchRun(runId);
-        // A refusal for missing bindings may name secrets the drawer did not know yet.
-        if (this.selectedRunId() === runId) this.loadRunSecrets(runId);
       },
     }));
   }
@@ -375,11 +331,7 @@ export class ProjectDeployAreaComponent {
       this.releaseOffset.set(0);
       this.releaseTotal.set(0);
       this.artifactReleases.set(new Map());
-      this.secretsEnvironment.set(null);
-      this.runSecretReads.unsubscribe();
-      this.runSecretPanel.set(null);
-      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel,
-        this.releaseGatePanel, this.secretPanel] as const)
+      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel, this.releaseGatePanel] as const)
         (target as WritableSignal<DeployPanel<unknown>>).set({ status: 'loading' });
     } else {
       // Refresh retries failed lookups; resolved release records do not change.
@@ -393,27 +345,7 @@ export class ProjectDeployAreaComponent {
     this.subscriptions.add(this.data.health(projectName).subscribe(panel => this.healthPanel.set(panel)));
     this.subscriptions.add(this.data.releaseGate(projectName).subscribe(panel => this.releaseGatePanel.set(panel)));
     this.reloadRuns(projectName, false);
-    this.loadSecrets(projectName);
-  }
-
-  private loadSecrets(projectName: string): void {
-    this.secretReads.unsubscribe();
-    this.secretReads = this.data.secretReadiness(projectName)
-      .subscribe(panel => { if (projectName === this.projectName()) this.into(this.secretPanel, true)(panel); });
-  }
-
-  private loadRunSecrets(runId: string): void {
-    const project = this.projectName();
-    const releaseId = this.selectedRun()?.releaseId;
-    this.runSecretReads.unsubscribe();
-    if (!releaseId) {
-      this.runSecretPanel.set(null);
-      return;
-    }
-    this.runSecretReads = this.data.secretReadiness(project, releaseId).subscribe(panel => {
-      if (this.selectedRunId() !== runId || project !== this.projectName()) return;
-      if (panel.status !== 'loading' || this.runSecretPanel()?.runId !== runId) this.runSecretPanel.set({ runId, panel });
-    });
+    this.secrets.load(projectName, resetSelection);
   }
 
   /** Status and runs change together after an approval, rejection, or cancellation. */
@@ -503,7 +435,6 @@ export class ProjectDeployAreaComponent {
     this.runFetch = this.data.deployment(project, runId).subscribe(panel => {
       if (this.selectedRunId() !== runId || project !== this.projectName()) return;
       if (panel.status !== 'loading' || this.fetchedRun()?.status !== 'ready') this.fetchedRun.set(panel);
-      if (panel.status === 'ready' && this.runSecretPanel()?.runId !== runId) this.loadRunSecrets(runId);
     });
   }
 

@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { Subscription } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
 import { SecretsService, type SecretEnvironment } from '../secrets.service';
 import { SecretsPanelComponent } from '../secrets-panel/secrets-panel.component';
@@ -55,11 +56,13 @@ export class ProjectSecretsPageComponent {
     effect(onCleanup => {
       const project = this.projectName();
       this.chosen = false;
-      const subscription = this.secrets.environments(project).subscribe(items => {
+      // Created first: an environments answer may arrive synchronously and attach the attention probe.
+      const subscription = new Subscription();
+      subscription.add(this.secrets.environments(project).subscribe(items => {
         const environments = [{ id: 'preview', kind: 'preview' }, ...items.filter(item => item.id !== 'preview')];
         this.environments.set(environments);
         untracked(() => this.openOnAttention(project, environments, subscription));
-      });
+      }));
       onCleanup(() => subscription.unsubscribe());
     });
     effect(() => this.refresh(this.projectName(), this.environment()));
@@ -135,7 +138,7 @@ export class ProjectSecretsPageComponent {
    * environment whose next deploy misses a secret. Preview stays selected
    * when every environment is ready or the check is unavailable.
    */
-  private openOnAttention(project: string, environments: readonly SecretEnvironment[], owner: { add(teardown: () => void): void }): void {
+  private openOnAttention(project: string, environments: readonly SecretEnvironment[], owner: Subscription): void {
     if (this.chosen) return;
     const known = (id: string | null | undefined): id is string => !!id && environments.some(item => item.id === id);
     const wanted = this.initialEnvironment();
@@ -152,7 +155,7 @@ export class ProjectSecretsPageComponent {
       },
       error: () => undefined,
     });
-    owner.add(() => probe.unsubscribe());
+    owner.add(probe);
   }
 
   private path(project: string, environment: string): string {
