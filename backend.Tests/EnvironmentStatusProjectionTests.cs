@@ -73,6 +73,30 @@ public sealed class EnvironmentStatusProjectionTests
     }
 
     [Fact]
+    public void FailedDeployAndFailedRollback_LeaveRunningReleaseUncertainUntilAHostReportConfirmsIt()
+    {
+        var old = Run("old", R1, Production, DeploymentStates.Succeeded, 1);
+        var failed = Run("failed", R2, Production, DeploymentStates.Failed, 2) with { FailedStep = DeployStepNames.Health };
+        var rollback = Run("rollback", R1, Production, DeploymentStates.Failed, 3) with
+        { Trigger = DeploymentTriggers.Rollback, FailedStep = DeployStepNames.Health };
+        var runs = new[] { old, failed, rollback };
+        var status = EnvironmentStatusProjection.Project([Production], [R1, R2], runs,
+            new Dictionary<string, string> { [Production.Id] = "failed" })[0];
+
+        Assert.True(status.ReleaseUncertain);
+        Assert.Equal(R1.Id, status.CurrentRelease?.Id); // Lifecycle baseline, not a claim about the host.
+        Assert.Equal(rollback.Id, status.CurrentDeployment?.Id);
+        var queuedAfterFailure = EnvironmentStatusProjection.Project([Production], [R1, R2],
+            runs.Append(Run("next", R2, Production, DeploymentStates.AwaitingApproval, 4)).ToArray(),
+            new Dictionary<string, string> { [Production.Id] = "failed" })[0];
+        Assert.True(queuedAfterFailure.ReleaseUncertain);
+        var confirmed = EnvironmentStatusProjection.Project([Production], [R1, R2], runs,
+            new Dictionary<string, string> { [Production.Id] = "healthy" },
+            new Dictionary<string, DateTime> { [Production.Id] = T0.AddHours(3).AddMinutes(6) })[0];
+        Assert.False(confirmed.ReleaseUncertain);
+    }
+
+    [Fact]
     public void PendingInterventionRemainsVisibleAfterANewerRunStarts()
     {
         var waiting = Run("older", R1, Staging, DeploymentStates.WaitingForIntervention, 1) with
