@@ -5,9 +5,11 @@ namespace AgentStudio.Tokens;
 /// <summary>
 /// Read compatibility for immutable legacy bus rows written before OpenAI
 /// input semantics were recorded. Durable task and pipeline records are
-/// already rewritten by the completed one-time migration; bus JSONL stays
+/// normally rewritten by the completed one-time migration; bus JSONL stays
 /// append-only and is normalized as it enters every aggregate. Legacy receipt
 /// calls get the same treatment in <see cref="ProjectTokenReceiptReader"/>.
+/// Pipeline step records that remain unnormalized are handled by
+/// <see cref="AgentStudio.Pipeline.PipelineStoredUsageNormalization"/>.
 /// </summary>
 internal static class StoredUsageNormalization
 {
