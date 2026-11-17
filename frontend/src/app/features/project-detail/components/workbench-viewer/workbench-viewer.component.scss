@@ -50,6 +50,14 @@
   outline-offset: 2px;
 }
 
+.workbench-viewer__documentation-blocked {
+  margin: 0;
+  padding: var(--studio-spacing-2) var(--studio-spacing-4);
+  border-bottom: 1px solid var(--studio-border);
+  color: var(--studio-fg-muted);
+  font-size: 0.72rem;
+}
+
 .workbench-viewer__documentation-error {
   margin: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-4);

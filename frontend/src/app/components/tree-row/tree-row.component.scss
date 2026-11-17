@@ -108,6 +108,10 @@
     flex-shrink: 0;
   }
 
+  &__glyph-char::before {
+    content: attr(data-glyph);
+  }
+
   &__glyph-overlay {
     position: absolute;
     right: -3px;

@@ -2380,24 +2380,32 @@ public partial class GitService
 
     public string? ResolveRepoRootForWatchPath(string? watchPath)
     {
-        var entries = _scanner.GetWatchPaths();
-        WatchPathEntry? entry = null;
-        if (!string.IsNullOrWhiteSpace(watchPath))
-        {
-            entry = entries.FirstOrDefault(e =>
-                string.Equals(e.Path, watchPath, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(e.RootPath, watchPath, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(e.RepositoryPath, watchPath, StringComparison.OrdinalIgnoreCase));
-        }
-        else if (entries.Count == 1)
-        {
-            entry = entries[0];
-        }
-
+        var entry = FindWatchPathEntry(watchPath);
         if (entry == null) return null;
         var configured = ResolveConfiguredRepositoryPath(entry);
         if (string.IsNullOrWhiteSpace(configured)) return null;
         return ResolveGitToplevel(configured) ?? configured;
+    }
+
+    /// <summary>
+    /// True when the project of <paramref name="watchPath"/> names a server
+    /// checkout (repository or root path). Reads configuration only and never
+    /// starts Git. A project without one is never indexed by the Git state
+    /// index, so its cards carry no Git-derived integration verdict (AGT-3810).
+    /// </summary>
+    public bool HasConfiguredRepository(string? watchPath)
+        => FindWatchPathEntry(watchPath) is { } entry
+           && !string.IsNullOrWhiteSpace(ResolveConfiguredRepositoryPath(entry));
+
+    private WatchPathEntry? FindWatchPathEntry(string? watchPath)
+    {
+        var entries = _scanner.GetWatchPaths();
+        if (string.IsNullOrWhiteSpace(watchPath))
+            return entries.Count == 1 ? entries[0] : null;
+        return entries.FirstOrDefault(e =>
+            string.Equals(e.Path, watchPath, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(e.RootPath, watchPath, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(e.RepositoryPath, watchPath, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

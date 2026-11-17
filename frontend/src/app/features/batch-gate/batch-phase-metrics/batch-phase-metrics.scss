@@ -5,3 +5,4 @@
 .phase-metrics th, .phase-metrics td { padding: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); text-align: right; white-space: nowrap; }
 .phase-metrics th:first-child { text-align: left; white-space: normal; }
 .phase-metrics p { margin: var(--studio-spacing-2) 0 0; color: var(--studio-fg-muted); }
+.phase-metrics__reruns { font-variant-numeric: tabular-nums; }

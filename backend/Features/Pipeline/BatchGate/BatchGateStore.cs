@@ -655,8 +655,11 @@ public sealed partial class BatchGateStore
             var projection = FailureProjection(project, now: now);
             projection.Failures.RemoveAll(failure => failure.AtUtc < now.AddDays(-90));
             projection.UnreadableFacts.RemoveAll(fact => fact.CompletedAtUtc < now.AddDays(-90));
+            var suspects = ListFlakySuspects(project).Where(view => view.Active)
+                .Select(view => view.Mark.BatchId + "/" + view.Mark.RedRunId)
+                .ToHashSet(StringComparer.Ordinal);
             return new BatchTestFailureReport(project, windowDays,
-                BatchGateFailureRanking.Rank(projection.Failures, now, windowDays),
+                BatchGateFailureRanking.Rank(projection.Failures, now, windowDays, suspects),
                 projection.UnreadableFacts.Count(fact => fact.CompletedAtUtc >= now.AddDays(-windowDays)
                     && fact.CompletedAtUtc <= now));
         }

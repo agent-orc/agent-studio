@@ -1,0 +1,8 @@
+<nav class="studio-skip-links" aria-label="Skip links" data-testid="studio-skip-links">
+  <a class="studio-skip-link" href="#studio-main" data-testid="studio-skip-to-main"
+     (click)="skipTo($event, main())">Skip to main content</a>
+  @if (needsYouAvailable()) {
+    <a class="studio-skip-link" href="#studio-needs-you" data-testid="studio-skip-to-needs-you"
+       (click)="skipToNeedsYou($event)">Skip to Needs you</a>
+  }
+</nav>

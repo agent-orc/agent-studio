@@ -3,11 +3,12 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { formatRunningLabel, StatusBarComponent } from './status-bar';
 import { TaskService } from '../../../../services/task.service';
 import type { TaskInfo } from '../../../../models/task.model';
 import { RemoteHostsService, type RemoteHost } from '../../../remote-hosts';
+import { UsageCockpitService } from '../../../usage-cockpit';
 
 describe('formatRunningLabel', () => {
   it.each([
@@ -281,5 +282,37 @@ describe('StatusBarComponent review entry', () => {
 
     expect(fixture.nativeElement.querySelector('[data-testid="status-bar-review"]')?.textContent)
       .toContain('review idle');
+  });
+});
+
+describe('StatusBarComponent usage chip name (AGT-3835)', () => {
+  it('starts each CLI chip name with its visible text', async () => {
+    const snapshot = signal<unknown>({
+      timeZone: 'UTC', runs: [], cost: null,
+      clis: [{
+        cliId: 'claude', primary: true, plan: 'Max', source: '/status',
+        windows: [
+          { id: 'claude/weekly', label: 'Weekly', usedPct: 35, resetAtUtc: null, resetLabel: null, suspiciousReason: null },
+          { id: 'claude/5-hour', label: '5-hour', usedPct: 24, resetAtUtc: null, resetLabel: null, suspiciousReason: null },
+        ],
+        fetchedAt: new Date().toISOString(), ttlSeconds: 600,
+        suspicious: false, suspiciousReason: null, probeFailedAt: null, limited: false, limitedReason: null,
+        availability: { status: 'complete', observedAt: new Date().toISOString(), ttlSeconds: 600 },
+      }],
+    });
+    await TestBed.configureTestingModule({
+      imports: [StatusBarComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([]),
+        { provide: UsageCockpitService, useValue: { snapshot, readFailed: signal(false), connect: () => undefined } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(StatusBarComponent);
+    fixture.detectChanges();
+
+    const chip = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="footer-usage-claude"]')!;
+    const visible = chip.textContent!.replace(/\s+/g, ' ').trim();
+    expect(visible).toBe('Claude WK 35% Session 24%');
+    expect(chip.getAttribute('aria-label')!.startsWith(`${visible}, Claude, weekly 35 percent used`)).toBe(true);
   });
 });

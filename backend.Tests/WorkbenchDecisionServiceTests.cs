@@ -400,6 +400,66 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
     }
 
     [Fact]
+    public void Confirm_ReworkOnAnotherRouteRecordsTheCardsPreviousRoute()
+    {
+        // AGT-3838: confirming a Claude route for a Codex concept card is a
+        // visible change; the receipt keeps where the card came from.
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+
+        var result = decisions.Confirm("Project", "routing-policy", ReworkConfirm(
+            catalogue.Read("Project", "routing-policy")!.Fingerprint, "claude", "claude-opus-5", "high"),
+            revisionTaskKey: "PRJ-12",
+            revisionRoute: new WorkbenchAgentRoute("codex", "gpt-5-codex", null));
+
+        Assert.True(result.Success, result.Error);
+        using var written = JsonDocument.Parse(File.ReadAllText(Descriptor("routing-policy")));
+        var receipt = written.RootElement.GetProperty("decision");
+        Assert.Equal("claude", receipt.GetProperty("cliType").GetString());
+        Assert.Equal("claude-opus-5", receipt.GetProperty("model").GetString());
+        var from = receipt.GetProperty("routeChangedFrom");
+        Assert.Equal("codex", from.GetProperty("cliType").GetString());
+        Assert.Equal("gpt-5-codex", from.GetProperty("model").GetString());
+        Assert.False(from.TryGetProperty("thinkingLevel", out _));
+
+        var item = Assert.Single(catalogue.List("Project", includeHistory: true)!.Items);
+        Assert.True(item.Valid, item.Error);
+        Assert.Equal(new WorkbenchAgentRoute("codex", "gpt-5-codex", null), item.Decision!.RouteChangedFrom);
+    }
+
+    [Fact]
+    public void Confirm_ReworkOnTheCardsOwnRouteRecordsNoRouteChange()
+    {
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+
+        var result = decisions.Confirm("Project", "routing-policy", ReworkConfirm(
+            catalogue.Read("Project", "routing-policy")!.Fingerprint, "codex", "gpt-5-codex", null),
+            revisionTaskKey: "PRJ-12",
+            revisionRoute: new WorkbenchAgentRoute("codex", "gpt-5-codex", "medium"));
+
+        Assert.True(result.Success, result.Error);
+        using var written = JsonDocument.Parse(File.ReadAllText(Descriptor("routing-policy")));
+        Assert.False(written.RootElement.GetProperty("decision").TryGetProperty("routeChangedFrom", out _));
+        Assert.Null(Assert.Single(catalogue.List("Project", includeHistory: true)!.Items).Decision!.RouteChangedFrom);
+    }
+
+    private static ConfirmWorkbenchDecisionRequest ReworkConfirm(
+        string? fingerprint, string? cliType, string? model, string? thinkingLevel) => new()
+    {
+        OperationId = "workbench-ui-rework-route",
+        Outcome = "rework",
+        Actor = "Robert",
+        ExpectedFingerprint = fingerprint,
+        Request = "Add a privacy section.",
+        Responses = [],
+        CliType = cliType,
+        Model = model,
+        ThinkingLevel = thinkingLevel,
+        Confirmed = true,
+    };
+
+    [Fact]
     public void Prepare_RefusesAReworkWithNeitherRequestNorComment()
     {
         WriteSchemaTwo("routing-policy");
