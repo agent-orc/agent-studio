@@ -1,29 +1,36 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
-import type { ProjectEnvironments } from '../../../../models/project-overview.model';
-import { TaskService } from '../../../../services/task.service';
+import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { ProjectRunbooksComponent } from '../project-runbooks/project-runbooks';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ProjectOperationsRailComponent } from '../project-operations-rail/project-operations-rail';
+import { EnvironmentStateComponent } from '../environment-state/environment-state';
+import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
+import { DEPLOY_CLOCK, type EnvironmentCardView } from '../../state/deploy-area.model';
 
-type EnvironmentStatus = ProjectEnvironments['environments'][number];
+/** One environment row: its state from the shared projection, and the runbook kind its declaration names. */
+interface EnvironmentRow {
+  state: EnvironmentCardView;
+  runbookKind: 'staging' | 'production' | null;
+}
 
 /** Operations entry: application health per declared environment. */
 @Component({
   selector: 'app-project-environment-overview',
   standalone: true,
-  imports: [ProjectRunbooksComponent, ProjectOperationsRailComponent, StatusIndicatorComponent],
+  imports: [LoadingSurfaceComponent, ProjectRunbooksComponent, ProjectOperationsRailComponent, EnvironmentStateComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-environment-overview.component.html',
   styleUrl: './project-environment-overview.component.scss',
 })
 export class ProjectEnvironmentOverviewComponent {
-  private readonly tasks = inject(TaskService);
+  private readonly data = inject(ProjectDeployDataService);
+  private readonly clock = inject(DEPLOY_CLOCK);
   readonly projectName = input.required<string>();
   readonly heading = input('Operations');
   readonly openDeploy = output<void>();
   readonly openRelease = output<string>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
-  readonly environments = signal<readonly EnvironmentStatus[]>([]);
+  readonly environments = signal<readonly EnvironmentRow[]>([]);
+  readonly now = signal(this.clock());
   readonly loading = signal(true);
   readonly failed = signal(false);
 
@@ -32,30 +39,24 @@ export class ProjectEnvironmentOverviewComponent {
       const projectName = this.projectName();
       this.loading.set(true);
       this.failed.set(false);
-      const subscription = this.tasks.getProjectEnvironments(projectName).subscribe({
-        next: value => {
-          this.environments.set(value.environments);
-          this.loading.set(false);
-        },
-        error: () => {
+      const subscription = this.data.environmentStates(projectName).subscribe(panel => {
+        if (panel.status === 'loading') return;
+        this.now.set(this.clock());
+        if (panel.status === 'ready') {
+          const kinds = new Map(panel.value.environments?.environments.map(item => [item.declaration.id, item.declaration.kind]) ?? []);
+          this.environments.set(panel.value.states.map(state => ({ state, runbookKind: runbookKind(kinds.get(state.id)) })));
+        } else {
           this.environments.set([]);
           this.failed.set(true);
-          this.loading.set(false);
-        },
+        }
+        this.loading.set(false);
       });
       onCleanup(() => subscription.unsubscribe());
     });
   }
+}
 
-  healthTone(health: string): StatusTone {
-    if (health === 'healthy') return 'success';
-    if (health === 'failed') return 'danger';
-    return 'neutral';
-  }
-
-  healthLabel(health: string): string {
-    if (health === 'healthy') return 'Healthy';
-    if (health === 'failed') return 'Failed';
-    return 'Health unknown';
-  }
+function runbookKind(kind: string | undefined): EnvironmentRow['runbookKind'] {
+  if (kind === 'stage') return 'staging';
+  return kind === 'production' ? 'production' : null;
 }

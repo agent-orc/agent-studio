@@ -2,6 +2,22 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { ProjectDeploymentPanelComponent } from './project-deployment-panel.component';
+import { DEPLOY_CLOCK } from '../../state/deploy-area.model';
+import {
+  DEPLOY_FIXTURE_NOW,
+  RELEASE_1,
+  deployEnvironmentsFixture,
+  deployStatusFixture,
+  productionDownHealthFixture,
+} from '../../testing/deploy-fixtures';
+
+/** The deploy status and control-plane health reads of the shared environment projection; 404 means "not on this server". */
+function answerStateSources(http: HttpTestingController, project: string, status?: unknown, health?: unknown): void {
+  const statusRead = http.expectOne(`/api/projects/${project}/deploy/status`);
+  if (status === undefined) statusRead.flush('', { status: 404, statusText: 'Not Found' });
+  else statusRead.flush(status);
+  http.expectOne(`/api/projects/${project}/environments/health`).flush(health ?? { capturedAt: '', probeOrigin: 'test', environments: [] });
+}
 
 describe('ProjectDeploymentPanelComponent', () => {
   it('renders the shared baseline, pending delta, and newest-first history', async () => {
@@ -24,6 +40,7 @@ describe('ProjectDeploymentPanelComponent', () => {
         stageHealthyAt: '2026-10-16T12:00:00Z', status: 'pending', actor: null, expiresAt: '2026-10-17T12:00:00Z' }],
       failureCards: [],
     });
+    answerStateSources(http, 'Demo%20Project');
     http.expectOne('/api/watch-paths').flush([{ name: 'Demo Project', path: 'C:/projects/demo' }]);
     http
       .expectOne('/api/projects/Demo%20Project/deployment/summary')
@@ -60,6 +77,7 @@ describe('ProjectDeploymentPanelComponent', () => {
     expect(approval.request.body).toEqual({ artifact: 'app@sha256:' + 'a'.repeat(64) });
     approval.flush({});
     http.expectOne('/api/projects/Demo%20Project/environments').flush({ project: 'Demo Project', environments: [], promotions: [], failureCards: [] });
+    answerStateSources(http, 'Demo%20Project');
 
     fixture.nativeElement.querySelector('[data-testid="deployment-visible-task"]').click();
     fixture.detectChanges();
@@ -123,5 +141,33 @@ describe('ProjectDeploymentPanelComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-unavailable"]').textContent)
       .toContain('does not belong to this project repository');
+  });
+
+  it('M2: shows Production down from the open incident and the release version, not the last report and raw digest', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDeploymentPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting(), { provide: DEPLOY_CLOCK, useValue: () => DEPLOY_FIXTURE_NOW }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDeploymentPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Website');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    // Every deploy report still says healthy.
+    http.expectOne('/api/projects/Website/environments').flush(deployEnvironmentsFixture());
+    answerStateSources(http, 'Website', deployStatusFixture(), productionDownHealthFixture());
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const production = fixture.nativeElement.querySelector('[data-testid="environment-production"]') as HTMLElement;
+    const health = production.querySelector('[data-testid="environment-state-health"]') as HTMLElement;
+    expect(health.textContent?.trim()).toBe('Down');
+    expect(health.dataset['tone']).toBe('danger');
+    expect(production.querySelector('[data-testid="environment-state-release"]')?.textContent?.replace(/\s+/g, ' ').trim())
+      .toBe(`Release ${RELEASE_1.version} deployed 13 h ago`);
+    expect(production.querySelector('[data-testid="environment-state-digest"]')?.textContent?.trim()).toBe('website@sha256:aaaaaaaaaaaa');
+    expect(production.querySelector('[data-testid="environment-health-state"]')).toBeNull();
+    const staging = fixture.nativeElement.querySelector('[data-testid="environment-stage"] [data-testid="environment-state-health"]') as HTMLElement;
+    expect(staging.textContent?.trim()).toBe('Up');
   });
 });
