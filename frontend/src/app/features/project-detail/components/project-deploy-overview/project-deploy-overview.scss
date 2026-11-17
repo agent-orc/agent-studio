@@ -9,3 +9,34 @@
   grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   gap: var(--studio-spacing-4);
 }
+
+.deploy-overview__declared {
+  @include deploy.panel;
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+
+  p { margin: 0; color: var(--studio-fg-dim); font-size: 0.8rem; }
+  code { font-family: var(--studio-mono); overflow-wrap: anywhere; }
+}
+
+.deploy-overview__declared-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--studio-spacing-2);
+
+  h3 { margin: 0; color: var(--studio-fg-strong); font-size: 1.05rem; font-weight: 600; }
+}
+
+.deploy-overview__actions { margin-top: var(--studio-spacing-3); }
+
+.deploy-overview__button {
+  @include deploy.button;
+  border-color: var(--studio-accent);
+  background: var(--studio-accent);
+  color: var(--studio-on-accent);
+
+}
+
+app-project-deploy-steps-form { margin-top: var(--studio-spacing-3); }

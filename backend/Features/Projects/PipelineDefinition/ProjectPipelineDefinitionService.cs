@@ -15,7 +15,8 @@ public sealed record PipelineDefinitionResponse(
     IReadOnlyList<ProjectDefinitionIssue> Issues,
     string? DefinitionSha256,
     PipelineDiagram? Diagram,
-    bool MigrationAvailable);
+    bool MigrationAvailable,
+    bool DeployStepsAvailable = false);
 
 /// <summary>Dry run of the schema 1 to schema 2 migration. Nothing is written.</summary>
 public sealed record PipelineMigrationResponse(
@@ -122,6 +123,15 @@ public sealed class ProjectPipelineDefinitionService
         if (Repository(projectName) is not { } root)
             return PipelineDefinitionResult<PipelineMigrationConfirmResponse>.Fail("not-found", $"Unknown project '{projectName}'.");
 
+        return Write(projectName, root, "project-definition-schema-2", "chore(project): migrate project.yml to schema 2",
+            () => Propose(projectName, root), request);
+    }
+
+    private PipelineDefinitionResult<PipelineMigrationConfirmResponse> Write(string projectName, string root,
+        string operationId, string commitMessage,
+        Func<(ProjectDefinitionReadResult Read, PipelineMigrationProposal Proposal, ProjectDeployHostRegistry Hosts, bool Readable)> propose,
+        ConfirmPipelineMigrationRequest request)
+    {
         var fullPath = DefinitionPath(root);
         (string Code, string Message)? refusal = null;
         PipelineMigrationProposal? confirmed = null;
@@ -131,13 +141,13 @@ public sealed class ProjectPipelineDefinitionService
             mutation = _mutations.Execute(
             projectName,
             root,
-            "project-definition-schema-2",
-            "chore(project): migrate project.yml to schema 2",
+            operationId,
+            commitMessage,
             [ProjectPreparationPaths.Definition],
             () => File.WriteAllText(fullPath, confirmed!.ProposedYaml, new UTF8Encoding(HasUtf8Bom(fullPath))),
             precondition: () =>
             {
-                var (read, proposal, hosts, _) = Propose(projectName, root);
+                var (read, proposal, hosts, _) = propose();
                 refusal = ConfirmRefusal(root, request, read, proposal, hosts);
                 confirmed = proposal;
                 return refusal?.Message;
@@ -155,12 +165,39 @@ public sealed class ProjectPipelineDefinitionService
                 "write-failed", $"project.yml could not be written: {mutation.Error}");
 
         _logger.LogInformation(
-            "project-definition-migrated project={Project} from={Base} to={Proposal} changed={Changed} sha={Sha} pushQueued={PushQueued}",
-            projectName, request.BaseSha256, confirmed?.ProposalSha256, mutation.Changed, mutation.CommitSha, mutation.PushQueued);
+            "project-definition-written operation={Operation} project={Project} from={Base} to={Proposal} changed={Changed} sha={Sha} pushQueued={PushQueued}",
+            operationId, projectName, request.BaseSha256, confirmed?.ProposalSha256, mutation.Changed, mutation.CommitSha, mutation.PushQueued);
         var (_, hosts, readable) = DeclarationContext(projectName, root);
         var (_, after) = ReadCurrent(root, hosts, readable);
         return PipelineDefinitionResult<PipelineMigrationConfirmResponse>.Ok(new(
             mutation.Changed, mutation.CommitSha, mutation.PushQueued, View(projectName, true, after)));
+    }
+
+    /// <summary>
+    /// Dry run of the deploy-step form (F5): the schema 2 file with the form's
+    /// artifact and steps appended, validated against the registered hosts. Nothing is written.
+    /// </summary>
+    public PipelineDefinitionResult<PipelineMigrationResponse> PreviewDeploySteps(
+        string projectName, PipelineDeployStepsRequest? request)
+    {
+        if (Repository(projectName) is not { } root)
+            return PipelineDefinitionResult<PipelineMigrationResponse>.Fail("not-found", $"Unknown project '{projectName}'.");
+        var (read, proposal, hosts, readable) = ProposeDeploySteps(projectName, root, request);
+        return PipelineDefinitionResult<PipelineMigrationResponse>.Ok(MigrationView(projectName, root, read, proposal, hosts, readable));
+    }
+
+    /// <summary>Writes the reviewed deploy-step proposal through one managed commit while both digests still hold.</summary>
+    public PipelineDefinitionResult<PipelineMigrationConfirmResponse> ConfirmDeploySteps(
+        string projectName, PipelineDeployStepsRequest? request)
+    {
+        if (string.IsNullOrWhiteSpace(request?.BaseSha256) || string.IsNullOrWhiteSpace(request.ProposalSha256))
+            return PipelineDefinitionResult<PipelineMigrationConfirmResponse>.Fail(
+                "validation", "baseSha256 and proposalSha256 from the preview are required.");
+        if (Repository(projectName) is not { } root)
+            return PipelineDefinitionResult<PipelineMigrationConfirmResponse>.Fail("not-found", $"Unknown project '{projectName}'.");
+        var digests = new ConfirmPipelineMigrationRequest(request.BaseSha256, request.ProposalSha256);
+        return Write(projectName, root, "project-definition-deploy-steps", "chore(project): add deploy steps to project.yml",
+            () => ProposeDeploySteps(projectName, root, request), digests);
     }
 
     /// <summary>The confirmation is refused unless it names exactly the current file and its current proposal.</summary>
@@ -172,9 +209,17 @@ public sealed class ProjectPipelineDefinitionService
         if (!string.Equals(read.DefinitionSha256, request.BaseSha256, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(proposal.ProposalSha256, request.ProposalSha256, StringComparison.OrdinalIgnoreCase))
             return ("stale", "project.yml or the environment declarations changed since the dry run. Review the new proposal.");
-        if (!ProjectDefinitionReader.Parse(proposal.ProposedYaml, root, hosts).IsValid)
+        if (!ProjectDefinitionReader.Parse(proposal.ProposedYaml, root, OptionalHosts(hosts)).IsValid)
             return ("proposal-invalid", "The proposal does not validate; fix the reported issues in the repository first.");
         return null;
+    }
+
+    private (ProjectDefinitionReadResult Read, PipelineMigrationProposal Proposal, ProjectDeployHostRegistry Hosts, bool Readable) ProposeDeploySteps(
+        string projectName, string root, PipelineDeployStepsRequest? request)
+    {
+        var (_, hosts, readable) = DeclarationContext(projectName, root);
+        var (text, read) = ReadCurrent(root, hosts, readable);
+        return (read, PipelineDeployStepsPolicy.Propose(text, read, request), hosts, readable);
     }
 
     private (ProjectDefinitionReadResult Read, PipelineMigrationProposal Proposal, ProjectDeployHostRegistry Hosts, bool Readable) Propose(
@@ -252,7 +297,8 @@ public sealed class ProjectPipelineDefinitionService
             read.Issues,
             read.DefinitionSha256,
             parsed is null ? null : PipelineDiagramProjection.Project(parsed),
-            read.IsValid && read.Definition!.SchemaVersion == 1);
+            read.IsValid && read.Definition!.SchemaVersion == 1,
+            PipelineDeployStepsPolicy.Offered(read));
     }
 
     private static PipelineMigrationResponse MigrationView(string projectName, string root,
@@ -261,7 +307,7 @@ public sealed class ProjectPipelineDefinitionService
         if (!proposal.Available || proposal.ProposedYaml is null)
             return new(projectName, false, proposal.Reason, current.DefinitionSha256, null, null, false,
                 current.Issues, proposal.Notes, null);
-        var proposed = WithDeclarationIssue(ProjectDefinitionReader.Parse(proposal.ProposedYaml, root, hosts), readable);
+        var proposed = WithDeclarationIssue(ProjectDefinitionReader.Parse(proposal.ProposedYaml, root, OptionalHosts(hosts)), readable);
         return new(projectName, true, null, current.DefinitionSha256, proposal.ProposedYaml, proposal.ProposalSha256,
             proposed.IsValid, proposed.Issues, proposal.Notes,
             proposed.Parsed is null ? null : PipelineDiagramProjection.Project(proposed.Parsed));

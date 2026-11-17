@@ -37,6 +37,7 @@ import {
   type Release,
   type DeployRunFilter,
   type ArtifactReleaseLookup,
+  declaredEnvironments,
 } from '../../state/deploy-area.model';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
@@ -167,6 +168,11 @@ export class ProjectDeployAreaComponent {
     return fetched ? buildDeployRuns([fetched], environmentNames(this.sources()), this.knownReleases()) : [];
   });
   readonly cards = computed(() => buildEnvironmentCards(this.sources()));
+  readonly pipelineDefinition = computed(() => {
+    const panel = this.pipelinePanel();
+    return panel.status === 'ready' ? panel.value : null;
+  });
+  readonly declaredEnvironments = computed(() => declaredEnvironments(this.pipelineDefinition(), this.cards()));
   /** The overview waits for the AGT-3176 environments, or for AGT-3201 status when those failed. */
   readonly overviewPanel = computed<DeployPanel<unknown>>(() => {
     const environments = this.environmentPanel();
