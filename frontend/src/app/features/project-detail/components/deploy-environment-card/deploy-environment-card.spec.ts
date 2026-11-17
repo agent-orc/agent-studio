@@ -63,6 +63,12 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(tone('deploy-environment-health')).toBe('danger');
   });
 
+  it('labels a production environment without telemetry as not observed', async () => {
+    await render({ ...fullCards()[1], health: { status: 'reported', state: 'not-observed' } });
+    expect(text('deploy-environment-health')).toBe('Not observed');
+    expect(tone('deploy-environment-health')).toBe('neutral');
+  });
+
   it('shows the newer release and an approval requested through AGT-3201, and opens that run for review', async () => {
     await render(fullCards()[1]);
     const events = emitted();
