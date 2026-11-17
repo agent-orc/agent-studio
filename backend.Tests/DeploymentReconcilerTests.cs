@@ -204,6 +204,21 @@ public sealed class DeploymentReconcilerTests
         Assert.Equal("deployment-approved", Assert.Single(linked.Audit).Action);
     }
 
+    [Fact]
+    public void PendingPromotion_NamingItsRelease_AsksApprovalForThatRelease_NotANewerOneWithTheSameDigest()
+    {
+        var r2 = R1 with { Id = "r2", Version = "2026.10.16.2", CreatedAtUtc = T0.AddMinutes(1) };
+        var stageHealthy = T0.AddMinutes(3);
+        var promotion = new EnvironmentPromotion(Artifact, "stage", "production", stageHealthy, "pending",
+            ExpiresAt: stageHealthy.AddHours(24)) { ReleaseId = "r1" };
+        var declarations = new[] { Declaration("stage", "container"), Declaration("production", "container") };
+        var result = DeploymentReconciler.Reconcile(new([Staging, Production],
+            [new ReleaseRecord(R1, declarations), new ReleaseRecord(r2, declarations)], [], [], [promotion]));
+
+        var run = Assert.Single(result.Deployments);
+        Assert.Equal(("r1", DeploymentStates.AwaitingApproval), (run.ReleaseId, run.State));
+    }
+
     [Theory]
     [InlineData("expired", "approval-expired", "Approval window expired.")]
     [InlineData("rejected", "deployment-rejected", "Rejected by maintainer.")]

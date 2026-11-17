@@ -12,8 +12,8 @@
       @if (cards().length) {
         <div class="deploy-overview__grid">
           @for (card of cards(); track card.id) {
-            <app-deploy-environment-card [environment]="card" [now]="now()"
-              (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" />
+            <app-deploy-environment-card [environment]="card" [now]="now()" [actions]="actions()" [actionState]="actionState()"
+              (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" (startAction)="startAction.emit($event)" />
           }
         </div>
       } @else {

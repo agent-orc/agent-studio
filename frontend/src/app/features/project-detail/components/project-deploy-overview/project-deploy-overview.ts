@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, input, output } from '@an
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { DeployEnvironmentCardComponent } from '../deploy-environment-card/deploy-environment-card';
-import type { DeployPanel, EnvironmentCardView } from '../../state/deploy-area.model';
+import type { DeployActionOption, DeployActionState, DeployPanel, EnvironmentCardView } from '../../state/deploy-area.model';
 
 /** Overview: one status card per declared environment. */
 @Component({
@@ -20,6 +20,9 @@ export class ProjectDeployOverviewComponent {
   readonly now = input.required<number>();
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  readonly actions = input<readonly DeployActionOption[]>([]);
+  readonly actionState = input<DeployActionState>({ busy: null, error: null });
+  readonly startAction = output<DeployActionOption>();
 
   readonly errorBody = computed(() => {
     const panel = this.panel();

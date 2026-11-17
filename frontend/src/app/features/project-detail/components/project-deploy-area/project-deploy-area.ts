@@ -11,6 +11,7 @@ import { EnvironmentHealthPanelComponent } from '../../../environment-health';
 import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
+import { DeployActionsStore } from '../../state/deploy-actions.store';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 import { ManagedDatabasesPanelComponent } from '../managed-databases-panel/managed-databases-panel';
 import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-page/project-secrets-page.component';
@@ -111,6 +112,12 @@ export class ProjectDeployAreaComponent {
   readonly actionState = signal<DeployRunActionState>(IDLE);
   readonly selectedRunId = signal<string | null>(null);
   readonly highlightedReleaseId = signal<string | null>(null);
+  /** Deploy, approval-request and redeploy options of the cards and the shown release. */
+  readonly deployActions = new DeployActionsStore(this.data, {
+    project: () => this.projectName(),
+    environment: id => this.environmentOf(id),
+    settled: (project, run) => { this.reloadRuns(project, true); if (run) this.openRun(run.id); },
+  });
 
   openRelease(id: string): void {
     this.highlightedReleaseId.set(id);
@@ -204,6 +211,7 @@ export class ProjectDeployAreaComponent {
         this.mutations.unsubscribe();
         this.mutations = new Subscription();
         this.mutationAction = null;
+        this.deployActions.dispose();
       });
     });
     // A new target on the same project only opens its release page; the other sources stay loaded.
@@ -272,9 +280,7 @@ export class ProjectDeployAreaComponent {
     if (!runId || this.mutationAction) return;
     const run = this.selectedRun();
     if (!run) return;
-    const production = ready(this.statusPanel())?.some(item => item.environment.id === run.environmentId && item.environment.kind === 'production')
-      || ready(this.environmentPanel())?.environments.some(item => item.declaration.id === run.environmentId && item.declaration.kind === 'production')
-      || run.environmentName.toLowerCase() === 'production';
+    const production = this.environmentOf(run.environmentId, run.environmentName).production;
     if ((action === 'cancel' && run.state === 'running') || action === 'abort' ||
       (production && (action === 'approve' || action === 'reject'))) {
       const verb = action === 'cancel' || action === 'abort' ? 'Abort' : action === 'approve' ? 'Approve' : 'Reject';
@@ -303,6 +309,12 @@ export class ProjectDeployAreaComponent {
     }));
   }
 
+  private environmentOf(id: string, name = this.cards().find(card => card.id === id)?.name ?? id): { name: string; production: boolean } {
+    return { name, production: ready(this.statusPanel())?.some(item => item.environment.id === id && item.environment.kind === 'production')
+      || ready(this.environmentPanel())?.environments.some(item => item.declaration.id === id && item.declaration.kind === 'production')
+      || name.toLowerCase() === 'production' };
+  }
+
   private load(projectName: string, resetSelection: boolean): void {
     this.subscriptions.unsubscribe();
     this.subscriptions = new Subscription();
@@ -319,6 +331,7 @@ export class ProjectDeployAreaComponent {
       this.releaseOffset.set(0);
       this.releaseTotal.set(0);
       this.artifactReleases.set(new Map());
+      this.deployActions.reset();
       for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel] as const)
         (target as WritableSignal<DeployPanel<unknown>>).set({ status: 'loading' });
     } else {
@@ -334,7 +347,7 @@ export class ProjectDeployAreaComponent {
     this.reloadRuns(projectName, false);
   }
 
-  /** Status and runs change together after an approval, rejection, or cancellation. */
+  /** Status, runs and deploy actions change together after an approval, rejection, cancellation, or start. */
   private reloadRuns(projectName: string, keepShown: boolean): void {
     this.now.set(this.clock());
     this.runReads.unsubscribe();
@@ -343,6 +356,7 @@ export class ProjectDeployAreaComponent {
     this.runReads.add(this.data.statuses(projectName).subscribe(panel => {
       if (generation === this.readGeneration) this.into(this.statusPanel, keepShown)(panel);
     }));
+    this.runReads.add(this.deployActions.load(projectName, keepShown, () => generation === this.readGeneration));
     this.runReads.add(this.data.deploymentPage(projectName, 0).subscribe(panel => {
       if (generation !== this.readGeneration) return;
       this.into(this.deploymentPanel, keepShown)(this.items(panel));

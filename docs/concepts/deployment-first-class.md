@@ -256,6 +256,11 @@ stays the only executor; releases and runs describe and steer it.
   invalid, with their pending promotions: an approved release supersedes waiting
   deploys of older releases and waiting redeploys and rollbacks. The AGT-3176
   promotion and rollback routes answer through the same rules.
+- **Staging started by a person.** A Staging deploy or redeploy that a person
+  starts opens the same Production promotion as the automatic Staging run,
+  unless one is already open for the artifact or Production already runs this
+  release or a newer one. Its success therefore asks for the same Production
+  approval, with the same 24-hour window.
 - **Deploy run.** Each run of a release in an environment has the state
   `queued`, `running`, `succeeded`, `failed`, `cancelled` or `awaiting-approval`,
   and the steps `approval` (when protected), the ordered schema 2
@@ -325,10 +330,20 @@ tenant's current release, deployment age, state and health.
 Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 (one EnvironmentStatus per environment), `releases`, `releases/{id}`,
 `releases/{id}/notes`, `cards`, `deployments[?environmentId=]`,
-`deployments/{id}`, `deployments/{id}/log[?step=]` and `audit`;
+`deployments/{id}`, `deployments/{id}/log[?step=]`, `audit`, `actions` and
+`releases/{id}/actions`;
 `POST releases/{id}/deployments` (`{environmentId, approve, tenant?, guidedFailure?}`),
 `deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
 `environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve, tenant?, guidedFailure?}`).
+`actions` returns, per environment, the deploy of the next release and the
+redeploy of the current one; `releases/{id}/actions` returns, per environment,
+the deploy of that release or its redeploy where it is current. Each
+`DeployActionOption` has `environmentId`, `action` (`deploy` or `redeploy`),
+`releaseId`, `releaseVersion`, `allowed`, `needsApproval` and `reason`, as the
+lifecycle decides them for the caller: `needsApproval` means the request waits
+for an Owner or Maintainer, and a refused action carries the lifecycle's
+reason. The Deploy overview cards and the release detail render these options
+as Deploy to, Request approval and Redeploy buttons.
 `GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
 caller's projects. `GET /api/deploy/cards` returns card environment badges across
 the caller's projects. The project-scoped `cards` route returns the same badges

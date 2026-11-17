@@ -43,6 +43,15 @@ public static class DeployEndpoints
             deploy.ReleaseDetail(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
 
+        project.MapGet("/releases/{releaseId}/actions", (HttpContext context, string projectName, string releaseId,
+            DeployService deploy) =>
+            deploy.Actions(projectName, releaseId, Actor(context, projectName)) is { } value
+                ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
+
+        project.MapGet("/actions", (HttpContext context, string projectName, DeployService deploy) =>
+            deploy.Actions(projectName, null, Actor(context, projectName)) is { } value
+                ? Results.Ok(value) : UnknownProject(projectName));
+
         project.MapGet("/releases/{releaseId}/notes", (string projectName, string releaseId, DeployService deploy) =>
             deploy.Notes(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));

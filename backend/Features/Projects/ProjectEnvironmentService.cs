@@ -113,7 +113,11 @@ public sealed record PreviewJobSpec(string Project, string CardKey, string Sourc
 public sealed record RunbookStepResult(int Index, bool Success);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
-    DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
+    DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null)
+{
+    /// <summary>The release the Staging job deployed; null on promotions written before releases named it.</summary>
+    public string? ReleaseId { get; init; }
+}
 
 public sealed record DeploymentFailureCard(string EnvironmentId, string Artifact, DateTime At,
     string Evidence, string? RollbackArtifact);
@@ -735,7 +739,8 @@ public sealed partial class ProjectEnvironmentService
             var state = Load(project);
             if (HasOpenPromotion(state, artifact)) return null;
             RequireQuota(project, stage.Id);
-            state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
+            state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued")
+                { ReleaseId = releaseId });
             var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state,
                 actor: "release-gate", releaseId: releaseId) with
             { Variables = [], ResolvedVariables = variables ?? new Dictionary<string, string>(),
@@ -752,12 +757,15 @@ public sealed partial class ProjectEnvironmentService
     /// Queues an already released artifact into one environment with the
     /// release's snapshot of its declaration, on the host the current
     /// declaration names. The caller (the BD-1 lifecycle) has decided that the
-    /// deployment may start.
+    /// deployment may start. With <paramref name="promoteTo"/> a Staging job
+    /// opens the same promotion into that environment as the automatic Staging
+    /// job of <see cref="QueueReleaseJob"/>, unless one is already open for the
+    /// artifact, so its success asks for the same Production approval.
     /// </summary>
     public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
         bool rollback, string? tenant = null, string? releaseId = null, string? retryStep = null,
         IReadOnlyDictionary<string, string>? variables = null,
-        IReadOnlyDictionary<string, string>? secretVariableRefs = null)
+        IReadOnlyDictionary<string, string>? secretVariableRefs = null, string? promoteTo = null)
     {
         if (!Digest.IsMatch(artifact)) return null;
         lock (_gate)
@@ -768,6 +776,10 @@ public sealed partial class ProjectEnvironmentService
             if (target.Template == "static" && (variables?.Count > 0 || secretVariableRefs?.Count > 0)) return null;
             var state = Load(project);
             RequireQuota(project, target.Id);
+            if (promoteTo is not null && tenant is null && !rollback && target.Kind == "stage"
+                && IsDeclared(current, promoteTo) && !HasActivePromotion(state, artifact, _clock.GetUtcNow().UtcDateTime))
+                state.Promotions.Add(new(artifact, target.Id, promoteTo, DateTime.MinValue, "stage-queued")
+                    { ReleaseId = releaseId });
             var routed = RouteToCurrentHost(target, current!);
             if (tenant is not null)
                 routed = RouteTenant(routed, tenant, target.TenantTargets[tenant]);
@@ -1712,6 +1724,16 @@ public sealed partial class ProjectEnvironmentService
     private static bool HasOpenPromotion(State state, string artifact)
         => state.Promotions.Any(item => item.Artifact == artifact
             && item.Status is not ("rejected" or "failed" or "cancelled"));
+
+    /// <summary>
+    /// A promotion of the artifact that is still on its way to Production. A
+    /// pending one past its window counts as expired, even before the queue
+    /// has written that.
+    /// </summary>
+    private static bool HasActivePromotion(State state, string artifact, DateTime now)
+        => state.Promotions.Any(item => item.Artifact == artifact
+            && (item.Status is "stage-queued" or "production-queued"
+                || item.Status == "pending" && !(item.ExpiresAt <= now)));
 
     /// <summary>
     /// A failed redeploy leaves the last healthy deployment running. Only a

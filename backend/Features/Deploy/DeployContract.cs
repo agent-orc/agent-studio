@@ -116,6 +116,21 @@ public sealed record InterventionSummary(string DeploymentId, string FailedStep,
 
 public sealed record ReleaseDetailResponse(Release Release, IReadOnlyList<Deployment> Deployments);
 
+public static class DeployActionKinds
+{
+    public const string Deploy = "deploy";
+    public const string Redeploy = "redeploy";
+}
+
+/// <summary>
+/// A deploy or redeploy a person may start in one environment, as the
+/// lifecycle decides it for the asking actor. <c>NeedsApproval</c> means the
+/// request waits for an Owner or Maintainer; otherwise it queues at once.
+/// A refused action carries the lifecycle's reason.
+/// </summary>
+public sealed record DeployActionOption(string EnvironmentId, string Action, string ReleaseId, string ReleaseVersion,
+    bool Allowed, bool NeedsApproval, string? Reason);
+
 public sealed record DeploymentLogLine(string Step, DateTime AtUtc, string Message);
 
 public sealed record DeploymentLogResponse(string DeploymentId, IReadOnlyList<DeploymentLogLine> Lines)

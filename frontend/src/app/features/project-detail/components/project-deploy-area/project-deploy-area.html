@@ -30,7 +30,8 @@
       @switch (view()) {
         @case ('overview') {
           <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()"
-            (openRun)="openRun($event)" (openTools)="show('tools')" />
+            [actions]="deployActions.cards()" [actionState]="deployActions.state()"
+            (openRun)="openRun($event)" (openTools)="show('tools')" (startAction)="deployActions.start($event)" />
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
             (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
@@ -39,7 +40,8 @@
             <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">deployment tools</button>.</p>
         }
         @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [projectName]="projectName()" [environments]="cards()" [now]="now()" [highlightedReleaseId]="highlightedReleaseId()"
-          [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" /> }
+          [total]="releaseTotal()" [offset]="releaseOffset()" [actions]="deployActions.releasePanel()" [actionState]="deployActions.state()"
+          (pageChange)="changeReleasePage($event)" (selectedRelease)="deployActions.selectRelease($event)" (startAction)="deployActions.start($event)" /> }
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading…</p> } }
         @case ('flow') { @defer { <app-flow-health-page [projectName]="projectName()" (openDetail)="openFlowDetail($event)" /> } @placeholder { <p>Loading flow health…</p> } }
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" (openFlowHealth)="show('flow')" /> }

@@ -51,11 +51,17 @@
   cursor: pointer;
 }
 
+.env-card__footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-3);
+  margin-top: auto;
+}
+
 .env-card__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--studio-spacing-2);
-  margin-top: auto;
 
   button { @include deploy.button; }
 }

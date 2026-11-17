@@ -46,16 +46,20 @@
       Open run
     </button>
   }
-  <div class="env-card__actions">
-    @if (environment().lastRun?.deploymentId; as runId) {
-      <button type="button" data-testid="deploy-environment-open-run"
-              [attr.aria-label]="'Open last run for ' + environment().name"
-              (click)="openRun.emit(runId)">Open last run</button>
-    }
-    @if (environment().awaitingApproval) {
-      <button type="button" data-testid="deploy-environment-review-approval"
-              [attr.aria-label]="'Review the pending approval for ' + environment().name"
-              (click)="reviewApproval()">Review approval</button>
-    }
+  <div class="env-card__footer">
+    <app-deploy-actions [options]="ownActions()" [environmentNames]="names()" [state]="actionState()"
+      [groupLabel]="'Deploy actions for ' + environment().name" (startAction)="startAction.emit($event)" />
+    <div class="env-card__actions">
+      @if (environment().lastRun?.deploymentId; as runId) {
+        <button type="button" data-testid="deploy-environment-open-run"
+                [attr.aria-label]="'Open last run for ' + environment().name"
+                (click)="openRun.emit(runId)">Open last run</button>
+      }
+      @if (environment().awaitingApproval) {
+        <button type="button" data-testid="deploy-environment-review-approval"
+                [attr.aria-label]="'Review the pending approval for ' + environment().name"
+                (click)="reviewApproval()">Review approval</button>
+      }
+    </div>
   </div>
 </article>

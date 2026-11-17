@@ -6,7 +6,7 @@ FRONTEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${FRONTEND_ROOT}/.." && pwd)"
 if [[ "${PW_E2E_SINGLE_RUN:-0}" != "1" && "$#" -eq 0 ]]; then
   result=0
-  for profile in standard recovery ref-drift demo owner-day public-demo first-run concept-remote networked-monolith networked-https networked-checkout networked-https-demo operator-cli; do
+  for profile in standard recovery ref-drift demo owner-day public-demo first-run concept-remote networked-monolith networked-https networked-checkout networked-https-demo operator-cli deploy-lifecycle; do
     PW_E2E_SINGLE_RUN=1 PW_E2E_PROFILE="${profile}" bash "$0" || result=1
   done
   exit "${result}"
@@ -18,6 +18,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *crash-recovery-prompt.spec.ts*|*first-run-checklist.spec.ts*) PW_E2E_PROFILE=recovery ;;
       *first-run-journey.spec.ts*|*first-run-review-host-restart.spec.ts*|*second-project-server-checkout.spec.ts*|*first-run-off-stable-grade.spec.ts*) PW_E2E_PROFILE=first-run ;;
       *concept-remote-journey.spec.ts*) PW_E2E_PROFILE=concept-remote ;;
+      *deploy-staging-retry-production-approval.spec.ts*) PW_E2E_PROFILE=deploy-lifecycle ;;
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
       *product-session-networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *reviewer-role.networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;

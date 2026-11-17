@@ -1,0 +1,20 @@
+@if (items().length) {
+  <div class="deploy-actions" role="group" [attr.aria-label]="groupLabel()">
+    <div class="deploy-actions__buttons">
+      @for (item of items(); track item.key) {
+        <button type="button" [class.deploy-actions__primary]="item.primary" [attr.data-testid]="item.testId"
+                [disabled]="!item.option.allowed || state().busy !== null" [attr.aria-describedby]="item.reasonId"
+                [attr.title]="item.option.allowed ? 'Release ' + item.option.releaseVersion : item.option.reason"
+                (click)="startAction.emit(item.option)">{{ state().busy === item.key ? item.label + '…' : item.label }}</button>
+      }
+    </div>
+    @for (item of items(); track item.key) {
+      @if (item.reasonId) {
+        <p class="deploy-actions__reason" [id]="item.reasonId" [attr.data-testid]="item.testId + '-reason'">{{ item.label }}: {{ item.option.reason }}</p>
+      }
+    }
+    @if (error(); as message) {
+      <p class="deploy-actions__error" role="alert" data-testid="deploy-action-error">{{ message }}</p>
+    }
+  </div>
+}

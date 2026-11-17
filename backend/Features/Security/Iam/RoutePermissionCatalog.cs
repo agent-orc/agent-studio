@@ -282,6 +282,7 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status",
             "/api/projects/{}/deploy/releases", "/api/projects/{}/deploy/releases/page",
             "/api/projects/{}/deploy/releases/{}",
+            "/api/projects/{}/deploy/actions", "/api/projects/{}/deploy/releases/{}/actions",
             "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",
             "/api/projects/{}/deploy/deployments/{}",
             "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit",

@@ -1,10 +1,18 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { QualityStudioService } from '../../../../services/quality-studio.service';
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { ProjectDeployReleaseNotesComponent } from '../project-deploy-release-notes/project-deploy-release-notes';
-import { formatAge, type DeployPanel, type EnvironmentCardView, type Release } from '../../state/deploy-area.model';
+import { DeployActionsComponent } from '../deploy-actions/deploy-actions';
+import {
+  formatAge,
+  type DeployActionOption,
+  type DeployActionState,
+  type DeployPanel,
+  type EnvironmentCardView,
+  type Release,
+} from '../../state/deploy-area.model';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 /** Pre-delivery full-suite verdict (raw wire value) onto the shared tones; anything else stays neutral. */
@@ -13,11 +21,12 @@ export function verdictTone(status: string): StatusTone {
   return Object.hasOwn(VERDICT_TONE, status) ? VERDICT_TONE[status] : 'neutral';
 }
 
-/** Release list with the selected release's cards, artifacts, and where it runs. */
+/** Release list with the selected release's cards, artifacts, where it runs, and where it may deploy next. */
 @Component({
   selector: 'app-project-deploy-releases',
   standalone: true,
-  imports: [DatePipe, EmptyStateComponent, LoadingSurfaceComponent, ProjectDeployReleaseNotesComponent, StatusIndicatorComponent],
+  imports: [DatePipe, EmptyStateComponent, LoadingSurfaceComponent, ProjectDeployReleaseNotesComponent, StatusIndicatorComponent,
+    DeployActionsComponent],
   templateUrl: './project-deploy-releases.html',
   styleUrl: './project-deploy-releases.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -31,11 +40,22 @@ export class ProjectDeployReleasesComponent {
   readonly total = input<number>(0);
   readonly offset = input<number>(0);
   readonly highlightedReleaseId = input<string | null>(null);
+  /** Deploy options of the selected release; the parent loads them for {@link selectedRelease}. */
+  readonly actions = input<DeployPanel<DeployActionOption[]>>({ status: 'loading' });
+  readonly actionState = input<DeployActionState>({ busy: null, error: null });
   readonly pageChange = output<number>();
+  readonly selectedRelease = output<string | null>();
+  readonly startAction = output<DeployActionOption>();
   readonly selectedId = signal<string | null>(null);
   protected readonly verdictTone = verdictTone;
 
-  constructor() { effect(() => this.selectedId.set(this.highlightedReleaseId())); }
+  constructor() {
+    effect(() => this.selectedId.set(this.highlightedReleaseId()));
+    effect(() => {
+      const id = this.selected()?.id ?? null;
+      untracked(() => this.selectedRelease.emit(id));
+    });
+  }
 
   readonly releases = computed(() => {
     const panel = this.panel();
@@ -54,6 +74,20 @@ export class ProjectDeployReleasesComponent {
     return release
       ? this.environments().filter(env => env.releaseVersion === release.version).map(env => env.name)
       : [];
+  });
+
+  readonly environmentNames = computed<ReadonlyMap<string, string>>(() =>
+    new Map(this.environments().map(env => [env.id, env.name])));
+  /** Options for the shown release only, so a late answer for another release never shows here. */
+  readonly releaseActions = computed(() => {
+    const panel = this.actions();
+    const id = this.selected()?.id;
+    return panel.status === 'ready' ? panel.value.filter(item => item.releaseId === id) : [];
+  });
+
+  readonly actionsError = computed(() => {
+    const panel = this.actions();
+    return panel.status === 'error' ? panel.message : '';
   });
 
   select(id: string): void { this.selectedId.set(id); }
