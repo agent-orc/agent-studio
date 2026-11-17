@@ -89,8 +89,11 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
       expect(acceptanceRefusalFor(card({ status: 'pending' }), null, false, readinessItem('AGT-1', 'ready'))?.reason)
         .toBe('The delivery is not in develop yet.');
       const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap', message: 'Completion refused.' };
-      expect(acceptanceRefusalFor(card({ status: 'pending' }), server, false, noVerdict))
-        .toEqual({ reason: 'Completion refused.', action: 'override', actionLabel: 'Accept with override…', source: 'server' });
+      // AGT-3873: a content refusal carries the review's concern from the dry run.
+      expect(acceptanceRefusalFor(card({ status: 'pending' }), server, false, noVerdict)).toEqual({
+        reason: 'Completion refused.', action: 'override', actionLabel: 'Accept with override…', source: 'server',
+        concern: 'The lane hides the reason.',
+      });
     });
   });
 
