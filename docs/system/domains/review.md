@@ -7,6 +7,13 @@ already applied the project's gate policy to that merge. The record must name
 the same project, branch, and first-parent SHA. Other uncovered commits still
 refuse acceptance. Their refusal names the source card when known, or the
 commit author, and omits batch diagnostics when the project has no batch gate.
+A passed full-suite gate on a later publication of the same branch also covers
+every earlier publication contained in its tested first-parent tree. Acceptance
+records the covering gate SHA and completion time in the card's completion
+evidence. A failed gate or a tested tree that does not contain the publication
+does not cover it. When a containing later batch gate is still running, the
+refusal says acceptance waits for that run. Otherwise the refusal explains the
+Owner or operator candidate-verification endpoint for the uncovered SHA.
 
 A server-authored document-key discovery commit is gate-neutral only when its
 first-parent diff changes existing `docs/**/workbench.json` descriptors solely
