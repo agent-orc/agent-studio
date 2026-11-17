@@ -45,6 +45,8 @@ import {
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
 
 const IDLE: DeployRunActionState = { busy: null, error: null };
+/** F17: while a run is queued or running, cards and history follow the host within 5 s. */
+export const DEPLOY_LIVE_REFRESH_MS = 3_000;
 
 @Component({
   selector: 'app-project-deploy-area',
@@ -74,6 +76,7 @@ export class ProjectDeployAreaComponent {
   private artifactReads = new Subscription();
   private mutations = new Subscription();
   private cardReads = new Subscription();
+  private liveReads = new Subscription();
   private readGeneration = 0;
   private releaseGeneration = 0;
   private logGeneration = 0;
@@ -174,6 +177,9 @@ export class ProjectDeployAreaComponent {
     return fetched ? buildDeployRuns([fetched], environmentNames(this.sources()), this.knownReleases()) : [];
   });
   readonly cards = computed(() => buildEnvironmentCards(this.sources()));
+  /** A run the host has still to finish, or a host deploy that has not reported yet. */
+  readonly inFlight = computed(() => [...this.runs(), ...this.statusRuns()].some(run => run.state === 'queued' || run.state === 'running')
+    || !!ready(this.environmentPanel())?.environments.some(item => item.pendingArtifact));
   /** The overview waits for the AGT-3176 environments, or for AGT-3201 status when those failed. */
   readonly overviewPanel = computed<DeployPanel<unknown>>(() => {
     const environments = this.environmentPanel();
@@ -205,6 +211,7 @@ export class ProjectDeployAreaComponent {
         this.releaseReads.unsubscribe();
         this.logReads.unsubscribe();
         this.cardReads.unsubscribe();
+        this.liveReads.unsubscribe();
         this.runFetch.unsubscribe();
         this.artifactReads.unsubscribe();
         this.artifactReads = new Subscription();
@@ -212,6 +219,17 @@ export class ProjectDeployAreaComponent {
         this.mutations = new Subscription();
         this.mutationAction = null;
       });
+    });
+    effect(onCleanup => {
+      const project = this.projectName();
+      if (!this.inFlight() || this.checkoutMissing()) return;
+      const timer = setInterval(() => {
+        if (this.mutationAction) return;
+        this.refreshLive(project);
+        const runId = this.selectedRunId();
+        if (runId) this.refetchRun(runId);
+      }, DEPLOY_LIVE_REFRESH_MS);
+      onCleanup(() => clearInterval(timer));
     });
     // A new target on the same project only opens its release page; the other sources stay loaded.
     effect(() => {
@@ -288,7 +306,7 @@ export class ProjectDeployAreaComponent {
       if (production && this.localOwner.missing() && (action === 'approve' || action === 'reject'))
         return this.localOwner.run('Production approval needs the owner account.', () => this.act(action, reason));
       const verb = action === 'cancel' || action === 'abort' ? 'Abort' : action === 'approve' ? 'Approve' : 'Reject';
-      if (!window.confirm(`${verb} ${run.environmentName} run ${run.id}?`)) return;
+      if (!window.confirm(`${verb} deploying ${this.releaseSubject(run.releaseId, run.releaseVersion)} to ${run.environmentName}?`)) return;
     }
     const project = this.projectName();
     this.mutationAction = action;
@@ -299,7 +317,7 @@ export class ProjectDeployAreaComponent {
       next: () => {
         this.mutationAction = null;
         this.actionState.set(IDLE);
-        this.reloadRuns(project, true);
+        this.refreshLive(project);
         this.refetchRun(runId);
         if (this.selectedRunId() === runId) this.loadLog(runId);
       },
@@ -307,13 +325,35 @@ export class ProjectDeployAreaComponent {
         this.mutationAction = null;
         this.actionState.set(this.selectedRunId() === runId
           ? { busy: null, error: serverMessage(error) ?? 'The deploy service did not accept the request.' } : IDLE);
-        this.reloadRuns(project, true);
+        this.refreshLive(project);
         this.refetchRun(runId);
       },
     }));
   }
 
+  /** F17: the release a confirmation names, with its version and card count. */
+  private releaseSubject(releaseId: string, version: string | null): string {
+    const release = this.knownReleases().find(item => item.id === releaseId);
+    if (!release) return `release ${version ?? releaseId} (card list not loaded)`;
+    const count = release.cardKeys.length;
+    return `release ${release.version} (${count} ${count === 1 ? 'card' : 'cards'})`;
+  }
+
+  /**
+   * F17: an action or a host report changes the environment cards as well as
+   * the runs, so environments, health, status, and runs are read again; what
+   * is shown stays until each read answers.
+   */
+  private refreshLive(projectName: string): void {
+    this.liveReads.unsubscribe();
+    this.liveReads = new Subscription();
+    this.liveReads.add(this.data.environments(projectName).subscribe(this.into(this.environmentPanel, true)));
+    this.liveReads.add(this.data.health(projectName).subscribe(this.into(this.healthPanel, true)));
+    this.reloadRuns(projectName, true);
+  }
+
   private load(projectName: string, resetSelection: boolean): void {
+    this.liveReads.unsubscribe();
     this.subscriptions.unsubscribe();
     this.subscriptions = new Subscription();
     this.now.set(this.clock());

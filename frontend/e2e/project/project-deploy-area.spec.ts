@@ -891,6 +891,48 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect.poll(() => calls).toEqual(['approve:run-c-production']);
   });
 
+  test('F17: after approval and the host report, the Production card follows without a reload', async ({ page }) => {
+    let environments = deployEnvironmentsFixture();
+    let status = deployStatusFixture();
+    let deployments = deployDeploymentsFixture();
+    const confirms: string[] = [];
+    page.on('dialog', dialog => confirms.push(dialog.message()));
+    const mocks = fullMocks({
+      act: (_action, id) => {
+        // The server queues the run and closes the AGT-3176 promotion of its artifact.
+        deployments = deployments.map(item => item.id === id ? { ...item, state: 'queued', approvedBy: 'local.owner' } : item);
+        status = status.map(item => item.currentDeployment?.id === id ? { ...item, currentDeployment: deployments.find(run => run.id === id)! } : item);
+        environments = { ...environments, promotions: environments.promotions.map(item => item.status === 'pending' ? { ...item, status: 'approved' } : item) };
+        return deployments.find(item => item.id === id);
+      },
+    });
+    for (const [key, read] of [['environments', () => environments], ['status', () => status], ['deployments', () => deployments]] as const)
+      Object.defineProperty(mocks, key, { get: read });
+    await openDeploy(page, mocks);
+
+    const card = page.getByTestId('deploy-environment-production');
+    await expect(card.getByTestId('deploy-environment-approval')).toBeVisible();
+    await card.getByRole('button', { name: 'Review the pending approval for Production' }).click();
+    await page.getByTestId('deploy-run-approve').click();
+    await expect(page.getByTestId('deploy-run-outcome')).toHaveText('Queued');
+    expect(confirms).toEqual(['Approve deploying release 2026.10.19.2 (1 card) to Production?']);
+    await expect(card.getByTestId('deploy-environment-approval')).toHaveCount(0, { timeout: 5_000 });
+
+    // The host reports healthy; nobody reloads the page.
+    const [stage] = environments.environments;
+    deployments = deployments.map(item => item.id === 'run-c-production'
+      ? { ...item, state: 'succeeded', startedAtUtc: '2026-10-19T11:56:00Z', finishedAtUtc: '2026-10-19T11:58:00Z' } : item);
+    const production = deployments.find(item => item.id === 'run-c-production')!;
+    status = status.map(item => item.environment.id === 'production'
+      ? { ...item, currentRelease: deployReleasesFixture()[0], currentDeployment: production, newerRelease: null, cardsSinceLastDeploy: [] } : item);
+    environments = { ...environments, promotions: environments.promotions.map(item => item.status === 'approved' ? { ...item, status: 'deployed' } : item),
+      environments: environments.environments.map(item => item.declaration.id === 'production' ? { ...item, deployedArtifact: stage.deployedArtifact,
+        history: [{ at: '2026-10-19T11:58:00Z', status: 'healthy', artifact: stage.deployedArtifact!, previousArtifact: ARTIFACT_A, evidence: 'health-ok' }, ...item.history] } : item) };
+    await expect(card.getByTestId('deploy-environment-release')).toContainText('2026.10.19.2', { timeout: 5_000 });
+    await expect(page.getByTestId('deploy-run-outcome')).toHaveText('Succeeded', { timeout: 5_000 });
+    await capture(page, 'deploy-production-live-after-approve-1280-light');
+  });
+
   test('captures every view in light and dark at 1280 and 1920 px', async ({ page }) => {
     await openDeploy(page, fullMocks());
 
