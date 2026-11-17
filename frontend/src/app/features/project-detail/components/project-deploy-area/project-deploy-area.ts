@@ -37,6 +37,7 @@ import {
   type Release,
   type DeployRunFilter,
   type ArtifactReleaseLookup,
+  type ReleaseGateStatus,
 } from '../../state/deploy-area.model';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
@@ -107,6 +108,9 @@ export class ProjectDeployAreaComponent {
   readonly releaseOffset = signal(0);
   readonly pipelinePanel = signal<DeployPanel<PipelineDefinitionResponse>>({ status: 'loading' });
   readonly healthPanel = signal<DeployPanel<EnvironmentHealthResponse>>({ status: 'loading' });
+  readonly releaseGatePanel = signal<DeployPanel<ReleaseGateStatus>>({ status: 'loading' });
+  /** F2: a refused release attempt shows its reason and next step here, not only in the API answer. */
+  readonly releaseRefusal = computed(() => ready(this.releaseGatePanel())?.refusal ?? null);
   readonly logPanel = signal<DeployPanel<DeploymentLogLine[]>>({ status: 'loading' });
   readonly actionState = signal<DeployRunActionState>(IDLE);
   readonly selectedRunId = signal<string | null>(null);
@@ -319,7 +323,8 @@ export class ProjectDeployAreaComponent {
       this.releaseOffset.set(0);
       this.releaseTotal.set(0);
       this.artifactReleases.set(new Map());
-      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel] as const)
+      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel,
+        this.releaseGatePanel] as const)
         (target as WritableSignal<DeployPanel<unknown>>).set({ status: 'loading' });
     } else {
       // Refresh retries failed lookups; resolved release records do not change.
@@ -331,6 +336,7 @@ export class ProjectDeployAreaComponent {
     else this.loadReleases(projectName, !resetSelection);
     this.subscriptions.add(this.data.pipeline(projectName).subscribe(panel => this.pipelinePanel.set(panel)));
     this.subscriptions.add(this.data.health(projectName).subscribe(panel => this.healthPanel.set(panel)));
+    this.subscriptions.add(this.data.releaseGate(projectName).subscribe(panel => this.releaseGatePanel.set(panel)));
     this.reloadRuns(projectName, false);
   }
 

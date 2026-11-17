@@ -208,6 +208,7 @@
 /api/projects/{projectName}/deploy/lanes	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/operations	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/operations/logs	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/deploy/release-gate	free	-	-	-
 /api/projects/{projectName}/deploy/releases	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/releases/page	reachable	frozen	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/releases/{releaseId}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
