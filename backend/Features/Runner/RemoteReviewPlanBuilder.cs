@@ -1161,8 +1161,15 @@ public sealed class RemoteReviewPlanBuilder
         internal static ReviewStatus Read(string folderPath)
         {
             var summary = RemoteReviewPlanBuilder.Read(Path.Combine(folderPath, "status.md"), Characters, string.Empty);
-            var report = RemoteReviewPlanBuilder.Read(
-                Path.Combine(folderPath, "results", "status.md"), Characters, string.Empty).Trim();
+            var reportPath = Path.Combine(folderPath, "results", "status.md");
+            var report = RemoteReviewPlanBuilder.Read(reportPath, Characters, string.Empty).Trim();
+            if (File.Exists(reportPath) && new FileInfo(reportPath).Length > Characters)
+            {
+                using var reader = new StreamReader(reportPath);
+                var head = new char[1_000];
+                var count = reader.Read(head, 0, head.Length);
+                report = new string(head, 0, count) + "\n... (report middle omitted)\n" + report;
+            }
             if (report.Length == 0) return new(summary, false, string.Empty);
             if (!IsSummary(summary)) return new(report, true, string.Empty);
             return Compose(summary.Trim(), report);
@@ -1173,7 +1180,13 @@ public sealed class RemoteReviewPlanBuilder
             var note = summary.Contains("results/status.md", StringComparison.OrdinalIgnoreCase)
                 ? AgentReportNote : string.Empty;
             var reportRoom = Characters - AgentReportHeading.Length - 1;
-            if (report.Length > reportRoom) report = report[^reportRoom..];
+            if (report.Length > reportRoom)
+            {
+                const int headCharacters = 1_000;
+                const string marker = "\n... (report middle omitted)\n";
+                report = report[..headCharacters] + marker
+                    + report[^(reportRoom - headCharacters - marker.Length)..];
+            }
             var text = new StringBuilder();
             text.AppendLf(AgentReportHeading).Append(report);
             var summaryRoom = Characters - text.Length - SummaryHeading.Length - 3;
