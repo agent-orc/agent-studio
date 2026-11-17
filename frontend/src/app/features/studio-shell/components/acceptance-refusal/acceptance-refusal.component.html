@@ -1,10 +1,11 @@
 <span class="acceptance-refusal" data-testid="acceptance-refusal"
       [attr.data-refusal-source]="refusal().source"
       [attr.data-refusal-action]="refusal().action"
+      [attr.data-readiness-ranked]="refusal().headline ? 'true' : null"
       role="status">
   <app-status-indicator class="acceptance-refusal__reason" tone="warning" [compact]="true"
                         testId="acceptance-refusal-reason"
-                        [label]="refusal().reason" [detail]="refusal().reason" />
+                        [label]="refusal().reason" [detail]="detail()" />
   <button type="button"
           class="studio-tab-action studio-tab-action--toggle"
           data-testid="acceptance-refusal-action"
@@ -29,6 +30,14 @@
        (keydown.escape)="cancelOverride()">
     <label class="acceptance-refusal__label" for="acceptance-refusal-reason-{{ job().id }}">Reason for the override</label>
     <p class="acceptance-refusal__hint">{{ refusal().reason }} The reason is recorded on the card.</p>
+    @if (refusal().nextStep; as step) {
+      <p class="acceptance-refusal__hint" data-testid="acceptance-refusal-next-step">Next step: {{ step }}</p>
+    }
+    @if (refusal().secondary?.length) {
+      <ul class="acceptance-refusal__secondary" data-testid="acceptance-refusal-secondary">
+        @for (gap of refusal().secondary; track gap) { <li>{{ gap }}</li> }
+      </ul>
+    }
     <textarea id="acceptance-refusal-reason-{{ job().id }}"
               class="acceptance-refusal__input"
               data-testid="acceptance-refusal-override-reason"

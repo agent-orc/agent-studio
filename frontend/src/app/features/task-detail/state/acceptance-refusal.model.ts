@@ -1,7 +1,13 @@
 import { Injectable, computed, inject, signal, type Signal } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../models/task.model';
 import { serverErrorMessage } from '../../../utils/server-error-message';
-import { AcceptanceReadinessStore, acceptanceOverrideAllowed, type AcceptanceReadinessItem } from '../../acceptance-readiness';
+import {
+  AcceptanceReadinessStore,
+  acceptanceOverrideAllowed,
+  acceptancePrimaryReason,
+  secondaryAcceptanceGaps,
+  type AcceptanceReadinessItem,
+} from '../../acceptance-readiness';
 
 /**
  * AGT-3704: why the Human Review Accept cannot act now, shown next to the
@@ -19,6 +25,13 @@ export interface AcceptanceRefusal {
   actionLabel: string;
   /** `hold`: read from the card's facts before any click. `server`: the server refused a click. */
   source: 'hold' | 'server';
+  /**
+   * F12: set when the acceptance-readiness answer ranks the reason. `reason`
+   * is then its primary sentence, and other gaps of the card are secondary.
+   */
+  headline?: string;
+  nextStep?: string;
+  secondary?: readonly string[];
 }
 
 /** A server refusal of the move to Accepted, kept for the card it refused. */
@@ -48,8 +61,10 @@ function nextAction(refusal: string, readiness: AcceptanceReadinessItem | null)
  * The refusal for `info`, or null when Accept may act. `awaitingGit` is the
  * bounded provenance wait: that state renders its own progress skeleton, so
  * a speculative hold reason is not added beside it. `readiness` is the
- * card's completion dry run (AGT-3867): an integrated card whose content
- * review returned concerns says why Accept will be refused before the click.
+ * card's completion dry run (AGT-3867): when it refuses, its reason leads and
+ * the integration hold is listed under it (F12), so an integrated card whose
+ * content review returned concerns says why Accept will be refused before
+ * the click.
  */
 export function acceptanceRefusalFor(
   info: TaskInfo,
@@ -63,9 +78,24 @@ export function acceptanceRefusalFor(
   if (server && server.taskKey === info.taskKey && server.code !== 'run-attempt-missing')
     return { reason: server.message, ...nextAction(server.message, readiness), source: 'server' };
   if (awaitingGit) return null;
+  const hold = integrationHold(info);
+  const refused = readinessHold(readiness);
+  const primary = refused ? acceptancePrimaryReason(readiness) : null;
   // AGT-3874: until the dry run answers (after a reload), a content verdict
   // that is not `pass` already says why Accept will be refused.
-  return integrationHold(info) ?? (readiness ? readinessHold(readiness) : contentVerdictHold(info));
+  if (!refused || !primary) return hold ?? (readiness ? null : contentVerdictHold(info));
+  // A round is the only step when policy forbids the override; otherwise the
+  // integration hold keeps its own action (a retry after a conflict).
+  const action = refused.action === 'send-round' || !hold ? refused : hold;
+  return {
+    reason: primary.reason,
+    headline: primary.headline,
+    nextStep: primary.nextStep,
+    secondary: secondaryAcceptanceGaps(primary, [hold?.reason]),
+    action: action.action,
+    actionLabel: action.actionLabel,
+    source: 'hold',
+  };
 }
 
 /**
@@ -95,6 +125,7 @@ function readinessHold(item: AcceptanceReadinessItem | null): AcceptanceRefusal 
   return { reason: item.reason, ...nextAction(item.refusal, item), source: 'hold' };
 }
 
+/** The client-side integration hold: why the board projection keeps Accept disabled. */
 function integrationHold(info: TaskInfo): AcceptanceRefusal | null {
   const integration = info.integration;
   const status = integration?.status;
