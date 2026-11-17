@@ -3799,6 +3799,12 @@ pins one compose service to the release artifact digest before pulling and
 starting it. It resolves secret names under the claimed job lease, sends step
 log messages to the deployment log, and records each step
 result. A failed deployment queues the previous healthy artifact for rollback.
+The status projection keeps the last successful release as the lifecycle
+baseline, while `releaseUncertain` marks a later failed deploy or rollback
+whose host state a newer successful host report has not confirmed. Consumers
+must not label the baseline or failed rollback target as the running release
+while this flag is set. A refused rollback returns its specific server reason;
+the operator can redeploy a known release or fix forward.
 The deploy host needs OpenSSH and access to the artifact store; its SSH target
 needs Python 3, and container targets also need Docker Compose. The
 [deploy host API contract](../contracts/deploy-host-api.md) defines the claim,
