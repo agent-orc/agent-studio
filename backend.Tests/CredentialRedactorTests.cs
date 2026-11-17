@@ -57,6 +57,50 @@ public sealed class CredentialRedactorTests
     }
 
     [Fact]
+    public void Masks_bare_live_provider_keys()
+    {
+        var key = "sk_" + "live_" + Body(36);
+        Assert.Equal($"key {Masked}", CredentialRedactor.Redact($"key {key}"));
+    }
+
+    [Theory]
+    [InlineData("postgres")]
+    [InlineData("postgresql")]
+    [InlineData("mysql")]
+    [InlineData("mariadb")]
+    [InlineData("redis")]
+    [InlineData("rediss")]
+    [InlineData("mongodb")]
+    [InlineData("mongodb+srv")]
+    [InlineData("amqp")]
+    [InlineData("amqps")]
+    [InlineData("custom+driver")]
+    public void Masks_userinfo_in_any_url_scheme(string scheme)
+    {
+        var password = Body(28);
+        Assert.Equal($"{scheme}://[REDACTED]@host/db",
+            CredentialRedactor.Redact($"{scheme}://user:{password}@host/db"));
+        Assert.Equal($"{scheme}://[REDACTED]@host/db",
+            CredentialRedactor.Redact($"{scheme}://:{password}@host/db"));
+    }
+
+    [Theory]
+    [InlineData("apiKey")]
+    [InlineData("api_key")]
+    [InlineData("secret")]
+    [InlineData("clientSecret")]
+    [InlineData("token")]
+    [InlineData("accessToken")]
+    [InlineData("password")]
+    [InlineData("db_password")]
+    public void Masks_named_secret_assignments(string name)
+    {
+        var value = Body(28);
+        Assert.Equal($"{name}=[REDACTED] next=ok", CredentialRedactor.Redact($"{name}={value} next=ok"));
+        Assert.Equal($"{name}: [REDACTED]", CredentialRedactor.Redact($"{name}: {value}"));
+    }
+
+    [Fact]
     public void Masks_claude_code_oauth_token_assignments_of_any_shape()
     {
         var name = "CLAUDE_CODE" + "_OAUTH_TOKEN";
