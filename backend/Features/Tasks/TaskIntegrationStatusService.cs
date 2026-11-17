@@ -538,12 +538,12 @@ public sealed class TaskIntegrationStatusService
     }
 
     /// <summary>
-    /// AGT-3810: integration verdicts of delivered cards whose project names no
-    /// server checkout. The Git state index never runs for such a project, so
-    /// every cache-only card read carries no verdict, and the card lost the
+    /// Integration verdicts of delivered cards whose project has no usable server
+    /// checkout. The Git state index cannot publish a projection for such a
+    /// project, so every cache-only card read carries no verdict and the card loses the
     /// recorded failure code (for example <c>server-checkout-missing</c>) that
     /// selects its remedy. The failed merge step is a local file, so this reads
-    /// it without starting Git. Cards with a checkout, outside the delivered
+    /// it without starting Git. Cards with a usable checkout, outside the delivered
     /// lanes, or without a recorded failure are absent from the result.
     /// </summary>
     public Dictionary<string, TaskIntegrationStatus> BuildRecordedFailuresWithoutCheckout(
@@ -555,9 +555,9 @@ public sealed class TaskIntegrationStatusService
         {
             if (!DeliveredLanes.Contains(job.State)) continue;
             var watchPath = job.WatchPath ?? string.Empty;
-            if (!checkout.TryGetValue(watchPath, out var configured))
-                checkout[watchPath] = configured = _git.HasConfiguredRepository(job.WatchPath);
-            if (configured || ReadIntegrationFailure(job) is null) continue;
+            if (!checkout.TryGetValue(watchPath, out var usable))
+                checkout[watchPath] = usable = _git.HasUsableConfiguredRepository(job.WatchPath);
+            if (usable || ReadIntegrationFailure(job) is null) continue;
             var status = ClassifyNotIntegrated(job,
                 TaskIntegrationBranch.Resolve(job, ConfiguredIntegrationBranch(job)));
             if (status.Failure is not null) result[job.TaskKey] = status;
