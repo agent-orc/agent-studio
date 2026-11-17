@@ -77,7 +77,7 @@ public class PromptEnhancementService
         sw.Stop();
 
         var (text, usage) = AdHocClaudeInvoker.ParseOrFallback(raw, fallbackModel);
-        AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.PromptEnhancement, fallbackModel, usage, sw.ElapsedMilliseconds, ok);
+        AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.PromptEnhancement, fallbackModel, usage, sw.ElapsedMilliseconds, ok, CliTypes.Claude);
 
         if (!ok || string.IsNullOrWhiteSpace(text))
             throw new InvalidOperationException(error ?? "Prompt enhancer returned empty response");
