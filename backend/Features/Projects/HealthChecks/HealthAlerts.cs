@@ -193,29 +193,36 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
 
     private static string Describe(IReadOnlyList<FailingCheck> failing)
         => string.Join("; ", failing.Select(item =>
-            $"{item.Incident.CheckId} failed {item.Incident.FailedProbes} times in a row ({item.Incident.FirstError})"));
+            item.Check.Kind == "telemetry"
+                ? $"{item.Incident.CheckId} fired ({item.Incident.FirstError})"
+                : $"{item.Incident.CheckId} failed {item.Incident.FailedProbes} times in a row ({item.Incident.FirstError})"));
 
     private static string Ended(HealthIncident check)
         => check.EndReason == "check-removed"
             ? $"Check {check.CheckId} was removed from the declaration; its incident closed {Stamp(check.EndedAt ?? check.StartedAt)}."
-            : $"Check {check.CheckId} recovered {Stamp(check.EndedAt ?? check.StartedAt)} after {check.FailedProbes} failed probes.";
+            : $"Check {check.CheckId} recovered {Stamp(check.EndedAt ?? check.StartedAt)} after {check.FailedProbes} "
+                + (check.CheckId.StartsWith("telemetry-", StringComparison.Ordinal) ? "firing evaluations." : "failed probes.");
 
     private static string IncidentPrompt(string project, EnvironmentDeclaration environment, EnvironmentIncident incident,
         IReadOnlyList<FailingCheck> failing)
     {
         var text = new StringBuilder();
         text.Append($"# Health incident: {environment.Name}\n\n");
-        text.Append($"Control plane health checks of environment `{environment.Id}` in project `{project}` are failing.\n\n");
+        text.Append($"Health checks or telemetry rules of environment `{environment.Id}` in project `{project}` are failing.\n\n");
         text.Append($"- Incident: `{incident.Id}`\n- Started: {Stamp(incident.StartedAt)}\n");
         text.Append($"- Environment address: {HealthTargets.Display(environment.Address)} on host `{environment.TargetHostId}`\n");
         foreach (var (check, checkIncident, evidence) in failing)
         {
             text.Append($"\n## Check `{check.Id}`\n\n");
-            text.Append($"Failed {checkIncident.FailedProbes} times in a row (threshold {check.FailureThreshold}) since {Stamp(checkIncident.StartedAt)}.\n\n");
+            if (check.Kind == "telemetry")
+                text.Append($"Rule fired since {Stamp(checkIncident.StartedAt)}: {checkIncident.FirstError}.\n\n");
+            else
+                text.Append($"Failed {checkIncident.FailedProbes} times in a row (threshold {check.FailureThreshold}) since {Stamp(checkIncident.StartedAt)}.\n\n");
             text.Append($"- Check: {check.Kind} `{HealthTargets.Display(check.Target)}`");
             if (check.Kind == "http") text.Append($", expects status {check.ExpectedStatus}");
             if (check.BodyContains is not null) text.Append(" and a body marker");
-            text.Append($", timeout {check.TimeoutSeconds} s, interval {check.IntervalSeconds} s\n\n");
+            if (check.Kind == "telemetry") text.Append(", evaluated from environment telemetry\n\n");
+            else text.Append($", timeout {check.TimeoutSeconds} s, interval {check.IntervalSeconds} s\n\n");
             text.Append("| Time (UTC) | Result | Status | Latency | Error |\n|---|---|---|---|---|\n");
             foreach (var sample in evidence.TakeLast(10))
                 text.Append($"| {Stamp(sample.At)} | {(sample.Ok ? "ok" : "failed")} | {sample.Status?.ToString(CultureInfo.InvariantCulture) ?? "-"} | "
