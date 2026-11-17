@@ -23,12 +23,12 @@ export interface OperatorAttentionResponse {
 
 /** The decision-event classes of the operator stream, in the order the list shows them. */
 export type AttentionClass =
-  | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'gate-host' | 'batch' | 'batch-record' | 'push'
+  | 'incident' | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'gate-host' | 'batch' | 'batch-record' | 'push'
   | 'quota'
   | 'host' | 'installation' | 'other';
 
 /** Where a row's primary action leads. */
-export type AttentionTarget = 'card' | 'dossiers' | 'backups' | 'credentials' | 'batch-gate' | 'cli-usage' | 'hosts' | 'activity';
+export type AttentionTarget = 'card' | 'operations' | 'dossiers' | 'backups' | 'credentials' | 'batch-gate' | 'cli-usage' | 'hosts' | 'activity';
 
 export interface AttentionClassSpec {
   readonly key: AttentionClass;
@@ -38,6 +38,7 @@ export interface AttentionClassSpec {
 }
 
 const CLASSES: readonly AttentionClassSpec[] = [
+  { key: 'incident', label: 'Environment incidents', action: 'Open incident card', target: 'card' },
   { key: 'decision', label: 'Decision cards', action: 'Decide', target: 'card' },
   { key: 'dossier', label: 'Dossiers', action: 'Open Dossiers', target: 'dossiers' },
   { key: 'escalation', label: laneName(TaskState.Escalated), action: 'Open card', target: 'card' },
@@ -55,6 +56,7 @@ const CLASSES: readonly AttentionClassSpec[] = [
 ];
 
 const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
+  'environment.incident-open': 'incident',
   'decision-card.opened': 'decision',
   'dossier.decision-open': 'dossier',
   'installation.backups': 'installation',

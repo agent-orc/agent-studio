@@ -1518,6 +1518,9 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGat
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
+    sp.GetRequiredService<HealthCheckStore>(),
+    () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name)));
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());

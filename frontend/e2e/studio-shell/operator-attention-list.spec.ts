@@ -62,6 +62,36 @@ async function screenshot(page: Page, name: string): Promise<void> {
 }
 
 test.describe('Operator attention list', () => {
+  test('shows an open environment incident first with its two destinations in both themes and on a phone', async ({ page }) => {
+    const [watch] = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');
+    const project = watch.name ?? 'alpha';
+    const incident = {
+      id: `environment.incident-open|${project}|production/20261116`, type: 'environment.incident-open',
+      project, cardKey: 'health-production-1', cards: ['health-production-1'],
+      title: `${project} · Production incident`, reason: 'Production since 2026-11-16 01:00 UTC: http: HTTP 503',
+      observedAt: '2026-11-16T01:00:00Z', suggestedOperations: ['card.inspect'], evidence: [],
+    };
+    await page.route('**/api/operator/attention', route => route.fulfill({ json: { items: [incident], count: 1 } }));
+    await gotoStudio(page);
+    for (const { name, width, height } of VIEWPORTS) {
+      await page.setViewportSize({ width, height });
+      for (const theme of (name === 'desktop' ? ['light', 'dark'] : ['light']) as ('light' | 'dark')[]) {
+        await setTheme(page, theme);
+        await page.getByTestId('studio-attention-trigger').click();
+        const row = page.getByTestId('attention-group-incident').getByTestId('attention-row');
+        await expect(row).toContainText('Production since 2026-11-16 01:00 UTC');
+        await expect(row).toContainText('HTTP 503');
+        await expect(row.getByTestId('attention-row-action')).toHaveText('Open incident card');
+        await expect(row.getByTestId('attention-open-operations')).toBeVisible();
+        await screenshot(page, `incident-${name}-${theme}`);
+        await page.getByTestId('studio-attention-list').getByRole('button', { name: 'Close' }).click();
+      }
+    }
+    await page.getByTestId('studio-attention-trigger').click();
+    await page.getByTestId('attention-open-operations').click();
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/operations/);
+  });
+
   test('accepts three Human Review cards from Needs you and auto-advance with a stale board projection', async ({ page }) => {
     test.setTimeout(240_000);
     const [watch] = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');
