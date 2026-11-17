@@ -304,7 +304,11 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   only when no slice was promoted. Promotion leaves the Dossier lifecycle alone.
   The Studio offers this as **Create implementation cards** on the Dossier view
   (through the Dossier's source concept card) and on the concept card's
-  Overview. The Dossier's **Start one combined task** stays the single-card path.
+  Overview. Each new card inherits the concept card's CLI, model, and thinking
+  level; missing route fields use the project CLI and model defaults, then the
+  source owner's task defaults.
+  The panel previews that route beside every slice. The Dossier's **Start one
+  combined task** stays the single-card path.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
   code-change request. The `message` names the card's mode and the two ways

@@ -12,14 +12,17 @@ import { ProjectEnvironmentOverviewComponent } from '../project-environment-over
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 import { DeployActionsStore } from '../../state/deploy-actions.store';
+import { deploymentEnvironment, deployPageItems, retainReadyPanel } from '../../state/deploy-panel.util';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 import { ManagedDatabasesPanelComponent } from '../managed-databases-panel/managed-databases-panel';
 import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-page/project-secrets-page.component';
 import { FlowHealthPageComponent, type FlowDetailTarget } from '../../../flow-health';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
-import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../services/project-deploy-data.service';
+import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
 import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
+import { LocalOwnerSessionService } from '../../../../services/local-owner-session.service';
+import { LocalOwnerDialogComponent } from '../../../../components/local-owner-dialog/local-owner-dialog';
 import { serverCheckoutMissing } from '../../../server-checkout/server-checkout.model';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import {
@@ -38,6 +41,7 @@ import {
   type Release,
   type DeployRunFilter,
   type ArtifactReleaseLookup,
+  type ReleaseGateStatus,
 } from '../../state/deploy-area.model';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
@@ -52,7 +56,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent,
+    FlowHealthPageComponent, LocalOwnerDialogComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -63,6 +67,7 @@ export class ProjectDeployAreaComponent {
   private readonly serverCheckout = inject(ServerCheckoutStore);
   private readonly cardLookup = inject(OperationsCardLookupService);
   private readonly clock = inject(DEPLOY_CLOCK);
+  private readonly localOwner = inject(LocalOwnerSessionService);
   private subscriptions = new Subscription();
   private runReads = new Subscription();
   private releaseReads = new Subscription();
@@ -108,6 +113,9 @@ export class ProjectDeployAreaComponent {
   readonly releaseOffset = signal(0);
   readonly pipelinePanel = signal<DeployPanel<PipelineDefinitionResponse>>({ status: 'loading' });
   readonly healthPanel = signal<DeployPanel<EnvironmentHealthResponse>>({ status: 'loading' });
+  readonly releaseGatePanel = signal<DeployPanel<ReleaseGateStatus>>({ status: 'loading' });
+  /** F2: a refused release attempt shows its reason and next step here, not only in the API answer. */
+  readonly releaseRefusal = computed(() => ready(this.releaseGatePanel())?.refusal ?? null);
   readonly logPanel = signal<DeployPanel<DeploymentLogLine[]>>({ status: 'loading' });
   readonly actionState = signal<DeployRunActionState>(IDLE);
   readonly selectedRunId = signal<string | null>(null);
@@ -131,7 +139,7 @@ export class ProjectDeployAreaComponent {
         this.releaseOffset.set(panel.value.offset);
         this.releaseTotal.set(panel.value.total);
       }
-      this.releasePanel.set(this.items(panel));
+      this.releasePanel.set(deployPageItems(panel));
     }));
   }
 
@@ -283,6 +291,9 @@ export class ProjectDeployAreaComponent {
     const production = this.environmentOf(run.environmentId, run.environmentName).production;
     if ((action === 'cancel' && run.state === 'running') || action === 'abort' ||
       (production && (action === 'approve' || action === 'reject'))) {
+      // The server lets only a signed-in Owner or Maintainer decide production; ask for the account first.
+      if (production && this.localOwner.missing() && (action === 'approve' || action === 'reject'))
+        return this.localOwner.run('Production approval needs the owner account.', () => this.act(action, reason));
       const verb = action === 'cancel' || action === 'abort' ? 'Abort' : action === 'approve' ? 'Approve' : 'Reject';
       if (!window.confirm(`${verb} ${run.environmentName} run ${run.id}?`)) return;
     }
@@ -309,10 +320,8 @@ export class ProjectDeployAreaComponent {
     }));
   }
 
-  private environmentOf(id: string, name = this.cards().find(card => card.id === id)?.name ?? id): { name: string; production: boolean } {
-    return { name, production: ready(this.statusPanel())?.some(item => item.environment.id === id && item.environment.kind === 'production')
-      || ready(this.environmentPanel())?.environments.some(item => item.declaration.id === id && item.declaration.kind === 'production')
-      || name.toLowerCase() === 'production' };
+  private environmentOf(id: string, name?: string): { name: string; production: boolean } {
+    return deploymentEnvironment(id, this.cards(), this.statusPanel(), this.environmentPanel(), name);
   }
 
   private load(projectName: string, resetSelection: boolean): void {
@@ -332,7 +341,8 @@ export class ProjectDeployAreaComponent {
       this.releaseTotal.set(0);
       this.artifactReleases.set(new Map());
       this.deployActions.reset();
-      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel] as const)
+      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel,
+        this.releaseGatePanel] as const)
         (target as WritableSignal<DeployPanel<unknown>>).set({ status: 'loading' });
     } else {
       // Refresh retries failed lookups; resolved release records do not change.
@@ -344,6 +354,7 @@ export class ProjectDeployAreaComponent {
     else this.loadReleases(projectName, !resetSelection);
     this.subscriptions.add(this.data.pipeline(projectName).subscribe(panel => this.pipelinePanel.set(panel)));
     this.subscriptions.add(this.data.health(projectName).subscribe(panel => this.healthPanel.set(panel)));
+    this.subscriptions.add(this.data.releaseGate(projectName).subscribe(panel => this.releaseGatePanel.set(panel)));
     this.reloadRuns(projectName, false);
   }
 
@@ -354,12 +365,12 @@ export class ProjectDeployAreaComponent {
     this.runReads = new Subscription();
     const generation = ++this.readGeneration;
     this.runReads.add(this.data.statuses(projectName).subscribe(panel => {
-      if (generation === this.readGeneration) this.into(this.statusPanel, keepShown)(panel);
+      if (generation === this.readGeneration) retainReadyPanel(this.statusPanel, keepShown)(panel);
     }));
     this.runReads.add(this.deployActions.load(projectName, keepShown, () => generation === this.readGeneration));
     this.runReads.add(this.data.deploymentPage(projectName, 0).subscribe(panel => {
       if (generation !== this.readGeneration) return;
-      this.into(this.deploymentPanel, keepShown)(this.items(panel));
+      retainReadyPanel(this.deploymentPanel, keepShown)(deployPageItems(panel));
     }));
     this.runReads.add(this.data.deploymentPage(projectName, this.historyOffset(), this.historyFilter(), this.now()).subscribe(panel => {
       if (generation !== this.readGeneration) return;
@@ -367,7 +378,7 @@ export class ProjectDeployAreaComponent {
         this.historyDeployments.set(panel.value.items);
         this.historyTotal.set(panel.value.total);
       }
-      this.into(this.historyPanel, keepShown)(this.items(panel));
+      retainReadyPanel(this.historyPanel, keepShown)(deployPageItems(panel));
     }));
   }
 
@@ -394,19 +405,8 @@ export class ProjectDeployAreaComponent {
     this.releaseReads.add(this.data.releasePage(projectName, this.releaseOffset()).subscribe(panel => {
       if (generation !== this.releaseGeneration) return;
       if (panel.status === 'ready') this.releaseTotal.set(panel.value.total);
-      this.into(this.releasePanel, keepShown)(this.items(panel));
+      retainReadyPanel(this.releasePanel, keepShown)(deployPageItems(panel));
     }));
-  }
-
-  private items<T>(panel: DeployPanel<DeployPage<T>>): DeployPanel<T[]> {
-    return panel.status === 'ready' ? { status: 'ready', value: panel.value.items } : panel;
-  }
-
-  /** With `keepShown`, ready data stays on screen until the reload answers. */
-  private into<T>(target: WritableSignal<DeployPanel<T>>, keepShown: boolean): (panel: DeployPanel<T>) => void {
-    return panel => {
-      if (!keepShown || panel.status !== 'loading' || target().status !== 'ready') target.set(panel);
-    };
   }
 
   /** Resolves each host artifact once per project; answers for another project are dropped. */

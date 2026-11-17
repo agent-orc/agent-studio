@@ -217,9 +217,10 @@ stays the only executor; releases and runs describe and steer it.
   port and secret references); the current declaration decides where
   (`targetHostId`). After an environment moves to another host, a rollback or a
   late approval of an older release is queued for the new host and the run log
-  names the host change. A schema 2 SSH step still pins its original `target`,
-  so the host rejects that old step; create a new release with the new target
-  before deploying there. The environment must still be declared; a release
+  names the host change. Each schema 2 SSH step of the job takes the new host
+  as its `target`; its artifact, directory or compose file, service, health
+  check and variables stay as the release snapshot recorded them, so the new
+  host runs the older release. The environment must still be declared; a release
   without a snapshot for an environment cannot be deployed there. Automatic
   and history rollbacks of the host queue repeat the declaration the artifact
   last deployed healthy with, on the currently declared host. A job queued

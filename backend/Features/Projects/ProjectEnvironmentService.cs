@@ -1690,10 +1690,10 @@ public sealed partial class ProjectEnvironmentService
 
     /// <summary>
     /// BD-1: the release snapshot decides what is deployed (template,
-    /// destination, health check, secrets, SSH targets); the current declaration
-    /// decides which host claims the job. After a host move, an older schema 2
-    /// release retains its target so the executor refuses to run it on the new
-    /// host. Legacy jobs have no SSH target and can use the new host.
+    /// destination, health check, secrets, SSH steps); the current declaration
+    /// decides which host claims the job. After a host move, <see cref="Queue"/>
+    /// points the snapshot's SSH steps at the new host (<see cref="OnHost"/>),
+    /// so a rollback or late approval of an older release runs there.
     /// </summary>
     private static EnvironmentDeclaration RouteToCurrentHost(EnvironmentDeclaration snapshot,
         IReadOnlyList<EnvironmentDeclaration> current)
@@ -1720,6 +1720,16 @@ public sealed partial class ProjectEnvironmentService
                 _ => step,
             }).ToArray(),
         };
+
+    /// <summary>
+    /// The SSH steps of one declaration all name its host (schema 2 compile
+    /// refuses mixed targets), and the executor runs a step only on that host.
+    /// A job therefore carries the host it is routed to as every step's
+    /// target; everything else in the step stays as the snapshot recorded it.
+    /// </summary>
+    internal static IReadOnlyList<ProjectDeployStep> OnHost(IReadOnlyList<ProjectDeployStep> steps, string hostId)
+        => steps.All(step => step.Target == hostId) ? steps
+            : steps.Select(step => step with { Target = hostId }).ToArray();
 
     private static bool HasOpenPromotion(State state, string artifact)
         => state.Promotions.Any(item => item.Artifact == artifact
@@ -1776,7 +1786,7 @@ public sealed partial class ProjectEnvironmentService
             IsRollback: rollback, RequestedBy: actor, ReleaseId: releaseId, RollbackOfJobId: rollbackOfJobId,
             GuidedFailure: declaration.GuidedFailure, RetryStep: retryStep, RetryOfJobId: retryOfJobId,
             Hosting: declaration.Hosting, EnvironmentKind: declaration.Kind)
-        { Tenant = tenant, Data = declaration.Data, SshSteps = declaration.SshSteps,
+        { Tenant = tenant, Data = declaration.Data, SshSteps = OnHost(declaration.SshSteps, declaration.TargetHostId),
             Variables = declaration.Variables, Artifacts = declaration.Artifacts, Databases = declaration.Databases };
         state.Jobs.Add(job);
         return job;

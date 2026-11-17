@@ -1,0 +1,55 @@
+@use '../../../../../styles/mixins' as m;
+
+// An acute notice: the click just failed. Whole-surface tint, no accent edge.
+.task-move-refusal {
+  @include m.deck-panel;
+  @include m.deck-panel-attention(var(--studio-status-warning));
+  display: grid;
+  gap: var(--studio-spacing-2);
+  margin: var(--studio-spacing-2) 0;
+  color: var(--studio-fg-strong);
+  line-height: 1.45;
+}
+
+.task-move-refusal__message,
+.task-move-refusal__concern {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-move-refusal__concern { color: var(--studio-fg); }
+
+.task-move-refusal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+}
+
+// Secondary and primary action buttons, the same treatment as the toolbar's override form.
+.task-move-refusal__button {
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-spacing-1);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover:not(:disabled) { background: var(--studio-bg-hover); }
+  &:disabled { cursor: not-allowed; opacity: 0.6; }
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+
+  &--primary {
+    background: var(--studio-accent);
+    border-color: var(--studio-accent);
+    color: var(--studio-on-accent);
+
+    &:hover:not(:disabled) { background: color-mix(in srgb, var(--studio-accent) 88%, var(--studio-fg-strong)); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-move-refusal__button { transition: none; }
+}

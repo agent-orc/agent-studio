@@ -14,6 +14,7 @@ export interface ConceptPromotionSlice {
   title: string;
   decision: string;
   section: string | null;
+  route: string;
   /** The card a previous promotion created for this slice, if any. */
   card: { key: string; lane: string | null } | null;
 }
@@ -41,9 +42,16 @@ export function promotionSlices(
         ? `Decision card: ${item.decision.question}`
         : decisionLabel(item.decisionId ?? null, decisions),
       section: item.section?.trim() || null,
+      route: routeLabel(plan.route),
       card: card ? { key: card.taskKey || card.jobId, lane: card.state ?? null } : null,
     };
   });
+}
+
+export function routeLabel(route: PromoteConceptResponse['route']): string {
+  if (!route) return 'Route unavailable';
+  const cli = route.cliType.charAt(0).toUpperCase() + route.cliType.slice(1);
+  return `${cli} · ${route.model || 'default model'} · ${route.thinkingLevel || 'default thinking'}`;
 }
 
 /** The working decision a slice implements: the operator's pick, else the recommendation. */

@@ -468,7 +468,13 @@
                        hidden
                        (change)="onSteerFileSelected($any($event.target).files?.[0])" />
               } @else {
-                <div class="activity-panel__empty">Start the task to follow the agent output live.</div>
+                <div class="activity-panel__empty">
+                  @if (isPreparation()) {
+                    Use Promote to Ready, then Run now to start the task and follow the agent output live.
+                  } @else {
+                    Start the task to follow the agent output live.
+                  }
+                </div>
               }
 
               @if (runFilterRange(); as range) {

@@ -105,6 +105,19 @@ export class ResultViewComponent {
     signal => signal.sourceLabel === 'text scan' && signal.label.startsWith('status text mentions:'),
   ) ?? null);
   readonly caseTone = computed(() => protocolVerdictTone(this.verdict()));
+
+  /**
+   * AGT-3873: the delivery state a generated report states first, when the
+   * delivery is merged. AGT-3534 was merged and reviewed, yet its generated
+   * report read only as a missing status.md under a "Pipeline failure" head.
+   */
+  readonly scaffoldDelivery = computed(() => {
+    const info = this.detail().info;
+    if (info.integration?.status !== 'integrated') return null;
+    const branch = info.integration.integrationBranch || 'the integration branch';
+    const reviewed = info.reviewProjection?.latestOutcome?.toLowerCase() === 'pass';
+    return `The delivery is merged into ${branch}${reviewed ? ' and its review passed' : ''}.`;
+  });
   readonly metricTone = resultMetricTone;
   readonly aspectTone = resultAspectTone;
 

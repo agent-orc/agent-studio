@@ -76,6 +76,13 @@ public static class DeployEndpoints
             deploy.Log(projectName, deploymentId, step) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown deployment '{deploymentId}'." }));
 
+        // F2: the gate keys a refusal by the registered display name. A file read, no git.
+        project.MapGet("/release-gate", (string projectName, DeployStore store,
+            AgentStudio.Registry.ProjectRegistry registry) =>
+            Results.Ok(new ReleaseGateStatus(store.ReadReleaseRefusal(
+                (registry.FindByIdOrDisplayName(projectName) ?? registry.FindByShortCode(projectName))?.DisplayName
+                ?? projectName))));
+
         project.MapGet("/audit", (string projectName, DeployService deploy) =>
             deploy.Audit(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 

@@ -2163,7 +2163,10 @@ public static class LeaseEndpoints
                             deliveryBranch,
                             deliveryRange.Commits,
                             req.Repository,
-                            RemoteCommitAttributionGuard.CardReferencedKeys(task));
+                            RemoteCommitAttributionGuard.CardReferencedKeys(task),
+                            task.Commits,
+                            parent => git.IsAncestor(repoRoot, parent,
+                                "refs/remotes/origin/" + TaskIntegrationBranch.Name(deliveryRange.IntegrationBranch)));
                         attributionWarning = string.Join(" ", new[]
                             { deliveryRange.Warning, remoteAttribution.Warning }
                             .Where(value => !string.IsNullOrWhiteSpace(value)));

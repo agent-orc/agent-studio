@@ -13,6 +13,7 @@ import type {
   EnvironmentStatus,
   Release,
   DeployRunFilter,
+  ReleaseGateStatus,
 } from '../state/deploy-area.model';
 import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
 import { EnvironmentHealthService } from '../../environment-health/services/environment-health.service';
@@ -98,6 +99,12 @@ export class ProjectDeployDataService {
     const request = this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`, { params })
       .pipe(map(page => page.items[0] ?? null));
     return panel(request, 'The release of the deployed artifact could not be loaded.', true);
+  }
+
+  /** F2: the standing release-candidate gate refusal, if the last release attempt was refused. */
+  releaseGate(projectName: string): Observable<DeployPanel<ReleaseGateStatus>> {
+    return panel(this.http.get<ReleaseGateStatus>(`${deployRoot(projectName)}/release-gate`),
+      'The release gate state could not be loaded.', true);
   }
 
   /** AGT-3201 deploy runs, newest first. */

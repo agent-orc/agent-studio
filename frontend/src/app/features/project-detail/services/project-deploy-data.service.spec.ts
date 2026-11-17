@@ -53,6 +53,14 @@ describe('ProjectDeployDataService', () => {
     expect(log.at(-1)).toEqual({ status: 'ready', value: deploymentLogFixture('run-b-stage') });
   });
 
+  it('reads the standing release gate refusal (F2)', () => {
+    const gate = collect(service.releaseGate('Web Site'));
+    const refusal = { commitSha: 'a'.repeat(40), mode: 'optional', reason: 'The candidate full suite is red.',
+      nextStep: 'Fix the failing tests and release a newer commit.', atUtc: '2026-11-16T10:00:00Z' };
+    http.expectOne(`${DEPLOY}/release-gate`).flush({ refusal });
+    expect(gate.at(-1)).toEqual({ status: 'ready', value: { refusal } });
+  });
+
   it('reads product-language release notes for the included cards', () => {
     const notes = collect(service.releaseNotes('Web Site', 'release one'));
     const response = { releaseId: 'release one', version: '1', preview: true,

@@ -110,6 +110,9 @@
     @if (d.overview.synthesized && !d.overview.problem) {
       <aside class="result__overview" data-testid="result-scaffold-notice">
         <p class="result__overview-text">
+          @if (scaffoldDelivery(); as delivery) {
+            <strong data-testid="result-scaffold-delivery">{{ delivery }}</strong>
+          }
           The run did not write <code>status.md</code>. This report was generated automatically from
           <code>task.json</code> and the artifacts.<br>
           <small class="result__overview-blurb">
