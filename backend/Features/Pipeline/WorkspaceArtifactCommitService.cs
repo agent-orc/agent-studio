@@ -809,11 +809,25 @@ public sealed class WorkspaceArtifactCommitService
             bool Covered(string path) => reported.Any(ig =>
                 path.Equals(ig, StringComparison.Ordinal)
                 || path.StartsWith(ig.TrimEnd('/') + "/", StringComparison.Ordinal));
+            var droppedPaths = pathspecs.Where(Covered).ToArray();
+            var stagedDropped = droppedPaths.Any(path =>
+                !string.IsNullOrWhiteSpace(RunGit(gitRoot,
+                    ["diff", "--cached", "--name-only", "--", path]).Out));
             pathspecs.RemoveAll(Covered);
+            // The failed add can stage tracked files below a folder which git
+            // also reports as ignored. Never leave those files in the index or
+            // describe their uncommitted changes as a successful skip.
+            ResetPaths(gitRoot, droppedPaths);
             foreach (var path in excluded.Where(Covered)) addFree.Add(path);
             _logger.LogWarning(
                 "workspace-artifact-ignored-paths-dropped root={Root} scope={Scope} count={Count} first={First} reason=git-add-refused",
                 gitRoot, scope, reported.Count, string.Join(",", reported.Take(IgnoredPathSample)));
+            if (stagedDropped)
+            {
+                ResetPaths(gitRoot, addFree);
+                return WorkspaceArtifactCommitResult.Failed("git-add",
+                    "Git refused an ignored watch path containing tracked changes.");
+            }
             if (pathspecs.Count == 0)
             {
                 ResetPaths(gitRoot, addFree);

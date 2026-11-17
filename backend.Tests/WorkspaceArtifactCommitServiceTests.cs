@@ -449,6 +449,30 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
     }
 
     [Fact]
+    public void RunBoundaryCommit_IgnoredFolderWithTrackedChange_FailsAndUnstagesIt()
+    {
+        File.WriteAllText(Path.Combine(_root, ".gitignore"), "ASS-TRACKED-IGNORED/\n");
+        var job = JobFolder("ASS-TRACKED-IGNORED");
+        var results = Path.Combine(job, "results");
+        Directory.CreateDirectory(results);
+        var tracked = Path.Combine(results, "status.md");
+        File.WriteAllText(tracked, "before\n");
+        RunGit(_root, "add", "-f", Relative(tracked));
+        RunGit(_root, "commit", "-m", "seed tracked report");
+        File.WriteAllText(tracked, "after\n");
+        File.WriteAllText(Path.Combine(results, "ignored.txt"), "ignored\n");
+
+        var result = _service.TryCommitRunBoundary(_root, "ASS-TRACKED-IGNORED", null, job,
+            ReviewDecisionKind.Reissue);
+
+        Assert.False(result.DidCommit);
+        Assert.NotNull(result.Error);
+        Assert.Contains("tracked changes", result.Error);
+        Assert.Empty(RunGitCapture(_root, "diff", "--cached", "--name-only"));
+        Assert.Contains(Relative(tracked), RunGitCapture(_root, "diff", "--name-only"));
+    }
+
+    [Fact]
     public void ArtifactCommit_DefaultLimitRefusesSixMegabytes()
     {
         var logger = new RefusalLogger();
