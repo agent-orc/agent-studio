@@ -42,6 +42,8 @@ describe('AcceptanceReadinessNoteComponent', () => {
     expect(host.querySelector('[data-testid="acceptance-readiness-reason"]')!.textContent)
       .toContain('The requirement-fit review returned concerns: The lane hides the reason.');
     expect(host.querySelector('[data-testid="acceptance-readiness-missing"]')!.textContent).toContain('lane.ts');
+    expect(host.querySelector('[data-testid="acceptance-readiness-next-step"]')!.textContent)
+      .toContain('Next step: Send a round to close the gap the review raised.');
     expect(host.querySelector('[data-testid="acceptance-review-report"]')!.getAttribute('href'))
       .toContain('/tasks/AGT-77?view=evidence:protocol');
 
@@ -59,6 +61,7 @@ describe('AcceptanceReadinessNoteComponent', () => {
 
     expect(host.querySelector('[data-testid="acceptance-readiness-note"]')!.getAttribute('data-tone')).toBe('success');
     expect(host.querySelector('[data-testid="acceptance-send-round"]')).toBeNull();
+    expect(host.querySelector('[data-testid="acceptance-readiness-next-step"]')).toBeNull();
   });
 
   it('renders nothing outside Human Review or before a check', () => {

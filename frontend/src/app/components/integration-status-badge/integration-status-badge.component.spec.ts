@@ -127,7 +127,7 @@ describe('IntegrationStatusBadgeComponent', () => {
       const pending = badgeOf(render(integration('pending', {
         verification: { state: 'integrated-unverified' },
       })));
-      expect(pending.textContent).toContain('NICHT integriert');
+      expect(pending.textContent).toContain('Not integrated');
       expect(pending.textContent).not.toContain('unverified');
       expect(pending.dataset['kind']).toBe('pending');
     });
@@ -171,10 +171,10 @@ describe('IntegrationStatusBadgeComponent', () => {
     expect(fixture.componentInstance.tooltip()).toContain('runner: 4/4 on main.');
   });
 
-  it('renders pending as amber "NICHT integriert" and flags acute', () => {
+  it('renders pending as amber "Not integrated" and flags acute', () => {
     const fixture = render(integration('pending'));
     const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
-    expect(badge.textContent).toContain('NICHT integriert');
+    expect(badge.textContent).toContain('Not integrated');
     expect(badge.dataset['kind']).toBe('pending');
     expect(badge.classList.contains('integration-badge--acute')).toBe(true);
   });
@@ -199,12 +199,12 @@ describe('IntegrationStatusBadgeComponent', () => {
     );
   });
 
-  it('renders partial as an orange "teilweise integriert" badge with missing SHAs in the tooltip', () => {
+  it('renders partial as an orange "Partly integrated" badge with missing SHAs in the tooltip', () => {
     const fixture = render(
       integration('partial', { detail: '1/2 attributed commits integrated; missing: beef123' }),
     );
     const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
-    expect(badge.textContent).toContain('teilweise integriert');
+    expect(badge.textContent).toContain('Partly integrated');
     expect(badge.dataset['kind']).toBe('partial');
     expect(badge.classList.contains('integration-badge--acute')).toBe(true);
     expect(fixture.componentInstance.tooltip()).toContain('Partially integrated');
@@ -497,10 +497,10 @@ describe('IntegrationStatusBadgeComponent', () => {
     ).textContent).not.toContain('·');
   });
 
-  it('renders no-branch as grey "kein Branch"', () => {
+  it('renders no-branch as grey "No branch"', () => {
     const fixture = render(integration('no-branch'));
     const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
-    expect(badge.textContent).toContain('kein Branch');
+    expect(badge.textContent).toContain('No branch');
     expect(badge.dataset['kind']).toBe('no-branch');
     expect(badge.classList.contains('integration-badge--acute')).toBe(false);
   });

@@ -54,6 +54,7 @@ public sealed partial class ProjectEnvironmentService
             // or the last healthy job's snapshot, owns the running routes.
             var projected = new List<(RunTargetProjectRead Read, RunTargetEnvironmentSpec Spec)>();
             var databaseDeletions = new List<RunTargetDatabaseDeletion>();
+            var databaseOperations = new List<RunTargetDatabaseOperation>();
             foreach (var read in projects)
             {
                 var databases = new List<(string, IReadOnlyList<ProjectDatabaseDefinition>)>();
@@ -71,6 +72,8 @@ public sealed partial class ProjectEnvironmentService
                 }
                 TrackDatabases(read.State, hostId, databases);
                 databaseDeletions.AddRange(DatabaseDeletions(read.Project, read.State, hostId));
+                databaseOperations.AddRange(DatabaseOperations(read.Project, read.State, hostId,
+                    read.Hosted.Select(item => item.Id).ToArray(), now));
             }
 
             // An owner Studio does not see as hosted keeps its domains while the
@@ -110,7 +113,7 @@ public sealed partial class ProjectEnvironmentService
             var claimsText = JsonSerializer.Serialize(claims, _json);
             if (claimsText != (storedClaims ?? JsonSerializer.Serialize(new Dictionary<string, RunTargetDomainClaim>(), _json)))
                 WriteStoreFile(claimsPath, claimsText);
-            return new(hostId, now, environments, skipped, removals, databaseDeletions);
+            return new(hostId, now, environments, skipped, removals, databaseDeletions, databaseOperations);
         }
     }
 
@@ -120,7 +123,11 @@ public sealed partial class ProjectEnvironmentService
     /// decision and its actor), and queues a rollback when the host rolled back
     /// from a crash-looping release.
     /// </summary>
-    public int RecordObserved(string hostId, RunTargetObservedReport report)
+    public int RecordObserved(string hostId, RunTargetObservedReport report) => RecordObserved(hostId, report, null);
+
+    /// <param name="measured">Receives each database record the report changed, for the operations intake (AGT-3878).</param>
+    public int RecordObserved(string hostId, RunTargetObservedReport report,
+        ICollection<(string Project, ManagedDatabaseRecord Record)>? measured)
     {
         lock (_gate)
         {
@@ -168,7 +175,8 @@ public sealed partial class ProjectEnvironmentService
                 }
                 if (JsonSerializer.Serialize(state, _json) != before) Save(group.Key, state);
             }
-            return accepted + RecordDatabaseObservations(hostId, report.Databases ?? [], now);
+            return accepted + RecordDatabaseObservations(hostId, report.Databases ?? [], now, measured)
+                + RecordDatabaseOperationResults(hostId, report.DatabaseOperations ?? [], now);
         }
     }
 

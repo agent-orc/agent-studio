@@ -236,7 +236,8 @@ test('stale running batch from the real backend shows timing and attention', asy
           .selectOption('4-auto-review');
       await page.getByTestId('batch-lane-indicator').filter({ visible: true }).first().click();
       const panel = page.getByTestId('batch-panel');
-      await expect(panel.getByTestId('batch-phase-time').first()).toContainText(/running since \d{2}:\d{2} UTC, 3 h \d+ min/);
+      await expect(panel.getByTestId('batch-phase-time').first()).toContainText(/running since \d{2}:\d{2}, 3 h \d+ min/);
+      await expect(panel.getByTestId('batch-time-zone')).toHaveText('Times in UTC');
       await expect(panel).toContainText('gate-host-01 · running · since');
       await panel.getByTestId('batch-panel-body').evaluate(element => { element.scrollTop = element.scrollHeight; });
       if (process.env.JOB_RESULTS_DIR) await panel.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `stale-batch-panel-${theme}-${width}.png`) });
@@ -502,10 +503,20 @@ test('failed-test ranking stays readable at wide and mobile widths in both theme
   }
   await page.getByRole('link', { name: 'batch-1' }).click();
   await expect(page.locator('#batch-batch-1')).toBeVisible();
+  // AGT-3872: the fix card is created in the backlog, not in the legacy editor.
+  const created = new Promise<Record<string, unknown>>(resolve => {
+    void page.route(url => url.pathname === '/api/tasks', async route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      resolve(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'fix-card-1' }) });
+    });
+  });
   await page.getByRole('button', { name: 'Create fix card for Product.Tests.Unstable' }).click();
-  await expect(page.getByTestId('create-title')).toHaveValue('Fix flaky test: Product.Tests.Unstable');
-  await expect(page.getByTestId('create-prompt')).toHaveValue(/Batches: batch-7, batch-5, batch-3, batch-1/);
-  await expect(page.getByTestId('create-task-type-bug')).toHaveAttribute('aria-pressed', 'true');
+  const body = await created;
+  expect(body).toMatchObject({ title: 'Fix flaky test: Product.Tests.Unstable', targetState: '0-backlog', taskType: 'bug' });
+  expect(String(body['promptMarkdown'])).toMatch(/Batches: batch-7, batch-5, batch-3, batch-1/);
+  await expect(page.getByTestId('batch-panel')).toBeHidden();
+  await expect(page.getByTestId('create-dialog-legacy-notice')).toHaveCount(0);
 });
 
 test('ejected batch member badge names why it went to the per-task gate', async ({ page }) => {
@@ -815,6 +826,9 @@ test('red, abandoned and running batches show truthful status and evidence at de
     pending: [],
     batches: [
       { ...state.batches[0], phase: 'red', phaseReason: 'Suite failed; isolate the culprit',
+        isolationActive: false, isolationPending: true,
+        nextAction: { actor: 'planner', dueAtUtc: null,
+          action: 'No isolation flight is active; on its next tick the planner pauses this batch and returns the unresolved members to planning' },
         phaseHistory: [{ phase: 'running', atUtc: '2026-10-11T13:00:00Z' },
           { phase: 'red', reason: 'Suite failed; isolate the culprit', atUtc: '2026-10-11T13:05:00Z' }],
         runs: [{ batchRunId: 'run-7', host: 'agent-runner-01', startedAtUtc: '2026-10-11T13:00:00Z', evidenceAvailable: true }] },
@@ -846,7 +860,9 @@ test('red, abandoned and running batches show truthful status and evidence at de
   await expect(panel.locator('#batch-batch-7')).toContainText('interrupted');
   await expect(panel.locator('#batch-batch-abandoned')).toContainText('interrupted');
   await expect(panel.locator('#batch-batch-running')).toContainText('running');
-  await expect(panel.getByTestId('batch-red-next')).toContainText('waits for a gate slot');
+  await expect(panel.locator('#batch-batch-7').getByTestId('batch-next-action'))
+    .toHaveText(/^Next \(planner\): No isolation flight is active; on its next tick the planner pauses this batch/);
+  await expect(panel.getByTestId('batch-red-next')).toHaveCount(0);
   await expect(panel.getByTestId('batch-close-now')).toBeDisabled();
   await expect(panel.getByTestId('batch-close-unavailable')).toHaveText('No eligible cards to close.');
   await expect(panel.locator('#batch-batch-7').getByRole('link', { name: /Batch fixture task/ })).toHaveAttribute('href', '#/tasks/AGT-2');
@@ -855,9 +871,9 @@ test('red, abandoned and running batches show truthful status and evidence at de
   await expect(panel.locator('#batch-batch-7').getByRole('link', { name: 'Run log' }))
     .toHaveAttribute('href', /run-log\?batchId=batch-7&runId=run-7/);
   await expect(panel.locator('#batch-batch-7').getByText('Phase history')).toBeVisible();
-  await expect(panel.locator('#batch-batch-7').getByText('Oct 11, 2026', { exact: false }).first()).toBeHidden();
+  await expect(panel.locator('#batch-batch-7').getByText('11 Oct 2026', { exact: false }).first()).toBeHidden();
   await panel.locator('#batch-batch-7 summary').click();
-  await expect(panel.locator('#batch-batch-7').getByText('Oct 11, 2026', { exact: false }).first()).toBeVisible();
+  await expect(panel.locator('#batch-batch-7').getByText('11 Oct 2026', { exact: false }).first()).toBeVisible();
   if (!evidence) return;
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });

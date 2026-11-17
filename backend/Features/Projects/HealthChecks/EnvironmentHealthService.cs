@@ -106,6 +106,9 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
     {
         try
         {
+            // A managed database publishes no port; its check reads the run host's reports (AGT-3878).
+            if (item.Check.Kind == "database")
+                return environments.DatabaseLivenessSample(item.Project, item.Environment.Id, item.Check.Host ?? "", clock.GetUtcNow());
             return await probe.ProbeAsync(item.Check, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -404,10 +407,12 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
                 .OfType<HealthCheckState>().ToArray();
             // The environment is as available as its worst check; latency is the first HTTP check's.
             var primary = checks.FirstOrDefault(check => check.Kind == "http") ?? checks.FirstOrDefault();
-            var status = checks.Length == 0 || checks.All(check => check.Status == "unknown") ? "unknown"
-                : checks.Any(check => check.Status == "down") ? "down"
-                : checks.Any(check => check.Status == "invalid") ? "invalid"
-                : checks.Any(check => check.Status is "degraded" or "unknown") ? "degraded" : "up";
+            // A managed database before its first deploy has nothing to watch yet (AGT-3878).
+            var counted = checks.Where(check => check.LastSample?.Error != HealthSample.NotApplicable).ToArray();
+            var status = counted.Length == 0 || counted.All(check => check.Status == "unknown") ? "unknown"
+                : counted.Any(check => check.Status == "down") ? "down"
+                : counted.Any(check => check.Status == "invalid") ? "invalid"
+                : counted.Any(check => check.Status is "degraded" or "unknown") ? "degraded" : "up";
             return new EnvironmentHealthView(project, environment.Id, environment.Name, environment.Kind,
                 HealthTargets.Display(environment.Address), status, Worst(checks.Select(check => check.Uptime24h)),
                 Worst(checks.Select(check => check.Uptime7d)), Worst(checks.Select(check => check.Uptime30d)),

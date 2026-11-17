@@ -17,18 +17,8 @@
     } @else {
       <span>Evidence file unavailable</span>
     }
-    @if (finding().evidencePath) {
-      <code data-testid="batch-proven-red-evidence-name">{{ evidenceName() }}</code>
-      <button type="button" class="studio-button btn btn--ghost" data-testid="batch-proven-red-path-toggle"
-              [attr.aria-expanded]="fullPathShown()" (click)="fullPathShown.set(!fullPathShown())">
-        <app-disclosure-marker [open]="fullPathShown()" [size]="10" />
-        <span>{{ fullPathShown() ? 'Hide full path' : 'Show full path' }}</span>
-      </button>
-    }
+    @if (finding().evidencePath) { <code data-testid="batch-proven-red-evidence-name">{{ evidenceName() }}</code> }
   </p>
-  @if (fullPathShown() && finding().evidencePath) {
-    <code class="batch-proven-red__path" data-testid="batch-proven-red-evidence-path">{{ finding().evidencePath }}</code>
-  }
   @if (finding().provingBatchId) {
     <p class="batch-proven-red__run">Proved by batch {{ finding().provingBatchId }}@if (finding().provingRunId) {, run {{ finding().provingRunId }}}</p>
   }

@@ -5,6 +5,8 @@ import { NotificationService } from '../../../../services/notification.service';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { AcceptanceReadinessStore } from '../../state/acceptance-readiness.store';
 import { acceptanceOverrideAllowed, readinessPresentation } from '../../models/acceptance-readiness.model';
+import { acceptancePrimaryReason, secondaryAcceptanceGaps } from '../../models/acceptance-primary-reason';
+import { briefGapOf, briefGapSentence, unrecordedBriefSubject } from '../../models/delivery-brief-gap.model';
 import { AcceptanceRoundDialogComponent } from '../acceptance-round-dialog/acceptance-round-dialog.component';
 
 type ContentReview = NonNullable<TaskDeliveryClaimAnswer['contentReview']>;
@@ -33,6 +35,8 @@ export class AcceptanceNextStepsComponent {
 
   readonly job = input.required<TaskInfo>();
   readonly contentReview = input<ContentReview | null>(null);
+  /** F12: the card's other gaps, such as the integration hold, listed under the readiness reason. */
+  readonly otherGaps = input<readonly string[]>([]);
 
   private readonly inReview = computed(() => this.job().state === TaskState.HumanReview);
   /** Re-check when the card changes, for example after a round or a review. */
@@ -44,17 +48,31 @@ export class AcceptanceNextStepsComponent {
     untracked(() => void this.store.checkCard(this.job()));
   });
 
-  readonly staleBrief = computed(() => {
-    const review = this.contentReview();
-    return this.inReview() && !!review
-      && (review.deliveryBriefVersion !== review.currentBriefVersion
-        || review.reviewBriefVersion !== review.currentBriefVersion);
-  });
+  /** F12: a missing brief version is unrecorded, never a changed brief. */
+  readonly briefGap = computed(() => this.inReview() ? briefGapOf(this.contentReview()) : null);
+  readonly unrecordedBriefSubject = unrecordedBriefSubject;
 
   /** The refused dry run of this card; the run-attempt gap has its own notice. */
   readonly item = computed(() => {
     const item = this.inReview() ? this.store.itemFor(this.job()) : null;
     return item && item.readiness !== 'ready' && item.stage !== 'admitted' && item.stage !== 'lineage' ? item : null;
+  });
+
+  /**
+   * F12: the readiness answer's reason and next step lead, as on the toolbar
+   * and the board note; the brief gap and the other gaps are listed under it.
+   * The brief gap leads only without a refusal or when the verdict is stale.
+   */
+  readonly primary = computed(() => acceptancePrimaryReason(this.item()));
+  readonly briefLeads = computed(() => !!this.briefGap()
+    && (!this.primary() || this.primary()!.readiness === 'verdict-stale'));
+  readonly secondaryGaps = computed(() => {
+    const primary = this.primary();
+    if (!primary) return [];
+    return secondaryAcceptanceGaps(primary, [
+      ...this.otherGaps(),
+      this.briefLeads() ? null : briefGapSentence(this.briefGap(), this.contentReview()),
+    ]);
   });
 
   /**
@@ -65,13 +83,13 @@ export class AcceptanceNextStepsComponent {
   readonly contentGap = computed(() => {
     const review = this.contentReview();
     const status = review?.contentStatus?.toLowerCase();
-    return this.inReview() && !this.staleBrief()
+    return this.inReview() && !this.briefGap()
       && (status === 'concerns' || status === 'block') ? review : null;
   });
 
-  readonly show = computed(() => this.staleBrief() || !!this.item() || !!this.contentGap());
+  readonly show = computed(() => !!this.briefGap() || !!this.item() || !!this.contentGap());
   readonly tone = computed(() => readinessPresentation(this.item()?.readiness ?? 'blocked').tone);
-  readonly canReviewAgain = computed(() => this.staleBrief() || !!this.contentGap() || this.item()?.stage === 'content');
+  readonly canReviewAgain = computed(() => !!this.briefGap() || !!this.contentGap() || this.item()?.stage === 'content');
   readonly canAcceptWithReason = computed(() => acceptanceOverrideAllowed(this.item()?.refusal));
   readonly roundDraft = computed(() => {
     const draft = this.store.draftFor('detail');

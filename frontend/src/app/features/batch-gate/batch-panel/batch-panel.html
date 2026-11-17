@@ -1,7 +1,7 @@
 <div class="batch-panel-backdrop" (click)="close()" aria-hidden="true"></div>
 <section class="batch-panel" role="dialog" aria-modal="true" aria-labelledby="batch-panel-title" data-testid="batch-panel">
   <header class="batch-panel__header">
-    <div><h2 id="batch-panel-title">Batch verification</h2><p>{{ project() }}</p></div>
+    <div><h2 id="batch-panel-title">Batch verification</h2><p>{{ project() }} · <span data-testid="batch-time-zone">{{ timeZoneNote }}</span></p></div>
     <button #closeButton type="button" aria-label="Close batch panel" (click)="close()">Close</button>
   </header>
   <div #body class="batch-panel__body" data-testid="batch-panel-body" tabindex="0" (keydown)="onBodyKeydown($event)">
@@ -67,7 +67,7 @@
                 </ul>
                 <button type="button" [attr.aria-label]="'Create fix card for ' + test.testName"
                   [disabled]="openingFix() !== null" [appPendingButton]="openingFix() === test.testName"
-                  pendingLabel="Opening fix card…"
+                  pendingLabel="Creating fix card…"
                   (click)="createFixCard(test)">Create fix card</button>
               </li>
             }</ol>
@@ -199,7 +199,13 @@
     <p class="batch-panel__time" data-testid="batch-phase-time">{{ batch.phase }} {{ timeLine(batch.phaseAtUtc) }}</p>
     @if (batch.lastProgressAtUtc) { <p class="batch-panel__time" data-testid="batch-last-progress">Last progress {{ date(batch.lastProgressAtUtc) }}</p> }
     @if (batch.claimAgeMinutes !== null && batch.claimAgeMinutes !== undefined) { <p class="batch-panel__time" data-testid="batch-claim-age">Flight claim: {{ formatDurationMinutes(batch.claimAgeMinutes) }}@if (batch.reservationWaitMinutes !== null && batch.reservationWaitMinutes !== undefined) { · reservation wait: {{ formatDurationMinutes(batch.reservationWaitMinutes) }} }</p> }
-    @if (batch.nextAction; as next) { <p data-testid="batch-next-action">Next: {{ next.action }} · by {{ date(next.dueAtUtc) }}</p> }
+    @if (batch.nextAction; as next) {
+      <p data-testid="batch-next-action" [attr.data-actor]="next.actor ?? null">Next ({{ actorLabel(next) }}): {{ next.action }}@if (next.dueAtUtc) { · by {{ date(next.dueAtUtc) }} }
+        @if (next.actor === 'owner' && next.taskKeys?.length) { ·
+          @for (key of next.taskKeys; track key) { <a [href]="memberHref(key)" (click)="openMember($event, key)">Open {{ key }}</a>@if (!$last) {, } }
+        }
+      </p>
+    }
     @if (batch.phase === 'running' && batch.liveFlight === false && batch.recoveryStatus) {
       <p role="status">Recovery pending: {{ batch.recoveryStatus.reason }}. Next retry {{ retryTime(batch.recoveryStatus.nextRetryAtUtc) }}.</p>
     }
@@ -213,7 +219,6 @@
         <ol>@for (step of batch.phaseHistory; track step.atUtc + step.phase) { <li>{{ date(step.atUtc) }} · {{ step.phase }}@if (step.reason) { · {{ step.reason }} }</li> }</ol>
       </details>
     }
-    @if (batch.phase === 'red') { <p data-testid="batch-red-next">Next: {{ redNext(batch) }}</p> }
     @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
     @if (batch.exclusions?.length) {
       <ul aria-label="Cards placed in another batch">

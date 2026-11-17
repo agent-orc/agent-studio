@@ -292,10 +292,14 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", async (HttpContext context, string hostId,
             RunTargetObservedReport report, ProjectEnvironmentService environments,
-            ManagedDatabaseCredentials credentials, IConfiguration configuration, CancellationToken ct) =>
+            ManagedDatabaseCredentials credentials, ManagedDatabaseMetrics metrics, IConfiguration configuration,
+            CancellationToken ct) =>
         {
             if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
-            var accepted = environments.RecordObserved(hostId, report);
+            var measured = new List<(string Project, ManagedDatabaseRecord Record)>();
+            var accepted = environments.RecordObserved(hostId, report, measured);
+            // AGT-3878: database size and connections reach the environment's operations intake.
+            metrics.Publish(measured);
             await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.RetireDeletedAsync(ct));
             return Results.Ok(new { accepted });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);

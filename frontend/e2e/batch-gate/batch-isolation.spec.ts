@@ -191,14 +191,9 @@ test('lane indicator and batch panel name the proven-red member, its failing tes
   const red = isolation.locator('[data-testid="batch-isolation-member"][data-task-key="AGT-2"]');
   await expect(red.getByTestId('batch-proven-red-test')).toHaveText(failingTests.map(test => test.testName));
   await expect(red.getByTestId('batch-proven-red-excerpt')).toContainText('Expected: 12.50');
-  // AGT-3836: the row names the evidence file; the absolute host path shows on demand.
+  // AGT-3836/AGT-3872: the row names the evidence file; the host path never shows.
   await expect(red.getByTestId('batch-proven-red-evidence-name')).toHaveText('batch-17/gate-evidence.jsonl');
-  await expect(red.getByTestId('batch-proven-red-evidence-path')).toHaveCount(0);
-  const pathToggle = red.getByTestId('batch-proven-red-path-toggle');
-  await pathToggle.click();
-  await expect(red.getByTestId('batch-proven-red-evidence-path')).toHaveText(evidence('batch-17'));
-  await pathToggle.click();
-  await expect(red.getByTestId('batch-proven-red-evidence-path')).toHaveCount(0);
+  await expect(panel).not.toContainText('/var/lib/agentstudio');
   await expect(red).toContainText('Proved by batch batch-17, run run-17');
   const link = red.getByTestId('batch-proven-red-evidence');
   await expect(link).toHaveAttribute('href',
@@ -221,19 +216,30 @@ test('lane indicator and batch panel name the proven-red member, its failing tes
       await page.waitForTimeout(200);
       await page.screenshot({ path: path.join(RESULTS_DIR, `batch-isolation-panel-${width}-${theme}.png`) });
       await red.screenshot({ path: path.join(RESULTS_DIR, `batch-isolation-culprit-row-${width}-${theme}.png`) });
-      // The evidence name stays on one line instead of a path wrapped over five lines;
-      // at phone width the path toggle may take a second row beside it.
+      // The evidence name stays on one line instead of a path wrapped over five lines.
       const evidenceName = await red.getByTestId('batch-proven-red-evidence-name').boundingBox();
       expect(evidenceName!.height, `evidence name at ${width} px`).toBeLessThanOrEqual(24);
       const evidenceLine = await red.locator('.batch-proven-red__evidence').boundingBox();
-      expect(evidenceLine!.height, `evidence line at ${width} px`).toBeLessThanOrEqual(width < 768 ? 64 : 40);
+      expect(evidenceLine!.height, `evidence line at ${width} px`).toBeLessThanOrEqual(40);
     }
   }
 
   await page.setViewportSize({ width: 1280, height: 900 });
+  // AGT-3872: the fix card is created in the backlog, not in the legacy editor.
+  const created = new Promise<Record<string, unknown>>(resolve => {
+    void page.route(url => url.pathname === '/api/tasks', async route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      resolve(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'fix-card-1' }) });
+    });
+  });
   await panel.getByRole('button', { name: 'Create fix card for Checkout.Tests.TotalsIncludeShipping' }).click();
-  await expect(page.getByTestId('create-title')).toHaveValue('Fix failing test: Checkout.Tests.TotalsIncludeShipping');
-  await expect(page.getByTestId('create-prompt')).toHaveValue(/Batch isolation proved AGT-2 red in batch batch-17, run run-17\./);
+  const body = await created;
+  expect(body).toMatchObject({ title: 'Fix failing test: Checkout.Tests.TotalsIncludeShipping',
+    targetState: '0-backlog', taskType: 'bug' });
+  expect(String(body['promptMarkdown'])).toMatch(/Batch isolation proved AGT-2 red in batch batch-17, run run-17\./);
+  await expect(panel).toBeHidden();
+  await expect(page.getByTestId('create-dialog-legacy-notice')).toHaveCount(0);
 });
 
 test('the culprit card says it was proven red in batch-14 and lists the failing tests', async ({ page }) => {

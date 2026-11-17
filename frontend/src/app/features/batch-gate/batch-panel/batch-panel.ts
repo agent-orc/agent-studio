@@ -1,11 +1,12 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, OnDestroy, afterNextRender, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { map, switchMap } from 'rxjs';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
-import { batchAlert, batchFlakySuspectLabel, batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine } from '../../../models/batch-gate.model';
+import { batchAlert, batchFlakySuspectLabel, batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine, batchDateTime, BATCH_TIME_ZONE_NOTE } from '../../../models/batch-gate.model';
 import { formatDurationMinutes } from '../../../models/duration-format';
-import type { BatchFlakySuspect, BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
+import type { BatchFlakySuspect, BatchGateBatch, BatchNextAction, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
 import { PendingButtonDirective } from '../../../components/async-feedback';
@@ -17,6 +18,8 @@ import { BatchQuarantineComponent } from '../batch-quarantine/batch-quarantine';
 import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
 import { BatchLaneAdmissionComponent } from '../batch-lane-admission/batch-lane-admission';
 import { BatchPerTaskGatesComponent } from '../batch-per-task-gates/batch-per-task-gates';
+
+class FixCardError extends Error {}
 
 @Component({
   selector: 'app-batch-panel',
@@ -75,6 +78,7 @@ export class BatchPanelComponent implements OnDestroy {
   readonly replayLabel = batchReplayLabel;
   readonly publishedSha = batchPublishedSha;
   readonly timeLine = batchTimeLine;
+  readonly timeZoneNote = BATCH_TIME_ZONE_NOTE;
   phaseReasonLabel(reason: string | null | undefined): string | null {
     if (!reason) return null;
     const pause = 'paused-to-per-task-gate: ';
@@ -164,13 +168,10 @@ export class BatchPanelComponent implements OnDestroy {
     queueMicrotask(() => this.previousFocus?.focus());
   }
 
-  date(value?: string | null): string {
-    const stamp = value ? Date.parse(value) : NaN;
-    if (!Number.isFinite(stamp)) return 'Unknown';
-    return new Date(stamp).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
-  }
+  /** AGT-3872: every panel time is UTC; the header names the zone once. */
+  readonly date = batchDateTime;
   retryTime(value: string): string {
-    return `${new Date(value).toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' })} UTC`;
+    return new Date(value).toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
   duration(start?: string | null, end?: string | null): string {
     if (!start) return 'Waiting';
@@ -188,14 +189,9 @@ export class BatchPanelComponent implements OnDestroy {
     const opened = this.references.openTaskKey(key) || this.references.openReference(key);
     if (opened) { event.preventDefault(); this.close(); }
   }
-  redNext(batch: BatchGateBatch): string {
-    const children = this.batches().filter(child => child.parentBatchId === batch.batchId);
-    if (children.some(child => ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing'].includes(child.phase)))
-      return 'Isolation has started. The next verdict will identify which members need a separate gate.';
-    const slots = this.state()?.gateSlots;
-    if (slots && slots.busy >= slots.total)
-      return 'Isolation waits for a gate slot. It starts when a slot becomes free; members then return to their agents for a fix or continue through their own gate.';
-    return 'Isolation is awaiting the next planner tick. Members return to their agents for a fix or continue through their own gate after isolation.';
+  /** F13: who acts on the batch's single next step. */
+  actorLabel(next: BatchNextAction): string {
+    return next.actor === 'owner' ? 'you' : next.actor === 'none' ? 'nobody' : 'planner';
   }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }
   isolationState(batch: BatchGateBatch) { return batchIsolationState(batch); }
@@ -261,19 +257,23 @@ export class BatchPanelComponent implements OnDestroy {
       '',
       'Investigate the shared test or fixture, fix the root cause, and add a regression check.',
     ].join('\n');
-    this.taskService.getWatchPaths().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({ next: paths => {
+    const title = `${test.flakySuspect ? 'Fix flaky test' : 'Fix failing test'}: ${test.testName}`;
+    // AGT-3872: create the bug card in the backlog and open it in the card
+    // detail, instead of the legacy full-field editor.
+    this.taskService.getWatchPaths().pipe(
+      map(paths => paths.find(path => path.name === project)?.path ?? null),
+      switchMap(watchPath => {
+        if (!watchPath) throw new FixCardError('This project is no longer available for a fix card.');
+        return this.createForm.createBacklogCard({ watchPath, title, prompt, taskType: 'bug' });
+      }),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe({ next: created => {
       this.openingFix.set(null);
-      if (!paths.some(path => path.name === project)) {
-        this.actionError.set('This project is no longer available for a fix card.');
-        return;
-      }
-      this.createForm.openUxuiFollowUp({ projectName: project, prefill: prompt,
-        title: `${test.flakySuspect ? 'Fix flaky test' : 'Fix failing test'}: ${test.testName}` }, paths);
-      this.createForm.onTaskTypeChange('bug');
       this.close();
-    }, error: () => {
+      this.references.openCreatedTask(created.watchPath, created.jobId);
+    }, error: (error: unknown) => {
       this.openingFix.set(null);
-      this.actionError.set('Could not load the project for the fix card.');
+      this.actionError.set(error instanceof FixCardError ? error.message : 'Could not create the fix card. Try again.');
     } });
   }
   showConfirm(target: string): void {

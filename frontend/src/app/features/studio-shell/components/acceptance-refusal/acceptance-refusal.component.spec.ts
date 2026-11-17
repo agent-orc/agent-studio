@@ -77,6 +77,24 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
       .toBe('Accept with override…');
   });
 
+  it('carries the ranked reason, its next step and the gaps under it (F12)', async () => {
+    const { host, find, click } = await mount({
+      ...OVERRIDE,
+      reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+      headline: 'No content verdict',
+      nextStep: 'Run the requirement-fit review for the current run.',
+      secondary: ['No delivery branch or commit was found for this card.'],
+    });
+    expect(host.querySelector('[data-testid="acceptance-refusal"]')?.getAttribute('data-readiness-ranked')).toBe('true');
+    expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent)
+      .toContain('The current run has no requirement-fit verdict');
+    await click('acceptance-refusal-action');
+    expect(find('acceptance-refusal-next-step')?.textContent)
+      .toContain('Next step: Run the requirement-fit review for the current run.');
+    expect(find('acceptance-refusal-secondary')?.textContent)
+      .toContain('No delivery branch or commit was found for this card.');
+  });
+
   it('accepts with an owner override only after a written reason', async () => {
     const { find, click, typeReason, moveJob, refresh, success } = await mount(OVERRIDE);
     TestBed.inject(AcceptanceRefusalStore).record({ taskKey: JOB.taskKey, code: 'integration-dead-end', message: 'x' });
