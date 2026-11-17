@@ -80,7 +80,14 @@ records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
 The batch panel lists pending cards that have not joined a formed or running
-batch. A run without a finish event counts as running only while its batch is
+batch.
+An operator gate infrastructure retry records a durable request for the card's current
+review attempt and returns its request id immediately. The next pilot tick checks the
+park and review again, then moves and enqueues under the tick lock. The state read
+reports pending, applied, and refused retry requests with any refusal reason. Clicks
+during a pending request return its id; a refused request may be submitted again after
+its cause is fixed.
+A run without a finish event counts as running only while its batch is
 in the running phase; after interruption, the panel uses `phaseAtUtc` to show
 the elapsed run time. Detached flights include their batch, detach time, and
 lease deadline in the state response and panel. The project's durable flight
