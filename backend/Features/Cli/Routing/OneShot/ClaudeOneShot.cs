@@ -276,6 +276,7 @@ public sealed class ClaudeOneShot : ICliOneShot
             result.Usage,
             (long)result.Duration.TotalMilliseconds,
             ok: result.Ok,
+            cliType: CliTypes.Claude,
             project: request.Project,
             jobId: request.JobId);
     }
