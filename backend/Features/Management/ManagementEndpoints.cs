@@ -140,9 +140,16 @@ public static class ManagementEndpoints
             if (string.IsNullOrEmpty(capability) || capability.Length > 200 || capability.Any(char.IsWhiteSpace))
                 return Results.Json(new { error = "invalid-capability", message = "Name one capability key." },
                     statusCode: 400);
-            return registry.RequestReprobe(id, capability)
-                ? Results.Accepted(value: new { runnerId = id, capability, requested = true })
-                : Results.Json(new { error = "runner-not-registered" }, statusCode: 404);
+            return registry.RequestReprobe(id, capability) switch
+            {
+                AgentStudio.Runner.V1ReviewExecutorRegistry.ReprobeRequestResult.Queued =>
+                    Results.Accepted(value: new { runnerId = id, capability, requested = true }),
+                AgentStudio.Runner.V1ReviewExecutorRegistry.ReprobeRequestResult.RunnerNotRegistered =>
+                    Results.Json(new { error = "runner-not-registered" }, statusCode: 404),
+                AgentStudio.Runner.V1ReviewExecutorRegistry.ReprobeRequestResult.QueueFull =>
+                    Results.Json(new { error = "reprobe-queue-full" }, statusCode: 429),
+                _ => Results.Json(new { error = "unknown-capability" }, statusCode: 400),
+            };
         });
         group.MapGet("/runner-infrastructure-failures", (
             HttpContext context,

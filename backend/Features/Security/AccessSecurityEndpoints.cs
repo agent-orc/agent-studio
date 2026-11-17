@@ -382,11 +382,13 @@ public static class AccessSecurityEndpoints
                 return Results.NoContent();
             }));
 
-        auth.MapDelete("/runners/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+        auth.MapDelete("/runners/{id}", (string id, HttpContext context, AccessSecurityStore store,
+            AgentStudio.Runner.V1ReviewExecutorRegistry registry) =>
             Execute(() =>
             {
                 RequireOwner(context, store);
                 store.RevokeRunner(id);
+                registry.ClearReprobeRequests(id);
                 return Results.NoContent();
             }));
 
