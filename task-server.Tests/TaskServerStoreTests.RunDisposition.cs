@@ -10,7 +10,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Failed_lane_placement_keeps_the_claim_and_fence_live()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -46,7 +46,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Operator_move_revokes_claim_and_old_completion_cannot_change_lane()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -81,7 +81,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Live_run_move_requires_explicit_intent()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -98,7 +98,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Progress_card_without_a_live_lease_does_not_require_run_intent()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -114,7 +114,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Explicit_continue_steer_keeps_claim_deliverable()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -134,7 +134,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Operator_move_after_steer_revokes_the_lease_from_ready()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -161,7 +161,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Edited_brief_parks_old_completion_as_offer()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -180,7 +180,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Older_brief_choice_accepts_immutable_result_only_after_operator_decision()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -206,7 +206,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Older_brief_starting_point_is_consumed_by_next_claim()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
