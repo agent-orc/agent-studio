@@ -334,6 +334,18 @@ describe('deploy area model', () => {
       expect(buildEnvironmentCards(sources)[1].awaitingApproval?.deploymentId).toBeNull();
     });
 
+    it('carries the declaration problem of a misconfigured check onto the card (F16)', () => {
+      const sources = deploySourcesFixture();
+      const problem = 'Health check http targets http://172.17.0.1:8080/health, a private network address.';
+      sources.health = { capturedAt: '', probeOrigin: '', environments: [{
+        project: 'Website', environmentId: 'stage', name: 'Staging', kind: 'stage', address: '',
+        status: 'invalid', checks: [{ id: 'http' }] as never, uptime24h: null, uptime7d: null,
+        uptime30d: null, latency24h: { p50Ms: null, p95Ms: null, p99Ms: null },
+        currentIncident: null, lastIncident: null, error: problem,
+      }] };
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'invalid', problem });
+    });
+
     it('uses the per-environment current deployment when that run is beyond the bounded history page', () => {
       const sources = deploySourcesFixture();
       sources.deployments = sources.deployments!.filter(run => run.environmentId === 'stage');

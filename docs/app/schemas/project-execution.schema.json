@@ -335,6 +335,11 @@
                 "name": {
                   "const": "staging"
                 },
+                "healthChecksAllowPrivateNetwork": {
+                  "description": "Lets the control plane's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses, for an environment hosted on a LAN or VPN. Loopback, link-local and cloud metadata addresses stay refused.",
+                  "type": "boolean",
+                  "default": false
+                },
                 "protected": {
                   "description": "P1 Staging deploys automatically after integration and cannot be protected.",
                   "const": false,
@@ -351,6 +356,11 @@
               "properties": {
                 "name": {
                   "const": "production"
+                },
+                "healthChecksAllowPrivateNetwork": {
+                  "description": "Lets the control plane's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses, for an environment hosted on a LAN or VPN. Loopback, link-local and cloud metadata addresses stay refused.",
+                  "type": "boolean",
+                  "default": false
                 },
                 "protected": {
                   "const": true,
