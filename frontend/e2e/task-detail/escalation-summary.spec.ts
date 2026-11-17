@@ -521,6 +521,16 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
   test.beforeEach(() => test.setTimeout(90_000));
 
   test('gate infrastructure park offers retry and project switch without coding actions', async ({ page }, testInfo) => {
+    // Keep the mock socket online so the app-wide offline guard allows this POST.
+    await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({ json: {
+      connectionId: 'gate-retry-mock', connectionToken: 'gate-retry-mock', negotiateVersion: 1,
+      availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+    } }));
+    await page.routeWebSocket('**/hubs/v1/studio**', socket => {
+      socket.onMessage(message => {
+        if (message.toString().includes('"protocol":"json"')) socket.send('{}\u001e');
+      });
+    });
     let retries = 0;
     let enabledOnSave: boolean | null = null;
     await openDetail(page, '5e-escalated', true, true,
@@ -551,7 +561,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
         });
         await page.route(`**/api/projects/${PROJECT}/batch-gate/infrastructure/${JOB_ID}/retry`, route => {
           retries++;
-          return route.fulfill({ status: 200, contentType: 'application/json', body: '{"retried":true}' });
+          return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ requestId: 'retry-1', taskKey: JOB_ID, requestedAtUtc: '2026-11-17T10:00:00Z', status: 'pending' }) });
         });
       });
     const parked = page.getByTestId('parked-blocker');
@@ -576,7 +586,11 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await page.setViewportSize({ width: 390, height: 900 });
     await shootBothThemes(page, testInfo, 'gate-infrastructure-actions-390');
     await page.getByTestId('escalation-action-retry-gate').click();
-    await expect(page.getByTestId('gate-infrastructure-outcome')).toContainText('returned to verification');
+    await expect(page.getByTestId('gate-infrastructure-retry-status')).toContainText('waits for the batch gate');
+    await expect(page.getByTestId('escalation-action-retry-gate')).toBeDisabled();
+    const pendingShot = await page.getByTestId('escalation-summary').screenshot();
+    await saveShot(testInfo, 'gate-infrastructure-retry-pending.png', pendingShot);
+    writeFileSync(path.join(SHOTS_DIR, 'gate-infrastructure-retry-pending.png'), pendingShot);
     expect(retries).toBe(1);
     await page.getByTestId('escalation-action-disable-batch').click();
     await expect(page.getByTestId('gate-infrastructure-outcome')).toContainText('off for this project');

@@ -705,6 +705,12 @@ occur. It is not a claim about tunnel transfer time.
   is not the status `currentRelease` resolves its release with one `limit=1`
   read. Runs named by `/status` open without being on a loaded page; any other
   run is read from `/deployments/<id>`. The unpaged routes remain for existing clients.
+  The Deploy card, Operations overview, and deployment tools resolve the
+  environment release through the same running-release projection. A failed
+  deploy or rollback makes the running release uncertain until a later
+  successful host report confirms an artifact. The last successful release
+  remains the lifecycle baseline for promotion and rollback decisions; it is
+  not presented as the running release while host state is uncertain.
   Each source has its own loading or error state, so a failed deploy route
   leaves declared environment cards visible. A route 404 without an error body
   means the route is unavailable; a 404 with `{ error }` is shown as a server

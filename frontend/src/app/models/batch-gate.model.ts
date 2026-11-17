@@ -59,6 +59,7 @@ export interface BatchGateState {
   flightClaim?: { batchId: string; stage: string; stageDeadlineUtc: string; end?: unknown | null } | null;
   ejectRequests?: { project: string; taskKey: string; actor: string; reason: string;
     requestedAtUtc: string; status: 'pending' | 'released'; releasedAtUtc?: string | null }[];
+  infrastructureRetries?: InfrastructureRetryRequest[];
   perTaskGates?: { taskKey: string; reviewAttemptId: string; position: number; total: number;
     batchId?: string | null; reason: string; running: boolean; host?: string | null;
     startedAtUtc?: string | null; slotCapacity?: number;
@@ -137,6 +138,12 @@ export interface BatchGateState {
   isolationFindings?: BatchIsolationFinding[];
   /** AGT-3681: batch records the store could not read; `batches` leaves those batches out. */
   quarantined?: BatchQuarantinedRecord[];
+}
+
+export interface InfrastructureRetryRequest {
+  requestId: string; project: string; taskKey: string; reviewAttemptId: string;
+  actor: string; requestedAtUtc: string; status: 'pending' | 'applied' | 'refused';
+  reason?: string | null; completedAtUtc?: string | null;
 }
 
 /** AGT-3858: a red batch run no isolation child reproduced, and its one same-code re-gate. */

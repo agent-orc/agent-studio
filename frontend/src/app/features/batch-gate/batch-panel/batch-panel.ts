@@ -18,13 +18,14 @@ import { BatchQuarantineComponent } from '../batch-quarantine/batch-quarantine';
 import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
 import { BatchLaneAdmissionComponent } from '../batch-lane-admission/batch-lane-admission';
 import { BatchPerTaskGatesComponent } from '../batch-per-task-gates/batch-per-task-gates';
+import { BatchInfrastructureRetriesComponent } from './batch-infrastructure-retries/batch-infrastructure-retries';
 
 class FixCardError extends Error {}
 
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
-  imports: [NgTemplateOutlet, PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent, BatchLaneAdmissionComponent, BatchPerTaskGatesComponent],
+  imports: [NgTemplateOutlet, BatchInfrastructureRetriesComponent, PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent, BatchLaneAdmissionComponent, BatchPerTaskGatesComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',
