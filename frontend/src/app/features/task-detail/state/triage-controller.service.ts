@@ -217,6 +217,9 @@ export class TriageController {
     const peers = this.jobSelection.triageLanePeers();
     const originalDetail = this.jobSelection.selected();
     const originalPager = this.lanePager.snapshot();
+    const keepMovedCard = originalPager?.jobs.some(peer => peer.taskKey === info.taskKey)
+      ? originalPager.jobs.length === 1
+      : !peers.some(peer => peer.taskKey !== info.taskKey);
     // Capture prev lane + slot BEFORE the optimistic move so undo can
     // restore the card to its exact origin position.
     const prevState = info.state;
@@ -236,7 +239,7 @@ export class TriageController {
     // pager snapshot (the lane iteration the user opened detail in)
     // and the prefetched core, so the new panel paints without a
     // roundtrip.
-    if (!this.jobSelection.advanceAfterMutation(info.taskKey)) {
+    if (!this.jobSelection.advanceAfterMutation(info.taskKey, keepMovedCard) && !keepMovedCard) {
       this.advanceToNextInLane(lane, info.taskKey, peers);
     }
 
@@ -250,8 +253,8 @@ export class TriageController {
 
     const actionLabel = ev.targetState === TaskState.Completed
         ? LANE_LABELS[TaskState.Completed]
-        : ev.targetState === '2-ready'
-          ? 'Requeued'
+        : ev.targetState === TaskState.Ready
+          ? info.execution ? 'Requeued' : 'Queued'
           : ev.targetState === '7-archive' ? 'Archived' : 'Moved';
     this.undo.offerLaneRevert({
       jobId: info.id,
@@ -270,6 +273,12 @@ export class TriageController {
         this.jobService.endOptimisticPersist();
         persistResolve();
         this.acceptanceRefusals.clear(info.taskKey);
+        if (keepMovedCard && this.jobSelection.selected()?.info.taskKey === info.taskKey) {
+          this.jobService.getDetail(info.id, info.watchPath).subscribe({
+            next: detail => this.jobSelection.selectResolvedDetail(detail, 'replace'),
+            error: () => this.jobService.refresh(true),
+          });
+        }
         this.clearActing();
       },
       error: (err) => {

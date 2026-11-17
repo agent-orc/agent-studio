@@ -197,6 +197,25 @@ describe('TriageController · optimistic navigation on Accept', () => {
     movePost.complete();
   });
 
+  it('keeps a lone Preparation card open on promotion and labels its first queue Queued', () => {
+    const task = makeJob('first-task', '1-preparation');
+    const readyDetail = makeDetail(task.id, '2-ready');
+    TestBed.inject(LanePagerService).capture(task.state, [task], task.taskKey);
+    selection.triageLaneState = task.state;
+    selection.selected.set(makeDetail(task.id, task.state));
+    vi.spyOn(jobService, 'getDetail').mockReturnValue(of(readyDetail));
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+    const movePost = new Subject<object>();
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(movePost.asObservable());
+    const undo = vi.spyOn(TestBed.inject(UndoController), 'offerLaneRevert');
+
+    ctrl.move(task, { targetState: '2-ready', actionId: 'promote-ready' });
+    expect(selection.selected()?.info.taskKey).toBe(task.taskKey);
+    expect(undo).toHaveBeenCalledWith(expect.objectContaining({ actionLabel: 'Queued' }));
+    movePost.next({});
+    expect(selection.selected()?.info.state).toBe('2-ready');
+  });
+
   it('keeps the selected escalated task tab on reissue to Ready', () => {
     const taskA = makeJob('task-a', '5e-escalated');
     const readyDetail = makeDetail('task-a', '2-ready');
