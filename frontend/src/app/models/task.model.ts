@@ -1873,6 +1873,8 @@ export interface PromoteConceptResponse {
   targetState: string;
   watchPath: string;
   projectName: string;
+  /** Effective route used by each new implementation card. */
+  route?: { cliType: string; model: string | null; thinkingLevel: string | null } | null;
   /** Slices that already have a card from an earlier promotion. */
   promoted?: PromotedConceptTask[];
   recovery?: ConceptPromotionRecovery | null;
