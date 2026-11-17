@@ -4,6 +4,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TokenAnalysisQuotaComponent } from './token-analysis-quota';
 import { fixtureResponse } from '../../testing/token-analysis.fixtures';
 import * as util from '../../token-analysis.util';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
 
 describe('TokenAnalysisQuotaComponent', () => {
   it('renders its data', async () => {
@@ -23,5 +24,8 @@ describe('TokenAnalysisQuotaComponent', () => {
     expect(root.querySelectorAll('path.qc__line').length).toBe(1);
     expect(root.querySelector('[data-testid="token-analysis-quota-table"]')?.textContent).toContain('running');
     expect(root.querySelector('[data-testid="token-analysis-quota-open"]')?.getAttribute('data-tone')).toBe('running');
+    const cells = root.querySelectorAll('[data-testid="token-analysis-quota-table"] tbody td');
+    expect(cells[1].textContent?.trim()).toBe(formatZonedWithUtc(data.quota[0].segments[0].from, browserTimeZone()));
+    expect(cells[2].textContent?.trim()).toBe(formatZonedWithUtc(data.quota[0].segments[0].to, browserTimeZone()));
   });
 });
