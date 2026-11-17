@@ -363,7 +363,7 @@ public static class CompletionGate
         else if (source == CompletionGateSource.ProjectDefinition)
         {
             sb.AppendLf("The Orchestrator project definition check found that .agent-studio/project.yml in this delivery is invalid at the delivered commit. Every build and merge gate stops on it before it runs a command.");
-            sb.AppendLf("Fix each issue below in the file. commands.prepare is required and names a repository-relative script that exists in the delivery and is committed executable; the minimal valid file is in docs/system/domains/pipeline.md.");
+            sb.AppendLf("Fix each reported issue below in the file, using its path, line, code, and message.");
             sb.AppendLf("End with [[TASK_DONE]] only when the file is valid.");
         }
         else

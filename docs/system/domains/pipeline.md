@@ -3610,8 +3610,12 @@ every gate path:
 - `GateFailureTriagePolicy` classifies a gate log whose reason carries the
   invalid-definition text as `product` with kind `definition`, before any
   environment marker. The failing items are the `path [code]` pairs. Routing
-  starts the one fix round with the issues and the rule above, never attaches
-  the card to a shared cause, and never spends the environment replay budget.
+  starts at most two automatic fix rounds per card and preparation fingerprint,
+  even when each round produces a new delivery SHA. The prompt carries the
+  reported issue codes, paths, lines, and messages without advice for a
+  different rule. A repeated failure then parks the card with that issue line.
+  Definition failures never attach the card to a shared cause or spend the
+  environment replay budget.
 - Review checks the file first. Right after the completion gate,
   `ProjectDefinitionGate` reads `project.yml` at the exact subject SHA through
   git and validates it, including the existence of every referenced file. An
