@@ -64,7 +64,7 @@ function jobDetail() {
   };
 }
 
-function pipeline(runCount = 4) {
+function pipeline(runCount = 4, partialPrice = false) {
   const coreStep = {
     id: 'core-agent-run',
     displayName: 'Agent execution',
@@ -107,7 +107,7 @@ function pipeline(runCount = 4) {
       }],
       totalTokens: Math.round(currentModel.totalTokens * scale),
       totalCostUsd: currentModel.costUsd * scale,
-      anyModelUnknown: false,
+      anyModelUnknown: partialPrice && index === 0,
       tokenUsageAvailable: true,
     };
   });
@@ -229,7 +229,7 @@ function runTimeline() {
   };
 }
 
-async function installFixtureRoutes(page: Page, tokenRunCount = 4) {
+async function installFixtureRoutes(page: Page, tokenRunCount = 4, partialPrice = false) {
   await page.route('**/api/**', route => route.fulfill(json([])));
   await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
@@ -265,7 +265,7 @@ async function installFixtureRoutes(page: Page, tokenRunCount = 4) {
   })));
 
   const id = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  await page.route(new RegExp(`/api/tasks/${id}/pipeline(\\?|$)`), route => route.fulfill(json(pipeline(tokenRunCount))));
+  await page.route(new RegExp(`/api/tasks/${id}/pipeline(\\?|$)`), route => route.fulfill(json(pipeline(tokenRunCount, partialPrice))));
   await page.route(new RegExp(`/api/tasks/${id}/runs(\\?|$)`), route => route.fulfill(json(runTimeline())));
   await page.route(new RegExp(`/api/tasks/${id}/output(\\?|$)`), route => route.fulfill(json([])));
   await page.route(new RegExp(`/api/tasks/${id}/session-events(\\?|$)`), route => route.fulfill(json({ events: [], sessionChain: [] })));
@@ -455,3 +455,31 @@ for (const theme of ['light', 'dark'] as const) {
     });
   });
 }
+
+test('partial-price run keeps token columns aligned across narrow Overview widths', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await installFixtureRoutes(page, 4, true);
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await expect(page.getByTestId('pipeline-token-usage-run')).toHaveCount(4);
+  await dismissDevErrorDialog(page);
+  await expect(page.getByTestId('pipeline-token-usage-run-cost').filter({ hasText: 'incomplete' })).toHaveCount(1);
+
+  for (const width of [340, 400, 560]) {
+    await page.locator('.overview').evaluate((el, value) => { (el as HTMLElement).style.width = `${value}px`; }, width);
+    const totals = [page.getByTestId('pipeline-token-usage-grand-total-tokens'),
+      ...Array.from({ length: 4 }, (_, i) => page.getByTestId('pipeline-token-usage-run-total').nth(i))];
+    const edges = await Promise.all(totals.map(async cell => {
+      const box = await cell.boundingBox();
+      expect(box).not.toBeNull();
+      return box!.x + box!.width;
+    }));
+    expect(Math.max(...edges) - Math.min(...edges), `token edges at ${width}px`).toBeLessThan(1);
+    if (width === 340) {
+      const name = page.locator('[data-testid="pipeline-token-usage-run"] .ptu__run-name').first();
+      expect(await name.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      await page.getByTestId('pipeline-token-usage').screenshot({
+        path: join(RESULTS_DIR || 'test-results', 'pipeline-token-usage-partial-340.png'),
+      });
+    }
+  }
+});
