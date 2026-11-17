@@ -25,6 +25,13 @@
       @for (notice of notices(); track notice) { <p>{{ notice }}</p> }
     </div>
   }
+  @if (releaseRefusal(); as refusal) {
+    <section class="deploy-area__refusal" role="status" data-testid="deploy-release-refusal">
+      <h2>Release refused</h2>
+      <p>Commit <code>{{ refusal.commitSha.slice(0, 12) }}</code> (delivery.fullSuite: {{ refusal.mode }}): {{ refusal.reason }}</p>
+      @if (refusal.nextStep) { <p data-testid="deploy-release-refusal-next">Next step: {{ refusal.nextStep }}</p> }
+    </section>
+  }
   <div class="deploy-area__body" [class.deploy-area__body--drawer]="selectedRun()">
     <div class="deploy-area__main">
       @switch (view()) {

@@ -51,7 +51,7 @@ while (($#)); do
   esac
 done
 if [[ "$url" == */release-candidates/* ]]; then
-  printf '{"mode":"required","postMergeGreen":true,"commandDigest":"%s","verdict":' "$FAKE_DIGEST"
+  printf '{"mode":"required","postMergeGreen":false,"candidateGreen":true,"commandDigest":"%s","verdict":' "$FAKE_DIGEST"
   if [[ "$FAKE_VERDICT_STATUS" == missing ]]; then printf 'null}\n'
   else printf '{"status":"%s"}}\n' "$FAKE_VERDICT_STATUS"; fi
 else

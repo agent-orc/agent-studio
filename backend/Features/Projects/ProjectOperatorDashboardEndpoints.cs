@@ -88,7 +88,8 @@ public static class ProjectOperatorDashboardEndpoints
         // starts the automatic Staging phase of the standard lifecycle.
         app.MapPost("/api/deploy/gate-releases", async (HttpContext context, GateArtifactRequest request,
             ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration,
-            AccessSecurityStore security, ReleaseCandidateGate gate, CancellationToken ct) =>
+            AccessSecurityStore security, ReleaseCandidateGate gate, DeployStore store, TimeProvider clock,
+            CancellationToken ct) =>
         {
             var builder = RunnerCredential(context, configuration, security);
             if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
@@ -96,8 +97,14 @@ public static class ProjectOperatorDashboardEndpoints
             ReleaseCandidateGateResult candidate;
             try { candidate = await gate.InspectAsync(request.Project, request.Commit, ct); }
             catch (HttpRequestException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
-            if (candidate.Mode == "invalid") return Results.BadRequest(new { error = candidate.Error });
-            if (!candidate.Allowed) return Results.Conflict(new { error = candidate.Error });
+            // F2: a refusal stays visible in the Deploy area until a release is created.
+            if (candidate.Project.Length > 0)
+                store.SaveReleaseRefusal(candidate.Project, candidate.Allowed ? null
+                    : new ReleaseGateRefusal(candidate.CommitSha, candidate.Mode, candidate.Error!,
+                        candidate.NextStep, clock.GetUtcNow()));
+            if (candidate.Mode == "invalid")
+                return Results.BadRequest(new { error = candidate.Error, nextStep = candidate.NextStep });
+            if (!candidate.Allowed) return Results.Conflict(new { error = candidate.Error, nextStep = candidate.NextStep });
             return DeployEndpoints.QuotaRefusable(() => environments.RegisterGateArtifact(
                 request.Project, request.Artifact, request.Commit, builder.RunnerId)
                 ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate",

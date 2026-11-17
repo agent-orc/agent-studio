@@ -30,6 +30,7 @@ class FakeDeployData {
   readonly deploymentsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
   readonly pipelinePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
   readonly healthPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
+  readonly releaseGatePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
   readonly requests: string[] = [];
   readonly actions: string[] = [];
   actionResult = new Subject<unknown>();
@@ -113,6 +114,7 @@ class FakeDeployData {
   }
   pipeline(): Observable<DeployPanel<unknown>> { return this.pipelinePanel; }
   health(): Observable<DeployPanel<unknown>> { return this.healthPanel; }
+  releaseGate(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`gate:${project}`); return this.releaseGatePanel; }
   deploymentLog(_project: string, id: string): Observable<DeployPanel<unknown>> {
     this.requests.push(`log:${id}`);
     return new BehaviorSubject<DeployPanel<unknown>>({ status: 'ready', value: deploymentLogFixture(id) });
@@ -182,6 +184,27 @@ describe('ProjectDeployAreaComponent', () => {
   });
 
   afterEach(() => { host().remove(); vi.unstubAllGlobals(); });
+
+  it('shows a refused release with its reason and next step until a release clears it (F2)', async () => {
+    data.serveEverything();
+    await settle();
+    expect(data.requests).toContain('gate:Website');
+    expect(byTestId('deploy-release-refusal')).toBeNull();
+
+    data.releaseGatePanel.next({ status: 'ready', value: { refusal: {
+      commitSha: '86afada0123456789abcdef0123456789abcdef0', mode: 'required',
+      reason: 'The candidate has no green pre-main or batch gate on this exact commit.',
+      nextStep: 'Release a commit that passed the pre-main or batch gate.', atUtc: '2026-11-16T10:00:00Z',
+    } } });
+    await settle();
+    expect(text('deploy-release-refusal')).toContain('Release refused');
+    expect(text('deploy-release-refusal')).toContain('86afada01234 (delivery.fullSuite: required): The candidate has no green pre-main');
+    expect(text('deploy-release-refusal-next')).toBe('Next step: Release a commit that passed the pre-main or batch gate.');
+
+    data.releaseGatePanel.next({ status: 'ready', value: { refusal: null } });
+    await settle();
+    expect(byTestId('deploy-release-refusal')).toBeNull();
+  });
 
   it('shows one checkout state for a URL project and skips deploy reads until its checkout exists', async () => {
     checkoutProject.set(urlProject({ id: 'PROJ-2', displayName: 'Tally Library' }));
@@ -676,7 +699,7 @@ describe('ProjectDeployAreaComponent', () => {
   it('reloads every source on Refresh and keeps the deployment tools reachable', async () => {
     data.requests.length = 0;
     await click('deploy-refresh');
-    expect(data.requests).toEqual(['environments:Website', 'releases:0', 'status', 'deployments:0:all', 'deployments:0:all']);
+    expect(data.requests).toEqual(['environments:Website', 'releases:0', 'gate:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
 
     await click('deploy-open-tools');
     expect(host().querySelector('app-project-deployment-panel')).not.toBeNull();
