@@ -10,6 +10,7 @@
           <app-status-indicator [tone]="alert.state === 'red' ? 'danger' : 'running'" [label]="alertLabel(alert)"
             [compact]="true" testId="batch-lane-alert" />
           @if (alert.culprits.length) { {{ alert.culprits.join(', ') }} proven red · }
+          <span data-testid="batch-lane-held">{{ heldLabel(alert) }}</span> ·
         }
         @if (batch.plan.decision !== 'disabled') {
           Batch: {{ waitingFor(project) }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running

@@ -773,6 +773,9 @@ test('red, abandoned and running batches show truthful status and evidence at de
     pending: [],
     batches: [
       { ...state.batches[0], phase: 'red', phaseReason: 'Suite failed; isolate the culprit',
+        isolationActive: false, isolationPending: true,
+        nextAction: { actor: 'planner', dueAtUtc: null,
+          action: 'No isolation flight is active; on its next tick the planner pauses this batch and returns the unresolved members to planning' },
         phaseHistory: [{ phase: 'running', atUtc: '2026-10-11T13:00:00Z' },
           { phase: 'red', reason: 'Suite failed; isolate the culprit', atUtc: '2026-10-11T13:05:00Z' }],
         runs: [{ batchRunId: 'run-7', host: 'agent-runner-01', startedAtUtc: '2026-10-11T13:00:00Z', evidenceAvailable: true }] },
@@ -804,7 +807,9 @@ test('red, abandoned and running batches show truthful status and evidence at de
   await expect(panel.locator('#batch-batch-7')).toContainText('interrupted');
   await expect(panel.locator('#batch-batch-abandoned')).toContainText('interrupted');
   await expect(panel.locator('#batch-batch-running')).toContainText('running');
-  await expect(panel.getByTestId('batch-red-next')).toContainText('waits for a gate slot');
+  await expect(panel.locator('#batch-batch-7').getByTestId('batch-next-action'))
+    .toHaveText(/^Next \(planner\): No isolation flight is active; on its next tick the planner pauses this batch/);
+  await expect(panel.getByTestId('batch-red-next')).toHaveCount(0);
   await expect(panel.getByTestId('batch-close-now')).toBeDisabled();
   await expect(panel.getByTestId('batch-close-unavailable')).toHaveText('No eligible cards to close.');
   await expect(panel.locator('#batch-batch-7').getByRole('link', { name: /Batch fixture task/ })).toHaveAttribute('href', '#/tasks/AGT-2');

@@ -106,12 +106,15 @@ export interface BatchGateState {
     lastProgressAtUtc?: string | null;
     claimAgeMinutes?: number | null;
     reservationWaitMinutes?: number | null;
-    nextAction?: { action: string; dueAtUtc: string } | null;
+    nextAction?: BatchNextAction | null;
     liveFlight?: boolean;
     recoveryStatus?: { reason: string; nextRetryAtUtc: string } | null;
     phaseReason?: string | null;
     isolationActive?: boolean;
+    /** The pilot tick still has to end this red batch's interrupted isolation. */
     isolationPending?: boolean;
+    /** F13: members a red batch still holds; they wait on its isolation. */
+    heldTaskKeys?: string[];
     phaseHistory?: { phase: string; reason?: string | null; atUtc: string }[];
     /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
     queuePosition?: number | null;
@@ -186,6 +189,17 @@ export interface BatchQuarantinedRecord {
   nextStep: string;
 }
 
+/**
+ * F13: who acts next on a batch, and what. An owner action names the cards it
+ * acts on. A due time is a stored deadline, or absent.
+ */
+export interface BatchNextAction {
+  actor?: 'planner' | 'owner' | 'none' | string;
+  action: string;
+  dueAtUtc?: string | null;
+  taskKeys?: string[] | null;
+}
+
 export type BatchGateBatch = BatchGateState['batches'][number];
 
 /** UTC phase start and elapsed time, shared by the panel and card. */
@@ -200,11 +214,15 @@ export function batchTimeLine(start?: string | null, end?: string | null, now = 
 
 const ACTIVE_BATCH_PHASES = new Set(['formed', 'assembling', 'assembled', 'running']);
 
-/** Pending records can remain in the snapshot after their cards joined a batch. */
+/**
+ * Pending records can remain in the snapshot after their cards joined a batch.
+ * A member a red batch holds waits on that batch, not for a new one (F13).
+ */
 export function batchWaitingCards(state: BatchGateState | null): BatchGateState['pending'] {
   if (!state) return [];
-  const assigned = new Set(state.batches.filter(batch => ACTIVE_BATCH_PHASES.has(batch.phase))
-    .flatMap(batch => batch.members.map(member => member.taskKey)));
+  const assigned = new Set([...state.batches.filter(batch => ACTIVE_BATCH_PHASES.has(batch.phase))
+    .flatMap(batch => batch.members.map(member => member.taskKey)),
+  ...state.batches.filter(batch => batch.phase === 'red').flatMap(batch => batch.heldTaskKeys ?? [])]);
   const perTask = new Set((state.perTaskGates ?? []).map(gate => gate.reviewAttemptId));
   return state.pending.filter(item => !assigned.has(item.taskKey) && !perTask.has(item.reviewAttemptId));
 }
@@ -253,6 +271,8 @@ export interface BatchAlert {
   state: 'red' | 'isolating';
   batchId: string;
   culprits: string[];
+  /** F13: the cards that wait on this batch. */
+  held: string[];
 }
 
 export interface BatchGatePushWait {
@@ -509,11 +529,12 @@ export function batchAlert(state: BatchGateState | null): BatchAlert | null {
     const children = batches.filter(child => child.parentBatchId === batch.batchId);
     const culprits = [...latestFindings(state, batch.batchId).values()]
       .filter(finding => finding.status === 'proven-red').map(finding => finding.taskKey);
+    const held = batch.heldTaskKeys ?? [];
     if (batch.isolationActive ?? children.some(child => ACTIVE_PHASES.has(child.phase)))
-      return { state: 'isolating', batchId: batch.batchId, culprits };
+      return { state: 'isolating', batchId: batch.batchId, culprits, held };
     // Batches arrive newest first: a published newer batch means the project moved on.
     if (roots.slice(0, index).some(newer => newer.phase === 'published')) return null;
-    return { state: 'red', batchId: batch.batchId, culprits };
+    return { state: 'red', batchId: batch.batchId, culprits, held };
   }
   return null;
 }

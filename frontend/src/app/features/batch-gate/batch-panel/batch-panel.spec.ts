@@ -36,6 +36,40 @@ describe('BatchPanelComponent', () => {
     await fixture.whenStable();
     expect(eject()?.disabled).toBe(false);
   });
+  it('shows one next line for a red batch naming the actor, without a moving deadline (F13)', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    const red = (nextAction: object) => ({ ...redHalvingState, batches: [{ ...redHalvingState.batches[0],
+      isolationActive: false, isolationPending: true, nextAction }] });
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(red({ actor: 'planner',
+      action: 'No isolation flight is active; on its next tick the planner pauses this batch', dueAtUtc: null }));
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const batch = () => document.body.querySelector('#batch-batch-7') as HTMLElement;
+    const lines = () => [...batch().querySelectorAll('p')].filter(line => line.textContent!.trim().startsWith('Next'));
+    expect(lines().length).toBe(1);
+    expect(lines()[0].textContent).toContain('Next (planner): No isolation flight is active');
+    expect(lines()[0].textContent).not.toContain(' by ');
+    expect(batch().querySelector('[data-testid="batch-isolation-state"]')!.textContent)
+      .toBe('Isolation has no active flight; awaiting recovery');
+    const refresh = TestBed.inject(BatchGateService).refresh('Demo');
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(red({ actor: 'owner',
+      action: 'Triage the proven-red members on their cards', dueAtUtc: null, taskKeys: ['AGT-2'] }));
+    await refresh;
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(lines().length).toBe(1);
+    expect(lines()[0].textContent).toContain('Next (you): Triage the proven-red members on their cards');
+    expect(lines()[0].querySelector('a')!.textContent).toBe('Open AGT-2');
+    expect(lines()[0].querySelector('a')!.getAttribute('href')).toBe('#/tasks/AGT-2');
+    http.verify();
+  });
   it('lists the per-task handoff in queue order without counting it as batch waiting', async () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
     const fixture = TestBed.createComponent(BatchPanelComponent);
@@ -98,7 +132,7 @@ describe('BatchPanelComponent', () => {
       reviewAttemptId: `r-${index}`, resultSha: 'a'.repeat(40), waitMinutes: 229.234388035, risk: 0.2 }));
     const batch = { ...redHalvingState.batches[1], phase: 'formed',
       lastProgressAtUtc: '2026-11-10T12:00:00Z',
-      nextAction: { action: 'Start the formed batch', dueAtUtc: '2026-11-10T12:00:30Z' },
+      nextAction: { actor: 'planner', action: 'Start the formed batch', dueAtUtc: null },
       members: [{ taskKey: 'AGT-1', replay: 'applied', disposition: 'claimed', released: false }], runs: [] };
     http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({ ...redHalvingState,
       oldestFormed: { batchId: batch.batchId, formedAtUtc: '2026-11-10T12:00:00Z', ageMinutes: 229 },

@@ -4,7 +4,7 @@ import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
 import { batchFlakySuspectLabel, batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards, batchTimeLine } from '../../../models/batch-gate.model';
 import { formatDurationMinutes } from '../../../models/duration-format';
-import type { BatchFlakySuspect, BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
+import type { BatchFlakySuspect, BatchGateBatch, BatchNextAction, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
 import { PendingButtonDirective } from '../../../components/async-feedback';
@@ -173,14 +173,9 @@ export class BatchPanelComponent implements OnDestroy {
     const opened = this.references.openTaskKey(key) || this.references.openReference(key);
     if (opened) { event.preventDefault(); this.close(); }
   }
-  redNext(batch: BatchGateBatch): string {
-    const children = this.batches().filter(child => child.parentBatchId === batch.batchId);
-    if (children.some(child => ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing'].includes(child.phase)))
-      return 'Isolation has started. The next verdict will identify which members need a separate gate.';
-    const slots = this.state()?.gateSlots;
-    if (slots && slots.busy >= slots.total)
-      return 'Isolation waits for a gate slot. It starts when a slot becomes free; members then return to their agents for a fix or continue through their own gate.';
-    return 'Isolation is awaiting the next planner tick. Members return to their agents for a fix or continue through their own gate after isolation.';
+  /** F13: who acts on the batch's single next step. */
+  actorLabel(next: BatchNextAction): string {
+    return next.actor === 'owner' ? 'you' : next.actor === 'none' ? 'nobody' : 'planner';
   }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }
   isolationState(batch: BatchGateBatch) { return batchIsolationState(batch); }
