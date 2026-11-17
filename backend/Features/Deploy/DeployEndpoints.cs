@@ -116,16 +116,29 @@ public static class DeployEndpoints
             Respond(runbooks.Reject(projectName, runId, Actor(context, projectName))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         project.MapGet("/operations", (string projectName, AgentStudio.Projects.ProjectOperationsService operations) =>
-            operations.Read(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+        {
+            try
+            {
+                return operations.Read(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName);
+            }
+            catch (AgentStudio.Projects.OperationsTelemetryReadException exception)
+            {
+                return Results.Json(new { error = exception.Message }, statusCode: 503);
+            }
+        });
 
         project.MapGet("/operations/logs", (string projectName, string environmentId, DateTimeOffset? since,
-            DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit,
+            DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit, string? cursor,
             AgentStudio.Projects.ProjectOperationsService operations) =>
         {
             try
             {
-                return operations.SearchLogs(projectName, environmentId, since, until, level, releaseId, text, limit)
+                return operations.SearchLogs(projectName, environmentId, since, until, level, releaseId, text, limit, cursor)
                     is { } value ? Results.Ok(value) : Results.NotFound(new { error = "Unknown project or environment." });
+            }
+            catch (AgentStudio.Projects.OperationsTelemetryReadException exception)
+            {
+                return Results.Json(new { error = exception.Message }, statusCode: 503);
             }
             catch (ArgumentException exception)
             {

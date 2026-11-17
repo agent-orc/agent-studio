@@ -498,6 +498,56 @@ test.describe('Project Deploy area (mocked)', () => {
     await page.getByTestId('project-operations').screenshot({ path: path.join(results, 'operations-trace-dark--mocked.png') });
   });
 
+  test('Operations renders stored trends and a paged log hit in both themes and at 390 px', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    const metrics = {
+      responseP50Ms: 24, responseP95Ms: 91, errorRate: 0.25, restarts: null, requests: 12,
+      sessions: null, activeUsers: null, cpuCores: 0.4, cpuReservedCores: null,
+      memoryBytes: 4096, memoryReservedBytes: null, diskBytes: 8192, diskReservedBytes: null,
+      networkBytes: null, topEndpoints: [{ path: '/orders', requests: 12 }], dailyUsage: [],
+      samples: [
+        { at: '2026-10-19T09:00:00Z', responseP95Ms: 51, errorRate: 0, requests: 3, cpuCores: 0.2, memoryBytes: 3072, diskBytes: 7168 },
+        { at: '2026-10-19T10:00:00Z', responseP95Ms: 91, errorRate: 0.25, requests: 9, cpuCores: 0.4, memoryBytes: 4096, diskBytes: 8192 },
+      ],
+    };
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: ['stage', 'production'].map(id => ({
+        environment: { id, name: id === 'stage' ? 'Staging' : 'Production', kind: id },
+        telemetryAvailable: true, metrics, markers: [],
+      })),
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.route(`**${DEPLOY}/operations/logs?*`, route => {
+      const cursor = new URL(route.request().url()).searchParams.get('cursor');
+      return answer(route, cursor ? { telemetryAvailable: true, nextCursor: null,
+        lines: [{ at: '2026-10-19T10:10:00Z', level: 'ERROR', message: 'upstream timeout', releaseId: 'v2' }] }
+        : { telemetryAvailable: true, nextCursor: 'next-page', lines: [] });
+    });
+    await page.getByTestId('deploy-tab-operations').click();
+    const operations = page.getByTestId('project-operations');
+    await expect(operations.getByTestId('operations-production')).toContainText('12');
+    await expect(operations.getByRole('img', { name: /Response p95 trend/ })).toHaveCount(2);
+    await operations.getByTestId('operations-search-logs').click();
+    await operations.getByTestId('operations-more-logs').click();
+    await expect(operations).toContainText('upstream timeout');
+    fs.mkdirSync(results, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await operations.getByRole('img', { name: /Response p95 trend/ }).first().scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(results, `operations-telemetry-trends-1280-${theme}.png`) });
+      await operations.getByTestId('operations-logs').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(results, `operations-telemetry-logs-1280-${theme}.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await operations.getByRole('img', { name: /Response p95 trend/ }).first().scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(results, 'operations-telemetry-trends-390-dark.png') });
+    await operations.getByTestId('operations-logs').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(results, 'operations-telemetry-logs-390-dark.png') });
+    await expect(operations.getByTestId('operations-logs')).toContainText('upstream timeout');
+  });
+
   test('project Operations links to installation backups in Settings with backup and host CA warnings in both themes and at 390 px (AGT-3574, AGT-3736)', async ({ page }) => {
     await openDeploy(page, fullMocks());
     await page.route(`**${DEPLOY}/operations`, route => answer(route, {

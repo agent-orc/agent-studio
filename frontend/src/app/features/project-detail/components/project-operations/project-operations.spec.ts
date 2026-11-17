@@ -100,6 +100,35 @@ describe('ProjectOperationsComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="operations-logs-empty"]')).not.toBeNull();
   });
 
+  it('loads another log page without losing the first page and names a failed store read', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    const view = fixture.componentInstance;
+    view.search();
+    requests.expectOne(req => req.url.endsWith('/deploy/operations/logs')).flush({
+      telemetryAvailable: true, nextCursor: 'page-2',
+      lines: [{ at: '2026-10-20T10:00:00Z', level: 'ERROR', message: 'First error', releaseId: null }],
+    });
+    await fixture.whenStable();
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="operations-more-logs"]')!.click();
+    const next = requests.expectOne(req => req.url.endsWith('/deploy/operations/logs'));
+    expect(next.request.params.get('cursor')).toBe('page-2');
+    next.flush({ telemetryAvailable: true, nextCursor: null,
+      lines: [{ at: '2026-10-20T09:00:00Z', level: 'ERROR', message: 'Second error', releaseId: null }] });
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('First error');
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Second error');
+    view.search();
+    requests.expectOne(req => req.url.endsWith('/deploy/operations/logs')).flush(
+      { error: 'Operations telemetry store read failed.' }, { status: 503, statusText: 'Service Unavailable' });
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Operations telemetry store read failed.');
+  });
+
   it('searches logs for a long-running release whose arrival predates the trend window', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');
