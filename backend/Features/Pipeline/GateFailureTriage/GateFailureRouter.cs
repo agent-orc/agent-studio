@@ -145,7 +145,8 @@ public sealed class GateFailureRouter
             ReplayBudgetLeft(card, deliverySha, status),
             otherCards?.Length,
             FixRoundsSpent(card, deliverySha),
-            _settings.Get(card.ProjectName).AutomaticFailureContinuationsEnabled);
+            _settings.Get(card.ProjectName).AutomaticFailureContinuationsEnabled,
+            FixRoundsSpentForFingerprint(card, triage.Fingerprint));
         var route = GateFailureRoutingPolicy.Decide(triage, facts);
         RetypeMergeStep(card, triage);
 
@@ -248,6 +249,13 @@ public sealed class GateFailureRouter
             && entry.Details?.GetValueOrDefault("source") == FixRoundSource
             && string.Equals(entry.Details.GetValueOrDefault("deliverySha"), deliverySha,
                 StringComparison.OrdinalIgnoreCase));
+
+    private int FixRoundsSpentForFingerprint(TaskInfo card, string fingerprint)
+        => _timeline.ReadAll(card.FolderPath).Count(entry =>
+            entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
+            && entry.Details?.GetValueOrDefault("source") == FixRoundSource
+            && string.Equals(entry.Details.GetValueOrDefault("fingerprint"), fingerprint,
+                StringComparison.Ordinal));
 
     /// <summary>
     /// Makes the durable failure code agree with the class: an environment class
@@ -405,6 +413,7 @@ public static class GateFailureFixRoundPrompt
             integrationBranch,
             stage,
             triage.ReasonLine.TrimEnd('.'),
-            gateEvidence: "failing items: " + string.Join("; ", triage.FailingItems),
+            gateEvidence: triage.Kind == GateProductKinds.Definition
+                ? null : "failing items: " + string.Join("; ", triage.FailingItems),
             evidenceRef: evidenceRef);
 }

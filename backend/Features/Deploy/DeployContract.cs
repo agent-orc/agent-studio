@@ -119,6 +119,8 @@ public sealed record EnvironmentStatus(
     InterventionSummary? Intervention = null)
 {
     public string? Tenant { get; init; }
+    /// <summary>A failed run may have changed the host even though the last successful release remains the lifecycle baseline.</summary>
+    public bool ReleaseUncertain { get; init; }
 }
 
 public sealed record InterventionSummary(string DeploymentId, string FailedStep, DateTime? ExpiresAtUtc,

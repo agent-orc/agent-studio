@@ -1,12 +1,22 @@
-import { signal } from '@angular/core';
+import { computed, signal } from '@angular/core';
 import type { BatchGateService } from '../../../../services/batch-gate.service';
 import type { TaskInfo } from '../../../../models/task.model';
+import type { InfrastructureRetryRequest } from '../../../../models/batch-gate.model';
 
 /** Retry-gate and disable-batch actions for a gate-infrastructure park (AGT-3708). */
 export class EscalationGateActions {
   readonly action = signal<'retry' | 'disable' | null>(null);
   readonly message = signal<string | null>(null);
   readonly error = signal<string | null>(null);
+  readonly requested = signal<InfrastructureRetryRequest | null>(null);
+  readonly pending = computed(() => {
+    const info = this.info();
+    const parkedAt = info.parkedBlocker?.parkedAt;
+    const current = (request: InfrastructureRetryRequest) => request.taskKey === (info.key ?? info.id)
+      && request.status === 'pending' && (!parkedAt || request.requestedAtUtc >= parkedAt);
+    return (this.requested() && current(this.requested()!))
+      || !!this.batchGate.state(info.projectName)()?.infrastructureRetries?.some(current);
+  });
 
   constructor(
     private readonly batchGate: BatchGateService,
@@ -19,10 +29,11 @@ export class EscalationGateActions {
     const info = this.info();
     this.action.set('retry');
     this.error.set(null);
+    this.message.set(null);
     this.batchGate.retryInfrastructureGate(info.projectName, info.key ?? info.id).subscribe({
-      next: () => {
+      next: request => {
         this.action.set(null);
-        this.message.set('The reviewed delivery returned to verification.');
+        this.requested.set(request);
       },
       error: err => {
         this.action.set(null);

@@ -73,11 +73,13 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
 
         var factTime = _clock.GetUtcNow().UtcDateTime;
         var expected = new Dictionary<string, DateTime>(StringComparer.Ordinal);
-        // Deploy completion has its own quota-backed source and a running batch
-        // without a live gate needs a stale snapshot; this fixture registers
-        // only the task, watcher, batch, push, provider and retry sources.
+        // Deploy completion and review-host drift have their own sources, and a
+        // running batch without a live gate needs a stale snapshot; this fixture
+        // registers only the task, watcher, batch, push, provider and retry sources.
         var seededTypes = OperatorDecisionTypes.All
-            .Where(type => type != OperatorDecisionTypes.DeployCompleted && type != OperatorDecisionTypes.BatchRunningWithoutGate)
+            .Where(type => type != OperatorDecisionTypes.DeployCompleted
+                && type != OperatorDecisionTypes.ReviewHostDrift
+                && type != OperatorDecisionTypes.BatchRunningWithoutGate)
             .ToArray();
         foreach (var type in seededTypes) expected[type] = factTime;
         expected[OperatorDecisionTypes.PushPendingOverdue] = factTime.AddSeconds(2);
