@@ -30,13 +30,13 @@ public static class WorkspaceEndpoints
         group.MapGet("/tokens/cli-window",
             (HttpContext context, string cliType, string label, DateTime? resetAt,
                 ProjectRegistry registry, TaskScannerService scanner, ITokenAggregator tokens,
-                AgentMessageBusStore bus, IConfiguration configuration) =>
+                AgentMessageBusStore bus, IConfiguration configuration, TimeProvider clock) =>
             {
                 if (cliType is not ("claude" or "codex"))
                     return Results.BadRequest(new { error = "Unknown CLI." });
                 var length = QuotaWindowProjection.InferWindowLength(label);
                 if (length is null) return Results.BadRequest(new { error = "Unknown quota window length." });
-                var now = DateTime.UtcNow;
+                var now = clock.GetUtcNow().UtcDateTime;
                 var reset = resetAt?.ToUniversalTime();
                 var from = (reset ?? now) - length.Value;
                 var to = reset is { } time && time < now ? time : now;

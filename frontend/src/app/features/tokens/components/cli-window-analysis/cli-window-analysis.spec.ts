@@ -38,8 +38,34 @@ describe('CliWindowAnalysisComponent', () => {
     expect(text).toContain('in 2h 30m');
     expect(text).toContain('UTC');
     expect(text).toContain('10.0% / h');
-    expect(text).toContain('Recorded attribution');
-    expect(text).toContain('10');
+    expect(fixture.nativeElement.querySelector('[data-testid="cli-window-attribution"]')
+      ?.textContent?.trim()).toBe('10');
+    http.verify();
+  });
+
+  it('shows unavailable when attribution fails', async () => {
+    await TestBed.configureTestingModule({
+      imports: [CliWindowAnalysisComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+        { provide: UsageCockpitService, useValue: { snapshot: () => ({ timeZone: 'UTC' }) } }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CliWindowAnalysisComponent);
+    fixture.componentRef.setInput('cliType', 'codex');
+    fixture.componentRef.setInput('quotaRows', [{ cliType: 'codex', plan: 'Pro', windows: [{
+      label: '5-hour', windowHours: 5, usedPct: 25, resetAt: new Date().toISOString(), resetLabel: 'now',
+    }] }]);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne(request => request.url === '/api/workspace/tokens/subscription-week').flush({
+      cli: 'codex', subscriptionKey: null, startUtc: null, resetAtUtc: null,
+      usedPct: null, observedAt: null, totalTokens: 0, receiptCount: 0,
+      cards: [], kinds: [], models: [], receipts: [], notice: 'No current provider week.',
+    });
+    http.expectOne(request => request.url === '/api/workspace/tokens/cli-window')
+      .flush({ error: 'Unavailable' }, { status: 500, statusText: 'Server error' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="cli-window-attribution"]')
+      ?.textContent?.trim()).toBe('Unavailable');
     http.verify();
   });
 });
