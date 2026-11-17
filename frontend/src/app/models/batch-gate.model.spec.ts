@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isolatedRedState, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
 import {
-  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine,
+  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine, batchDateTime, BATCH_TIME_ZONE_NOTE,
   type BatchGateState,
 } from './batch-gate.model';
 
@@ -9,8 +9,15 @@ const root = (state: BatchGateState) => state.batches.find(batch => batch.batchI
 
 it('formats the UTC start and elapsed gate time', () => {
   expect(batchTimeLine('2026-11-09T21:11:00Z', null, Date.parse('2026-11-10T00:41:00Z')))
-    .toBe('since 21:11 UTC, 3 h 30 min');
-  expect(batchTimeLine('2026-11-09T21:11:00Z', '2026-11-09T21:14:00Z')).toBe('since 21:11 UTC, 3 min');
+    .toBe('since 21:11, 3 h 30 min');
+  expect(batchTimeLine('2026-11-09T21:11:00Z', '2026-11-09T21:14:00Z')).toBe('since 21:11, 3 min');
+});
+
+it('formats batch dates in UTC like the time lines, without repeating the zone', () => {
+  expect(batchDateTime('2026-11-15T21:50:00Z')).toBe('15 Nov 2026, 21:50');
+  expect(batchDateTime('2026-11-15T23:50:00+02:00')).toBe('15 Nov 2026, 21:50');
+  expect(batchDateTime(null)).toBe('Unknown');
+  expect(BATCH_TIME_ZONE_NOTE).toBe('Times in UTC');
 });
 
 describe('batch waiting projection', () => {

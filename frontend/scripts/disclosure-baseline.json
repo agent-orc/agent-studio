@@ -33,8 +33,7 @@
     "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html",
     "src/app/features/server-readiness/components/server-readiness-panel/server-readiness-panel.component.html",
     "src/app/features/structure/structure-view/structure-view.component.html",
-    "src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html",
-    "src/app/features/batch-gate/batch-proven-red/batch-proven-red.html"
+    "src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html"
   ],
   "documented": {
     "src/app/features/access/components/session-manager/session-manager.component.html": {

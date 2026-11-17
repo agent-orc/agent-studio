@@ -7,6 +7,8 @@ import { BatchPanelComponent } from './batch-panel';
 import { isolatedRedState, redHalvingState } from '../testing/batch-fixtures';
 import { ModalStackService } from '../../../services/modal-stack.service';
 import { BatchGateService } from '../../../services/batch-gate.service';
+import { TaskReferenceNavigationService } from '../../../services/task-reference-navigation.service';
+import { CreateTaskFormService } from '../../board';
 
 describe('BatchPanelComponent', () => {
   it('shows a held member Eject action that unlocks when isolation ends', async () => {
@@ -99,7 +101,9 @@ describe('BatchPanelComponent', () => {
     expect(rows[0].textContent).toContain('Queued');
     expect(rows[0].textContent).toContain('3 per-task slots');
     expect(rows[0].textContent).toContain('Start estimate unavailable: Full-suite duration is unknown.');
-    expect(rows[0].textContent).toContain('Last progress');
+    expect(rows[0].textContent).toContain('Last progress 10 Nov 2026, 12:00');
+    expect(rows[1].textContent).toContain('since 10 Nov 2026, 12:00');
+    expect(document.body.querySelector('[data-testid="batch-time-zone"]')?.textContent).toBe('Times in UTC');
     expect(rows[0].textContent).toContain('Red escalates the card; green integrates it.');
     expect(rows[1].textContent).toContain('Running on gate-01 since');
     expect(fixture.nativeElement.querySelector('[data-testid="batch-per-task-gates"]').textContent)
@@ -283,11 +287,13 @@ describe('BatchPanelComponent', () => {
     http.verify();
   });
 
-  it('ranks a flaky suspect and opens a prefilled bug card for operator confirmation', async () => {
+  it('ranks a flaky suspect and creates a prefilled backlog bug card without the legacy editor', async () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const open = vi.spyOn(TestBed.inject(TaskReferenceNavigationService), 'openCreatedTask').mockImplementation(() => undefined);
+    const closed = vi.fn();
     const fixture = TestBed.createComponent(BatchPanelComponent);
     fixture.componentRef.setInput('project', 'Demo');
-    fixture.componentRef.setInput('closed', vi.fn());
+    fixture.componentRef.setInput('closed', closed);
     await fixture.whenStable();
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
@@ -309,14 +315,56 @@ describe('BatchPanelComponent', () => {
       .toContain('Flaky suspect');
     fixture.nativeElement.querySelector('[aria-label="Create fix card for Product.Tests.Unstable"]').click();
     http.expectOne('/api/watch-paths').flush([{ name: 'Demo', path: '/tmp/demo' }]);
-    const followUps = http.match(() => true);
-    expect(followUps.some(request => request.request.urlWithParams.includes('taskType=bug'))).toBe(true);
-    for (const request of followUps) request.flush({}, { status: 500, statusText: 'Fixture unavailable' });
+    const create = http.expectOne(request => request.method === 'POST' && request.url === '/api/tasks');
+    expect(create.request.body).toEqual(expect.objectContaining({
+      title: 'Fix flaky test: Product.Tests.Unstable', watchPath: '/tmp/demo',
+      targetState: '0-backlog', taskType: 'bug', kind: 'task',
+    }));
+    expect(create.request.body.promptMarkdown).toContain('Batches: one, two, three.');
+    expect(create.request.body.promptMarkdown).toContain('run one-run');
+    expect(create.request.body.promptMarkdown).toContain('Error Message: timed out');
+    create.flush({ id: 'fix-1' });
     await fixture.whenStable();
-    expect(fixture.componentInstance['createForm'].visible()).toBe(true);
-    expect(fixture.componentInstance['createForm'].newTaskType).toBe('bug');
-    expect(fixture.componentInstance['createForm'].newPrompt).toContain('Batches: one, two, three.');
-    expect(fixture.componentInstance['createForm'].newPrompt).toContain('run one-run');
+    const form = TestBed.inject(CreateTaskFormService);
+    expect(form.visible()).toBe(false);
+    expect(closed).toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith('/tmp/demo', 'fix-1');
+  });
+
+  it('keeps the panel open and says so when the fix card cannot be created', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const open = vi.spyOn(TestBed.inject(TaskReferenceNavigationService), 'openCreatedTask').mockImplementation(() => undefined);
+    const closed = vi.fn();
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', closed);
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [{
+      testName: 'Product.Tests.Broken', batches: 1, runs: 1, distinctMemberSets: 1,
+      firstFailureUtc: '2026-11-05T12:00:00Z', lastFailureUtc: '2026-11-05T12:00:00Z',
+      latestErrorExcerpt: '', flakyRerunPassed: false, flakySuspect: false, batchIds: ['one'], failures: [],
+    }] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const button = () => fixture.nativeElement.querySelector('[aria-label="Create fix card for Product.Tests.Broken"]') as HTMLButtonElement;
+    button().click();
+    http.expectOne('/api/watch-paths').flush([{ name: 'Other', path: '/tmp/other' }]);
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-failed-tests"] [role="alert"]').textContent)
+      .toContain('This project is no longer available for a fix card.');
+    button().click();
+    http.expectOne('/api/watch-paths').flush([{ name: 'Demo', path: '/tmp/demo' }]);
+    http.expectOne(request => request.method === 'POST' && request.url === '/api/tasks')
+      .flush({ error: 'disk full' }, { status: 500, statusText: 'Server Error' });
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-failed-tests"] [role="alert"]').textContent)
+      .toContain('Could not create the fix card. Try again.');
+    expect(button().disabled).toBe(false);
+    expect(closed).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
   });
 
   it('marks a red no isolation child reproduced on the batch and in the ranking', async () => {
@@ -383,6 +431,7 @@ describe('BatchPanelComponent', () => {
   });
   it('shows what the bisection proved per member and offers a fix card for a deterministic failure', async () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    vi.spyOn(TestBed.inject(TaskReferenceNavigationService), 'openCreatedTask').mockImplementation(() => undefined);
     const fixture = TestBed.createComponent(BatchPanelComponent);
     fixture.componentRef.setInput('project', 'Demo');
     fixture.componentRef.setInput('closed', vi.fn());
@@ -423,11 +472,11 @@ describe('BatchPanelComponent', () => {
     expect(runs).toContain('batch-14 · run run-14 · members AGT-1, AGT-2, AGT-3, AGT-4');
     host.querySelector<HTMLButtonElement>('[aria-label="Create fix card for Checkout.Tests.TotalsIncludeShipping"]')!.click();
     http.expectOne('/api/watch-paths').flush([{ name: 'Demo', path: '/tmp/demo' }]);
-    for (const request of http.match(() => true)) request.flush({}, { status: 500, statusText: 'Fixture unavailable' });
+    const create = http.expectOne(request => request.method === 'POST' && request.url === '/api/tasks');
+    expect(create.request.body.title).toBe('Fix failing test: Checkout.Tests.TotalsIncludeShipping');
+    expect(create.request.body.promptMarkdown).toContain('Batch isolation proved AGT-2 red in batch batch-17, run run-17.');
+    create.flush({ id: 'fix-2' });
     await fixture.whenStable();
-    const form = fixture.componentInstance['createForm'];
-    expect(form.newTitle).toBe('Fix failing test: Checkout.Tests.TotalsIncludeShipping');
-    expect(form.newPrompt).toContain('Batch isolation proved AGT-2 red in batch batch-17, run run-17.');
   });
   it('shows each formed batch at its flight queue position, oldest first', async () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });

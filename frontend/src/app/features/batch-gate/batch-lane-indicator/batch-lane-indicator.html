@@ -13,7 +13,7 @@
           <span data-testid="batch-lane-held">{{ heldLabel(alert) }}</span> ·
         }
         @if (batch.plan.decision !== 'disabled') {
-          Batch: {{ waitingFor(project) }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running
+          Batch: {{ waitingFor(project) }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'HH:mm':'UTC' }} UTC } @else { when ready } · {{ runningFor(project) }} running
         }
         @if (batch.perTaskGates?.length) { @if (batch.plan.decision !== 'disabled') { · } Per-task gates: {{ perTaskFor(project).queued }} queued · {{ perTaskFor(project).running }} running }
       </button>
