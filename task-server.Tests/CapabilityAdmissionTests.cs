@@ -175,6 +175,49 @@ public sealed class CapabilityAdmissionTests
                 CredentialHealthVersion: 2), runner, default);
     }
 
+    /// <summary>
+    /// AGT-3948: the runner reserves once before its status command and again
+    /// right before its real request. The second reservation extends the
+    /// owner's window, so a success after the first 45 seconds still releases
+    /// the hold instead of leaving the binding indeterminate.
+    /// </summary>
+    [Fact]
+    public async Task Owner_reservation_extends_the_canary_window_for_the_real_request()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedTasksAsync(store, 1);
+        var key = CapabilityProtocol.ProviderAuthentication("claude");
+        await RegisterAndAdvertiseAsync(store, clock, "runner-a", "instance-a", "host-a",
+            CapabilityProtocol.CodingExecutor, key);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseHealth(2, "indeterminate");
+        clock.Advance(TimeSpan.FromSeconds(70));
+        Assert.Equal("canary", (await store.ReserveProviderCanaryAsync("runner-a", "instance-a", "claude", default)).Reason);
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal("canary", (await store.ReserveProviderCanaryAsync("runner-a", "instance-a", "claude", default)).Reason);
+        clock.Advance(TimeSpan.FromSeconds(25));
+        await AdvertiseHealth(3, "healthy", clock.GetUtcNow().UtcDateTime);
+
+        Assert.Equal("claimed", (await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, key]), "runner-a", default)).Status);
+
+        async Task AdvertiseHealth(long generation, string outcome, DateTime? successAt = null)
+            => await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+                "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, generation,
+                [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+                 new AdvertisedCapabilityDto(key, "provider-auth", "ready",
+                     CredentialGeneration: "generation-a", CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                     LastRealSuccessAt: successAt, EffectiveSource: "environment-file",
+                     HealthOutcome: outcome,
+                     ServiceAvailability: outcome == "healthy" ? "available" : "unknown",
+                     CredentialHealth: outcome == "healthy" ? "valid" : "unknown")],
+                CredentialHealthVersion: 2), "runner-a", default);
+    }
+
     [Fact]
     public async Task Invalid_shared_binding_creates_one_runbook_item_and_other_provider_can_claim()
     {

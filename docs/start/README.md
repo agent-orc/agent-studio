@@ -268,6 +268,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Background polling leaves an open HTTP request at `verify()` | [system/common-problems/open-http-request-at-verify-from-chat-polling/](../system/common-problems/open-http-request-at-verify-from-chat-polling/) |
 | Background chat polling test measure | [system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md](../system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md) |
 | Ready shows waiting for sign-in but the host is logged in | [common-problems/ready-sign-in-runner-link-down/](../operations/common-problems/ready-sign-in-runner-link-down/) |
+| provider-auth stays indeterminate after a provider limit reset until the daemon restarts (AGT-3948) | [common-problems/provider-auth-indeterminate-latch-after-limit/](../operations/common-problems/provider-auth-indeterminate-latch-after-limit/) |
 | claude CLI not available right after a CLI auto-update (launcher stub) | [common-problems/claude-launcher-stub-after-autoupdate/](../operations/common-problems/claude-launcher-stub-after-autoupdate/) |
 | Every process of the runner account dies in one second (sentinel pid broadcast kill) | [common-problems/sentinel-pid-broadcast-kill/](../operations/common-problems/sentinel-pid-broadcast-kill/) |
 | Designated topics (AGENTS/wiki-sync current-state index; post-agents-wiki-sync) | [concepts/designated-topics/README.md](../concepts/designated-topics/README.md) |
