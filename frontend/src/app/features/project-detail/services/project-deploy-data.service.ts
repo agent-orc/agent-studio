@@ -145,6 +145,14 @@ export class ProjectDeployDataService {
       action === 'retry' || action === 'skip' || action === 'abort' ? { action, reason } : {});
   }
 
+  stopEnvironment(projectName: string, environmentId: string): Observable<void> {
+    return this.http.post<void>(`/api/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/stop`, {});
+  }
+
+  confirmRunTargetRemoval(projectName: string, environmentId: string, hostId: string): Observable<void> {
+    return this.http.post<void>(`/api/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/run-target-removal/confirm`, { hostId });
+  }
+
   pipeline(projectName: string): Observable<DeployPanel<PipelineDefinitionResponse>> {
     return panel(this.definitions.read(projectName), 'The project.yml pipeline could not be loaded.', true);
   }

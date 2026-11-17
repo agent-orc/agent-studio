@@ -533,6 +533,15 @@ sends it in `removals` only on a decision:
   (optional body `{ "hostId": ... }`). The actor is recorded.
 - `grace`: kind `other` only, after 10 minutes missing.
 
+The Deploy overview offers Stop for a deployed app and Remove for a declared
+environment. Stop queues a host stop and keeps the declaration. Remove queues a
+card to delete the repository declaration and its `project.yml` references.
+The overview then shows the pending placement with a separate host removal
+confirmation. Each confirmation explains that deploy history, health samples,
+and environment secrets stay stored. Open health incidents
+close as `check-removed` when their checks disappear. The host app is deleted only
+after the second confirmation and the host's next poll.
+
 Deleting, renaming, or retargeting a `production` or `stage` declaration
 therefore removes nothing by itself. It stays `pending-confirmation`, and
 placements recorded before kinds were kept are treated the same way. A

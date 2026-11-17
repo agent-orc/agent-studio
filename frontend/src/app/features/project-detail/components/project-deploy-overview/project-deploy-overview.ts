@@ -18,8 +18,11 @@ export class ProjectDeployOverviewComponent {
   readonly panel = input.required<DeployPanel<unknown>>();
   readonly cards = input.required<readonly EnvironmentCardView[]>();
   readonly now = input.required<number>();
+  readonly busy = input(false);
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  readonly stop = output<string>();
+  readonly remove = output<string>();
 
   readonly errorBody = computed(() => {
     const panel = this.panel();

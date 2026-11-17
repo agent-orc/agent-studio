@@ -10,6 +10,7 @@ import {
 } from '../../state/deploy-area.model';
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '../../../../components/async-feedback';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
@@ -19,7 +20,7 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [DatePipe, StatusIndicatorComponent, PendingButtonDirective],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -27,8 +28,11 @@ function ago(age: string | null): string | null {
 export class DeployEnvironmentCardComponent {
   readonly environment = input.required<EnvironmentCardView>();
   readonly now = input.required<number>();
+  readonly busy = input(false);
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  readonly stop = output<string>();
+  readonly remove = output<string>();
 
   readonly headingId = computed(() => `deploy-environment-${this.environment().id}-title`);
   readonly release = computed(() => {

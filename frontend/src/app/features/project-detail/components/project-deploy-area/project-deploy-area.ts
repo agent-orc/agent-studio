@@ -17,9 +17,12 @@ import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-pa
 import { FlowHealthPageComponent, type FlowDetailTarget } from '../../../flow-health';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
-import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../services/project-deploy-data.service';
+import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
+import { pageItems, intoPanel } from '../../state/deploy-panel-utils';
 import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
 import { LocalOwnerSessionService } from '../../../../services/local-owner-session.service';
+import { ProjectDeployEnvironmentActions } from '../../services/project-deploy-environment-actions.service';
+import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { LocalOwnerDialogComponent } from '../../../../components/local-owner-dialog/local-owner-dialog';
 import { serverCheckoutMissing } from '../../../server-checkout/server-checkout.model';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
@@ -49,12 +52,13 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
 @Component({
   selector: 'app-project-deploy-area',
   standalone: true,
+  providers: [ProjectDeployEnvironmentActions],
   imports: [
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent, LocalOwnerDialogComponent,
+    FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -66,6 +70,7 @@ export class ProjectDeployAreaComponent {
   private readonly cardLookup = inject(OperationsCardLookupService);
   private readonly clock = inject(DEPLOY_CLOCK);
   private readonly localOwner = inject(LocalOwnerSessionService);
+  private readonly environmentActions = inject(ProjectDeployEnvironmentActions);
   private subscriptions = new Subscription();
   private runReads = new Subscription();
   private releaseReads = new Subscription();
@@ -116,6 +121,11 @@ export class ProjectDeployAreaComponent {
   readonly releaseRefusal = computed(() => ready(this.releaseGatePanel())?.refusal ?? null);
   readonly logPanel = signal<DeployPanel<DeploymentLogLine[]>>({ status: 'loading' });
   readonly actionState = signal<DeployRunActionState>(IDLE);
+  readonly environmentActionMessage = this.environmentActions.message;
+  readonly environmentActionError = this.environmentActions.error;
+  readonly environmentActionBusy = this.environmentActions.busy;
+  readonly pendingRemovals = computed(() => (ready(this.environmentPanel())?.runTargetRemovals ?? [])
+    .filter(item => item.status === 'pending-confirmation'));
   readonly selectedRunId = signal<string | null>(null);
   readonly highlightedReleaseId = signal<string | null>(null);
 
@@ -131,7 +141,7 @@ export class ProjectDeployAreaComponent {
         this.releaseOffset.set(panel.value.offset);
         this.releaseTotal.set(panel.value.total);
       }
-      this.releasePanel.set(this.items(panel));
+      this.releasePanel.set(pageItems(panel));
     }));
   }
 
@@ -249,12 +259,15 @@ export class ProjectDeployAreaComponent {
   }
 
   refresh(): void { if (!this.checkoutMissing()) this.load(this.projectName(), false); }
-
+  stopEnvironment(id: string): void { this.environmentActions.stop(this.projectName(),
+    this.cards().find(item => item.id === id), () => this.refresh()); }
+  removeEnvironment(id: string): void { this.environmentActions.remove(this.projectName(),
+    this.cards().find(item => item.id === id)); }
+  confirmRemoval(id: string, hostId: string): void { this.environmentActions.confirm(this.projectName(), id, hostId, () => this.refresh()); }
   openFlowDetail(target: FlowDetailTarget): void {
     if (target === 'steps') this.show('steps');
     else this.openRail.emit(target);
   }
-
   openRun(runId: string): void {
     this.runOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.selectedRunId.set(runId);
@@ -353,11 +366,11 @@ export class ProjectDeployAreaComponent {
     this.runReads = new Subscription();
     const generation = ++this.readGeneration;
     this.runReads.add(this.data.statuses(projectName).subscribe(panel => {
-      if (generation === this.readGeneration) this.into(this.statusPanel, keepShown)(panel);
+      if (generation === this.readGeneration) intoPanel(this.statusPanel, keepShown)(panel);
     }));
     this.runReads.add(this.data.deploymentPage(projectName, 0).subscribe(panel => {
       if (generation !== this.readGeneration) return;
-      this.into(this.deploymentPanel, keepShown)(this.items(panel));
+      intoPanel(this.deploymentPanel, keepShown)(pageItems(panel));
     }));
     this.runReads.add(this.data.deploymentPage(projectName, this.historyOffset(), this.historyFilter(), this.now()).subscribe(panel => {
       if (generation !== this.readGeneration) return;
@@ -365,7 +378,7 @@ export class ProjectDeployAreaComponent {
         this.historyDeployments.set(panel.value.items);
         this.historyTotal.set(panel.value.total);
       }
-      this.into(this.historyPanel, keepShown)(this.items(panel));
+      intoPanel(this.historyPanel, keepShown)(pageItems(panel));
     }));
   }
 
@@ -392,19 +405,8 @@ export class ProjectDeployAreaComponent {
     this.releaseReads.add(this.data.releasePage(projectName, this.releaseOffset()).subscribe(panel => {
       if (generation !== this.releaseGeneration) return;
       if (panel.status === 'ready') this.releaseTotal.set(panel.value.total);
-      this.into(this.releasePanel, keepShown)(this.items(panel));
+      intoPanel(this.releasePanel, keepShown)(pageItems(panel));
     }));
-  }
-
-  private items<T>(panel: DeployPanel<DeployPage<T>>): DeployPanel<T[]> {
-    return panel.status === 'ready' ? { status: 'ready', value: panel.value.items } : panel;
-  }
-
-  /** With `keepShown`, ready data stays on screen until the reload answers. */
-  private into<T>(target: WritableSignal<DeployPanel<T>>, keepShown: boolean): (panel: DeployPanel<T>) => void {
-    return panel => {
-      if (!keepShown || panel.status !== 'loading' || target().status !== 'ready') target.set(panel);
-    };
   }
 
   /** Resolves each host artifact once per project; answers for another project are dropped. */

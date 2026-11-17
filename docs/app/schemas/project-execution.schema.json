@@ -305,7 +305,7 @@
       }
     },
     "environments": {
-      "description": "Ordered deployment environments. Defaults to staging, then protected production, when omitted. The shorthand list protects production.",
+      "description": "Ordered deployment environments. Staging alone or staging followed by protected production. Omission defaults to both.",
       "oneOf": [
         {
           "type": "array",
@@ -317,12 +317,12 @@
               "const": "production"
             }
           ],
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 2
         },
         {
           "type": "array",
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 2,
           "prefixItems": [
             {
@@ -453,7 +453,7 @@
               "additionalProperties": false
             }
           ],
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 2
         }
       },

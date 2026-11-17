@@ -136,7 +136,8 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(text('deploy-environment-release')).toBe('Nothing deployed yet');
     expect(text('deploy-environment-age')).toBe('Never');
     expect(text('deploy-environment-last-run')).toBe('No runs yet');
-    expect(host().querySelectorAll('button')).toHaveLength(0);
+    expect(button('deploy-environment-stop')).toBeNull();
+    expect(button('deploy-environment-remove')).not.toBeNull();
   });
 
   describe('accessibility', () => {
@@ -156,6 +157,8 @@ describe('DeployEnvironmentCardComponent', () => {
       expect(buttons.map(item => item.getAttribute('aria-label'))).toEqual([
         'Open last run for Production',
         'Review the pending approval for Production',
+        'Stop Production',
+        'Remove Production',
       ]);
       expect(buttons.every(item => item.type === 'button' && item.tabIndex === 0)).toBe(true);
     });
@@ -167,5 +170,19 @@ describe('DeployEnvironmentCardComponent', () => {
       expect(terms).toEqual(['Release', 'Deployed', 'Cards', 'Last run']);
       expect(host().querySelector('.env-card__health')?.textContent?.trim()).toBe('Health: Healthy');
     });
+  });
+
+  it('offers stop for a deployed app and removal for a declared environment', async () => {
+    await render(fullCards()[1]);
+    const stopped: string[] = [];
+    const removed: string[] = [];
+    fixture.componentInstance.stop.subscribe(id => stopped.push(id));
+    fixture.componentInstance.remove.subscribe(id => removed.push(id));
+
+    button('deploy-environment-stop')!.click();
+    button('deploy-environment-remove')!.click();
+
+    expect(stopped).toEqual(['production']);
+    expect(removed).toEqual(['production']);
   });
 });

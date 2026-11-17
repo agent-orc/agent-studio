@@ -3668,15 +3668,17 @@ in
   repository-relative. Their segments contain only letters, digits, `.`, `_`, and
   `-`; no segment is empty, `.`, or `..`, or starts with `-`. A lone `.` names
   the repository root only for a container build context.
-- `environments` are ordered and exactly Staging, then Production. Production
+- `environments` are ordered: Staging alone, or Staging then Production. Production
   must be `protected`: every deploy, redeploy, or rollback into it needs an
   Owner or Maintainer approval. Staging deploys automatically after
   integration, so `protected: true` on Staging is refused as
   `staging-protection-unsupported`. The shorthand `[staging, production]`
   protects Production. When the file describes a deployment but omits
-  `environments` or `lifecycles`, the default is Staging, protected Production,
-  and the standard lifecycle.
-- `lifecycles.standard`: Staging is automatic after integration; Production
+  `environments`, the default is Staging and protected Production. When
+  `lifecycles` is omitted, the standard lifecycle follows the declared
+  environments. Removing Production therefore also requires removing its
+  lifecycle phase and all Production-scoped steps and references.
+- `lifecycles.standard`: Staging is automatic after integration; when declared, Production
   requires successful Staging and approval by Owner or Maintainer.
 - `tenants` declare customer installations with a unique portable `name`,
   optional unique `tags`, and a nonempty list of participating `environments`.

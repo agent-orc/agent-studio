@@ -293,7 +293,9 @@ public static partial class ProjectDefinitionReader
         return new(NestedStringList(lines, "pipeline", "build"),
             NestedStringList(lines, "pipeline", "test"), artifacts,
             defaultEnvironments ? ProjectDeploymentVocabulary.DefaultEnvironments() : environments,
-            defaultLifecycle ? ProjectDeploymentVocabulary.DefaultStandardLifecycle() : phases,
+            defaultLifecycle ? (environments.Count == 1 && environments[0].Name == "staging"
+                ? [new ProjectLifecyclePhase("staging", true, [], null)]
+                : ProjectDeploymentVocabulary.DefaultStandardLifecycle()) : phases,
             steps)
         {
             Variables = variables,
@@ -474,15 +476,16 @@ public static partial class ProjectDefinitionValidator
             if (value.Artifacts.Count > 0 || value.Deploy.Count > 0 || value.Variables.Count > 0
                 || value.Runbooks.Count > 0)
                 issues.Add(new("environments", "deployment-environments-invalid",
-                    "P1 environments must be [staging, production] in deployment order."));
+                    "Environments must be [staging] or [staging, production] in deployment order."));
             return environments;
         }
-        if (value.Environments.Count != 2 || !environments.SetEquals(ProjectDeploymentVocabulary.EnvironmentNames))
+        if (value.Environments.Count == 2 && value.Environments[0].Name == "production"
+            && value.Environments[1].Name == "staging")
+            issues.Add(new("environments", "deployment-environment-order-invalid", "Staging must precede production."));
+        else if (value.Environments.Count is < 1 or > 2 || value.Environments[0].Name != "staging"
+            || value.Environments.Count == 2 && value.Environments[1].Name != "production")
             issues.Add(new("environments", "deployment-environments-invalid",
-                "P1 environments must be [staging, production] in deployment order."));
-        else if (value.Environments[0].Name != "staging")
-            issues.Add(new("environments", "deployment-environment-order-invalid",
-                "Staging must precede production."));
+                "Environments must be [staging] or [staging, production] in deployment order."));
         for (var i = 0; i < value.Environments.Count; i++)
         {
             if (value.Environments[i] is { Name: "production", Protected: false })
@@ -527,22 +530,24 @@ public static partial class ProjectDefinitionValidator
     {
         if (value.StandardLifecycle.Count == 0 && value.Environments.Count == 0)
             return;
-        if (value.StandardLifecycle.Count != 2
+        var stagingOnly = value.Environments.Count == 1 && value.Environments[0].Name == "staging"
+            && value.StandardLifecycle.Count == 1 && value.StandardLifecycle[0].Phase == "staging";
+        if (!stagingOnly && (value.StandardLifecycle.Count != 2
             || value.StandardLifecycle[0].Phase != "staging"
-            || value.StandardLifecycle[1].Phase != "production")
+            || value.StandardLifecycle[1].Phase != "production"))
         {
             issues.Add(new("lifecycles.standard", "standard-lifecycle-invalid",
-                "P1 standard lifecycle must contain staging followed by production."));
+                "The standard lifecycle must contain staging, optionally followed by production."));
             return;
         }
         if (!value.StandardLifecycle[0].Automatic)
             issues.Add(new("lifecycles.standard[0].automatic", "staging-automatic-required",
                 "Staging must deploy automatically after integration."));
-        if (value.StandardLifecycle[1].Approval.Count == 0
-            || value.StandardLifecycle[1].Approval.Any(role => !ProjectDeploymentVocabulary.ApprovalRoles.Contains(role)))
+        if (!stagingOnly && (value.StandardLifecycle[1].Approval.Count == 0
+            || value.StandardLifecycle[1].Approval.Any(role => !ProjectDeploymentVocabulary.ApprovalRoles.Contains(role))))
             issues.Add(new("lifecycles.standard[1].approval", "production-approval-invalid",
                 "Production approval must name Owner or Maintainer."));
-        if (value.StandardLifecycle[1].Requires is not ("staging" or "{ staging: success }" or "{staging: success}"))
+        if (!stagingOnly && value.StandardLifecycle[1].Requires is not ("staging" or "{ staging: success }" or "{staging: success}"))
             issues.Add(new("lifecycles.standard[1].requires", "production-requires-staging",
                 "Production must require successful staging. Use 'requires: staging'."));
         foreach (var (name, phases) in value.Lifecycles)

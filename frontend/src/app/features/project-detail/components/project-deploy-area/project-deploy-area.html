@@ -36,8 +36,18 @@
     <div class="deploy-area__main">
       @switch (view()) {
         @case ('overview') {
-          <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()"
-            (openRun)="openRun($event)" (openTools)="show('tools')" />
+          <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()" [busy]="environmentActionBusy()"
+            (openRun)="openRun($event)" (openTools)="show('tools')" (stop)="stopEnvironment($event)" (remove)="removeEnvironment($event)" />
+          @if (environmentActionMessage(); as message) { <p role="status" data-testid="deploy-environment-action-message">{{ message }}</p> }
+          @if (environmentActionError(); as error) { <p role="alert" data-testid="deploy-environment-action-error">{{ error }}</p> }
+          @for (removal of pendingRemovals(); track removal.hostId + ':' + removal.environmentId) {
+            <section class="deploy-section" data-testid="deploy-pending-removal">
+              <h3>{{ removal.environmentId }} removal pending on {{ removal.hostId }}</h3>
+              <p>The declaration is gone. The app stays on the host until you confirm removal.</p>
+              <button type="button" [appPendingButton]="environmentActionBusy()" pendingLabel="Removing…"
+                (click)="confirmRemoval(removal.environmentId, removal.hostId)">Confirm host removal</button>
+            </section>
+          }
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
             (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
