@@ -71,7 +71,8 @@ public static class ModelSelectionPlanner
         bool preferFallback = false,
         Func<string, string?, bool>? modelAccepted = null,
         bool sameClassOnly = false,
-        Func<string, bool>? fallbackProviderAllowed = null)
+        Func<string, bool>? fallbackProviderAllowed = null,
+        Func<string?, string?, CapEvaluation>? evaluateModelQuota = null)
     {
         ArgumentNullException.ThrowIfNull(routing);
         var cli = Clean(requestedCliType)?.ToLowerInvariant() ?? Claude;
@@ -80,7 +81,7 @@ public static class ModelSelectionPlanner
 
         var primaryModel = Clean(requestedModel) ?? profile?.PrimaryModel;
         var primaryThinking = Clean(requestedThinkingLevel) ?? profile?.PrimaryThinkingLevel;
-        var cap = evaluateQuota(cli);
+        var cap = evaluateModelQuota?.Invoke(cli, primaryModel) ?? evaluateQuota(cli);
         if (!cap.Blocked && !preferFallback)
             return new(cli, primaryModel, primaryThinking, false, null, cap);
 
@@ -120,9 +121,9 @@ public static class ModelSelectionPlanner
         if (modelAccepted is not null && !modelAccepted(fallbackCli, fallbackModel))
             return new(cli, primaryModel, primaryThinking, false,
                 $"fallback {fallbackCli}/{fallbackModel} is not accepted by the claiming host", cap);
-        var fallbackCap = string.Equals(fallbackCli, cli, StringComparison.OrdinalIgnoreCase)
-            ? CapEvaluation.NotBlocked
-            : evaluateQuota(fallbackCli);
+        var fallbackCap = evaluateModelQuota?.Invoke(fallbackCli, fallbackModel)
+            ?? (string.Equals(fallbackCli, cli, StringComparison.OrdinalIgnoreCase)
+                ? CapEvaluation.NotBlocked : evaluateQuota(fallbackCli));
         if (fallbackCap.Blocked)
             return new(cli, primaryModel, primaryThinking, false,
                 $"primary {cap.DescribeReason()}; fallback {fallbackCap.DescribeReason()}", cap)
@@ -318,7 +319,12 @@ public static class ModelSelectionPlanner
             : pins.CliType!.Trim().ToLowerInvariant();
         var caps = facts.Caps;
         var nowUtc = facts.NowUtc;
-        var snapshotFor = facts.SnapshotFor;
+        QuotaSnapshot? SnapshotForModel(string? provider, string? model)
+            => SelectionQuotaMath.ForModel(facts.SnapshotFor(provider), model);
+        QuotaSnapshot? snapshotFor(string? provider) => SnapshotForModel(provider,
+            string.Equals(provider, cli, StringComparison.OrdinalIgnoreCase)
+                ? requestedModel ?? facts.Routing?.Profile(cli)?.PrimaryModel
+                : facts.Routing?.Profile(provider ?? "")?.PrimaryModel);
         var waitPolicy = facts.WaitPolicy;
         var preference = facts.OperatorSwitch;
         var primarySnapshot = snapshotFor(cli);
@@ -329,13 +335,18 @@ public static class ModelSelectionPlanner
         // projected-to-breach-before-reset. The router is fed the admission
         // view so a primary about to hit the wall routes to the fallback now.
         CapEvaluation Strict(string? c) => SelectionQuotaMath.EvaluateCap(snapshotFor(c), caps);
-        CapEvaluation Admission(string? c)
+        CapEvaluation ModelAdmission(string? c, string? model)
         {
-            var strict = Strict(c);
+            var snapshot = SnapshotForModel(c, model);
+            var strict = SelectionQuotaMath.EvaluateCap(snapshot, caps);
             if (strict.Blocked) return strict;
-            return SelectionQuotaMath.EvaluateProjectedBreach(snapshotFor(c), caps, nowUtc)
+            return SelectionQuotaMath.EvaluateProjectedBreach(snapshot, caps, nowUtc)
                    ?? CapEvaluation.NotBlocked;
         }
+        CapEvaluation Admission(string? c) => ModelAdmission(c,
+            string.Equals(c, cli, StringComparison.OrdinalIgnoreCase)
+                ? requestedModel ?? facts.Routing?.Profile(cli)?.PrimaryModel
+                : facts.Routing?.Profile(c ?? "")?.PrimaryModel);
         QuotaProjection? Worst(QuotaSnapshot? snapshot) => SelectionQuotaMath.WorstProjection(snapshot, caps, nowUtc);
         SelectionResult Decided(
             SelectionOutcome outcome, string? model, string? thinking, string rule, string reason,
@@ -408,7 +419,7 @@ public static class ModelSelectionPlanner
                 : facts.ConfiguredFallbacks;
             if (configured is not { Count: > 0 })
                 return ResolveRoute(cli, requestedModel, requestedThinking, routing, Admission,
-                    preferFallback, accepted, request.Required.SameClassOnly, facts.FallbackProviderAllowed);
+                    preferFallback, accepted, request.Required.SameClassOnly, facts.FallbackProviderAllowed, ModelAdmission);
 
             // Keep the list in planner facts so every host applies the same
             // admission checks and the ledger records the route actually used.
@@ -418,7 +429,7 @@ public static class ModelSelectionPlanner
                 var candidate = configured[index];
                 if (string.IsNullOrWhiteSpace(candidate.Model) || string.IsNullOrWhiteSpace(candidate.CliType))
                     continue;
-                if (Admission(candidate.CliType).Blocked)
+                if (ModelAdmission(candidate.CliType, candidate.Model).Blocked)
                 {
                     rejected = new CliRouteDecision(cli, requestedModel, requestedThinking, false,
                         $"configured fallback {index + 1} provider quota is exhausted", Admission(cli))
@@ -437,7 +448,7 @@ public static class ModelSelectionPlanner
                 } };
                 var evaluated = ResolveRoute(cli, requestedModel, requestedThinking, candidateRouting,
                     Admission, preferFallback, accepted, request.Required.SameClassOnly,
-                    facts.FallbackProviderAllowed);
+                    facts.FallbackProviderAllowed, ModelAdmission);
                 if (!evaluated.IsFallback)
                 {
                     rejected = evaluated;

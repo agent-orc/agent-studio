@@ -339,3 +339,34 @@ reset when known, so the visible state distinguishes waiting from switching.
   rendering changes.
 - For Codex changes, re-check current CLI behavior before relying on older
   recovery heuristics.
+
+## Fable 5.2 onboarding (2026-11-17)
+
+`claude-fable-5-2` is an explicit selectable model with a 1M context window,
+128K output limit, and the `low`, `medium`, `high`, `xhigh`, `max` effort
+ladder. Its default is `medium`, matching
+[Claude Code model configuration](https://code.claude.com/docs/en/model-config).
+Qualification preserves explicit card model and effort pins. Host acceptance
+still requires a real request for the named model and the current login;
+registry membership alone does not prove account access. Remote worker, one-shot, and
+read-only turns set Claude Code's effort environment override for an explicit
+Fable 5.2 level because the pinned CAR package predates the model.
+
+The shared subscription parser retains `Current week (Fable)` as
+`Weekly (Fable)` alongside the session and all-model weekly windows. Admission
+applies this window only to Fable routes, including fallback targets. The footer
+shows it separately when reported. No snapshot means no invented Fable limit;
+the provider-reported percentage is already relative to that allowance, so
+Studio does not divide it by 50. See the
+[plan contract](https://support.claude.com/en/articles/15424964).
+
+The 9 November thinking-prefix change was checked against the
+[provider contract](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking/prefix-checks).
+Studio resumes Claude through CAR's session ID and supplies only the new user
+turn. The remote worker likewise passes `ResumeSessionId` and the new prompt;
+read-only turns start fresh conversations. Studio does not reconstruct,
+trim, or resend assistant thinking blocks. Claude Code owns transcript replay.
+The backend uses the same configured rules file on continuation. A fixture test
+pins the Fable model, session ID, rules argument, and new-turn stdin transport.
+This verifies Studio's boundary; it does not claim a fixture exercises the live
+provider's HTTP prefix check.
