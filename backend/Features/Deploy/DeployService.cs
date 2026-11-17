@@ -490,9 +490,11 @@ public sealed class DeployService
         {
             var snapshot = SyncLocked(project);
             if (snapshot is null || snapshot.Runs.All(item => item.Id != deploymentId)) return null;
+            var run = snapshot.Runs.First(item => item.Id == deploymentId);
             return new DeploymentLogResponse(deploymentId, _store.ReadLog(project, deploymentId)
+                .Select(item => item with { Step = DeploymentStepPlan.LogStepFor(run, item.Step) })
                 .Where(item => step is null || item.Step == step).ToArray())
-            { Tenant = snapshot.Runs.First(item => item.Id == deploymentId).Tenant };
+            { Tenant = run.Tenant };
         }
     }
 
