@@ -137,6 +137,17 @@ the origin. The spec makes no direct application API calls.
 With `JOB_RESULTS_DIR` set, it writes light, dark and 390 px checkout screenshots
 and an integration screenshot to `networked-project-checkout/`.
 
+### Run host enrollment (F4)
+
+Run `npm --prefix frontend run e2e -- e2e/settings/run-host-enrollment.spec.ts`.
+The `run-host` profile is a fresh networked monolith over HTTPS with a private
+encryption key, so the Owner can seal a second factor. The browser issues a
+run host code from Hosts > Add host > Run host (deploy). The test enrolls with
+that code and makes one deploy claim with the run host credential. Hosts must
+then list the run host online, with no "Not enrolled" tag. With
+`JOB_RESULTS_DIR` set, it writes light and dark wizard and Hosts screenshots to
+`run-host-enrollment/`.
+
 ### Product card detail check
 
 Run `npm --prefix frontend run e2e -- e2e/security/product-card-detail.spec.ts`.

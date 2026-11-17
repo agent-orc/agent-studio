@@ -84,6 +84,17 @@ public static class RunnerScopes
     public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration or Deploy or Release or Gate;
 }
 
+/// <summary>How a run host (runner.deploy) reached Studio; see <see cref="AccessSecurityStore.RecordDeployHostContact"/>.</summary>
+public enum DeployHostContact
+{
+    /// <summary>An empty claim, a desired-state poll, a lease renewal or a log line.</summary>
+    Poll,
+    /// <summary>A claim that returned a deploy job.</summary>
+    Claim,
+    /// <summary>A job report or an observed-state report.</summary>
+    Report,
+}
+
 public sealed record StudioUser
 {
     public required string Id { get; init; }
@@ -153,6 +164,8 @@ public sealed record RunnerServiceIdentity
     public DateTime? RetiredAt { get; init; }
     public DateTime? LastSeenAt { get; init; }
     public DateTime? LastClaimAt { get; init; }
+    /// <summary>The last deploy job report of a run host (runner.deploy).</summary>
+    public DateTime? LastReportAt { get; init; }
     public int ActiveSlots { get; init; }
     public int AvailableSlots { get; init; }
     public List<RunnerCredential> Credentials { get; init; } = [];

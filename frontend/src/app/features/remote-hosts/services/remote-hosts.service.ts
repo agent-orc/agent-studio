@@ -21,6 +21,8 @@ import type {
 } from '../models/host-release-drift';
 import type { ClaimGateEvent } from '../models/claim-load-gate';
 import { seedRemoteHosts } from './remote-hosts.seed';
+import { projectRunHost } from '../models/run-host';
+import type { RunHostStatus } from '../../../models/run-host.model';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
 import { NotificationService } from '../../../services/notification.service';
 import { AuthSessionState } from '../../../services/auth.service';
@@ -125,6 +127,8 @@ export class RemoteHostsService {
     return seedRemoteHosts(Date.now(), this.auth?.status()?.profile ?? 'local');
   }
   private capabilityRunnerIds = new Set<string>(['api-host']);
+  /** Run hosts (F4) advertise no capabilities; they stay listed in the networked profile too. */
+  private runHostIds = new Set<string>();
   private monolithClients: ClientSummary[] = [];
 
   /** Every mount revalidates live state; cached cards are never authoritative. */
@@ -184,7 +188,7 @@ export class RemoteHostsService {
         const now = Date.now();
         this.hosts.update(hosts => {
           const projected = (this.auth?.status()?.profile === 'networked'
-            ? hosts.filter(host => this.capabilityRunnerIds.has(host.clientId)) : hosts).map(host => {
+            ? hosts.filter(host => this.listed(host.clientId)) : hosts).map(host => {
           if (host.clientId === 'api-host') return host;
           const client = byId.get(host.clientId);
           if (!client) return {
@@ -234,6 +238,7 @@ export class RemoteHostsService {
           this.hydrateTelemetry(host.id, host.clientId, telemetryWindow, preserveLongTelemetry);
         }
         this.hydrateCapabilityRegistry();
+        this.hydrateRunHosts();
         this.hydrateLinkHealth();
         this.hydrateReleaseDrift();
         this.hydrateProviderRefusals();
@@ -283,7 +288,7 @@ export class RemoteHostsService {
         const now = Date.now();
         this.hosts.update(hosts => {
           const projected = this.auth?.status()?.profile === 'networked'
-            ? hosts.filter(host => this.capabilityRunnerIds.has(host.clientId))
+            ? hosts.filter(host => this.listed(host.clientId))
             : [...hosts];
           for (const snapshot of snapshots ?? []) {
             const index = projected.findIndex(host =>
@@ -409,6 +414,34 @@ export class RemoteHostsService {
         this.log('capabilities-hydrate-failed', { message: error?.message ?? 'unknown' });
       },
     });
+  }
+
+  /**
+   * F4: a run host claims deploy jobs and sends no claim heartbeat, so its row
+   * comes from the run-host directory: last claim, last report, reachability.
+   */
+  private hydrateRunHosts(): void {
+    this.http?.get<RunHostStatus[]>('/api/deploy/run-hosts').subscribe({
+      next: runHosts => {
+        this.runHostIds = new Set((runHosts ?? []).map(host => host.id));
+        this.hosts.update(hosts => {
+          const next = [...hosts];
+          for (const runHost of runHosts ?? []) {
+            const index = next.findIndex(host => host.clientId === runHost.id || host.id === runHost.id);
+            const projected = projectRunHost(index >= 0 ? next[index] : undefined, runHost);
+            if (index >= 0) next[index] = projected;
+            else next.push(projected);
+          }
+          return next;
+        });
+        this.log('run-hosts-hydrated', { runHosts: runHosts?.length ?? 0 });
+      },
+      error: error => this.log('run-hosts-hydrate-failed', { message: error?.message ?? 'unknown' }),
+    });
+  }
+
+  private listed(clientId: string): boolean {
+    return this.capabilityRunnerIds.has(clientId) || this.runHostIds.has(clientId);
   }
 
   /** Legacy networked monoliths expose enrolled runners but no Task Server capability route. */

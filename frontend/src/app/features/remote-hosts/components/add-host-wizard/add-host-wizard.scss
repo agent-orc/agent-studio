@@ -144,3 +144,7 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
 }
+
+// F4: execution host or run host; the run host path replaces the provisioning steps.
+.wizard__kind { padding: var(--studio-spacing-3) var(--studio-spacing-5); border-bottom: 1px solid var(--studio-border); }
+.wizard__run-host { flex: 1; min-height: 0; overflow: auto; padding: var(--studio-spacing-5); }

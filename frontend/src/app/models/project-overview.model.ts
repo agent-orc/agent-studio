@@ -1,3 +1,5 @@
+import type { RunHostStatus } from './run-host.model';
+
 /** Compact project throughput used by the operator-first Project Overview. */
 export interface ProjectThroughputSummary {
   project: string;
@@ -84,6 +86,8 @@ export interface ProjectEnvironments {
     evidence: string;
     rollbackArtifact: string | null;
   }[];
+  /** The run host of each declared targetHostId and whether it is reachable (F4). */
+  runHosts?: RunHostStatus[] | null;
 }
 
 export interface TestRunScope {

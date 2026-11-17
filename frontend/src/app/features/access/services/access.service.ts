@@ -6,6 +6,7 @@ import type {
   AccessOverview,
   AccessProject,
   EnrolledRunner,
+  EnrollmentKind,
   IamGrant,
   IamPrincipalKind,
   IamScope,
@@ -15,6 +16,7 @@ import type {
   RunnerEnrollment,
   ServiceAccount,
 } from '../models/access.model';
+import { RUN_HOST_SCOPE } from '../models/access.model';
 
 const IAM = '/api/auth/iam';
 
@@ -126,9 +128,12 @@ export class AccessService {
     return this.mutate(this.http.put(`/api/auth/users/${encodeURIComponent(userId)}`, { disabled }));
   }
 
-  /** A runner code names its projects; none named binds none. The engine is not project-bound. */
-  createEnrollment(name: string, kind: 'runner' | 'orchestrator', projects: readonly string[] = []): Promise<{ enrollmentCode: string } | null> {
-    const scopes = kind === 'orchestrator' ? ['orchestration.write'] : undefined;
+  /**
+   * A runner or run host code names its projects; none named binds none. The
+   * engine is not project-bound. A run host code carries only runner.deploy (F4).
+   */
+  createEnrollment(name: string, kind: EnrollmentKind, projects: readonly string[] = []): Promise<{ enrollmentCode: string } | null> {
+    const scopes = kind === 'orchestrator' ? ['orchestration.write'] : kind === 'deploy' ? [RUN_HOST_SCOPE] : undefined;
     return this.mutate(this.http.post<{ enrollmentCode: string }>('/api/auth/runner-enrollments', {
       name, scopes, projects: kind === 'orchestrator' ? undefined : projects,
     }));
