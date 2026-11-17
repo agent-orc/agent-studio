@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
@@ -23,6 +23,11 @@ export class ProjectDeploymentPanelComponent {
   private readonly cliTasks = inject(VisibleCliTaskService);
 
   readonly projectName = input.required<string>();
+  readonly focusedEnvironment = input<string | null>(null);
+  readonly visibleEnvironments = computed(() => {
+    const all = this.environments()?.environments ?? [];
+    return this.focusedEnvironment() ? all.filter(item => item.declaration.id === this.focusedEnvironment()) : all;
+  });
   readonly summary = signal<ProjectDeploymentSummary | null>(null);
   readonly environments = signal<ProjectEnvironments | null>(null);
   readonly environmentError = signal<string | null>(null);
@@ -33,6 +38,7 @@ export class ProjectDeploymentPanelComponent {
   readonly parameterValues = signal<Record<string, string | boolean>>({});
   readonly running = signal(false);
   readonly runError = signal<string | null>(null);
+  readonly rollingBack = signal<string | null>(null);
   readonly createdTask = signal<VisibleCliTaskCreated | null>(null);
   readonly visibleExecution = signal(true);
   readonly revisionMode = signal<'tested' | 'head'>('head');
@@ -55,10 +61,12 @@ export class ProjectDeploymentPanelComponent {
   }
 
   rollbackEnvironment(id: string): void {
+    if (this.rollingBack()) return;
     this.environmentError.set(null);
+    this.rollingBack.set(id);
     this.tasks.rollbackProjectEnvironment(this.projectName(), id).subscribe({
-      next: () => this.loadEnvironments(this.projectName()),
-      error: () => this.environmentError.set('Rollback could not be queued.'),
+      next: () => { this.rollingBack.set(null); this.loadEnvironments(this.projectName()); },
+      error: () => { this.rollingBack.set(null); this.environmentError.set('Rollback could not be queued.'); },
     });
   }
 

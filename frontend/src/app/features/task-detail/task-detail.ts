@@ -78,6 +78,7 @@ import { CardEnvironmentBadgesComponent } from '../deployments/components/card-e
 import { TASK_REFERENCE_CHAT_PROVIDER } from '../../services/task-reference-chat.provider';
 import { MobileLanePrimaryComponent, type MobileLanePrimary } from './components/mobile-lane-primary/mobile-lane-primary.component';
 import { MobilePaneSwitcherComponent } from './components/mobile-pane-switcher/mobile-pane-switcher.component';
+import { HealthIncidentCardComponent } from './components/health-incident-card/health-incident-card.component';
 
 @Component({
   selector: 'app-task-detail, app-job-detail',
@@ -103,6 +104,7 @@ import { MobilePaneSwitcherComponent } from './components/mobile-pane-switcher/m
     TaskResourceStatusComponent,
     BatchDetailComponent, CardEnvironmentBadgesComponent,
     MobileLanePrimaryComponent, MobilePaneSwitcherComponent,
+    HealthIncidentCardComponent,
   ],
   providers: [
     TASK_REFERENCE_CHAT_PROVIDER,
@@ -137,6 +139,7 @@ export class TaskDetailComponent implements OnDestroy {
   private clientService = inject(ClientService);
   private undo = inject(UndoController);
   readonly detail = input.required<TaskDetail>();
+  readonly isHealthIncident = computed(() => this.detail().info.creationSource === 'environment-health' && this.detail().info.id.startsWith('health-'));
   readonly defaultThinkingLevel = computed(() =>
     this.clientService.resolve(this.detail().info.ownerClientId).defaultThinkingLevel ?? null
   );

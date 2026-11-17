@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked, type WritableSignal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, output, signal, untracked, type WritableSignal } from '@angular/core';
 import { Subscription } from 'rxjs';
+import { linkedDeployView } from './linked-deploy-view';
 import { ProjectDeploymentPanelComponent } from '../project-deployment-panel/project-deployment-panel.component';
 import { ProjectDeployOverviewComponent } from '../project-deploy-overview/project-deploy-overview';
 import { ProjectDeployReleasesComponent } from '../project-deploy-releases/project-deploy-releases';
@@ -10,6 +11,7 @@ import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project
 import { EnvironmentHealthPanelComponent } from '../../../environment-health';
 import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
+import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 import { ManagedDatabasesPanelComponent } from '../managed-databases-panel/managed-databases-panel';
@@ -45,7 +47,6 @@ import {
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
 
 const IDLE: DeployRunActionState = { busy: null, error: null };
-
 @Component({
   selector: 'app-project-deploy-area',
   standalone: true,
@@ -54,7 +55,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent, LocalOwnerDialogComponent,
+    FlowHealthPageComponent, LocalOwnerDialogComponent, LoadingSurfaceComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -90,6 +91,7 @@ export class ProjectDeployAreaComponent {
   });
   readonly releaseTarget = input<{ project: string; id: string } | null>(null);
   readonly initialView = input<DeployView>('overview');
+  readonly focusedEnvironment = computed(() => new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('environmentId'));
   readonly focusStepId = input<string | undefined>();
   readonly openPrompts = output<void>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
@@ -192,9 +194,8 @@ export class ProjectDeployAreaComponent {
       ...(this.fetchedRun() ? notice('Deploy run', this.fetchedRun()!) : []),
     ];
   });
-
   constructor() {
-    effect(() => this.view.set(this.initialView()));
+    effect(() => this.view.set(linkedDeployView() ?? this.initialView()));
     effect(onCleanup => {
       const project = this.projectName();
       const missingCheckout = this.checkoutMissing();
@@ -223,6 +224,7 @@ export class ProjectDeployAreaComponent {
     this.watchArtifactReleases();
   }
 
+  @HostListener('window:hashchange') onHashChange(): void { this.view.set(linkedDeployView() ?? this.initialView()); }
   private openTargetRelease(target: { project: string; id: string }): void {
     this.openedTarget = target;
     this.openRelease(target.id);

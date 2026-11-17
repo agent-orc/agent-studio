@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using AgentStudio.Diagnostics;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
@@ -10,14 +11,14 @@ namespace AgentStudio.Projects;
 public sealed record FailingCheck(HealthCheckDefinition Check, HealthIncident Incident, IReadOnlyList<HealthSample> Evidence);
 
 /// <summary>
-/// Bounded side effects of the health checks (IP-14): one typed Activity entry per environment
-/// incident change, and one card per environment incident that the checks of that incident
-/// comment on and that a later incident of the same environment updates while it is still open.
+/// Bounded side effects of the health checks (IP-14): one typed Activity entry and one card
+/// per environment incident. Checks of that incident comment on its card.
 /// Card creation is idempotent so a retried tick cannot duplicate a card. Targets appear
 /// without user info and query strings.
 /// </summary>
 public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService mutations, TimelineLog timeline,
-    OrchestratorLog activity, TimeProvider clock, ILogger<HealthAlerts> logger)
+    OrchestratorLog activity, TimeProvider clock, ILogger<HealthAlerts> logger,
+    IHealthIncidentContext? context = null)
 {
     public const string Tag = "environment-health";
     private static readonly string[] TerminalLanes = [TaskStates.Completed, TaskStates.Archive];
@@ -30,21 +31,26 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
         if (watchPath is null) return incident;
         if (incident.CardId is null)
         {
-            var reusable = OpenCard(state.IncidentCardId, watchPath);
-            if (reusable is not null)
+            var slug = $"health-{environment.Id}-{incident.StartedAt:yyyyMMddHHmmss}";
+            // A tick that created the card but crashed before saving its id finds it by slug.
+            var cardId = OpenCard(slug, watchPath)?.Id;
+            if (cardId is null)
             {
-                Comment(reusable, $"Incident reopened since {Stamp(incident.StartedAt)}: {Describe(failing)}.", incident, null, "reopened");
-                incident = incident with { CardId = reusable.Id };
-            }
-            else
-            {
-                var slug = $"health-{environment.Id}-{incident.StartedAt:yyyyMMddHHmmss}";
-                // A tick that created the card but crashed before saving the id finds it by slug.
-                var cardId = OpenCard(slug, watchPath)?.Id ?? mutations.CreateJob(new CreateTaskRequest
+                HealthIncidentContext? snapshot = null;
+                if (context is not null)
+                {
+                    try { snapshot = context.Read(project, environment.Id, incident.StartedAt); }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "environment-health incident context unavailable project={Project} incident={Incident}",
+                            project, incident.Id);
+                    }
+                }
+                cardId = mutations.CreateJob(new CreateTaskRequest
                 {
                     Id = slug,
-                    Title = $"Health incident: {environment.Name} is failing",
-                    PromptMarkdown = IncidentPrompt(project, environment, incident, failing),
+                    Title = $"Health incident: {environment.Name} · {Stamp(incident.StartedAt)}",
+                    PromptMarkdown = IncidentPrompt(project, environment, incident, failing, snapshot),
                     WatchPath = watchPath,
                     TargetState = TaskStates.Backlog,
                     TaskType = TaskTypes.Bug,
@@ -55,8 +61,8 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
                 if (cardId is null)
                     logger.LogWarning("environment-health card creation failed project={Project} incident={Incident}",
                         project, incident.Id);
-                incident = incident with { CardId = cardId };
             }
+            incident = incident with { CardId = cardId };
             if (incident.CardId is not null) state.IncidentCardId = incident.CardId;
         }
         if (!incident.OpenedEventRaised)
@@ -201,13 +207,28 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
             : $"Check {check.CheckId} recovered {Stamp(check.EndedAt ?? check.StartedAt)} after {check.FailedProbes} failed probes.";
 
     private static string IncidentPrompt(string project, EnvironmentDeclaration environment, EnvironmentIncident incident,
-        IReadOnlyList<FailingCheck> failing)
+        IReadOnlyList<FailingCheck> failing, HealthIncidentContext? context)
     {
         var text = new StringBuilder();
         text.Append($"# Health incident: {environment.Name}\n\n");
-        text.Append($"Control plane health checks of environment `{environment.Id}` in project `{project}` are failing.\n\n");
+        text.Append($"Control plane health checks of environment `{environment.Id}` in project `{project}` failed.\n\n");
         text.Append($"- Incident: `{incident.Id}`\n- Started: {Stamp(incident.StartedAt)}\n");
         text.Append($"- Environment address: {HealthTargets.Display(environment.Address)} on host `{environment.TargetHostId}`\n");
+        text.Append($"- Running release: {context?.ReleaseVersion ?? "Unknown (no deployed release recorded)"}\n");
+        text.Append($"- Deployed: {(context?.DeployedAtUtc is { } deployed ? Stamp(new DateTimeOffset(deployed, TimeSpan.Zero)) : "Unknown")}\n");
+        text.Append($"- Release cards: {(context?.ReleaseCards.Count > 0 ? string.Join(", ", context.ReleaseCards) : "None recorded")}\n");
+        text.Append($"- Restart count: {(context?.Restarts?.ToString(CultureInfo.InvariantCulture) ?? "Telemetry unavailable")}\n");
+        var projectId = Uri.EscapeDataString(context?.ProjectId ?? project);
+        var environmentId = Uri.EscapeDataString(environment.Id);
+        var window = $"environmentId={environmentId}&since={Uri.EscapeDataString(incident.StartedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture))}";
+        text.Append($"- [Open Operations](#/projects/{projectId}/deploy?view=operations&{window})\n");
+        text.Append($"- [Roll back](#/projects/{projectId}/deploy?view=tools&environmentId={environmentId})\n");
+        text.Append($"- [Run runbook](#/projects/{projectId}/deploy?view=runbooks&environmentId={environmentId})\n");
+        text.Append("\n## Last crash or error log lines\n\n");
+        if (context?.ErrorLines.Count > 0)
+            foreach (var line in context.ErrorLines)
+                text.Append($"- {Stamp(line.At)} {line.Level}: {LogRedactor.Scrub(line.Message).Replace('\n', ' ').Replace('\r', ' ')}\n");
+        else text.Append("No crash or error lines available from telemetry for this incident window.\n");
         foreach (var (check, checkIncident, evidence) in failing)
         {
             text.Append($"\n## Check `{check.Id}`\n\n");
@@ -221,8 +242,8 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
                 text.Append($"| {Stamp(sample.At)} | {(sample.Ok ? "ok" : "failed")} | {sample.Status?.ToString(CultureInfo.InvariantCulture) ?? "-"} | "
                     + $"{(sample.LatencyMs is { } ms ? ms.ToString(CultureInfo.InvariantCulture) + " ms" : "-")} | {sample.Error ?? "-"} |\n");
         }
-        text.Append("\nOther checks of this environment that fail during the incident and their recoveries comment on this card. ");
-        text.Append("The incident closes when every check has recovered; a later incident of this environment updates this card while it is open.\n");
+        text.Append("\nOther checks that fail during this incident and their recoveries appear in this card's timeline. ");
+        text.Append("A later incident receives its own card.\n");
         return text.ToString();
     }
 

@@ -38,6 +38,11 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 18 | `app-pane-toggle-bar` | Pane visibility | Task detail open; hidden in Studio where toolbar owns toggles | Toolbar; `170164f07`. |
 | Task 19 | Phone pane switcher | Active card detail pane | Task detail open below 600 px | One Overview, Result, or Git pane at a time; full page scroll. |
 
+Environment health incident cards replace the normal task detail with an
+incident record and operator links. The task toolbar and phone lane primary are
+omitted for those cards because coding and lane actions do not apply. This is a
+conditional rendering of the existing task header slots, not a new slot.
+
 The global top row's child order is navigation, breadcrumb, project picker,
 search, defaults, Environment, Project Chat, theme, Needs you, Settings, and
 account. Navigation is always available; the breadcrumb needs an active

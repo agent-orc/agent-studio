@@ -746,6 +746,7 @@ builder.Services.AddSingleton(_ => new HealthCheckConnector());
 builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
 builder.Services.AddSingleton<HealthCheckStore>();
 builder.Services.AddSingleton<HealthAlerts>();
+builder.Services.AddSingleton<IHealthIncidentContext, HealthIncidentContextReader>();
 builder.Services.AddSingleton<EnvironmentHealthService>();
 // Test hosts never probe the addresses their fixture declarations name.
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))

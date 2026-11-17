@@ -25,7 +25,7 @@ public sealed class EnvironmentHealthState
 {
     public EnvironmentIncident? OpenIncident { get; set; }
     public EnvironmentIncident? LastIncident { get; set; }
-    /// <summary>The card of the latest incident; a later incident updates it while it is open.</summary>
+    /// <summary>The card of the latest incident, kept for navigation and legacy state.</summary>
     public string? IncidentCardId { get; set; }
 }
 
