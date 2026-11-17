@@ -242,7 +242,7 @@ public static class BatchGatePolicy
             return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0
                 || AgentStudio.Runner.MonolithTransitionAdapter.BatchBacklogAgedOut(
                     eligible[0].ReviewCompletedAtUtc, now, options.DeadlineMinutes),
-                "oldest eligible card reached deadline without a batch partner");
+                BatchGateLookAheadPlanner.ThresholdNoPartnerReason);
 
         if (eligible.Count < options.MinimumSize)
             return new(null, exclusions, keys, false,

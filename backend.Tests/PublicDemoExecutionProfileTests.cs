@@ -233,7 +233,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // occurrence and must receive the same typed public-demo denial.
         // AGT-3762 adds combined one-shot create, claim, and completion. All
         // three execute model work through runner hosts and receive that denial.
-        Assert.Equal(161, routes.Count);
+        // AGT-3877 adds an owner-confirmed managed database deletion on Start.
+        // Provisioning runs through the existing run-target claim and report routes.
+        Assert.Equal(162, routes.Count);
         foreach (var (routePath, path) in new[]
         {
             ("/api/tasks/{jobId}/content-review", ExecutionAdmissionPath.Review),
@@ -269,6 +271,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{project}/operator-candidate-verifications", ExecutionAdmissionPath.PostStep),
             ("/api/deploy/gate-releases", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/environments/{environmentId}/run-target-removal/confirm", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/environments/{environmentId}/databases/{name}/deletion", ExecutionAdmissionPath.Start),
             ("/api/deploy/jobs/{project}/{jobId}/log", ExecutionAdmissionPath.PostStep),
             ("/api/deploy/jobs/{project}/{jobId}/renew", ExecutionAdmissionPath.PostStep),
             ("/api/projects/{projectName}/deploy/releases/{releaseId}/deployments", ExecutionAdmissionPath.Start),
@@ -344,7 +347,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 14,
-                [ExecutionAdmissionPath.Start] = 36,
+                [ExecutionAdmissionPath.Start] = 37,
                 [ExecutionAdmissionPath.Continue] = 37,
                 [ExecutionAdmissionPath.Review] = 10,
                 [ExecutionAdmissionPath.Chat] = 9,

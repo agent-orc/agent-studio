@@ -27,6 +27,9 @@ export const STUDIO_HEADER_NAV_ITEMS: readonly CockpitNavItem[] = [
   { id: 'project', label: 'Switch project', inlineFrom: 'tablet' },
   { id: 'search', label: 'Search', inlineFrom: 'tablet' },
   { id: 'chat', label: 'Project chat', inlineFrom: 'tablet' },
+  // AGT-3836: the activity rail gives way to the content on a phone.
+  { id: 'activity', label: 'Activity', inlineFrom: 'phone' },
+  { id: 'dossiers', label: 'Dossiers', inlineFrom: 'phone' },
   { id: 'theme', label: 'Switch theme', inlineFrom: 'desktop' },
   { id: 'environment', label: 'Environment', inlineFrom: 'tablet' },
   { id: 'settings', label: 'Orchestrator configuration', inlineFrom: null },
@@ -46,6 +49,8 @@ export interface StudioHeaderHost {
   readonly openOrchSettings: OutputEmitterRef<void>;
   openInstallationMagazine(): void;
   toggleTheme(): void;
+  openFeed(): void;
+  openWorkbenches(projectName: string | null): void;
 }
 
 /**
@@ -117,6 +122,8 @@ export class StudioHeaderCockpit {
         return;
       case 'search': host.globalSearchOpen.set(true); return;
       case 'chat': host.chatToggle.emit(); return;
+      case 'activity': host.openFeed(); return;
+      case 'dossiers': host.openWorkbenches(null); return;
       case 'theme': host.toggleTheme(); return;
       case 'environment': host.environmentOpen.set(true); return;
       case 'settings': host.openOrchSettings.emit(); return;

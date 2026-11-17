@@ -2,8 +2,10 @@ import { ChangeDetectionStrategy, Component, ElementRef, inject, input, output, 
 import { MenuComponent } from '../../../../components/menu/menu.component';
 import type { MenuItemClickEvent } from '../../../../components/menu/menu.types';
 
-export interface CockpitNavItem { id: string; label: string; inlineFrom: 'tablet' | 'desktop' | null; }
+export interface CockpitNavItem { id: string; label: string; inlineFrom: 'phone' | 'tablet' | 'desktop' | null; }
 export interface UsageDetailRequest { section: 'cli' | 'cost' | 'details'; cliId: string | null; }
+/** Narrowest header width at which an `inlineFrom` control shows inline; below it the More menu carries it. */
+const INLINE_FROM_WIDTH = { phone: 601, tablet: 720, desktop: 1100 } as const;
 const CLOSED_MENU_ITEMS: { kind: 'row'; id: string; label: string }[] = [];
 
 /** One navigation row; compact destinations live in the text-only More menu. */
@@ -22,8 +24,7 @@ export class StudioNavigationHeaderComponent {
   menuItems() {
     if (!this.moreOpen()) return CLOSED_MENU_ITEMS;
     const width = this.host.nativeElement.clientWidth;
-    return this.navItems().filter(item => item.inlineFrom === null
-      || (item.inlineFrom === 'desktop' ? width < 1100 : width < 720))
+    return this.navItems().filter(item => item.inlineFrom === null || width < INLINE_FROM_WIDTH[item.inlineFrom])
       .map(item => ({ kind: 'row' as const, id: item.id, label: item.label }));
   }
   onMoreClick(event: Event): void { event.stopPropagation(); this.moreOpen.update(open => !open); }

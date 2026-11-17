@@ -36,6 +36,34 @@ The full networked deploy script also drains and resumes its manifest's host
 identities. Its own idle and image verification remain required; the UI's fresh
 heartbeat provides a separate check of what the runner actually reports.
 
+### Review roles without a client identity
+
+The source-built first-run Compose profile starts its review role without
+`RUNNER_CLIENT_ID`. Its review executor registration does not create a record
+in the Studio client identity store, so the guided panel cannot drain it yet.
+Register that role with the Studio API before using the panel:
+
+```sh
+curl -sS -X POST http://127.0.0.1:4011/api/clients/register \
+  -H 'Content-Type: application/json' \
+  -d '{"displayName":"distributed-review-runner","kind":"service"}'
+```
+
+Check that the returned `id` equals the review role's `RUNNER_ID` shown in
+Execution Hosts. A different id will not drain that role; resolve the name
+collision before proceeding. Select **Check identity again** in the panel,
+then follow its drain, quiet point, host switch, verification, and resume
+steps. For this Compose profile, rebuild and recreate only the review service
+at the host switch after the panel confirms a quiet point:
+
+```sh
+AGENT_STUDIO_VERSION="$(cat VERSION)" docker compose --profile dev up -d --build --no-deps agent-host-review-distributed-dev
+```
+
+Keep the client drain in place until the replacement reports the expected
+commit and image digest in the panel. Networked installations whose review
+role already has a registered client identity use the normal guided flow.
+
 ## Order
 
 1. **Drain every work host.** For each runner identity a coding or review host

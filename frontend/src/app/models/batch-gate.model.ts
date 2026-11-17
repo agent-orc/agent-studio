@@ -35,7 +35,26 @@ export interface BatchGateConfiguration {
   limits: { hardMaximumSize: number };
 }
 
+/** AGT-3857: why a formed batch waits while the project runs no batch gate. */
+export type BatchLaneIdleCause = 'per-task-holder' | 'restart-recovery' | 'planner';
+
+export interface BatchLaneIdleTotals {
+  perTaskHolderMinutes: number;
+  restartRecoveryMinutes: number;
+  plannerMinutes: number;
+}
+
+export interface BatchLaneIdle {
+  current?: { cause: BatchLaneIdleCause; detail: string; batchId?: string | null;
+    sinceUtc: string; minutes: number } | null;
+  last24Hours: BatchLaneIdleTotals;
+  last7Days: BatchLaneIdleTotals;
+  intervals: { cause: BatchLaneIdleCause; detail: string; batchId?: string | null;
+    startedAtUtc: string; endedAtUtc?: string | null; minutes: number }[];
+}
+
 export interface BatchGateState {
+  laneIdle?: BatchLaneIdle | null;
   oldestFormed?: { batchId: string; formedAtUtc: string; ageMinutes: number } | null;
   flightClaim?: { batchId: string; stage: string; stageDeadlineUtc: string; end?: unknown | null } | null;
   ejectRequests?: { project: string; taskKey: string; actor: string; reason: string;
@@ -44,6 +63,11 @@ export interface BatchGateState {
     batchId?: string | null; reason: string; running: boolean; host?: string | null;
     startedAtUtc?: string | null; slotCapacity?: number;
     startEstimateUnavailableReason?: string | null; lastProgressAtUtc?: string | null }[];
+  /** AGT-3856: per-card suites not started because a batch gates the card anyway, newest first. */
+  suiteRefusals?: { taskKey: string; reviewAttemptId: string; rule: string; reason: string; refusedAtUtc: string }[];
+  /** AGT-3856: full suites of this host that wait while a batch gate and one other full suite run. */
+  laneAdmission?: { batchGates: number; companionSuites: number; limit: number;
+    waiting: { runId: string; project?: string | null; gateId: string; cards: string[]; sinceUtc: string; reason: string }[] } | null;
   /** Gate processes detached at a lease deadline and still exiting. */
   detachedFlights?: { batchId: string; project: string; startedAtUtc: string; detachedAtUtc: string;
     deadlineMinutes: number; reason: string }[];
@@ -51,6 +75,7 @@ export interface BatchGateState {
     phaseMinutes?: Record<string, { p50: number | null; p90: number | null; cards: number }>;
     diagnosticRerunShare?: number | null;
     preCheckYield?: { runs: number; red: number; cardsKeptOut: number; costMinutes: number } | null;
+    perCardSuites?: { greenSuites: number; followedByBatchGate: number; share: number | null } | null;
     /** AGT-3858: minutes spent gating already gated code, by purpose. */
     sameCodeRerunMinutesByPurpose?: Record<string, number> | null;
   } | null;

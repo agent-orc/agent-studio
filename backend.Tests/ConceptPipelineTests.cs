@@ -302,6 +302,39 @@ public sealed class ConceptPipelineTests : IDisposable
         Assert.Empty(updates);
     }
 
+    [Fact]
+    public void PromotionPlan_Refusal_NamesTheMissingPiece()
+    {
+        var (taskStore, _, scanner, _, mutations, source) = PublishConceptWithTwoSlices();
+        Assert.NotNull(scanner.ReadPromoteConceptPlan(source.Id, taskStore).Plan);
+
+        // A concept review failure names its findings (AGT-3875).
+        var descriptorPath = Path.Combine(_root, "repository", "docs", "delivery-flow", "workbench.json");
+        var descriptor = File.ReadAllText(descriptorPath);
+        File.WriteAllText(descriptorPath, descriptor.Replace("\"decision-pending\"", "\"active\""));
+        var failed = scanner.ReadPromoteConceptPlan(source.Id, taskStore);
+        Assert.Null(failed.Plan);
+        Assert.Equal(ConceptPromotionRefusals.ReviewFailed, failed.RefusalCode);
+        Assert.Contains("did not pass concept review", failed.Refusal);
+        Assert.Contains("status must be decision-pending", failed.Refusal);
+
+        // A concept card that never delivered a Dossier was never concept-reviewed.
+        File.Delete(Path.Combine(source.FolderPath, ".metadata", "concept-workbench.json"));
+        var unpublished = scanner.ReadPromoteConceptPlan(source.Id, taskStore);
+        Assert.Equal(ConceptPromotionRefusals.NoReview, unpublished.RefusalCode);
+        Assert.Contains("has not delivered a reviewed Dossier", unpublished.Refusal);
+
+        var codingId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "coding-card", Title = "Coding card", Mode = TaskModes.Coding,
+            RequiresIntegration = false, WatchPath = taskStore, TargetState = TaskStates.Ready,
+        });
+        var coding = scanner.ReadPromoteConceptPlan(codingId!, taskStore);
+        Assert.Equal(ConceptPromotionRefusals.NoConceptCard, coding.RefusalCode);
+        Assert.Contains("is not a concept card", coding.Refusal);
+        Assert.Null(scanner.BuildPromoteConceptPlan(source.Id, taskStore));
+    }
+
     [Theory]
     [InlineData("after-card-created", "creating-cards")]
     [InlineData("after-cards-recorded", "cards-recorded")]

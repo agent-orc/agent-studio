@@ -14,6 +14,12 @@ public static class MonolithTransitionAdapter
     public static AutoReviewStrandingAction AutoReviewBatchRoute(AutoReviewStrandingAction decided,
         AutoReviewStrandingFacts facts, AutoReviewBatchRouteFacts route)
         => AutoReviewStrandingPolicy.RouteBatch(decided, facts, route);
+    public static EngineDeliveryIntegrationAction EngineDeliveryIntegration(EngineDeliveryIntegrationFacts facts)
+        => EngineDeliveryIntegrationPolicy.Decide(facts);
+    public static bool EngineDeliveryIntegrationRetryable(string? integrationOutcome)
+        => EngineDeliveryIntegrationPolicy.IsRetryableOutcome(integrationOutcome);
+    public static bool EngineDeliveryIntegrationPublished(string? integrationOutcome)
+        => EngineDeliveryIntegrationPolicy.IsPublishedOutcome(integrationOutcome);
 
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
@@ -196,6 +202,15 @@ public static class MonolithTransitionAdapter
 
     public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
         => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
+
+    public static string? BatchCompanionSuiteRefusal(int batchGatesRunning, int companionSuitesRunning)
+        => BatchGateLookAheadPlanner.CompanionSuiteRefusal(batchGatesRunning, companionSuitesRunning);
+
+    public static bool BatchPartnerMissingRoute(string? planEvent)
+        => BatchGateLookAheadPlanner.PartnerMissingRoute(planEvent);
+
+    public static string? PerTaskSuiteRefusal(PerTaskSuiteFacts facts)
+        => BatchGateLookAheadPlanner.PerTaskSuiteRefusal(facts);
 
     public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
         DateTimeOffset nowUtc)

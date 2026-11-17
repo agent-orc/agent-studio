@@ -9,16 +9,19 @@ import type { BatchFlakySuspect, BatchGateBatch, BatchTestFailureRank, BatchTest
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
 import { PendingButtonDirective } from '../../../components/async-feedback';
+import type { BatchLaneIdleCause } from '../../../models/batch-gate.model';
 import { BatchIsolationComponent } from '../batch-isolation/batch-isolation';
 import { TaskReferenceNavigationService } from '../../../services/task-reference-navigation.service';
 import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
 import { BatchQuarantineComponent } from '../batch-quarantine/batch-quarantine';
 import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
+import { BatchLaneAdmissionComponent } from '../batch-lane-admission/batch-lane-admission';
+import { BatchPerTaskGatesComponent } from '../batch-per-task-gates/batch-per-task-gates';
 
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
-  imports: [NgTemplateOutlet, PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent],
+  imports: [NgTemplateOutlet, PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent, BatchLaneAdmissionComponent, BatchPerTaskGatesComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',
@@ -79,6 +82,13 @@ export class BatchPanelComponent implements OnDestroy {
       ? `Moved to per-task gates after pause: ${reason.slice(pause.length)}` : reason;
   }
   readonly formatDurationMinutes = formatDurationMinutes;
+  laneIdleCause(cause: BatchLaneIdleCause): string {
+    switch (cause) {
+      case 'per-task-holder': return 'Per-task holder';
+      case 'restart-recovery': return 'Restart recovery';
+      default: return 'Planner';
+    }
+  }
   runDuration(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): string {
     if (batchRunIsRunning(batch, run)) return 'Running';
     const detached = this.state()?.detachedFlights?.find(flight => flight.batchId === batch.batchId);

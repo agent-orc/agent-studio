@@ -33,6 +33,47 @@ public static partial class RunTargetNames
     [GeneratedRegex("[^a-z0-9]+")]
     private static partial Regex NotSlug();
 
+    [GeneratedRegex(@"\A[a-z][a-z0-9_]{0,30}\z")]
+    private static partial Regex DatabaseName();
+
+    [GeneratedRegex(@"\A(1[4-7])(?:\.(?:0|[1-9][0-9]{0,2}))?\z")]
+    private static partial Regex PostgresVersion();
+
+    [GeneratedRegex(@"\Asecret://[A-Za-z0-9 ._/-]{1,400}/MANAGED_DB_[A-Z0-9_]{1,40}_PASSWORD\z")]
+    private static partial Regex DatabasePasswordRef();
+
+    /// <summary>The PostgreSQL role every managed database's app connects as.</summary>
+    public const string DatabaseUser = "app";
+    public const int DatabasePort = 5432;
+    public const string DatabaseDataPath = "/var/lib/postgresql/data";
+
+    public static bool IsDatabaseName(string? value) => value is not null && DatabaseName().IsMatch(value);
+
+    /// <summary>
+    /// The network an environment's databases share with its app containers.
+    /// The edge never joins it, so public traffic has no route to a database,
+    /// and no other environment's app is attached to it.
+    /// </summary>
+    public static string DataNetwork(string appKey) => appKey + "-data";
+
+    /// <summary>Compose project, container and host name of one database; within Docker's 63-character DNS label.</summary>
+    public static string DatabaseKey(string appKey, string database) => $"{appKey}-db-{Hash(database, 8)}";
+
+    /// <summary>The named volume of a database. Only an owner's deletion removes it.</summary>
+    public static string DatabaseVolume(string databaseKey) => databaseKey + "-data";
+
+    /// <summary>Secret file that holds the app's connection string to one database.</summary>
+    public static string DatabaseUrlFile(string database) => "managed-db-" + database.Replace('_', '-') + "-url";
+
+    /// <summary>The official PostgreSQL image for a version both Studio and the host validated.</summary>
+    public static string PostgresImage(string version) => $"postgres:{version}-alpine";
+
+    public static string MajorOf(string version) => version.Split('.')[0];
+
+    /// <summary>The connection string the app reads from its secret file. The password is base64url, so it needs no escaping.</summary>
+    public static string ConnectionString(string databaseKey, string database, string password)
+        => $"postgresql://{DatabaseUser}:{Uri.EscapeDataString(password)}@{databaseKey}:{DatabasePort}/{database}";
+
     public static bool IsDigest(string? value) => value is not null && Digest().IsMatch(value);
     public static bool IsDomain(string value) => Domain().IsMatch(value);
     public static bool IsSecretRef(string value) => SecretRef().IsMatch(value);
@@ -76,6 +117,9 @@ public static partial class RunTargetNames
             spec.Variables.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new[] { item.Key, item.Value }),
             spec.SecretRefs.Order(StringComparer.Ordinal),
             spec.Resources,
+            // Only how the app reaches a database changes the app container,
+            // not the database's version or size.
+            (spec.Databases ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).Select(item => new[] { item.Name, item.Variable }),
         });
         return Hash(canonical, 12);
     }
@@ -100,6 +144,19 @@ public static partial class RunTargetNames
             || spec.Variables.ContainsKey(name[..^"_FILE".Length]))
             || secretNames.Distinct(StringComparer.Ordinal).Count() != secretNames.Length)
             return "secret reference maps to a variable name that is invalid, shadowed or repeated";
+        var databases = spec.Databases ?? [];
+        if (databases.Any(item => !IsDatabaseName(item.Name) || item.Engine != "postgres"
+                || !PostgresVersion().IsMatch(item.Version) || !DatabasePasswordRef().IsMatch(item.PasswordRef)
+                || item.Resources.Cpus is < 0.1 or > 64 || item.Resources.MemoryMb is < 64 or > 262144
+                || item.Resources.PidsLimit is < 64 or > 32768))
+            return "invalid managed database";
+        var databaseFiles = databases.Select(item => item.Variable + "_FILE").ToArray();
+        if (databases.Select(item => item.Name).Distinct(StringComparer.Ordinal).Count() != databases.Count
+            || databases.Any(item => !VariableName().IsMatch(item.Variable))
+            || databaseFiles.Any(name => !VariableName().IsMatch(name) || spec.Variables.ContainsKey(name)
+                || spec.Variables.ContainsKey(name[..^"_FILE".Length]) || secretNames.Contains(name, StringComparer.Ordinal))
+            || databaseFiles.Distinct(StringComparer.Ordinal).Count() != databaseFiles.Length)
+            return "managed database variable is invalid, shadowed or repeated";
         return null;
     }
 

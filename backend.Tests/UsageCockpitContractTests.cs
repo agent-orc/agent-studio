@@ -11,6 +11,19 @@ public sealed class UsageCockpitContractTests
     private static readonly ProjectTokenDataFreshness Complete = new() { Status = "complete" };
 
     [Fact]
+    public void Idle_ledger_read_is_current_independently_of_latest_receipt()
+    {
+        var receiptAt = At.AddHours(-5);
+        var cost = UsageCockpitProjection.Cost(TokenTestServices.Pricing(),
+            UsageCockpitProjection.Calendar(At, "Etc/UTC", null),
+            [new UsageCostInput("PROJ-001", "Demo Platform", [Entry("idle", receiptAt, 100, 0)],
+                new ProjectTokenDataFreshness { Status = "complete", AsOf = receiptAt.ToString("o") }, receiptAt)], At);
+        Assert.Equal(At, cost.Coverage.ObservedAt);
+        Assert.Equal(At, cost.Projects[0].Coverage.ObservedAt);
+        Assert.Equal(receiptAt, cost.LatestReceiptAt);
+    }
+
+    [Fact]
     public void Codex_raw_cache_is_normalized_once_and_priced_by_separate_dimensions()
     {
         var raw = new AgentMessageTokens(1000, 0, CacheRead: 400, Model: "gpt-5.6-sol");
@@ -25,7 +38,7 @@ public sealed class UsageCockpitContractTests
         var calendar = UsageCockpitProjection.Calendar(At, "Europe/Berlin", DayOfWeek.Monday);
         var entry = Entry("run-1", At, (int)normalized.Input, (int)normalized.CacheRead.Value);
         var cost = UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar,
-            [new UsageCostInput("PROJ-001", "One", [entry], Complete)]);
+            [new UsageCostInput("PROJ-001", "One", [entry], Complete)], At);
         var once = TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 600, 0, 400, 0, At);
         Assert.True(once.ModelKnown);
         Assert.Equal(once.Total, cost.TodayUsd);
@@ -45,7 +58,7 @@ public sealed class UsageCockpitContractTests
             UsageCockpitProjection.Calendar(At, "Europe/Berlin", DayOfWeek.Monday),
             [new UsageCostInput("PROJ-001", "One", merged, Complete, At),
              new UsageCostInput("PROJ-002", "Two", [other], Complete),
-             new UsageCostInput(null, "Unattributed", [unattributed], Complete)]);
+             new UsageCostInput(null, "Unattributed", [unattributed], Complete)], At);
         Assert.Equal(cost.Projects.Sum(project => project.TodayUsd), cost.TodayUsd);
         Assert.Equal(cost.Projects.Sum(project => project.WeekUsd), cost.WeekUsd);
         Assert.Equal(3, cost.Projects.Count);
@@ -63,14 +76,17 @@ public sealed class UsageCockpitContractTests
         var unpriced = new UsageCostInput("PROJ-002", "Two",
             [new OrchestratorLogEntry { Ts = At, TokenUsage = new OrchestratorTokenUsage
                 { Model = "unknown-model", InputTokens = 10 } }], Complete);
-        var cost = UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar, [unavailable, unpriced]);
+        var cost = UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar, [unavailable, unpriced], At);
         Assert.Equal("partial", cost.Coverage.Status);
         Assert.Null(cost.Projects[0].TodayUsd);
         Assert.Equal("partial", cost.Projects[1].Coverage.Status);
         Assert.Equal(0m, cost.TodayUsd);
+        Assert.Null(UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar, [unavailable], At).TodayUsd);
+        Assert.Contains("One", cost.Coverage.Reason);
+        Assert.Contains("Two", cost.Coverage.Reason);
+        Assert.Contains("unknown-model", cost.Coverage.Reason);
         Assert.Equal(1, cost.UnpricedTodayRuns);
         Assert.Equal(1, cost.UnpricedWeekRuns);
-        Assert.Null(UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar, [unavailable]).TodayUsd);
     }
 
     [Fact]
