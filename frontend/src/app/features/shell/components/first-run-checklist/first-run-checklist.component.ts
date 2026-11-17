@@ -16,19 +16,19 @@ import { credentialFreeRepositoryUrl, deviceLoginTone, downloadTextFile, gitSetu
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { readInstallationIdentity } from './first-run-installation';
 import { ServerCheckoutNoticeComponent, ServerCheckoutStore } from '../../../server-checkout';
+import { LocalOwnerSignInComponent } from '../../../../components/local-owner-sign-in/local-owner-sign-in';
 
 /** Installation facts are re-read from the authority and runner probes on every refresh. */
 @Component({
   selector: 'app-first-run-checklist',
-  standalone: true,
-  imports: [StatusIndicatorComponent, DeviceLoginCodeEntryComponent, ServerCheckoutNoticeComponent],
+  imports: [StatusIndicatorComponent, DeviceLoginCodeEntryComponent, ServerCheckoutNoticeComponent, LocalOwnerSignInComponent],
   templateUrl: './first-run-checklist.component.html',
   styleUrl: './first-run-checklist.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   private readonly http = inject(HttpClient);
-  private readonly auth = inject(AuthService);
+  readonly auth = inject(AuthService);
   private readonly tasks = inject(TaskService);
   private readonly workspaces = inject(WorkspaceManagerService);
   private readonly overlays = inject(WorkspaceOverlaysService);

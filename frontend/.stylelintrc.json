@@ -272,6 +272,8 @@
         "src/app/features/project-detail/components/deployment-definition-editor/deployment-definition-editor.scss",
         "src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.scss",
         "src/app/features/project-detail/components/project-deploy-area/project-deploy-area.scss",
+        "src/app/features/project-detail/components/managed-database-backups/managed-database-backups.scss",
+        "src/app/features/project-detail/components/managed-databases-panel/managed-databases-panel.scss",
         "src/app/features/project-detail/components/project-integration-panel/project-integration-panel.component.scss",
         "src/app/features/project-detail/components/project-git-changes/project-git-changes.component.scss",
         "src/app/features/project-detail/components/project-git-history/project-git-history.component.scss",

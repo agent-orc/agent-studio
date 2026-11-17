@@ -77,6 +77,24 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
       .toBe('Accept with override…');
   });
 
+  it('carries the ranked reason, its next step and the gaps under it (F12)', async () => {
+    const { host, find, click } = await mount({
+      ...OVERRIDE,
+      reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+      headline: 'No content verdict',
+      nextStep: 'Run the requirement-fit review for the current run.',
+      secondary: ['No delivery branch or commit was found for this card.'],
+    });
+    expect(host.querySelector('[data-testid="acceptance-refusal"]')?.getAttribute('data-readiness-ranked')).toBe('true');
+    expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent)
+      .toContain('The current run has no requirement-fit verdict');
+    await click('acceptance-refusal-action');
+    expect(find('acceptance-refusal-next-step')?.textContent)
+      .toContain('Next step: Run the requirement-fit review for the current run.');
+    expect(find('acceptance-refusal-secondary')?.textContent)
+      .toContain('No delivery branch or commit was found for this card.');
+  });
+
   it('accepts with an owner override only after a written reason', async () => {
     const { find, click, typeReason, moveJob, refresh, success } = await mount(OVERRIDE);
     TestBed.inject(AcceptanceRefusalStore).record({ taskKey: JOB.taskKey, code: 'integration-dead-end', message: 'x' });
@@ -160,5 +178,49 @@ describe('AcceptanceRefusalComponent · content verdict (AGT-3874)', () => {
     expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent).toContain(SUMMARY);
     expect(host.querySelector('[data-testid="acceptance-refusal-action"]')?.textContent?.trim())
       .toBe('Accept with override…');
+  });
+});
+
+describe('AcceptanceRefusalComponent · override request (AGT-3873)', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  async function settle(fixture: Awaited<ReturnType<typeof mount>>['fixture']): Promise<void> {
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
+
+  it('opens the written-reason form with its field focused when the card asks for it', async () => {
+    const { fixture, find } = await mount({ ...OVERRIDE, source: 'server',
+      reason: 'Acceptance refused: requirement-fit verdict was concerns.',
+      concern: 'The 830-card first-paint target remains unmet and lacks idle-host confirmation' });
+    const store = TestBed.inject(AcceptanceRefusalStore);
+    expect(find('acceptance-refusal-form')).toBeNull();
+
+    store.requestOverride(JOB.taskKey);
+    await settle(fixture);
+
+    expect(find('acceptance-refusal-form')).not.toBeNull();
+    expect(document.activeElement).toBe(find('acceptance-refusal-override-reason'));
+    expect(find('acceptance-refusal-concern')?.textContent)
+      .toContain("The review's concern: The 830-card first-paint target remains unmet");
+    expect(store.overrideRequest()).toBeNull();
+  });
+
+  it('ignores a request for another card and keeps it pending', async () => {
+    const { fixture, find } = await mount(OVERRIDE);
+    const store = TestBed.inject(AcceptanceRefusalStore);
+    store.requestOverride('wp::AGT-9999');
+    await settle(fixture);
+    expect(find('acceptance-refusal-form')).toBeNull();
+    expect(store.overrideRequest()).toBe('wp::AGT-9999');
+  });
+
+  it('opens no form when the refusal is resolved by another action', async () => {
+    const { fixture, find } = await mount({ reason: 'develop moved under the delivery.', action: 'retry-integration',
+      actionLabel: 'Retry integration', source: 'hold' });
+    TestBed.inject(AcceptanceRefusalStore).requestOverride(JOB.taskKey);
+    await settle(fixture);
+    expect(find('acceptance-refusal-form')).toBeNull();
   });
 });

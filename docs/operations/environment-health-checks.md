@@ -25,7 +25,12 @@ Checks belong to the environment declaration in
 | `address` is `host:port` or `tcp://host:port` | `tcp` connect |
 
 An explicit `healthChecks` array replaces the derived list; an empty array turns
-checks off. Each entry:
+these checks off. Each managed database of a run-zone environment adds a
+derived `database-<name>` check (kind `database`, AGT-3878) either way. It opens
+no connection: the database publishes no port, so the check reads the run
+host's reports and fails with `database-not-ready`, `database-failed`, or
+`database-report-stale` after three minutes without a report; see
+[managed databases](managed-databases/README.md#health-and-size). Each entry:
 
 ```json
 { "id": "api", "kind": "http", "url": "https://shop.example/api/health",

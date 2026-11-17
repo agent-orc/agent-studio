@@ -103,19 +103,34 @@ public static class TaskDetailResources
         group.MapGet("/{jobId}/details/review", (string jobId, string? project, long? generation,
             bool? evidence,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
-            ITaskCoreRuntime runtime, TaskListGitProjectionCache snapshots) =>
+            ITaskCoreRuntime runtime, TaskListGitProjectionCache snapshots, ReviewProjectionService reviews,
+            AttemptAuthorityService attemptAuthority) =>
         {
             var lookup = Resolve(jobId, project, generation, context, projects, index);
             if (lookup.Error is not null) return lookup.Error;
             var core = lookup.Core!;
-            var task = new TaskInfo { TaskKey = core.TaskKey, WatchPath = core.WatchPath };
-            var snapshot = snapshots.ReadCacheOnly([task]);
-            var data = new TaskReviewResource(snapshot.ReviewProjection.GetValueOrDefault(core.TaskKey),
+            // AGT-3845: the projection is signed per task (AGT-3704), so a
+            // key-only stub never matched it and every card read null. Read
+            // the resident task the same way GET /api/tasks/{id} does.
+            var resident = index.GetDetailFacts(core.Id, core.WatchPath).Info;
+            var task = resident is not null && resident.TaskKey == core.TaskKey
+                ? resident : new TaskInfo { TaskKey = core.TaskKey, WatchPath = core.WatchPath };
+            var read = snapshots.ReadTask(task);
+            var projection = ReviewProjectionOf(read, ReferenceEquals(task, resident) ? task : null, reviews);
+            var state = read.State switch
+            {
+                "warming" => "warming",
+                "unavailable" => "unavailable",
+                // Ready only once the published projection carries every report.
+                "ready" when !ReviewProjectionPending(core.FolderPath, read.Data?.ReviewProjection)
+                    && !(ReferenceEquals(task, resident) && ReviewEvidencePending(task, attemptAuthority))
+                    => "ready",
+                _ => "stale",
+            };
+            var data = new TaskReviewResource(projection,
                 evidence == true ? ReviewEvidenceLog.ReadLatestPerId(core.FolderPath) : null);
-            var freshness = snapshots.ReadFreshness([task]);
-            var state = freshness.GitStateAt is null ? "warming" : freshness.Stale ? "stale" : "ready";
             return Reply(context, core, lookup.ProjectId!, runtime, "review", state, data,
-                state == "ready" ? null : "review-projection-pending", freshness.GitStateAt?.UtcDateTime);
+                state == "ready" ? null : "review-projection-pending", read.ComputedAt?.UtcDateTime);
         });
 
         group.MapGet("/{jobId}/details/documents", (string jobId, string? project, long? generation,
@@ -152,6 +167,62 @@ public static class TaskDetailResources
             return Reply(context, core, lookup.ProjectId!, runtime, "history", "ready", data, null,
                 Directory.Exists(core.FolderPath) ? Directory.GetLastWriteTimeUtc(core.FolderPath) : null);
         });
+    }
+
+    /// <summary>
+    /// The card's review projection: the published one, or, while it is
+    /// withheld (a lane move changed the card's Git signature) or misses a
+    /// grade report written after it, the same view read from the card's files
+    /// (AGT-3845). Review facts need no Git, so they never wait for the next
+    /// index run. Read directly, not from the watcher-driven memo, which may
+    /// not have seen the newest report yet.
+    /// </summary>
+    internal static ReviewProjectionView? ReviewProjectionOf(TaskGitSnapshot read, TaskInfo? resident,
+        ReviewProjectionService reviews)
+    {
+        var published = read.Data?.ReviewProjection;
+        if (resident is null || string.IsNullOrWhiteSpace(resident.FolderPath)) return published;
+        if (published is not null && !ReviewProjectionPending(resident.FolderPath, published))
+            return published;
+        return reviews.Read(resident);
+    }
+
+    /// <summary>
+    /// True while the card's current Remote Review attempt is settled but its
+    /// grade report is not written yet (AGT-3845). The settlement moves the
+    /// card first; the evidence projection writes the report right after.
+    /// A journal that needs repair, or a report already on disk, is not pending.
+    /// </summary>
+    internal static bool ReviewEvidencePending(TaskInfo task, AttemptAuthorityService authority)
+        => !string.IsNullOrWhiteSpace(task.FolderPath) && ReviewEvidencePending(task.FolderPath,
+            authority.GetTaskProjection(task.Key ?? task.Id).CurrentReviewAttempt?.AttemptId);
+
+    internal static bool ReviewEvidencePending(string folder, string? currentReviewAttemptId)
+    {
+        if (string.IsNullOrWhiteSpace(currentReviewAttemptId)) return false;
+        if (File.Exists(Path.Combine(folder, RemoteReviewReportEvidence.EvidenceFileName(currentReviewAttemptId))))
+            return false;
+        var journal = RemoteReviewSettlementJournal.Read(folder, currentReviewAttemptId);
+        return journal.Status == RemoteReviewSettlementReadStatus.Ready
+            && journal.Entry is { EvidenceComplete: false, RepairReason: null };
+    }
+
+    /// <summary>
+    /// True when the task folder holds a Remote Review grade report that the
+    /// projection does not carry (AGT-3845): the projection is missing, or it
+    /// was computed before the report landed. Decided by content, not by file
+    /// time, since a report can land while an index run is in flight. A report
+    /// the reader cannot parse never shows in a projection, so it never counts.
+    /// </summary>
+    internal static bool ReviewProjectionPending(string folder, ReviewProjectionView? projection)
+    {
+        var reports = TaskScopedTestEvidenceReader.ReadRemoteReviewAttempts(new TaskInfo { FolderPath = folder });
+        if (reports.Count == 0) return false;
+        var projected = projection?.Attempts
+            .Where(attempt => attempt.Plane == ReviewPlane.Remote)
+            .Select(attempt => attempt.ReportRef)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        return reports.Any(report => !projected.Contains(report.ReportRef));
     }
 
     private static (TaskCoreRecord? Core, string? ProjectId, IResult? Error) Resolve(string jobId, string? project,

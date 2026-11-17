@@ -244,6 +244,11 @@ and labels its values as sample data. The `Environment`, `Release`, `Deployment`
 The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
 `/releases`, and `/deployments` when configured. Its Pipeline view reads the
 parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
+For a registered URL project without a server checkout, Deploy shows one checkout
+state across its views and skips repository-backed reads. The explorer also
+skips its Dossier catalogue refresh until the checkout is available. Both
+resume when the shared checkout state reports a usable checkout. Project
+Settings also skips the developer checkout lag request until a checkout exists.
 The release view loads
 `/releases/{releaseId}/notes` from the included cards.
 The release response also projects current Quality verdicts from the included
@@ -492,6 +497,10 @@ A refused optimistic triage move restores the original task, lane-pager
 snapshot, route, and active task tab together. The detail shows the refusal
 beside the action with the next step. If an error dialog opens, closing it
 returns focus to the failed action.
+When a move empties the captured lane, the detail stays on the moved task and
+refreshes its new lane state. A first move to Ready is labelled "Queued";
+"Requeued" requires a recorded execution. Preparation's empty Activity view
+names Promote to Ready and Run now as the controls for starting work.
 
 Each Wiki/Dossier tab owns a history stack containing its current target and up
 to 49 earlier or forward targets. Normal link navigation truncates that tab's
@@ -942,6 +951,10 @@ occur. It is not a claim about tunnel transfer time.
   decision-pending status or decision-ready phase opens that count; unsaved
   browser selections do not close it. An active Dossier with open decisions
   stays under `Needs a decision` until the recorded decision closes them.
+  A rework receipt remains visible after its source card's agent run finishes.
+  The viewer projects the run as updated, unchanged, or failed, links the card,
+  and restores decision actions even when the agent retained the receipt and
+  left the Dossier content unchanged.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -1002,9 +1015,19 @@ occur. It is not a claim about tunnel transfer time.
   `sourceTaskKeys`, `relatedTaskKeys`, and decision receipts retained as
   compatibility bridges. The compact viewer head shows every resolved card as
   a live lane dot. While a decision-pending or decided Workbench has at least
-  one reference beyond Ready and not every reference is terminal, it also shows
-  the derived `In implementation` summary marker. This is a live read-model
-  marker and does not add a descriptor lifecycle state.
+  one implementation card beyond Ready and not every implementation card is
+  terminal, it also shows the derived `In implementation` summary marker, and
+  the header status reads `In implementation`; otherwise a decided Dossier
+  reads `Decided`. Implementation cards are the resolved references plus the
+  Dossier's own member cards (`cards`), without the concept card that wrote it
+  (`sourceTaskKeys` and `revisionCard`), so a concept card in Human Review
+  does not mark the Dossier as in implementation (AGT-3649-D13). This is a
+  live read-model marker and does not add a descriptor lifecycle state. The
+  review tag and `Record relevance review` action name the operator's
+  relevance review; concept-fit reviews of the concept card are a separate
+  gate and do not set it. The promotion bar loads the slice plan when it
+  renders and states `n of m slices have cards`; a decision label never
+  repeats `(recommended)` that the authored option label already carries.
   Once every referenced card is in `6-completed` or `7-archive`, the catalogue
   projects a quiet `Ready to document` suggestion in the viewer header and list
   surfaces. `POST /api/projects/{projectName}/workbenches/{id}/document`

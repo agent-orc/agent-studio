@@ -44,6 +44,22 @@ without a flight uses its recovery retry time, and other batches name the next
 pilot tick. These are observation deadlines, not a promise of publication.
 The batch panel shows these facts beside the flight queue and batch history.
 
+The state read also reports `laneIdle` (AGT-3857): how long a formed batch
+waited while the project ran no batch gate, by cause. `per-task-holder` means a
+direct integration held the project reservation, an approved per-task push was
+pending, or per-task gates held the gate slots. `restart-recovery` means the
+server restarted, or a previous process's flight claim or batch was still being
+recovered. `planner` means nothing held the lane and the planner had not
+started the batch yet. Each pilot tick observes the lane. The open interval is
+stored in the batch store, so a restarted process closes it at the last
+observation and records the downtime as `restart-recovery`. The response gives
+the current cause, minutes per cause for the last 24 hours and 7 days, and the
+20 latest intervals, each naming its cause. The batch panel shows the current
+cause and the 24-hour split. A flight claim owner records its process start
+time, so a server that comes back under the same process id (PID 1 in a
+container) expires the previous owner's claim on its first tick. It does not
+wait for the two-minute heartbeat.
+
 An interrupted deterministic red batch ends as `Paused` with reason
 `isolation interrupted` on the next pilot tick when unresolved members remain.
 The pilot derives any child findings, releases the parent members to planning,
@@ -631,6 +647,10 @@ is behind their current integration tip. They replay the final delivery tree's
 net change against the merge base as one commit on the tip. The gate and push
 use that exact commit, and the card maps each delivery commit absent from the
 tip to it. A tree conflict names its files and starts an agent round.
+When the per-task integration route creates a merge commit, its subject names
+the delivered card key and title. `MergeIntoDevelopRunner` supplies that identity
+to `GitService` for direct and mechanically recovered merges, so first-parent
+history and downstream changelogs identify the card.
 
 The merge route is the documented strategy for non-linear deliveries. It is
 the same `--no-ff` merge the per-task integration uses, so every delivery SHA,
@@ -1171,7 +1191,8 @@ credential and starts the release-pinned backend binary with
 `--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
 on that host. Pull gate mutations authenticate this service bearer directly;
 they do not require a browser `X-Client-Id` header. The worker registers,
-claims from `/api/pull-gates`, downloads
+claims from `/api/pull-gates` (an empty claim answers `204 No Content`, which
+the worker treats as no work and polls again after 2 s; AGT-3649-D12), downloads
 the exact source bundle, heartbeats its lease, streams progress through those
 heartbeats, and uploads the result and files from its `artifacts/` run folder.
 The server refuses uploads after lease expiry or replacement. Completed
@@ -2850,6 +2871,14 @@ operator changes cause the step to fail before its writer runs.
   and timeline event remain the detailed evidence. Every merge `Error` names a
   typed code (AGT-2995); the code table and the Error sites are in
   [rebase-merge-and-integration-invariants.md](../../concepts/platform-architecture/rebase-merge-and-integration-invariants.md#typed-codes-of-an-error-outcome-agt-2995).
+- A merge-only continuation is attributed when its earlier non-merge delivery
+  commits name the card (or carry its runner attribution trailer) and each new
+  merge imports a parent already on the integration branch. The run result SHA
+  receives a `commits[]` entry with that run's attempt id. A passing review
+  escalated solely for missing attribution can be restored to Auto Review by
+  the integration-history repair sweep, then admitted to a batch without a new
+  review. Other missing attribution escalations name the affected commits and
+  the required next-round action.
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.

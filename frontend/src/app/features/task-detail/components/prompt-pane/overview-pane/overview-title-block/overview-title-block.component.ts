@@ -9,6 +9,7 @@ import { PlanningSpawnPanelComponent } from '../../../planning-spawn-panel/plann
 import { DeliveryClaimPanelComponent } from '../../../delivery-claim-panel/delivery-claim-panel.component';
 import { ContinueRoundPanelComponent } from '../../../continue-round-panel/continue-round-panel.component';
 import { HumanReviewDecisionPanelComponent } from '../../../human-review-decision-panel/human-review-decision-panel.component';
+import { OffStableGradeNoticeComponent } from '../../../off-stable-grade-notice/off-stable-grade-notice.component';
 import { ReviewerSession } from '../../../../../../services/reviewer-session.service';
 import { CopyableTaskKeyComponent } from '../../../../../../components/copyable-task-key/copyable-task-key.component';
 import { ConceptPromotionComponent } from '../../../../../../components/concept-promotion/concept-promotion.component';
@@ -54,6 +55,7 @@ function makeAttachmentId(): string {
     DeliveryClaimPanelComponent,
     ContinueRoundPanelComponent,
     HumanReviewDecisionPanelComponent,
+    OffStableGradeNoticeComponent,
     CopyableTaskKeyComponent,
     TaskPromptPopoverComponent,
     DossierSliceLinkComponent,

@@ -10,10 +10,23 @@
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   text-align: left;
+  margin-top: var(--studio-spacing-1);
+}
+/* F14: the red state and culprit come first and wrap; only the counts line truncates. */
+.batch-lane-indicator__alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  margin-bottom: var(--studio-spacing-1);
+  color: var(--studio-fg);
+  overflow-wrap: anywhere;
+}
+.batch-lane-indicator__summary {
+  display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: var(--studio-spacing-1);
 }
 .batch-lane-indicator[data-batch-alert='red'] {
   border-color: color-mix(in srgb, var(--studio-status-danger) 45%, var(--studio-border));

@@ -14,6 +14,8 @@ import { ModalStackService } from '../../../../services/modal-stack.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { TaskService } from '../../../../services/task.service';
 import { CliCatalogStore } from '../../../cli';
+import { ActionPanelCoordinator } from '../../../../services/action-panel-coordinator.service';
+import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
 import { WorkbenchDecisionActionsComponent } from '../workbench-decision-actions/workbench-decision-actions.component';
 import { WorkbenchDecisionPanelComponent } from './workbench-decision-panel';
 import { decisionOutcomeTone, decisionStageTone } from './workbench-decision-panel.util';
@@ -99,6 +101,7 @@ describe('WorkbenchDecisionPanelComponent', () => {
         provideZonelessChangeDetection(),
         provideHttpClient(),
         provideHttpClientTesting(),
+        ActionPanelCoordinator,
         {
           provide: TaskService,
           useValue: { createJob, getDetailByProject, getReferenceStatuses, getWatchPaths, refresh },
@@ -119,6 +122,30 @@ describe('WorkbenchDecisionPanelComponent', () => {
   });
 
   afterEach(() => http.verify());
+
+  it('returns actions and shows an unchanged round while retaining the rework receipt', () => {
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      entryFingerprint: 'a'.repeat(64),
+      workbench: { ...DOCUMENT.workbench, decision: {
+        outcome: 'rework', state: 'pending', operationId: 'rework-1',
+        sourceRevision: DOCUMENT.revision, sourceFingerprint: DOCUMENT.fingerprint,
+        sourceEntryFingerprint: 'a'.repeat(64),
+        preparedAt: '2026-11-15T10:00:00Z', preparedBy: 'Owner',
+        confirmedAt: '2026-11-15T10:00:00Z', confirmedBy: 'Owner',
+        decidedAt: null, reason: null, failure: null, spawnedTaskKeys: [],
+        responses: RESPONSES, taskDraft: null, revisionTaskKey: 'AGT-2300',
+      } },
+      revisionRound: { status: 'unchanged', taskKey: 'AGT-2300',
+        title: 'Concept: routing policy', queueReason: null, detail: null },
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-receipt"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-revision-round"]')?.textContent)
+      .toContain('unchanged');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-rework"]')).toBeTruthy();
+  });
 
   it('records one answer while leaving another explicitly open and does not create a card', () => {
     const partial = [RESPONSES[0], {
@@ -145,6 +172,60 @@ describe('WorkbenchDecisionPanelComponent', () => {
     confirm.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
       decisionStage: 'succeeded', revision: 'd'.repeat(40), fingerprint: 'e'.repeat(64), responses: partial });
     expect(createJob).not.toHaveBeenCalled();
+  });
+
+  it('saves a fully answered Dossier with its notes without starting a card (AGT-3875)', () => {
+    const record = fixture.nativeElement.querySelector('[data-testid="workbench-decision-record"]') as HTMLButtonElement;
+    expect(record.textContent).toContain('Save answers');
+    expect(record.disabled).toBe(false);
+    expect(fixture.nativeElement.textContent).toContain('1 of 1 answered');
+    expect(fixture.nativeElement.textContent).toContain('1 note');
+    record.click();
+    const prepare = http.expectOne('/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/prepare');
+    expect(prepare.request.body).toEqual(expect.objectContaining({ outcome: 'record-only', responses: RESPONSES, task: null }));
+    const operationId = prepare.request.body.operationId;
+    prepare.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
+      decisionStage: 'prepared', revision: 'c'.repeat(40), fingerprint: 'b'.repeat(64), responses: RESPONSES });
+    const confirm = http.expectOne('/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/confirm');
+    expect(confirm.request.body.responses[0].comment).toBe('Keep the boundary explicit.');
+    confirm.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
+      decisionStage: 'succeeded', revision: 'd'.repeat(40), fingerprint: 'e'.repeat(64), responses: RESPONSES });
+    expect(createJob).not.toHaveBeenCalled();
+
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT, workbench: { ...DOCUMENT.workbench, recordedResponses: RESPONSES },
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-save-state"]')?.textContent)
+      .toContain('Saved in Dossier');
+    expect((fixture.nativeElement.querySelector('[data-testid="workbench-decision-record"]') as HTMLButtonElement)
+      .disabled).toBe(true);
+  });
+
+  it('marks answers that differ from the saved ones as not saved yet', () => {
+    const changed = [{ ...RESPONSES[0], selectedOptionIds: ['queue'] }];
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT, workbench: { ...DOCUMENT.workbench, recordedResponses: RESPONSES },
+    });
+    TestBed.inject(WorkbenchDecisionDraftStore).saveResponses('Agent Studio', 'routing-policy', changed);
+    fixture.componentRef.setInput('responses', changed);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-save-state"]')?.textContent)
+      .toContain('Not saved yet');
+    expect((fixture.nativeElement.querySelector('[data-testid="workbench-decision-record"]') as HTMLButtonElement)
+      .disabled).toBe(false);
+  });
+
+  it('closes the combined-task form when another action panel of the view opens (AGT-3875)', () => {
+    click('workbench-decision-start');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-feature-confirmation"]')).not.toBeNull();
+
+    TestBed.inject(ActionPanelCoordinator).claim('concept-promotion');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-feature-confirmation"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-start"]')).not.toBeNull();
   });
 
   it('shows recorded choices after concept acceptance without offering another decision', () => {
@@ -720,7 +801,10 @@ describe('decision panel status tones', () => {
     expect(decisionStageTone('later', false)).toBe('neutral');
     expect(decisionOutcomeTone('feature-spawn')).toBe('success');
     expect(decisionOutcomeTone('archive')).toBe('neutral');
-    expect(decisionOutcomeTone('rework')).toBe('warning');
+    expect(decisionOutcomeTone('rework')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'succeeded')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'failed')).toBe('danger');
+    expect(decisionOutcomeTone('feature-spawn', 'pending')).toBe('running');
     expect(decisionOutcomeTone(null)).toBe('neutral');
   });
 });

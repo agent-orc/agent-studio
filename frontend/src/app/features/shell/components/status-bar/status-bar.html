@@ -54,15 +54,15 @@
        role="group" aria-label="Subscription usage" data-testid="status-bar-usage-entries">
       @for (cli of visibleUsageClis(); track cli.cliId) {
         @let v = usageView(cli);
-        <button type="button" class="statusbar__item statusbar__item--btn statusbar__usage-entry" [attr.data-testid]="'footer-usage-' + cli.cliId"
+        <a class="statusbar__item statusbar__item--btn statusbar__usage-entry" [attr.data-testid]="'footer-usage-' + cli.cliId"
+                [href]="cli.cliId.toLowerCase() === 'gemini' ? '#/workspace/settings/caps' : '#/workspace/settings/tokens/' + cli.cliId.toLowerCase()"
                 [attr.data-state]="v.state" [attr.data-usage-trigger]="'cli:' + cli.cliId.toLowerCase()"
-                [attr.aria-label]="usageName(cli)" [title]="usageTooltip(cli)"
-                (click)="openUsageDetail.emit({ section: 'cli', cliId: cli.cliId })">
+                [attr.aria-label]="usageName(cli)" [title]="usageTooltip(cli)">
           <strong>{{ v.name }} </strong>
           @if (v.weekly.reported) { <span>WK {{ v.weekly.value }} </span> }
-          @if (v.session.reported) { <span>Session {{ v.session.value }} </span> }
+          @if (v.session.reported) { <span class="statusbar__usage-session">Session {{ v.session.value }} </span> }
           @if (v.state === 'stale') { <span class="statusbar__age">{{ age(cli.fetchedAt) }}</span> }
-        </button>
+        </a>
         @if (hostProblem(cli.cliId); as problem) {
           <button type="button" class="statusbar__item statusbar__item--btn statusbar__host-problem" [attr.data-testid]="'footer-host-problem-' + cli.cliId"
                   [title]="'Open Execution Hosts to restore ' + v.name + ' sign-in.'"
@@ -72,9 +72,10 @@
       @if (usage.snapshot()?.cost; as cost) {
         @let c = costView();
         <button type="button" class="statusbar__item statusbar__item--btn statusbar__usage-entry" data-testid="footer-usage-cost"
-                [attr.data-state]="c.state" data-usage-trigger="cost" [title]="c.detail"
+                [attr.data-state]="c.state" data-usage-trigger="cost" [title]="c.detail" [attr.aria-label]="c.ariaLabel"
                 (click)="openUsageDetail.emit({ section: 'cost', cliId: null })">
           <strong>Today</strong> <span>{{ c.value }}</span>
+          @if (c.state === 'partial') { <span>Partial</span> }
           @if (c.state === 'stale') { <span class="statusbar__age">{{ age(cost.coverage.observedAt) }}</span> }
         </button>
       }

@@ -88,7 +88,8 @@ public static class ProjectOperatorDashboardEndpoints
         // starts the automatic Staging phase of the standard lifecycle.
         app.MapPost("/api/deploy/gate-releases", async (HttpContext context, GateArtifactRequest request,
             ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration,
-            AccessSecurityStore security, ReleaseCandidateGate gate, CancellationToken ct) =>
+            AccessSecurityStore security, ReleaseCandidateGate gate, DeployStore store, TimeProvider clock,
+            CancellationToken ct) =>
         {
             var builder = RunnerCredential(context, configuration, security);
             if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
@@ -96,8 +97,14 @@ public static class ProjectOperatorDashboardEndpoints
             ReleaseCandidateGateResult candidate;
             try { candidate = await gate.InspectAsync(request.Project, request.Commit, ct); }
             catch (HttpRequestException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
-            if (candidate.Mode == "invalid") return Results.BadRequest(new { error = candidate.Error });
-            if (!candidate.Allowed) return Results.Conflict(new { error = candidate.Error });
+            // F2: a refusal stays visible in the Deploy area until a release is created.
+            if (candidate.Project.Length > 0)
+                store.SaveReleaseRefusal(candidate.Project, candidate.Allowed ? null
+                    : new ReleaseGateRefusal(candidate.CommitSha, candidate.Mode, candidate.Error!,
+                        candidate.NextStep, clock.GetUtcNow()));
+            if (candidate.Mode == "invalid")
+                return Results.BadRequest(new { error = candidate.Error, nextStep = candidate.NextStep });
+            if (!candidate.Allowed) return Results.Conflict(new { error = candidate.Error, nextStep = candidate.NextStep });
             return DeployEndpoints.QuotaRefusable(() => environments.RegisterGateArtifact(
                 request.Project, request.Artifact, request.Commit, builder.RunnerId)
                 ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate",
@@ -280,17 +287,29 @@ public static class ProjectOperatorDashboardEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         // IP-1 run-target role: the host polls; Studio never dials in.
-        app.MapGet("/api/deploy/run-targets/{hostId}/desired-state", (HttpContext context, string hostId,
-            ProjectEnvironmentService environments, IConfiguration configuration) =>
-            RunTargetCallerDenied(context, hostId, configuration)
-                ? RunTargetForbidden() : Results.Ok(environments.DesiredState(hostId)))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+        // AGT-3877: managed database credentials exist before the host may resolve them.
+        app.MapGet("/api/deploy/run-targets/{hostId}/desired-state", async (HttpContext context, string hostId,
+            ProjectEnvironmentService environments, ManagedDatabaseCredentials credentials,
+            IConfiguration configuration, CancellationToken ct) =>
+        {
+            if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
+            await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.EnsureForHostAsync(hostId, ct));
+            return Results.Ok(environments.DesiredState(hostId));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
-        app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", (HttpContext context, string hostId,
-            RunTargetObservedReport report, ProjectEnvironmentService environments, IConfiguration configuration) =>
-            RunTargetCallerDenied(context, hostId, configuration)
-                ? RunTargetForbidden() : Results.Ok(new { accepted = environments.RecordObserved(hostId, report) }))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+        app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", async (HttpContext context, string hostId,
+            RunTargetObservedReport report, ProjectEnvironmentService environments,
+            ManagedDatabaseCredentials credentials, ManagedDatabaseMetrics metrics, IConfiguration configuration,
+            CancellationToken ct) =>
+        {
+            if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
+            var measured = new List<(string Project, ManagedDatabaseRecord Record)>();
+            var accepted = environments.RecordObserved(hostId, report, measured);
+            // AGT-3878: database size and connections reach the environment's operations intake.
+            metrics.Publish(measured);
+            await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.RetireDeletedAsync(ct));
+            return Results.Ok(new { accepted });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/log", (string project, string jobId,
             DeployStepLogRequest request, DeployService deploy) =>

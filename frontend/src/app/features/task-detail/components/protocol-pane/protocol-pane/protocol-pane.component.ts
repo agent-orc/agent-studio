@@ -158,6 +158,7 @@ export class ProtocolPaneComponent implements OnDestroy {
   private keyboardSurface?: DetailKeyboardSurfaceDirective;
 
   readonly detail = input.required<TaskDetail>();
+  readonly isPreparation = computed(() => this.detail().info.state === TaskState.Preparation);
   readonly maximized = input(false);
   readonly weight = input<number>(1);
   readonly isRunning = input(false);

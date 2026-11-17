@@ -71,7 +71,7 @@ describe('PipelineStepEffectiveRouteComponent', () => {
     const line = host.querySelector('[data-testid="pipeline-step-effective-aspect-code-quality"]');
     expect(line?.getAttribute('data-rule')).toBe('quota-cap');
     expect(line?.textContent).toContain('Runs codex · gpt-6-sol');
-    expect(line?.textContent).toContain('configured claude · claude-opus-5');
+    expect(line?.textContent).toContain('Step setting: claude · claude-opus-5');
     expect(host.querySelector('[data-testid="pipeline-step-effective-rule-aspect-code-quality"]')?.textContent).toContain('Quota cap');
     expect(host.querySelector('[data-testid="pipeline-step-effective-reason-aspect-code-quality"]')?.textContent)
       .toContain('reason not recorded');

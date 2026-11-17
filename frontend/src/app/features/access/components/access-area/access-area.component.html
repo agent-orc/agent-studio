@@ -8,6 +8,7 @@
   </header>
 
   @if (access.error(); as message) { <p class="access-error" role="alert" data-testid="access-error">{{ message }}</p> }
+  @if (access.state() === 'denied' && localOwner.missing()) { <app-local-owner-sign-in data-testid="access-owner-sign-in" (signedIn)="reload()" /> }
   @if (access.projectsError(); as message) { <p class="access-error" role="alert" data-testid="access-projects-error">{{ message }}</p> }
 
   @if (overview(); as data) {

@@ -182,13 +182,9 @@ async function openBoard(page: Page): Promise<void> {
   await expect(page.getByTestId('lane-2-ready')).toBeVisible({ timeout: 15_000 });
 }
 
-/** Closes the Explorer rail so the 390 px board shows a full card column. */
+/** At 390 px the shell hides the Explorer and the activity rail (AGT-3836), so the board gets the full width. */
 async function toPhone(page: Page): Promise<void> {
   await page.setViewportSize(PHONE);
-  const explorer = page.getByTestId('studio-ab-explorer');
-  if (await explorer.evaluate(el => el.classList.contains('studio-ab__btn--active')).catch(() => false)) {
-    await explorer.click();
-  }
   await page.waitForTimeout(300);
 }
 

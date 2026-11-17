@@ -13,6 +13,7 @@ import {
   type TaskDeliveryClaimAnswer,
   type TaskInfo,
 } from '../../../../models/task.model';
+import type { AcceptanceReadinessItem } from '../../../acceptance-readiness';
 
 function answer(overrides: Partial<TaskDeliveryClaimAnswer> = {}): TaskDeliveryClaimAnswer {
   return {
@@ -79,7 +80,7 @@ function job(overrides: Partial<TaskInfo> = {}): TaskInfo {
 }
 
 async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())),
-  tasks: Record<string, unknown> = {}) {
+  readiness: AcceptanceReadinessItem | null = null, tasks: Record<string, unknown> = {}) {
   TestBed.resetTestingModule();
   await TestBed.configureTestingModule({
     imports: [DeliveryClaimPanelComponent],
@@ -94,6 +95,12 @@ async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())
   const fixture = TestBed.createComponent(DeliveryClaimPanelComponent);
   fixture.componentRef.setInput('job', info);
   fixture.detectChanges();
+  if (readiness) {
+    TestBed.inject(HttpTestingController).expectOne('/api/tasks/acceptance-readiness')
+      .flush({ checkedAtUtc: '2026-11-15T10:00:00Z', counts: {}, items: [readiness] });
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
   return fixture;
 }
 
@@ -114,6 +121,83 @@ describe('DeliveryClaimPanelComponent', () => {
     expect(host.querySelector('[data-testid="stale-brief-acceptance"]')?.textContent)
       .toContain('Acceptance is blocked');
   });
+  describe('F12 brief versions and the ranked reason', () => {
+    const current = 'cccccccccccccccc';
+    const review = (overrides: Partial<NonNullable<TaskDeliveryClaimAnswer['contentReview']>>) => ({
+      ...conceptReview, mode: 'coding', requiredAspect: 'requirement-fit', contentStatus: null,
+      currentBriefVersion: current, deliveryBriefVersion: current, reviewBriefVersion: current,
+      ...overrides,
+    }) as NonNullable<TaskDeliveryClaimAnswer['contentReview']>;
+    const humanReview = (integration: TaskInfo['integration'] = null) => job({ state: TaskState.HumanReview, integration });
+    const host = (fixture: { nativeElement: unknown }) => fixture.nativeElement as HTMLElement;
+
+    it('says no brief version was recorded when the delivery brief is missing, not that it changed', async () => {
+      const fixture = await mount(humanReview(),
+        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: null }) }))));
+      const gap = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="stale-brief-acceptance"]');
+
+      expect(gap?.getAttribute('data-brief-gap')).toBe('unrecorded');
+      expect(gap?.textContent).toContain('No brief version was recorded');
+      expect(gap?.textContent).toContain('No brief version was recorded for this delivery');
+      expect(gap?.textContent).not.toContain('changed brief');
+      expect(host(fixture).querySelector('[data-testid="brief-difference-link"]')).toBeNull();
+      expect(host(fixture).querySelector('[data-testid="review-current-brief"]')).not.toBeNull();
+    });
+
+    it('says the brief changed when a recorded version differs from the current one', async () => {
+      const fixture = await mount(humanReview(),
+        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: 'aaaaaaaaaaaaaaaa' }) }))));
+      const gap = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="stale-brief-acceptance"]');
+
+      expect(gap?.getAttribute('data-brief-gap')).toBe('changed');
+      expect(gap?.textContent).toContain('Acceptance is blocked by a changed brief');
+      expect(host(fixture).querySelector('[data-testid="brief-difference-link"]')).not.toBeNull();
+    });
+
+    it('shows no brief gap when both versions are the current brief', async () => {
+      const fixture = await mount(humanReview(), vi.fn(() => of(answer({ contentReview: review({}) }))));
+
+      expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="stale-brief-acceptance"]')).toBeNull();
+    });
+
+    it('leads with the readiness reason and its next step and lists the other gaps under it', async () => {
+      const fixture = await mount(
+        humanReview({ status: 'no-branch', integrationBranch: 'develop', deliveryRef: null, sha: null, detail: null }),
+        vi.fn(() => of(answer({ integrated: false, containmentStatus: 'pending',
+          contentReview: review({ deliveryBriefVersion: null }) }))),
+        readinessItem('task', 'no-content-verdict', {
+          taskKey: 'agt::task', headline: 'No content verdict',
+          reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+        }));
+      const steps = host(fixture).querySelector('[data-testid="acceptance-next-steps"]');
+
+      expect(steps?.getAttribute('data-readiness')).toBe('no-content-verdict');
+      expect(steps?.querySelector('[data-testid="acceptance-next-steps-status"]')?.textContent).toContain('No content verdict');
+      expect(steps?.querySelector('[data-testid="acceptance-next-steps-reason"]')?.textContent)
+        .toContain('The current run has no requirement-fit verdict');
+      expect(steps?.querySelector('[data-testid="acceptance-primary-next-step"]')?.textContent)
+        .toContain('Next step: Run the requirement-fit review for the current run.');
+      expect(steps?.querySelector('[data-testid="stale-brief-acceptance"]')).toBeNull();
+      const secondary = [...host(fixture).querySelectorAll('[data-testid="acceptance-secondary-gaps"] li')]
+        .map(item => item.textContent?.trim());
+      expect(secondary).toEqual([
+        'No delivery branch or commit was found for this card.',
+        'No brief version was recorded for this delivery.',
+      ]);
+    });
+
+    it('does not claim a changed brief blocks acceptance when readiness ranks another reason first', async () => {
+      const fixture = await mount(humanReview(),
+        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: 'aaaaaaaaaaaaaaaa' }) }))),
+        readinessItem('task', 'no-content-verdict', { taskKey: 'agt::task', headline: 'No content verdict' }));
+      const secondary = [...host(fixture).querySelectorAll('[data-testid="acceptance-secondary-gaps"] li')]
+        .map(item => item.textContent?.trim());
+
+      expect(host(fixture).querySelector('[data-testid="stale-brief-acceptance"]')).toBeNull();
+      expect(secondary).toEqual(['No integration verdict for this delivery yet.', 'The brief changed after this delivery.']);
+    });
+  });
+
   describe('AGT-3874 accept with a reason on a content verdict', () => {
     const concerns: NonNullable<TaskDeliveryClaimAnswer['contentReview']> = {
       mode: 'coding',
@@ -136,7 +220,7 @@ describe('DeliveryClaimPanelComponent', () => {
         refresh: vi.fn(),
       };
       const fixture = await mount(job({ state: TaskState.HumanReview }),
-        vi.fn(() => of(answer({ contentReview: review }))), tasks);
+        vi.fn(() => of(answer({ contentReview: review }))), null, tasks);
       const host = fixture.nativeElement as HTMLElement;
       const click = async (testId: string) => {
         host.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)!.click();
@@ -150,6 +234,7 @@ describe('DeliveryClaimPanelComponent', () => {
       const { fixture, host, click, tasks } = await mountGap(concerns);
       const section = host.querySelector('[data-testid="content-verdict-acceptance"]');
       expect(section?.textContent).toContain('returned concerns');
+      expect(host.querySelector('[data-testid="acceptance-next-steps"]')?.getAttribute('data-readiness')).toBe('review-concerns');
       expect(section?.textContent).toContain('The 830-card first-paint target remains unmet');
       expect(host.querySelector('[data-testid="stale-brief-acceptance"]')).toBeNull();
 

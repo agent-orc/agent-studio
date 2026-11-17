@@ -595,6 +595,33 @@ public sealed class GitStateIndexServiceTests : IDisposable
     }
 
     [Fact]
+    public void RemoteReviewGradeReport_IsAReviewInputOfItsTaskFolder()
+    {
+        // AGT-3845: a grade report did not change the run input, so the
+        // indexer skipped the run and the card kept a projection without it.
+        var jobsPath = NewRepoWatchPath("proj");
+        var folder = Path.Combine(jobsPath, "task-1");
+        Directory.CreateDirectory(folder);
+        var task = new TaskInfo
+        {
+            Id = "task-1", TaskKey = "task-1", ProjectName = "proj",
+            WatchPath = jobsPath, FolderPath = folder,
+        };
+        var cache = new TaskListGitProjectionCache();
+        var before = GitStateIndexService.CaptureTaskInputSignature([task], cache);
+        var report = Path.Combine(folder, "remote-review-grade-review_1.md");
+        File.WriteAllText(report, "---\ntype: remote-review-grade\n---\n");
+
+        Assert.True(GitStateIndexService.IsReviewGradeReport(report));
+        Assert.False(GitStateIndexService.IsReviewGradeReport(Path.Combine(folder, "remote-review-review_1.json")));
+        Assert.True(cache.MarkTaskInputChanged(report, folder));
+        Assert.Equal(1, cache.SubjectVersion(folder));
+        Assert.NotEqual(before, GitStateIndexService.CaptureTaskInputSignature([task], cache));
+        // A repeated watcher event for the same bytes is not a new input.
+        Assert.False(cache.MarkTaskInputChanged(report, folder));
+    }
+
+    [Fact]
     public void SameLengthReviewSubjectRewrite_WithPreservedTimestamp_ChangesInputGeneration()
     {
         var jobsPath = NewRepoWatchPath("proj");

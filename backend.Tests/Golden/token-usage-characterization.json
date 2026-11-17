@@ -2690,7 +2690,7 @@
         "today": "0.10375",
         "week": "0.54435",
         "Status": "partial",
-        "Reason": "Some models have no historical USD price."
+        "Reason": "No historical USD price for Unknown model."
       },
       {
         "Name": "beta",

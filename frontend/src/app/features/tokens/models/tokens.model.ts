@@ -186,6 +186,7 @@ export interface TokenTimeline {
    * this response and equals the id when the registry does not know it.
    */
   models?: TokenTimelineModelUsage[];
+  oneShotSources?: { source: string; calls: number; tokens: number; costUsd: number }[];
   /** Read health of the merged usage ledger (bus history plus task receipts). */
   freshness?: TokenTimelineFreshness;
   fetchedAt: string;

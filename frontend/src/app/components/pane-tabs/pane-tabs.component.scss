@@ -78,9 +78,15 @@ app-pane-tabs.pane-tabs-host--header {
   pointer-events: none;
 }
 
-.pane-tabs__measurement .pane-tab {
+/* The header-tab rule below lets live tabs shrink. Its equal-specificity
+ * `flex: 0 1 auto` used to win here too, so a long label such as "Code Review"
+ * measured at the minimum width, the strip believed every tab fitted, and the
+ * live tab clipped to "Code Revi..." instead of moving into the overflow menu
+ * (AGT-3836). The doubled class keeps the probe at its intrinsic width. */
+.pane-tabs__measurement.pane-tabs__measurement .pane-tab {
   flex: 0 0 auto;
   min-width: var(--pane-tab-min-width);
+  max-width: none;
 }
 
 .pane-tabs__measurement .pane-tab__spinner,

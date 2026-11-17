@@ -141,10 +141,13 @@ function windowView(window: UsageCliWindow | null, kind: UsageWindowKind, timeZo
     };
   }
   const reset = formatLocalWithUtc(window?.resetAtUtc, timeZone) ?? window?.resetLabel ?? null;
+  const resetMs = window?.resetAtUtc ? Date.parse(window.resetAtUtc) : NaN;
+  const weeklyStart = kind === 'weekly' && Number.isFinite(resetMs)
+    ? formatLocalWithUtc(window?.startAtUtc ?? new Date(resetMs - 7 * 86_400_000).toISOString(), timeZone) : null;
   return {
     kind, tag, value: pct, reported: true,
       spoken: `${spokenName} ${percentSpoken(pct)} used`,
-    detail: `${providerLabel}: ${pct} used${reset ? `, resets ${reset}` : ''}`,
+    detail: `${providerLabel}: ${pct} used${reset ? `, resets ${reset}` : ''}${weeklyStart ? `; provider week ${weeklyStart} to ${reset}` : ''}`,
   };
 }
 
@@ -364,6 +367,7 @@ export function buildCostChipView(
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
   const dayStart = formatLocalWithUtc(cost.calendar?.dayStartUtc, zone);
   const updated = formatLocalWithUtc(coverage?.observedAt, zone);
+  const latestReceipt = formatLocalWithUtc(cost.latestReceiptAt, zone);
   const missing = cost.unpricedTodayRuns ?? 0;
   const missingText = missing > 0 ? ` priced subtotal + ${missing} ${missing === 1 ? 'run' : 'runs'} without price` : '';
   const spokenValue = unknown ? 'unavailable' : `${exact} USD ledger estimate${missingText}`;
@@ -379,6 +383,7 @@ export function buildCostChipView(
       ...alarms.map(a => a.label),
       dayStart ? `Day starts ${dayStart}` : null,
       updated ? `Updated ${updated}` : null,
+      latestReceipt ? `Latest receipt ${latestReceipt}` : null,
       stateClause || null,
       budget || null,
     ].filter(Boolean).join('\n'),

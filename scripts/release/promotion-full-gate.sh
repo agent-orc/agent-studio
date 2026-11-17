@@ -98,13 +98,19 @@ PY
   )
   plan=$(curl -fsS --max-time 30 -H "@$verdict_header" \
     "$verdict_api/api/runner/release-candidates/$encoded_project/$candidate_sha")
-  read -r mode post_merge_green verdict_digest verdict_status < <(python3 -c '
+  # candidateGreen also counts an exact-SHA pre-main or batch gate (F2);
+  # an older server sends only postMergeGreen.
+  read -r mode candidate_green verdict_digest verdict_status < <(python3 -c '
 import json,sys
 p=json.load(sys.stdin)
-print(p["mode"], str(p["postMergeGreen"]).lower(), p["commandDigest"],
+print(p["mode"], str(p.get("candidateGreen", p["postMergeGreen"])).lower(), p["commandDigest"],
       (p.get("verdict") or {}).get("status", "missing"))' <<< "$plan")
-  [[ "$mode" != invalid && "$post_merge_green" == true ]] || {
-    printf '[promotion-full-gate] candidate is not the green post-merge tip\n' >&2; exit 1;
+  [[ "$mode" != invalid && "$candidate_green" == true ]] || {
+    printf '[promotion-full-gate] candidate is not green: %s\n' "$(python3 -c '
+import json,sys
+p=json.load(sys.stdin)
+print(" ".join(part for part in (p.get("error"), p.get("nextStep")) if part))' <<< "$plan")" >&2
+    exit 1;
   }
   if [[ "$verdict_status" == green ]]; then
     printf '[promotion-full-gate] reused green T4 verdict sha=%s digest=%s\n' "$candidate_sha" "$verdict_digest"

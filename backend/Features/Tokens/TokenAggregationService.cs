@@ -17,6 +17,9 @@ public sealed class TokenAggregationService : ITokenAggregator
     private readonly TokenSummaryCacheStore _summaryCache;
     private readonly ITokenPricing _pricing;
     private readonly TokenPricingDriftMonitor? _pricingDrift;
+    private readonly AgentMessageBusStore? _workspaceBus;
+    private readonly AgentStudio.Registry.ProjectRegistry? _projects;
+    private readonly TaskScannerService? _scanner;
 
     public TokenAggregationService(
         BusAggregationCache bus,
@@ -26,7 +29,10 @@ public sealed class TokenAggregationService : ITokenAggregator
         BusAdHocUsageReader adHoc,
         TokenSummaryCacheStore summaryCache,
         ITokenPricing pricing,
-        TokenPricingDriftMonitor? pricingDrift = null)
+        TokenPricingDriftMonitor? pricingDrift = null,
+        AgentMessageBusStore? workspaceBus = null,
+        AgentStudio.Registry.ProjectRegistry? projects = null,
+        TaskScannerService? scanner = null)
     {
         _bus = bus;
         _config = config;
@@ -36,6 +42,9 @@ public sealed class TokenAggregationService : ITokenAggregator
         _summaryCache = summaryCache;
         _pricing = pricing;
         _pricingDrift = pricingDrift;
+        _workspaceBus = workspaceBus;
+        _projects = projects;
+        _scanner = scanner;
     }
 
     public TokenAggregateResponse ForProject(string project, DateTime? since = null, DateTime? until = null, CancellationToken ct = default)
@@ -59,7 +68,10 @@ public sealed class TokenAggregationService : ITokenAggregator
     public ProjectTokenUsageSummary ProjectSummary(string projectName, string watchPath, DateTime? nowUtc = null)
     {
         var snapshot = _ledger.LoadSnapshot(projectName, watchPath);
-        return ProjectTokenUsageFold.Summary(projectName, snapshot.Entries, _jobs.JobsById(watchPath), nowUtc) with
+        var workspaceRows = ReadWorkspaceUsage(DateTime.MinValue);
+        var project = _projects?.List().FirstOrDefault(p => string.Equals(p.DisplayName, projectName, StringComparison.OrdinalIgnoreCase));
+        var entries = project is null ? snapshot.Entries : workspaceRows?.MergeInto(project.Id, snapshot.Entries) ?? snapshot.Entries;
+        return ProjectTokenUsageFold.Summary(projectName, entries, _jobs.JobsById(watchPath), nowUtc) with
         {
             Freshness = snapshot.Freshness,
         };
@@ -87,19 +99,24 @@ public sealed class TokenAggregationService : ITokenAggregator
 
     public TokenSummary LifetimeSummary(string projectName, string watchPath)
     {
-        var summary = ProjectLifetimeSummary(projectName, watchPath);
+        var summary = ProjectLifetimeSummary(projectName, watchPath, ReadWorkspaceUsage(DateTime.MinValue));
         _pricingDrift?.Observe(summary);
         return summary;
     }
 
     public TokenSummaryAggregate WorkspaceAggregate(IEnumerable<(string Name, string WatchPath)> projects)
     {
-        var summaries = projects
-            .Select(project => (project.Name, ProjectLifetimeSummary(project.Name, project.WatchPath)))
+        var selected = projects.ToList();
+        var workspaceRows = ReadWorkspaceUsage(DateTime.MinValue);
+        var summaries = selected
+            .Select(project => (project.Name, ProjectLifetimeSummary(project.Name, project.WatchPath, workspaceRows)))
             .ToList();
+        if (workspaceRows is { Unattributed.Count: > 0 } && CanShowUnattributed(selected))
+            summaries.Add(("Unattributed one-shot jobs",
+                TokenSummaryFold.ForProject("Unattributed one-shot jobs", _pricing.Price(workspaceRows.Unattributed))));
         foreach (var (_, summary) in summaries)
             _pricingDrift?.Observe(summary);
-        var aggregate = TokenSummaryFold.ForWorkspace(summaries);
+        var aggregate = TokenSummaryFold.ForWorkspace(summaries) with { Projects = selected.Count };
         _summaryCache.Write(aggregate);
         return aggregate;
     }
@@ -126,18 +143,29 @@ public sealed class TokenAggregationService : ITokenAggregator
     public TokenTimeline WorkspaceTimeline(IEnumerable<(string Name, string WatchPath)> projects, int windowHours, int bucketMinutes, DateTime? nowUtc = null)
     {
         var (windowStart, windowEnd, b) = WorkspaceTimelineFold.TrailingWindow(windowHours, bucketMinutes, nowUtc);
+        var selected = projects.ToList();
+        var workspaceUsage = ReadWorkspaceUsage(windowStart);
         var perProject = new List<(string Project, IReadOnlyList<PricedTokenEntry> Ledger)>();
         var freshness = new List<ProjectTokenDataFreshness>();
-        foreach (var (name, watchPath) in projects)
+        foreach (var (name, watchPath) in selected)
         {
             var snapshot = _ledger.LoadSnapshot(name, watchPath);
-            perProject.Add((name, _pricing.Price(InWindow(snapshot.Entries, windowStart, windowEnd))));
+            var project = _projects?.List().FirstOrDefault(p => string.Equals(p.DisplayName, name, StringComparison.OrdinalIgnoreCase));
+            var entries = project is null ? snapshot.Entries : workspaceUsage?.MergeInto(project.Id, snapshot.Entries) ?? snapshot.Entries;
+            perProject.Add((name, _pricing.Price(InWindow(entries, windowStart, windowEnd))));
             freshness.Add(snapshot.Freshness);
+        }
+
+        if (workspaceUsage is not null && CanShowUnattributed(selected))
+        {
+            var unattributed = InWindow(workspaceUsage.Unattributed, windowStart, windowEnd);
+            if (unattributed.Count > 0) perProject.Add((UnattributedProject, _pricing.Price(unattributed)));
         }
 
         return WorkspaceTimelineFold.Build(perProject, windowStart, windowEnd, b) with
         {
             Freshness = ProjectTokenDataFreshness.Combine(freshness),
+            OneShotSources = OneShotSources(perProject),
         };
     }
 
@@ -168,11 +196,12 @@ public sealed class TokenAggregationService : ITokenAggregator
         return WorkspaceTimelineFold.Build(perProject, fromUtc, toUtc, bucketMinutes) with
         {
             Freshness = ProjectTokenDataFreshness.Combine(freshness),
+            OneShotSources = OneShotSources(perProject),
         };
     }
 
     /// <summary>Row name of projectless workspace usage, as in the usage cockpit cost.</summary>
-    public const string UnattributedProject = "Unattributed";
+    public const string UnattributedProject = "Unattributed one-shot jobs";
 
     public AdHocUsageAggregate AdHocAggregate(DateTime? since = null)
     {
@@ -197,8 +226,38 @@ public sealed class TokenAggregationService : ITokenAggregator
         return CliWindowAttributionFold.Sum(entries, cliType, fromUtc, toUtc);
     }
 
-    private TokenSummary ProjectLifetimeSummary(string projectName, string watchPath)
-        => TokenSummaryFold.ForProject(projectName, PricedLedger(projectName, watchPath));
+    private TokenSummary ProjectLifetimeSummary(string projectName, string watchPath, WorkspaceBusUsage? workspaceRows = null)
+    {
+        var snapshot = _ledger.LoadSnapshot(projectName, watchPath);
+        var project = _projects?.List().FirstOrDefault(p => string.Equals(p.DisplayName, projectName, StringComparison.OrdinalIgnoreCase));
+        var entries = project is null ? snapshot.Entries : workspaceRows?.MergeInto(project.Id, snapshot.Entries) ?? snapshot.Entries;
+        return TokenSummaryFold.ForProject(projectName, _pricing.Price(entries));
+    }
+
+    private WorkspaceBusUsage? ReadWorkspaceUsage(DateTime sinceUtc)
+    {
+        var root = _config["TaskRepository"];
+        if (string.IsNullOrWhiteSpace(root) || _workspaceBus is null || _projects is null || _scanner is null) return null;
+        var allProjects = _projects.List();
+        return WorkspaceBusUsage.Read(_workspaceBus, root, allProjects, _scanner, sinceUtc);
+    }
+
+    private bool CanShowUnattributed(IReadOnlyList<(string Name, string WatchPath)> selected)
+        => _scanner is not null && _scanner.GetWatchPaths().All(project => selected.Any(s =>
+            string.Equals(s.Name, project.Name, StringComparison.OrdinalIgnoreCase)));
+
+    private static IReadOnlyList<TokenTimelineOneShotSource> OneShotSources(
+        IEnumerable<(string Project, IReadOnlyList<PricedTokenEntry> Ledger)> projects)
+        => projects.SelectMany(project => project.Ledger)
+            .Where(row => row.Usage is not null && TokenUsageKindPolicy.ForLedger(
+                row.Entry.ParticipantId, row.Entry.Topic, true) == TokenUsageKinds.Enrichment)
+            .GroupBy(row => row.Entry.Topic?.Trim() is { Length: > 0 } topic ? topic : "unknown",
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => new TokenTimelineOneShotSource(group.Key, group.Count(),
+                group.Sum(row => (long)row.Usage!.InputTokens + row.Usage.OutputTokens
+                    + row.Usage.CacheReadTokens + row.Usage.CacheCreationTokens),
+                group.Sum(row => row.Cost?.ModelKnown == true ? row.Cost.Total : 0)))
+            .OrderByDescending(row => row.CostUsd).ToList();
 
     private IReadOnlyList<PricedTokenEntry> PricedLedger(string projectName, string watchPath)
         => _pricing.Price(_ledger.LoadSnapshot(projectName, watchPath).Entries);

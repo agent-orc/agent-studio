@@ -454,6 +454,8 @@ public sealed class BatchGatePilotReleaseAttributionTests : BatchGatePilotServic
         var status = File.ReadAllText(Path.Combine(_watchPath, TaskStates.Escalated,
             member.Key, "status.md"));
         Assert.Contains("Commit attribution is missing", status);
+        Assert.Matches(@"Commits missing this delivery's attribution: [0-9a-f]{7,12} \(", status);
+        Assert.Contains("The next round must publish task-owned commits", status);
         Assert.Equal(0, _gate.BatchRuns);
         Assert.Equal(0, _gate.FallbackRuns);
     }

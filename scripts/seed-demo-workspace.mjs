@@ -1336,6 +1336,19 @@ function stampTree(root) {
   stamp(root);
 }
 
+const OWNER_DAY_REPORT_TEST_OUTPUT = [
+  'Starting test execution, please wait...',
+  '  Failed ReportExportTests.EmptyReportKeepsExportDisabled [38 ms]',
+  '  Error Message:',
+  '   Assert.False() Failure',
+  '   Expected: False',
+  '   Actual:   True',
+  '  Stack Trace:',
+  '     at ReportExportTests.EmptyReportKeepsExportDisabled() in ReportExportTests.cs:line 42',
+  '',
+  'Failed!  - Failed:     1, Passed:    11, Skipped:     0, Total:    12 (simulated report suite)',
+].join('\n');
+
 // This receipt belongs to the disposable backend instance, outside the task
 // repository. The fixed identity lets backend startup locate the same ledger.
 function writeOwnerDayBatchState(root, stateRoot) {
@@ -1382,7 +1395,9 @@ function writeOwnerDayBatchState(root, stateRoot) {
   const failureEvidence = join(folder, 'runs', 'demo-report-run-1.evidence.jsonl');
   writeJsonl(failureEvidence, [{ gateRunId: 'demo-report-run-1', testedSha: sha,
     gateCompletedAtUtc: at, recordedFailedTests: ['ReportExportTests.EmptyReportKeepsExportDisabled'],
-    output: 'ReportExportTests.EmptyReportKeepsExportDisabled failed in the simulated report suite.' }]);
+    // Shaped like `dotnet test` console output so the failed-test ranking can
+    // extract the error excerpt the batch panel and its fix card show.
+    output: OWNER_DAY_REPORT_TEST_OUTPUT }]);
   writeJson(join(stateRoot, 'agentstudio', 'instances', identity, 'batch-gates', 'executions', 'demo-report-run-1.json'), {
     project: 'Demo App', batchId, batchRunId: 'demo-report-run-1', testedSha: sha,
     outcome: 'red', host: 'demo-gate.invalid', startedAtUtc: at, completedAtUtc: at,

@@ -7,8 +7,8 @@ import type { HostReleaseDriftSnapshot } from '../../models/host-release-drift';
 import { reviewHeartbeatProvesUpdate, reviewUpdateStepFromStatus,
   type ReviewDrainStatus, type ReviewUpdateTarget } from '../../models/review-host-update';
 
-type Stage = 'ready' | 'draining' | 'blocked' | 'quiet' | 'switching' | 'verifying' | 'aborting'
-  | 'verified' | 'resuming' | 'complete' | 'error';
+type Stage = 'checking' | 'unavailable' | 'ready' | 'draining' | 'blocked' | 'quiet' | 'switching'
+  | 'verifying' | 'aborting' | 'verified' | 'resuming' | 'complete' | 'error';
 
 /** Guided operator handoff to the supported networked deploy procedure. */
 @Component({
@@ -29,6 +29,7 @@ export class ReviewHostUpdateComponent {
   readonly switchStartedAt = signal<string | null>(null);
   readonly proofVerified = signal(false);
   readonly drainRequested = signal(false);
+  private eligibilityRequest = 0;
   readonly drainedSince = signal<string | null>(null);
   readonly active = computed(() => {
     const target = this.target();
@@ -36,7 +37,7 @@ export class ReviewHostUpdateComponent {
   });
   readonly progressIndex = computed(() => {
     switch (this.stage()) {
-      case 'ready': case 'draining': case 'aborting': return 0;
+      case 'checking': case 'unavailable': case 'ready': case 'draining': case 'aborting': return 0;
       case 'blocked': return 1;
       case 'quiet': case 'switching': return 2;
       case 'verifying': return 3;
@@ -66,32 +67,46 @@ export class ReviewHostUpdateComponent {
     const target = this.target();
     if (!target || target.clientId === this.restoredFor) return;
     this.restoredFor = target.clientId;
-    untracked(() => void this.restore(target));
+    untracked(() => void this.checkEligibility(target));
   });
 
   private url(target: ReviewUpdateTarget): string {
     return `/api/clients/${encodeURIComponent(target.clientId)}`;
   }
 
-  private async restore(target: ReviewUpdateTarget): Promise<void> {
-    if (this.busy() || this.stage() !== 'ready') return;
+  async checkEligibility(target = this.target()): Promise<void> {
+    if (!target) return;
+    const request = ++this.eligibilityRequest;
+    this.stage.set('checking');
     this.busy.set(true);
+    this.message.set(null);
     try {
       const status = await firstValueFrom(this.http.get<ReviewDrainStatus>(this.url(target) + '/drain-status'));
-      if (this.target()?.clientId !== target.clientId || this.stage() !== 'ready') return;
-      if (!status.draining || (target.updatePending === false && !status.switchStartedAt)) return;
-      this.captured.set(target);
-      this.applyStatus(status);
-    } catch {
-      // The panel stays at step 1; the first action reads the status again.
+      if (request !== this.eligibilityRequest || this.target()?.clientId !== target.clientId) return;
+      if (status.draining && (target.updatePending !== false || status.switchStartedAt)) {
+        this.captured.set(target);
+        this.applyStatus(status);
+      } else this.stage.set('ready');
+    } catch (error) {
+      if (request !== this.eligibilityRequest) return;
+      this.failDrainAccess(error, 'Could not check the review identity. Check its connection and retry.');
     } finally {
-      this.busy.set(false);
+      if (request === this.eligibilityRequest) this.busy.set(false);
     }
+  }
+
+  private failDrainAccess(error: unknown, fallback: string): void {
+    if (error instanceof HttpErrorResponse && error.status === 404) {
+      this.stage.set('unavailable');
+      this.message.set('This review host has no registered client identity, so Studio cannot drain it here.');
+      return;
+    }
+    this.fail(fallback);
   }
 
   async start(): Promise<void> {
     const target = this.target();
-    if (!target || this.busy()) return;
+    if (!target || this.busy() || this.stage() !== 'ready') return;
     if (!target.expectedCommit || !target.expectedImageRef?.match(/@sha256:[0-9a-f]{64}$/i)) {
       this.message.set('Expected commit and image digest are required before this update can be verified.');
       return;
@@ -104,8 +119,8 @@ export class ReviewHostUpdateComponent {
       await firstValueFrom(this.http.post(this.url(target) + '/drain', {}));
       this.drainRequested.set(true);
       await this.readQuietPoint(target);
-    } catch {
-      this.fail('Could not drain or read the host. Check its connection and retry.');
+    } catch (error) {
+      this.failDrainAccess(error, 'Could not drain or read the host. Check its connection and retry.');
     } finally {
       this.busy.set(false);
     }
@@ -116,7 +131,7 @@ export class ReviewHostUpdateComponent {
     if (!target || this.busy()) return;
     this.busy.set(true);
     try { await this.readQuietPoint(target); }
-    catch { this.fail('Could not read the host drain status. Retry before switching.'); }
+    catch (error) { this.failDrainAccess(error, 'Could not read the host drain status. Retry before switching.'); }
     finally { this.busy.set(false); }
   }
 
@@ -150,7 +165,7 @@ export class ReviewHostUpdateComponent {
       const refused = error instanceof HttpErrorResponse && error.status === 409
         ? (error.error as { status?: ReviewDrainStatus } | null)?.status : undefined;
       if (refused) this.applyStatus(refused);
-      else this.fail('Could not confirm the quiet point. The host switch is refused.');
+      else this.failDrainAccess(error, 'Could not confirm the quiet point. The host switch is refused.');
     }
     finally { this.busy.set(false); }
   }
@@ -190,7 +205,7 @@ export class ReviewHostUpdateComponent {
       }
       this.stage.set('complete');
       this.message.set('Review host update complete. The new heartbeat was verified and admission resumed.');
-    } catch { this.fail('Could not confirm resumed admission. Retry resume.'); }
+    } catch (error) { this.failDrainAccess(error, 'Could not confirm resumed admission. Retry resume.'); }
     finally { this.busy.set(false); }
   }
 
@@ -207,7 +222,7 @@ export class ReviewHostUpdateComponent {
         return;
       }
       this.reset();
-    } catch { this.fail('Could not resume the host after cancellation. Retry cancellation.'); }
+    } catch (error) { this.failDrainAccess(error, 'Could not resume the host after cancellation. Retry cancellation.'); }
     finally { this.busy.set(false); }
   }
 
