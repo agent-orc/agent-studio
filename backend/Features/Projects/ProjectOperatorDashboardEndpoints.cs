@@ -215,13 +215,12 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/deploy/jobs/claim", async (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, DeployService deploy, RunbookService runbooks,
-            ProjectSecretBindings bindings,
+            ProjectSecretBindings bindings, AccessSecurityStore security,
             IConfiguration configuration, CancellationToken ct) =>
         {
-            if (SecurityProfiles.IsNetworked(configuration) &&
-                (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
-                 || principal.RunnerId != request.HostId))
-                return Results.Forbid();
+            // F6: the credential must belong to the claimed host on every profile, before
+            // a lease exists, so a mismatch cannot surface only at secret resolution.
+            if (DeployClaimRefusal(context, request.HostId, configuration, security) is { } refused) return refused;
             var job = environments.Claim(request.HostId, requireVerifiedRelease: true);
             return await CompleteClaimAsync(job, project =>
             {
@@ -251,7 +250,7 @@ public static class ProjectOperatorDashboardEndpoints
             var claim = environments.FindClaimedJobVerification(project, jobId, lease, requireVerifiedRelease: true);
             if (claim.Retryable) return RegistryUnavailable();
             var job = claim.Job;
-            if (job is null || SecurityProfiles.IsNetworked(configuration) && principal.RunnerId != job.HostId)
+            if (job is null || !DeployHostIdentity.Belongs(principal, job.HostId, security.DeployHostRunnerId(job.HostId)))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             try
             {
@@ -402,6 +401,30 @@ public static class ProjectOperatorDashboardEndpoints
     // checked by AccessSecurityMiddleware, so answer 403 directly.
     private static IResult RunTargetForbidden() => Results.Json(
         new { error = "A run target may access only its enrolled host identity." }, statusCode: StatusCodes.Status403Forbidden);
+
+    /// <summary>
+    /// Null when the caller may claim for <paramref name="hostId"/>. A presented runner
+    /// credential must belong to that host on every profile; only the local profile
+    /// still admits a claim that presents no runner credential at all.
+    /// </summary>
+    private static IResult? DeployClaimRefusal(HttpContext context, string hostId, IConfiguration configuration,
+        AccessSecurityStore security)
+    {
+        var principal = RunnerCredential(context, configuration, security);
+        if (principal is null)
+            return SecurityProfiles.IsNetworked(configuration) || HasBearer(context)
+                ? Results.Json(new { error = "A deploy claim needs a valid runner credential.", code = DeployHostIdentity.DeniedCode },
+                    statusCode: StatusCodes.Status403Forbidden)
+                : null;
+        return DeployHostIdentity.Belongs(principal, hostId, security.DeployHostRunnerId(hostId))
+            ? null
+            : Results.Json(new { error = DeployHostIdentity.Refusal(hostId, principal), code = DeployHostIdentity.DeniedCode },
+                statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    private static bool HasBearer(HttpContext context)
+        => context.Request.Headers.Authorization.Any(value =>
+            value?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true);
 
     private static bool RunTargetCallerDenied(HttpContext context, string hostId, IConfiguration configuration)
         => SecurityProfiles.IsNetworked(configuration)

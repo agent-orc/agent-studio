@@ -66,6 +66,14 @@ public static class DeployHostCommand
         client.BaseAddress ??= new Uri(args[0].TrimEnd('/') + "/");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var claimed = await client.PostAsJsonAsync("api/deploy/jobs/claim", new Claim(args[1]), cancellationToken);
+        if (claimed.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            // F6: the refusal names the job's host and the credential's host; no step has run.
+            var refusal = await claimed.Content.ReadAsStringAsync(cancellationToken);
+            Console.Error.WriteLine($"Deploy claim for host '{args[1]}' refused: "
+                + new string(refusal.Where(ch => !char.IsControl(ch)).Take(600).ToArray()));
+            return 1;
+        }
         claimed.EnsureSuccessStatusCode();
         var job = await claimed.Content.ReadFromJsonAsync<Job>(cancellationToken);
         if (job is null) return 0;
