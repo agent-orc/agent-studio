@@ -116,6 +116,16 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
+    overflow: visible;
+    white-space: normal;
+  }
+
+  &__row--sum &__scope {
+    display: none;
+  }
+
+  &__row--sum &__head-label {
+    grid-column: 3 / 5;
   }
 
   &__run-name {
@@ -339,6 +349,7 @@
   .ptu__split {
     grid-column: 4;
   }
+
 }
 
 @container ov-pipeline (max-width: 460px) {
@@ -363,14 +374,6 @@
     display: none;
   }
 
-  .ptu__row--sum .ptu__head-label {
-    grid-column: 3 / 5;
-  }
-
-  .ptu__sum-title {
-    overflow: visible;
-    white-space: normal;
-  }
 }
 
 .ptu__analysis {

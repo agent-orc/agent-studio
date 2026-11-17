@@ -482,4 +482,9 @@ test('partial-price run keeps token columns aligned across narrow Overview width
       });
     }
   }
+  for (const width of [500, 620, 800]) {
+    await page.locator('.overview').evaluate((el, value) => { (el as HTMLElement).style.width = `${value}px`; }, width);
+    const title = page.locator('[data-testid="pipeline-token-usage-total"] .ptu__sum-title');
+    expect(await title.evaluate(el => el.scrollWidth <= el.clientWidth + 1), `task title at ${width}px`).toBe(true);
+  }
 });
