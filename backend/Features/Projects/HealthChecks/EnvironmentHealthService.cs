@@ -29,6 +29,8 @@ public sealed record HealthRunSummary(int Probed, int Opened, int Closed, int Ce
 /// (<see cref="EnvironmentIncidentPolicy"/>) and report their changes. Every project, and
 /// every environment within the reports, fails on its own: a broken declaration or a failing
 /// card write is logged and shown on its environment while the others keep being watched.
+/// Only a deployed environment is probed: before its first healthy deploy report and after a
+/// confirmed stop it reports <see cref="NotDeployed"/>, adds no samples and opens no incident.
 /// </summary>
 public sealed class EnvironmentHealthService(TaskScannerService scanner, ProjectEnvironmentService environments,
     HealthCheckStore store, IHealthCheckProbe probe, HealthAlerts alerts, IConfiguration configuration,
@@ -37,14 +39,23 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
     public const string ProbeOrigin = "control-plane";
     /// <summary>The environment id under which a project whose declarations cannot be listed reports.</summary>
     public const string DeclarationsId = "declarations";
+    /// <summary>The status of an environment and its checks while no deployment of it runs.</summary>
+    public const string NotDeployed = "not-deployed";
     private const string Removed = "check-removed";
     private readonly SemaphoreSlim _tick = new(1, 1);
 
     private sealed record DueCheck(string Project, EnvironmentDeclaration Environment, HealthCheckDefinition Check);
 
     /// <param name="Readable">False when the declaration directory itself failed; its incidents stay as they are.</param>
+    /// <param name="Running">The environments a host runs; null when the deploy state is unreadable, which keeps every declaration watched.</param>
     private sealed record ProjectEnvironments(string Project, IReadOnlyList<EnvironmentDeclaration> Valid,
-        IReadOnlyList<EnvironmentDeclarationFile> Broken, bool Readable);
+        IReadOnlyList<EnvironmentDeclarationFile> Broken, bool Readable, IReadOnlySet<string>? Running = null)
+    {
+        public bool Deployed(EnvironmentDeclaration environment) => Running?.Contains(environment.Id) != false;
+
+        /// <summary>The declared environments whose checks run.</summary>
+        public IEnumerable<EnvironmentDeclaration> Watched => Valid.Where(Deployed);
+    }
 
     public async Task<HealthRunSummary> RunDueAsync(CancellationToken cancellationToken = default)
     {
@@ -92,7 +103,7 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
     {
         var state = store.Load(project.Project);
         var due = new List<DueCheck>();
-        foreach (var environment in project.Valid)
+        foreach (var environment in project.Watched)
         foreach (var check in HealthCheckDeclarations.Effective(environment))
         {
             var last = state.Checks.GetValueOrDefault(HealthCheckStore.Key(environment.Id, check.Id))?.LastRunAt;
@@ -181,14 +192,17 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         var state = store.Load(project.Project);
         var declared = project.Valid.ToDictionary(item => item.Id, StringComparer.Ordinal);
         var broken = project.Broken.Select(item => item.EnvironmentId).ToHashSet(StringComparer.Ordinal);
-        var running = project.Valid.SelectMany(environment => HealthCheckDeclarations.Effective(environment)
+        var running = project.Watched.SelectMany(environment => HealthCheckDeclarations.Effective(environment)
             .Select(check => HealthCheckStore.Key(environment.Id, check.Id))).ToHashSet(StringComparer.Ordinal);
         var changed = false;
         foreach (var (key, checkState) in state.Checks)
         {
             if (running.Contains(key) || broken.Contains(EnvironmentOf(key)) || checkState.OpenIncident is not { } open)
                 continue;
-            checkState.LastIncident = open with { EndedAt = now, EndReason = Removed };
+            // A stopped environment closes its incidents; a check gone from the declaration closes its own.
+            var reason = declared.TryGetValue(EnvironmentOf(key), out var environment) && !project.Deployed(environment)
+                ? NotDeployed : Removed;
+            checkState.LastIncident = open with { EndedAt = now, EndReason = reason };
             checkState.OpenIncident = null;
             checkState.ConsecutiveFailures = 0;
             changed = true;
@@ -350,7 +364,7 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         var now = clock.GetUtcNow();
         return new(now, ProbeOrigin, Projects()
             .SelectMany(item => Views(item, now))
-            .OrderBy(item => item.Status switch { "down" => 0, "invalid" => 1, "degraded" => 2, "unknown" => 3, _ => 4 })
+            .OrderBy(item => item.Status switch { "down" => 0, "invalid" => 1, "degraded" => 2, "unknown" => 3, NotDeployed => 4, _ => 5 })
             .ThenBy(item => item.Project, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray());
     }
@@ -360,7 +374,7 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         IReadOnlyList<EnvironmentHealthView> valid;
         try
         {
-            valid = View(project.Project, project.Valid, store.Load(project.Project), now);
+            valid = View(project, store.Load(project.Project), now);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -376,10 +390,12 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         string error)
         => new(project, id, name, kind, address, "invalid", null, null, null, new(null, null, null), null, null, [], error);
 
-    private IReadOnlyList<EnvironmentHealthView> View(string project, IReadOnlyList<EnvironmentDeclaration> declarations,
-        ProjectHealthState state, DateTimeOffset now)
-        => declarations.Select(environment =>
+    private IReadOnlyList<EnvironmentHealthView> View(ProjectEnvironments declarations, ProjectHealthState state,
+        DateTimeOffset now)
+        => declarations.Valid.Select(environment =>
         {
+            var project = declarations.Project;
+            var deployed = declarations.Deployed(environment);
             var checks = HealthCheckDeclarations.Effective(environment).Select(check =>
             {
                 var checkState = state.Checks.GetValueOrDefault(HealthCheckStore.Key(environment.Id, check.Id));
@@ -389,7 +405,8 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
                 var rawSince = new[] { aggregated, now - TimeSpan.FromHours(24) }.Min();
                 var samples = store.Samples(project, environment.Id, check.Id,
                     rawSince < now - HealthSeries.RawRetention ? now - HealthSeries.RawRetention : rawSince);
-                var status = checkState?.LastSample is not { } last ? "unknown"
+                var status = !deployed ? NotDeployed
+                    : checkState?.LastSample is not { } last ? "unknown"
                     : checkState.OpenIncident is not null ? "down"
                     : last.Error == HealthSample.AddressBlocked ? "invalid"
                     : !last.MeasuresAvailability ? "unknown"
@@ -409,7 +426,8 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
             var primary = checks.FirstOrDefault(check => check.Kind == "http") ?? checks.FirstOrDefault();
             // A managed database before its first deploy has nothing to watch yet (AGT-3878).
             var counted = checks.Where(check => check.LastSample?.Error != HealthSample.NotApplicable).ToArray();
-            var status = counted.Length == 0 || counted.All(check => check.Status == "unknown") ? "unknown"
+            var status = !deployed ? NotDeployed
+                : counted.Length == 0 || counted.All(check => check.Status == "unknown") ? "unknown"
                 : counted.Any(check => check.Status == "down") ? "down"
                 : counted.Any(check => check.Status == "invalid") ? "invalid"
                 : counted.Any(check => check.Status is "degraded" or "unknown") ? "degraded" : "up";
@@ -440,8 +458,11 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         try
         {
             if (environments.DeclarationFiles(project) is not { } files) return null;
+            var running = environments.RunningEnvironments(project);
+            if (running is null)
+                logger.LogWarning("environment-health deploy state unreadable project={Project}; every declaration stays watched", project);
             return new(project, files.Select(item => item.Declaration).OfType<EnvironmentDeclaration>().ToArray(),
-                files.Where(item => item.Declaration is null).ToArray(), Readable: true);
+                files.Where(item => item.Declaration is null).ToArray(), Readable: true, running);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
