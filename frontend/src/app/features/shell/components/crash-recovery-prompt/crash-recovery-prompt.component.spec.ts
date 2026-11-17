@@ -91,6 +91,10 @@ describe('CrashRecoveryPromptComponent', () => {
     const fixture = TestBed.createComponent(CrashRecoveryPromptComponent);
     fixture.detectChanges();
     expect(fixture.componentInstance.open()).toBe(false);
+    // AGT-3835: the entry's name starts with its visible text.
+    const entry = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="crash-recovery-entry"]')!;
+    expect(entry.textContent!.replace(/\s+/g, ' ').trim()).toBe('Recovery pending 2');
+    expect(entry.getAttribute('aria-label')).toBe('Recovery pending 2, review 2 pending crash recovery items');
     fixture.componentInstance.openRecovery();
     fixture.detectChanges();
     expect(fixture.componentInstance.open()).toBe(true);

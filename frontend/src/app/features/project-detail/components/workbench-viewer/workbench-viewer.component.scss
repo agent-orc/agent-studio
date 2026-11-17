@@ -1,18 +1,23 @@
 :host { display: block; width: 100%; height: 100%; min-width: 0; }
 
+// A flex column: the head, card list and promotion rows take their height and
+// the document takes the rest. A fixed grid row let the promotion panel and the
+// frame share one cell, so the panel covered the decision bar (AGT-3875).
 .workbench-viewer {
   width: 100%;
   height: 100%;
   min-width: 0;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   background: var(--studio-bg);
   color: var(--studio-fg);
 }
 
-.workbench-viewer__head { min-width: 0; }
+.workbench-viewer__head { flex: 0 0 auto; min-width: 0; }
+.workbench-viewer > app-dossier-card-list { flex: 0 0 auto; }
 
 .workbench-viewer__promotion {
+  flex: 0 0 auto;
   padding: var(--studio-spacing-2) var(--studio-spacing-4);
   border-bottom: 1px solid var(--studio-border);
   background: var(--studio-bg);
@@ -50,6 +55,14 @@
   outline-offset: 2px;
 }
 
+.workbench-viewer__documentation-blocked {
+  margin: 0;
+  padding: var(--studio-spacing-2) var(--studio-spacing-4);
+  border-bottom: 1px solid var(--studio-border);
+  color: var(--studio-fg-muted);
+  font-size: 0.72rem;
+}
+
 .workbench-viewer__documentation-error {
   margin: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-4);
@@ -60,7 +73,7 @@
 
 .workbench-viewer__frame-shell {
   position: relative;
-  grid-row: 3;
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -127,6 +140,8 @@
 
 @media (max-width: 700px) {
   .workbench-viewer__documentation-ready { align-items: flex-start; flex-direction: column; }
+  // On a phone the document stays the larger part; the action scrolls inside its share.
+  .workbench-viewer__decision-action { max-height: 42%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

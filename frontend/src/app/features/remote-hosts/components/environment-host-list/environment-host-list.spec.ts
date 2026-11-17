@@ -55,4 +55,28 @@ describe('EnvironmentHostListComponent', () => {
     expect(document.activeElement).toBe(rows[1]);
     expect(selected).toEqual(['coding-1']);
   });
+
+  // AGT-3840: the review role read Online while provider-auth:codex was held.
+  it('names a held capability on an Online role row', () => {
+    TestBed.configureTestingModule({
+      imports: [EnvironmentHostListComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(EnvironmentHostListComponent);
+    const review = {
+      ...ROLE, id: 'review-1', serviceRole: 'review',
+      heldCapabilities: [{ key: 'provider-auth:codex', state: 'indeterminate', cause: 'probe-indeterminate',
+        detail: 'codex login status timed out after 30s' }],
+    } as RemoteHost;
+    fixture.componentRef.setInput('groups', groupPhysicalHosts([review], false));
+    fixture.componentRef.setInput('slots', () => 0);
+    fixture.detectChanges();
+
+    const row = fixture.nativeElement.querySelector('[data-testid="remote-host-role-row"]') as HTMLElement;
+    expect(row.dataset['status']).toBe('online');
+    const held = row.querySelector('[data-testid="remote-host-role-held"]') as HTMLElement;
+    expect(held.textContent?.trim()).toBe('Held: provider-auth:codex');
+    expect(held.getAttribute('title'))
+      .toBe('provider-auth:codex · probe indeterminate: codex login status timed out after 30s');
+  });
 });

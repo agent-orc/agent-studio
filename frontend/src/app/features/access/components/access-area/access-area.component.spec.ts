@@ -13,10 +13,14 @@ import { fakeStandingGrantsService } from '../../testing/grant-fixtures';
 import { fakeOperatorAgentsService } from '../../testing/operator-fixtures';
 import { AccessAreaComponent } from './access-area.component';
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { AuthSessionState, type AuthStatus } from '../../../../services/auth.service';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 
 describe('AccessAreaComponent', () => {
   async function render(access: ReturnType<typeof fakeAccessService>, operators = fakeOperatorAgentsService(),
-    grants = fakeStandingGrantsService(), approvals = fakeOperatorApprovalsService(), backups = fakeBackupActivityService()) {
+    grants = fakeStandingGrantsService(), approvals = fakeOperatorApprovalsService(), backups = fakeBackupActivityService(),
+    auth?: AuthStatus) {
     await TestBed.configureTestingModule({
       imports: [AccessAreaComponent],
       providers: [
@@ -26,8 +30,10 @@ describe('AccessAreaComponent', () => {
         { provide: StandingGrantsService, useValue: grants },
         { provide: OperatorApprovalsService, useValue: approvals },
         { provide: BackupActivityService, useValue: backups },
+        provideHttpClient(), provideHttpClientTesting(),
       ],
     }).compileComponents();
+    if (auth) TestBed.inject(AuthSessionState).status.set(auth);
     const fixture = TestBed.createComponent(AccessAreaComponent);
     fixture.detectChanges();
     await fixture.whenStable();
@@ -163,6 +169,32 @@ describe('AccessAreaComponent', () => {
     access.state.set('ready');
     TestBed.tick();
     expect(element.querySelector('[data-testid="access-temporary-password"]')).toBeNull();
+  });
+
+  it('offers to create the owner in place when the local profile has no session, then reloads', async () => {
+    const access = fakeAccessService(null);
+    access.state.set('denied');
+    access.error.set('Access settings, runner enrollments, and production approval need a signed-in Owner.');
+    const element = await render(access, fakeOperatorAgentsService(), fakeStandingGrantsService(), fakeOperatorApprovalsService(),
+      fakeBackupActivityService(), { profile: 'local', bootstrapRequired: true, authenticated: false });
+    expect(access.load).toHaveBeenCalledTimes(1);
+    const open = element.querySelector<HTMLButtonElement>('[data-testid="access-owner-sign-in"] [data-testid="local-owner-open"]');
+    expect(open?.textContent).toContain('Create owner account');
+    open!.click();
+    TestBed.tick();
+    for (const [id, value] of [['local-owner-username', 'local.owner'], ['local-owner-password', 'correct-horse-battery']]) {
+      const input = element.querySelector<HTMLInputElement>(`[data-testid="${id}"]`)!;
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+    }
+    element.querySelector<HTMLButtonElement>('[data-testid="local-owner-submit"]')!.click();
+    TestBed.inject(HttpTestingController).expectOne('/api/v1/studio/auth/bootstrap').flush({
+      profile: 'local', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_1', username: 'local.owner', displayName: 'local.owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
+    });
+    expect(access.load).toHaveBeenCalledTimes(2);
+    TestBed.tick();
+    expect(element.querySelector('[data-testid="access-owner-sign-in"]')).toBeNull();
   });
 
   it('shows the error of a denied account instead of the sections', async () => {

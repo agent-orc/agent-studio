@@ -36,6 +36,28 @@ export type IsolatedHtmlNavigation =
  * iframe with `sandbox="allow-scripts"`. The missing `allow-same-origin`
  * capability keeps the resulting document on an opaque origin.
  */
+/**
+ * Give every scrolling element without focusable content a tab stop, and take
+ * it back once the element no longer scrolls. Runs inside the isolated frame,
+ * so it must not reference anything outside its own body.
+ */
+export function focusScrollRegions(doc: Document): void {
+  const marker = 'data-studio-scroll-focus';
+  for (const el of Array.from(doc.body.querySelectorAll<HTMLElement>('*'))) {
+    const style = doc.defaultView!.getComputedStyle(el);
+    const scrollable = /auto|scroll/.test(style.overflowX + ' ' + style.overflowY)
+      && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1);
+    const hasFocusable = !!el.querySelector('a[href], button, input, select, textarea, [tabindex]');
+    if (scrollable && !hasFocusable && !el.hasAttribute('tabindex')) {
+      el.setAttribute('tabindex', '0');
+      el.setAttribute(marker, '');
+    } else if (!scrollable && el.hasAttribute(marker)) {
+      el.removeAttribute('tabindex');
+      el.removeAttribute(marker);
+    }
+  }
+}
+
 export function buildIsolatedHtmlSrcdoc(
   html: string,
   options: {
@@ -141,20 +163,44 @@ export function buildIsolatedHtmlSrcdoc(
   anchorBridge.textContent = isolatedHtmlAnchorBridgeScript();
   wrapper.body.append(anchorBridge);
 
+  // Authored tables and code blocks scroll on narrow frames; a scroll region
+  // must take keyboard focus (WCAG 2.1.1, AGT-3835).
+  const scrollRegions = wrapper.createElement('script');
+  scrollRegions.textContent = `var studioFocusScrollRegions = ${focusScrollRegions.toString()};
+  studioFocusScrollRegions(document);
+  window.addEventListener('resize', function () { studioFocusScrollRegions(document); });`;
+  wrapper.body.append(scrollRegions);
+
   if (options.workbenchDecisions) {
     const style = wrapper.createElement('style');
     style.textContent = `
       [data-studio-decision-enhanced] [data-option-id] {
+        list-style: none !important;
+      }
+      [data-studio-decision-option] {
         display: flex !important;
         align-items: flex-start !important;
         gap: .55em !important;
+        box-sizing: border-box !important;
+        min-width: 24px !important;
+        min-height: 24px !important;
+        padding: .2em 0 !important;
+        cursor: pointer !important;
+      }
+      [data-studio-decision-text] {
+        display: block !important;
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        overflow-wrap: anywhere !important;
       }
       [data-studio-decision-control] {
-        width: 1em !important;
-        height: 1em !important;
-        min-width: 1em !important;
-        margin: .2em 0 0 !important;
+        flex: 0 0 auto !important;
+        width: 1.15em !important;
+        height: 1.15em !important;
+        min-width: 1.15em !important;
+        margin: .15em 0 0 !important;
         accent-color: AccentColor !important;
+        cursor: pointer !important;
       }
       [data-studio-decision-comment] {
         display: block !important;
@@ -258,6 +304,40 @@ function workbenchDecisionBridgeScript(): string {
     var kinds = { single: true, multi: true, confirm: true };
     var points = [];
     var seen = Object.create(null);
+    // The whole option is the label of its control, so a tap on the option
+    // text selects it, and the text flows as one block beside the control.
+    function wrapOption(option, input) {
+      var host = option.tagName === 'LABEL' ? option : null;
+      var inner = input.parentNode && input.closest ? input.closest('label') : null;
+      if (inner && inner !== option && option.contains(inner)) {
+        while (inner.firstChild) inner.parentNode.insertBefore(inner.firstChild, inner);
+        inner.remove();
+      }
+      var text = document.createElement('span');
+      text.setAttribute('data-studio-decision-text', '');
+      if (!host) host = document.createElement('label');
+      var source = host === option ? host : option;
+      while (source.firstChild) text.appendChild(source.firstChild);
+      if (input.parentNode) input.remove();
+      host.appendChild(input);
+      host.appendChild(text);
+      if (host !== option) option.appendChild(host);
+      host.setAttribute('data-studio-decision-option', '');
+    }
+    // Each point is a named group, so assistive technology announces the
+    // question when focus enters its options.
+    function nameGroup(point, id, kind) {
+      if (!point.hasAttribute('role')) point.setAttribute('role', kind === 'single' ? 'radiogroup' : 'group');
+      if (point.hasAttribute('aria-labelledby') || point.hasAttribute('aria-label')) return;
+      var question = point.querySelector('[data-decision-question]')
+        || point.querySelector('legend,h1,h2,h3,h4,h5,h6');
+      if (question && (question.textContent || '').trim()) {
+        if (!question.id) question.id = 'studio-decision-question-' + id;
+        point.setAttribute('aria-labelledby', question.id);
+        return;
+      }
+      point.setAttribute('aria-label', (point.getAttribute('data-decision-label') || id).trim());
+    }
     Array.prototype.forEach.call(document.querySelectorAll('[data-decision-id][data-decision-kind]'), function (point) {
       var id = (point.getAttribute('data-decision-id') || '').trim();
       var kind = (point.getAttribute('data-decision-kind') || '').trim();
@@ -269,10 +349,8 @@ function workbenchDecisionBridgeScript(): string {
         if (!safeId.test(optionId) || optionIds[optionId]) return;
         optionIds[optionId] = true;
         var input = option.querySelector('input[type="checkbox"],input[type="radio"]');
-        if (!input) {
-          input = document.createElement('input');
-          option.insertBefore(input, option.firstChild);
-        }
+        if (!input) input = document.createElement('input');
+        wrapOption(option, input);
         input.type = kind === 'single' ? 'radio' : 'checkbox';
         if (kind === 'single') input.name = 'studio-decision-' + id;
         input.value = optionId;
@@ -296,6 +374,7 @@ function workbenchDecisionBridgeScript(): string {
         if (!comment.getAttribute('placeholder')) comment.setAttribute('placeholder', commentLabel);
         comment.setAttribute('data-studio-decision-comment', '');
       }
+      nameGroup(point, id, kind);
       point.setAttribute('data-studio-decision-enhanced', '');
       seen[id] = true;
       points.push({ id: id, kind: kind, root: point, options: options, comment: comment });

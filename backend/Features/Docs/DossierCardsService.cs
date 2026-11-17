@@ -7,35 +7,33 @@ public sealed class DossierCardsService(TaskScannerService scanner)
 {
     public DossierCardList List(string projectName, WorkbenchListItem dossier)
     {
-        return Project(projectName, dossier, scanner.ScanAllJobsWithArchiveForBackgroundIndex());
+        return Project(projectName, dossier, scanner.ScanAllJobsWithArchiveForBackgroundIndex(),
+            task => SpawnedTaskLedger.Read(task.FolderPath));
     }
 
     public static DossierCardList Project(string projectName, WorkbenchListItem dossier,
-        IReadOnlyList<TaskInfo> tasks)
+        IReadOnlyList<TaskInfo> tasks, Func<TaskInfo, IReadOnlyList<SpawnedTaskRecord>>? spawns = null)
     {
-        var assigned = tasks
-            .Where(task => string.Equals(task.ProjectName, projectName, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(task.Dossier?.Path, dossier.EntryPath, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(task => task.CreatedAt)
-            .ThenBy(task => task.Key ?? task.Id, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var cards = assigned
-            .Select(task => new DossierCard(
-                task.Key ?? task.Id, task.Id, task.Title, task.State, task.Phase ?? task.State,
-                task.Dossier?.Environments ?? [],
-                task.Dossier?.Section, task.Dossier?.Decision, task.Dossier?.ImplementationIndex))
+        var members = new DossierMembership(tasks, spawns ?? (_ => [])).Members(projectName, dossier);
+        var cards = members
+            .Select(member => new DossierCard(
+                member.Task.Key ?? member.Task.Id, member.Task.Id, member.Task.Title, member.Task.State,
+                member.Task.Phase ?? member.Task.State,
+                member.Task.Dossier?.Environments ?? [],
+                member.Task.Dossier?.Section, member.Task.Dossier?.Decision, member.ImplementationIndex))
             .ToArray();
         var declaredSlices = dossier.ImplementationTasks.Count + dossier.ImplementationTaskKeys.Length;
         var spawnedSlices = (dossier.Decision?.SpawnedTaskKeys ?? [])
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(key => assigned.FirstOrDefault(task => string.Equals(task.Key, key, StringComparison.OrdinalIgnoreCase)))
-            .Where(task => task is not null && task.Dossier?.ImplementationIndex is null)
-            .Select(task => task!)
+            .Select(key => members.FirstOrDefault(member => string.Equals(member.Task.Key, key, StringComparison.OrdinalIgnoreCase)))
+            .Where(member => member is not null && member.ImplementationIndex is null)
+            .Select(member => member!.Task)
             .ToArray();
         var implemented = Enumerable.Range(0, declaredSlices)
             .Count(index =>
             {
-                var slice = assigned.Where(task => task.Dossier?.ImplementationIndex == index).ToArray();
+                var slice = members.Where(member => member.ImplementationIndex == index)
+                    .Select(member => member.Task).ToArray();
                 var implementation = slice.Where(task => task.Kind != TaskKinds.Decision).ToArray();
                 var counted = implementation.Length > 0 ? implementation : slice;
                 return counted.Length > 0 && counted.All(task =>
@@ -58,6 +56,68 @@ public sealed class DossierCardsService(TaskScannerService scanner)
             mutations.SetJobDossier(task.Id, dossier, task.WatchPath);
     }
 }
+
+/// <summary>
+/// The cards a Dossier owns: every card whose primary <c>task.dossier</c>
+/// points at it, plus promoted slices that only the source concept's promotion
+/// ledger names (the relation write failed or has not been backfilled yet). A
+/// primary association to another Dossier always wins over the ledger. The
+/// card list and the documentation projection both read this set (AGT-3837).
+/// </summary>
+public sealed class DossierMembership
+{
+    private readonly ILookup<string, TaskInfo> _byDossier;
+    private readonly ILookup<string, TaskInfo> _byKey;
+    private readonly ILookup<string, TaskInfo> _byId;
+    private readonly Func<TaskInfo, IReadOnlyList<SpawnedTaskRecord>> _spawns;
+
+    public DossierMembership(IReadOnlyList<TaskInfo> tasks,
+        Func<TaskInfo, IReadOnlyList<SpawnedTaskRecord>> spawns)
+    {
+        _byDossier = tasks.Where(task => task.Dossier is { Path.Length: > 0 })
+            .ToLookup(task => DossierKey(task.ProjectName, task.Dossier!.Path), StringComparer.OrdinalIgnoreCase);
+        _byKey = tasks.Where(task => !string.IsNullOrWhiteSpace(task.Key))
+            .ToLookup(task => task.Key!, StringComparer.OrdinalIgnoreCase);
+        _byId = tasks.ToLookup(task => task.Id, StringComparer.Ordinal);
+        _spawns = spawns;
+    }
+
+    public IReadOnlyList<DossierMember> Members(string projectName, WorkbenchListItem dossier)
+    {
+        var members = _byDossier[DossierKey(projectName, dossier.EntryPath)]
+            .Select(task => new DossierMember(task, task.Dossier!.ImplementationIndex))
+            .ToList();
+        var seen = new HashSet<TaskInfo>(members.Select(member => member.Task), ReferenceEqualityComparer.Instance);
+        var prefix = $"concept-promotion:{dossier.EntryPath}:";
+        foreach (var sourceKey in dossier.SourceTaskKeys.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var sources = _byKey[sourceKey.Trim()]
+                .Where(task => string.Equals(task.ProjectName, projectName, StringComparison.OrdinalIgnoreCase))
+                .Take(2).ToArray();
+            if (sources.Length != 1) continue;
+            foreach (var spawn in _spawns(sources[0]))
+            {
+                if (spawn.Reason?.StartsWith(prefix, StringComparison.Ordinal) != true) continue;
+                var matches = (spawn.TargetJobId != null ? _byId[spawn.TargetJobId] : [])
+                    .Concat(spawn.TargetKey != null ? _byKey[spawn.TargetKey] : [])
+                    .Distinct(ReferenceEqualityComparer.Instance).Cast<TaskInfo>()
+                    .Take(2).ToArray();
+                if (matches.Length != 1 || matches[0].Dossier is { Path.Length: > 0 } || !seen.Add(matches[0]))
+                    continue;
+                members.Add(new DossierMember(matches[0],
+                    int.TryParse(spawn.Reason[prefix.Length..], out var index) && index >= 0 ? index : null));
+            }
+        }
+        return members
+            .OrderBy(member => member.Task.CreatedAt)
+            .ThenBy(member => member.Task.Key ?? member.Task.Id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string DossierKey(string projectName, string path) => $"{projectName}\u001f{path}";
+}
+
+public sealed record DossierMember(TaskInfo Task, int? ImplementationIndex);
 
 public sealed record DossierCard(string Key, string Id, string Title, string Lane, string State,
     string[] Environments, string? Section, string? Decision, int? ImplementationIndex);

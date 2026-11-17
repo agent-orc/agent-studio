@@ -1,0 +1,17 @@
+<div class="task-move-refusal" data-testid="task-move-refusal" role="alert"
+     [attr.data-overridable]="refusal().overridable ? 'true' : null">
+  <p class="task-move-refusal__message">{{ refusal().message }}</p>
+  @if (concern(); as concern) {
+    <p class="task-move-refusal__concern" data-testid="task-move-refusal-concern">
+      <strong>The review's concern:</strong> {{ concern }}
+    </p>
+  }
+  @if (refusal().overridable) {
+    <div class="task-move-refusal__actions">
+      <button type="button" class="task-move-refusal__button task-move-refusal__button--primary" data-testid="task-move-refusal-override"
+              [disabled]="mutationsBlocked()" (click)="override()">{{ overrideLabel }}</button>
+      <button type="button" class="task-move-refusal__button" data-testid="task-move-refusal-review"
+              [disabled]="mutationsBlocked()" (click)="reviewAgain()">{{ reviewLabel }}</button>
+    </div>
+  }
+</div>

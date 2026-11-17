@@ -209,7 +209,7 @@
 
 .studio-settings-project-row {
   display: grid;
-  grid-template-columns: 8px auto auto 1fr auto auto;
+  grid-template-columns: 8px auto auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 6px;
   padding: 2px 4px;
@@ -249,6 +249,18 @@
   display: flex;
   gap: 2px;
   justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 600px) {
+  .studio-settings-project-row {
+    grid-template-columns: 8px auto auto minmax(0, 1fr);
+  }
+
+  .studio-settings-project-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+  }
 }
 
 .studio-settings-workspace-id {
@@ -304,5 +316,11 @@
 
   &--danger:hover:not([disabled]) {
     color: var(--studio-error);
+  }
+
+  &--text {
+    width: auto;
+    padding: 0 var(--studio-spacing-1);
+    border-color: var(--studio-border);
   }
 }

@@ -25,6 +25,8 @@ export interface WorkbenchDecisionDraft {
   thinkingLevel?: string | null;
   /** The owner's free-text rework request (AGT-3703). */
   request?: string;
+  /** Set once the owner was warned about leaving these answers unsaved (AGT-3875). */
+  leaveWarned?: boolean;
   updatedAt: string;
 }
 
@@ -41,9 +43,16 @@ export class WorkbenchDecisionDraftStore {
     workbenchId: string,
     responses: readonly WorkbenchDecisionResponse[],
   ): void {
+    // A changed answer is a new unsaved state, so leaving warns again.
     this.patch(projectName, workbenchId, {
       responses: responses.map(copyResponse),
+      leaveWarned: false,
     });
+  }
+
+  markLeaveWarned(projectName: string, workbenchId: string): void {
+    if (!this.draft(projectName, workbenchId)) return;
+    this.patch(projectName, workbenchId, { leaveWarned: true });
   }
 
   beginFeature(
@@ -167,9 +176,24 @@ function entryKey(projectName: string, workbenchId: string): string {
   return `${encodeURIComponent(projectName)}:${encodeURIComponent(workbenchId)}`;
 }
 
+/**
+ * Drafts live in localStorage so unsaved answers survive closing the tab
+ * (AGT-3875). A draft an older build left in sessionStorage moves over once.
+ */
 function readEntries(): Record<string, WorkbenchDecisionDraft> {
+  const entries = { ...parseEntries(readStorage('sessionStorage')), ...parseEntries(readStorage('localStorage')) };
+  try { globalThis.sessionStorage?.removeItem(STORAGE_KEY); } catch { /* storage unavailable */ }
+  if (Object.keys(entries).length > 0) persistEntries(entries);
+  return entries;
+}
+
+function readStorage(kind: 'localStorage' | 'sessionStorage'): string | null {
+  try { return globalThis[kind]?.getItem(STORAGE_KEY) ?? null; }
+  catch { return null; }
+}
+
+function parseEntries(value: string | null): Record<string, WorkbenchDecisionDraft> {
   try {
-    const value = globalThis.sessionStorage?.getItem(STORAGE_KEY);
     if (!value) return {};
     const parsed = JSON.parse(value) as { version?: unknown; entries?: unknown };
     if (parsed.version !== 1 || !isRecord(parsed.entries)) return {};
@@ -182,7 +206,7 @@ function readEntries(): Record<string, WorkbenchDecisionDraft> {
 
 function persistEntries(entries: Record<string, WorkbenchDecisionDraft>): void {
   try {
-    globalThis.sessionStorage?.setItem(STORAGE_KEY, JSON.stringify({ version: 1, entries }));
+    globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ version: 1, entries }));
   } catch {
     // Browser storage is a resilience aid. The in-memory draft remains usable.
   }

@@ -305,6 +305,11 @@
   }
 }
 
+// Responsive degradation (AGT-3794-F13). This block exists to show what each
+// run spent, so it drops columns in the opposite order from the pipeline
+// steps above: first the start time and duration, then the share bar. Tokens
+// and cost stay visible down to the narrow split pane (about 340 px at the
+// default 1280 px layout); the run tooltip still carries the full detail.
 @container ov-pipeline (max-width: 620px) {
   .ptu__row,
   .ptu__model-row {
@@ -313,39 +318,54 @@
       var(--ov-pipeline-kind-col)
       var(--ov-pipeline-name-col)
       var(--ov-pipeline-meta-col)
-      var(--ov-pipeline-time-col)
-      var(--ov-pipeline-tokens-col);
+      var(--ov-pipeline-tokens-col)
+      minmax(4.5rem, max-content);
+  }
+
+  .ptu__timing {
+    display: none;
+  }
+
+  .ptu__head-total,
+  .ptu__model-total {
+    grid-column: 5;
   }
 
   .ptu__head-cost,
   .ptu__model-cost {
-    display: none;
+    grid-column: 6;
+  }
+
+  .ptu__split {
+    grid-column: 4;
   }
 }
 
 @container ov-pipeline (max-width: 460px) {
   .ptu__row,
   .ptu__model-row {
-    --ov-pipeline-time-col: 52px;
     --ov-pl-grid-cols:
       var(--ov-pipeline-status-col)
       var(--ov-pipeline-kind-col)
       minmax(0, 3fr)
       minmax(0, 2fr)
-      var(--ov-pipeline-time-col);
+      var(--ov-pipeline-tokens-col)
+      minmax(3.5rem, max-content);
   }
 
-  .ptu__head-total,
-  .ptu__model-total {
+  // The task total names its scope in the tooltip; the title takes the freed
+  // track and may wrap instead of being cut off.
+  .ptu__scope {
     display: none;
   }
 
-  .ptu__timing {
-    grid-template-columns: 52px;
+  .ptu__row--sum .ptu__head-label {
+    grid-column: 3 / 5;
   }
 
-  .ptu__run-time {
-    display: none;
+  .ptu__sum-title {
+    overflow: visible;
+    white-space: normal;
   }
 }
 

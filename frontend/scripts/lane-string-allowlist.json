@@ -1,5 +1,10 @@
 [
   {
+    "file": "src/app/features/project-detail/components/managed-databases-panel/managed-database.model.ts",
+    "literal": "Ready",
+    "reason": "Readiness of a managed PostgreSQL database (pg_isready result from the run host). Not the 2-ready lane."
+  },
+  {
     "file": "src/app/models/parked-blocker-presentation.ts",
     "literal": "Auto Review",
     "reason": "Auto Review watchdog is the named recovery service, not the lane; the lane's display name is Post Processing."
@@ -25,9 +30,14 @@
     "reason": "Button verb ('Archive' / 'Archived') for archiving a project. Not the 7-archive lane."
   },
   {
-    "file": "src/app/features/shell/components/workspace-management/workspace-management.component.ts",
+    "file": "src/app/services/project-lifecycle-dialog.service.ts",
     "literal": "Archive",
     "reason": "Confirm-dialog verb for archiving a project registry entry. Not the 7-archive lane."
+  },
+  {
+    "file": "src/app/features/shell/components/workspace-management/workspace-management.component.html",
+    "literal": "Archive",
+    "reason": "Button verb for archiving a project registry entry. Not the 7-archive lane."
   },
   {
     "file": "src/app/features/project-detail/components/project-cli-environment-section/project-cli-environment-section.ts",

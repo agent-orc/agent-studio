@@ -102,6 +102,8 @@ public sealed record PromoteConceptResponse
     public string TargetState { get; init; } = TaskStates.Preparation;
     public string WatchPath { get; init; } = "";
     public string ProjectName { get; init; } = "";
+    /// <summary>Route used for every new implementation card in this plan.</summary>
+    public ConceptPromotionRoute? Route { get; init; }
     /// <summary>
     /// Slices that already have a card from an earlier promotion, read from the
     /// source card's spawn ledger. A repeated request returns these cards
@@ -109,6 +111,43 @@ public sealed record PromoteConceptResponse
     /// </summary>
     public List<PromotedConceptTask> Promoted { get; init; } = [];
     public ConceptPromotionRecovery? Recovery { get; init; }
+}
+
+public sealed record ConceptPromotionRoute
+{
+    public string CliType { get; init; } = "claude";
+    public string? Model { get; init; }
+    public string? ThinkingLevel { get; init; }
+}
+
+/// <summary>
+/// Why no implementation cards can be promoted (AGT-3875). Each code names one
+/// missing piece so the refusal and the Dossier control can offer its next step.
+/// </summary>
+public static class ConceptPromotionRefusals
+{
+    /// <summary>The Dossier names no concept card, or the card is not a concept card.</summary>
+    public const string NoConceptCard = "no-concept-card";
+    /// <summary>The concept card never delivered a Dossier, so no concept review ran.</summary>
+    public const string NoReview = "no-review";
+    /// <summary>The delivered Dossier fails the concept review contract.</summary>
+    public const string ReviewFailed = "review-failed";
+    /// <summary>The reviewed Dossier proposes no validated implementation cards.</summary>
+    public const string NoProposals = "no-proposals";
+    /// <summary>The concept card delivered a different Dossier than the one in view.</summary>
+    public const string OtherDossier = "other-dossier";
+    public const string RepositoryUnavailable = "repository-unavailable";
+}
+
+/// <summary>A promotion plan, or the reason it could not be built.</summary>
+public sealed record ConceptPromotionPlanRead(
+    PromoteConceptResponse? Plan,
+    string? RefusalCode,
+    string? Refusal,
+    string? RepoRelativeDirectory = null)
+{
+    public static ConceptPromotionPlanRead Refused(string code, string message, string? directory = null) =>
+        new(null, code, message, directory);
 }
 
 /// <summary>Durable promotion progress returned after failures and on later plan reads.</summary>

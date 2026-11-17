@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
 
@@ -52,18 +53,27 @@ public sealed partial class ProjectEnvironmentService
             // Lease before claiming domains: the open job's approved snapshot,
             // or the last healthy job's snapshot, owns the running routes.
             var projected = new List<(RunTargetProjectRead Read, RunTargetEnvironmentSpec Spec)>();
+            var databaseDeletions = new List<RunTargetDatabaseDeletion>();
+            var databaseOperations = new List<RunTargetDatabaseOperation>();
             foreach (var read in projects)
             {
+                var databases = new List<(string, IReadOnlyList<ProjectDatabaseDefinition>)>();
                 foreach (var declaration in read.Hosted)
                 {
+                    RefuseMajorDatabaseChange(read, declaration, hostId, now);
                     var job = LeaseJob(read, declaration, hostId, now);
                     var history = read.State.History.Where(row => row.EnvironmentId == declaration.Id)
                         .Select(row => row.Item).ToArray();
                     var settled = history.LastOrDefault(item => item.Status is "healthy" or "rolled-back");
                     var deployedJob = settled is null ? null : read.State.Jobs.LastOrDefault(item =>
                         item.EnvironmentId == declaration.Id && item.Artifact == settled.Artifact && item.Status == "healthy");
+                    databases.Add((declaration.Id, (job ?? deployedJob)?.Databases ?? []));
                     projected.Add((read, RunTargetDesiredStatePolicy.Project(read.Project, declaration, job, history, deployedJob)));
                 }
+                TrackDatabases(read.State, hostId, databases);
+                databaseDeletions.AddRange(DatabaseDeletions(read.Project, read.State, hostId));
+                databaseOperations.AddRange(DatabaseOperations(read.Project, read.State, hostId,
+                    read.Hosted.Select(item => item.Id).ToArray(), now));
             }
 
             // An owner Studio does not see as hosted keeps its domains while the
@@ -103,7 +113,7 @@ public sealed partial class ProjectEnvironmentService
             var claimsText = JsonSerializer.Serialize(claims, _json);
             if (claimsText != (storedClaims ?? JsonSerializer.Serialize(new Dictionary<string, RunTargetDomainClaim>(), _json)))
                 WriteStoreFile(claimsPath, claimsText);
-            return new(hostId, now, environments, skipped, removals);
+            return new(hostId, now, environments, skipped, removals, databaseDeletions, databaseOperations);
         }
     }
 
@@ -113,7 +123,11 @@ public sealed partial class ProjectEnvironmentService
     /// decision and its actor), and queues a rollback when the host rolled back
     /// from a crash-looping release.
     /// </summary>
-    public int RecordObserved(string hostId, RunTargetObservedReport report)
+    public int RecordObserved(string hostId, RunTargetObservedReport report) => RecordObserved(hostId, report, null);
+
+    /// <param name="measured">Receives each database record the report changed, for the operations intake (AGT-3878).</param>
+    public int RecordObserved(string hostId, RunTargetObservedReport report,
+        ICollection<(string Project, ManagedDatabaseRecord Record)>? measured)
     {
         lock (_gate)
         {
@@ -161,7 +175,8 @@ public sealed partial class ProjectEnvironmentService
                 }
                 if (JsonSerializer.Serialize(state, _json) != before) Save(group.Key, state);
             }
-            return accepted;
+            return accepted + RecordDatabaseObservations(hostId, report.Databases ?? [], now, measured)
+                + RecordDatabaseOperationResults(hostId, report.DatabaseOperations ?? [], now);
         }
     }
 

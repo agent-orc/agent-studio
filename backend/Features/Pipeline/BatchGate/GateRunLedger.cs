@@ -5,7 +5,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Pipeline;
 
-/// <summary>One durable, immutable fact for each invocation of a machine gate.</summary>
+/// <summary>
+/// One durable, immutable fact for each invocation of a machine gate.
+/// AGT-3858: <see cref="SameCodeRerunMs"/> splits the time spent gating code
+/// that was already gated by purpose (<see cref="SameCodeRerunPurposes"/>);
+/// rows written before AGT-3858 carry null.
+/// </summary>
 public sealed record GateRunLedgerRow(
     string RunId, string Type, string Project, IReadOnlyList<string> Cards,
     string? BaseSha, string? Profile, DateTimeOffset RequestedAtUtc,
@@ -14,7 +19,33 @@ public sealed record GateRunLedgerRow(
     string Outcome, long DurationMs, long QueueWaitMs,
     IReadOnlyList<GateRunSpan> Spans, string? RerunCause, long RerunDurationMs,
     double? HostLoadStart, double? HostLoadEnd, string? TriggerEvent,
-    string? BatchId = null);
+    string? BatchId = null, IReadOnlyDictionary<string, long>? SameCodeRerunMs = null);
+
+/// <summary>AGT-3858: why a gate ran code that was already gated.</summary>
+public static class SameCodeRerunPurposes
+{
+    /// <summary>The targeted rerun of failed tests inside one gate run.</summary>
+    public const string FlakyTestRerun = "flaky-test-rerun";
+    /// <summary>The same candidate SHA again after an infrastructure red.</summary>
+    public const string InfrastructureRetry = "infrastructure-retry";
+    /// <summary>A red cohort that no isolation child reproduced, gated once more.</summary>
+    public const string FlakySuspectRegate = "flaky-suspect-regate";
+
+    public static IReadOnlyDictionary<string, long>? Split(string? triggerEvent, long durationMs, long inGateRerunMs)
+    {
+        var split = new Dictionary<string, long>(StringComparer.Ordinal);
+        if (inGateRerunMs > 0) split[FlakyTestRerun] = inGateRerunMs;
+        var purpose = triggerEvent switch
+        {
+            "infrastructure-red" => InfrastructureRetry,
+            { } value when value.StartsWith(FlakySuspectRegate + ":", StringComparison.Ordinal) => FlakySuspectRegate,
+            _ => null,
+        };
+        // The in-gate rerun is part of the run's duration; count it once.
+        if (purpose is not null) split[purpose] = Math.Max(0, durationMs - inGateRerunMs);
+        return split.Count == 0 ? null : split;
+    }
+}
 
 public sealed record GateRunSpan(string Name, string Kind, string Host,
     DateTimeOffset? StartedAtUtc, DateTimeOffset? FinishedAtUtc,
@@ -28,13 +59,26 @@ public sealed record GateRunDailySummary(DateOnly Day,
     double CardsPublishedPerHour, double? MedianBatchGateMinutes,
     double? P90BatchGateMinutes, double? HostMinutes, double? ReconciliationPercent,
     IReadOnlyDictionary<string, BatchPhasePercentiles>? PhaseMinutes = null,
-    double? DiagnosticRerunShare = null, BatchPreCheckYield? PreCheckYield = null);
+    double? DiagnosticRerunShare = null, BatchPreCheckYield? PreCheckYield = null,
+    IReadOnlyDictionary<string, double>? SameCodeRerunMinutesByPurpose = null,
+    PerCardSuiteFollowUp? PerCardSuites = null);
+
+/// <summary>
+/// AGT-3856: green per-task fallback suites requested on the day, how many of
+/// their cards went through a batch gate afterwards (within
+/// <see cref="GateRunLedger.FollowUpDays"/> days), and that share. On 3 and 4
+/// November 2026 it was 36 of 40; the admission rule aims below 10%.
+/// </summary>
+public sealed record PerCardSuiteFollowUp(int GreenSuites, int FollowedByBatchGate, double? Share);
 
 /// <summary>Instance-local records outside the workspace repository. Ninety days are retained.</summary>
 public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null,
     ILogger<GateRunLedger>? logger = null)
 {
     public const int RetentionDays = 90;
+
+    /// <summary>Days after a green per-card suite in which a batch gate of the same card counts as its follow-up.</summary>
+    public const int FollowUpDays = 2;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly object _writeLock = new();
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
@@ -165,7 +209,29 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
             rows.Length > 0 && host > 0 ? Math.Abs(sum - host) / host * 100 : null,
             BatchMemberTimelineProjection.Phases(timelines),
             timelines.Length == 0 ? null : (double)timelines.Count(item => item.DiagnosticRerun) / timelines.Length,
-            yield);
+            yield,
+            rows.SelectMany(row => row.SameCodeRerunMs ?? new Dictionary<string, long>())
+                .GroupBy(item => item.Key, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Sum(item => item.Value) / 60_000d,
+                    StringComparer.Ordinal),
+            PerCardSuites(rows, Enumerable.Range(0, FollowUpDays + 1)
+                .SelectMany(offset => ReadAll(project, day.AddDays(offset))).ToArray()));
+    }
+
+    /// <summary>
+    /// AGT-3856: of the green per-task fallback suites in <paramref name="dayRows"/>,
+    /// the ones whose card a later batch gate row in <paramref name="laterRows"/> tested again.
+    /// </summary>
+    internal static PerCardSuiteFollowUp PerCardSuites(IReadOnlyList<GateRunLedgerRow> dayRows,
+        IReadOnlyList<GateRunLedgerRow> laterRows)
+    {
+        var green = dayRows.Where(row => row.Type == "per-task-fallback"
+            && row.Outcome == nameof(BuildTestGateVerdict.Ok) && row.Cards.Count > 0).ToArray();
+        var batches = laterRows.Where(row => row.Type == "batch-gate").ToArray();
+        var followed = green.Count(row => batches.Any(batch => batch.RequestedAtUtc >= row.FinishedAtUtc
+            && batch.Cards.Intersect(row.Cards, StringComparer.Ordinal).Any()));
+        return new PerCardSuiteFollowUp(green.Length, followed,
+            green.Length == 0 ? null : (double)followed / green.Length);
     }
 
     private void Prune(DateTime before)
@@ -215,6 +281,7 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
             _ => "per-task-gate",
         });
         var cleanRerun = type == "clean-diagnostic-rerun";
+        var trigger = request.LedgerTriggerEvent ?? request.Executor + ":" + (request.JobId ?? request.ExpectedSha);
         return new GateRunLedgerRow(runId ?? request.LedgerRunId ?? result.GateRunId ?? Guid.NewGuid().ToString("N"),
             type, request.Project ?? "unknown", request.LedgerCards ?? (request.JobId is null ? [] : [request.JobId]),
             request.IntegrationRef, result.GateProfileDigest ?? request.LedgerProfile, requested, slot,
@@ -225,8 +292,8 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
             cleanRerun ? request.LedgerTriggerEvent : rerunMs > 0 ? "flaky-test" : null,
             cleanRerun ? result.DurationMs : rerunMs,
             result.GateHostLoadAtStart ?? loadStart, result.GateHostLoadAtEnd ?? loadEnd,
-            request.LedgerTriggerEvent ?? request.Executor + ":" + (request.JobId ?? request.ExpectedSha),
-            request.LedgerBatchId);
+            trigger, request.LedgerBatchId,
+            SameCodeRerunPurposes.Split(request.LedgerTriggerEvent, result.DurationMs, rerunMs));
     }
 }
 

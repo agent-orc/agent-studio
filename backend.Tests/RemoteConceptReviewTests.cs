@@ -132,6 +132,9 @@ public sealed class RemoteConceptReviewTests : IDisposable
         Assert.Contains("docs/persona-team/cards.md", prompt);
         Assert.Contains("independently reviewable card", prompt);
         Assert.Contains("implementationTasks", prompt);
+        Assert.True(ConceptDossierSnapshotSpan.TrySplit(prompt, out _, out var span, out _));
+        Assert.Contains("Persona team decisions", span);
+        Assert.Contains("implementationTasks", span);
     }
 
     [Fact]

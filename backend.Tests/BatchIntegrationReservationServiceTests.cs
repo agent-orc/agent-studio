@@ -156,4 +156,109 @@ public sealed class BatchIntegrationReservationServiceTests
         Assert.Equal(1, fetches);
         Assert.Null(reservation.GetWait("project"));
     }
+
+    // AGT-3882: per-task gates arrive every few minutes while a flight reserves.
+    [Fact]
+    public async Task Stream_of_per_task_integrations_does_not_starve_a_reserving_batch()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 16, 11, 8, 0, TimeSpan.Zero));
+        var reservation = new BatchIntegrationReservationService(timeProvider: clock);
+        var running = await reservation.AcquireAsync("project",
+            IntegrationReservationKinds.PerTaskIntegration, "AGT-3868", CancellationToken.None);
+        clock.Advance(TimeSpan.FromMinutes(4));
+        var batch = reservation.AcquireBatchAsync("project", null, CancellationToken.None,
+            batchId: "f8037b78");
+        var arrivals = new List<Task<IDisposable>>();
+        foreach (var key in new[] { "AGT-3852", "AGT-3816", "AGT-3870" })
+        {
+            clock.Advance(TimeSpan.FromMinutes(3));
+            arrivals.Add(reservation.AcquireAsync("project",
+                key == "AGT-3816" ? IntegrationReservationKinds.PerTaskFallbackIntegration
+                    : IntegrationReservationKinds.PerTaskIntegration, key, CancellationToken.None));
+        }
+        Assert.False(batch.IsCompleted);
+
+        // The wait is bounded by the running gate, not by the new arrivals.
+        running.Dispose();
+        using (var flight = await batch.WaitAsync(TimeSpan.FromSeconds(10)))
+        {
+            await Task.Delay(50);
+            Assert.All(arrivals, arrival => Assert.False(arrival.IsCompleted));
+            Assert.Null(reservation.GetBatchWait("project"));
+        }
+
+        // Per-task gates resume once the flight has its reservation, in arrival order.
+        var order = new List<string>();
+        foreach (var (arrival, key) in arrivals.Zip(new[] { "AGT-3852", "AGT-3816", "AGT-3870" }))
+        {
+            using var grant = await arrival.WaitAsync(TimeSpan.FromSeconds(10));
+            order.Add(key);
+        }
+        Assert.Equal(["AGT-3852", "AGT-3816", "AGT-3870"], order);
+    }
+
+    [Fact]
+    public async Task Batch_wait_names_the_running_job_the_held_back_jobs_and_the_pending_pushes()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 16, 11, 8, 0, TimeSpan.Zero));
+        var reservation = new BatchIntegrationReservationService(timeProvider: clock);
+        Assert.Null(reservation.GetBatchWait("project"));
+        var running = await reservation.AcquireAsync("project",
+            IntegrationReservationKinds.PerTaskIntegration, "AGT-3868", CancellationToken.None);
+        clock.Advance(TimeSpan.FromMinutes(4));
+        using var cancel = new CancellationTokenSource();
+        var batch = reservation.AcquireBatchAsync("project", null, cancel.Token, batchId: "f8037b78");
+        clock.Advance(TimeSpan.FromMinutes(11));
+        var heldBack = reservation.AcquireAsync("project",
+            IntegrationReservationKinds.PerTaskIntegration, "AGT-3852", CancellationToken.None);
+
+        var wait = Assert.IsType<BatchReservationWait>(reservation.GetBatchWait("project"));
+        Assert.Equal("f8037b78", wait.BatchId);
+        Assert.Equal(11, wait.WaitMinutes);
+        Assert.Equal(new IntegrationReservationJob(IntegrationReservationKinds.PerTaskIntegration, "AGT-3868",
+            new DateTimeOffset(2026, 11, 16, 11, 8, 0, TimeSpan.Zero)), wait.Holder);
+        var held = Assert.Single(wait.HeldBack);
+        Assert.Equal("AGT-3852", held.TaskKey);
+        Assert.Equal(new DateTimeOffset(2026, 11, 16, 11, 23, 0, TimeSpan.Zero), held.SinceUtc);
+        Assert.Contains("per-task-integration AGT-3868 holds the project reservation since 2026-11-16T11:08:00", wait.Reason);
+        Assert.Contains("1 per-task integration(s) wait until the flight has its reservation", wait.Reason);
+        Assert.Equal("AGT-3868", reservation.PerTaskHolder("project")?.TaskKey);
+
+        // A cancelled flight (claim expiry) lets the held-back integration start.
+        await cancel.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => batch);
+        Assert.Null(reservation.GetBatchWait("project"));
+        running.Dispose();
+        using var grant = await heldBack.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task Pending_push_goes_before_the_batch_and_the_batch_before_held_back_integrations()
+    {
+        var reservation = new BatchIntegrationReservationService();
+        reservation.MarkPushPending("project", "AGT-3868", "abc");
+        var running = await reservation.AcquireAsync("project",
+            IntegrationReservationKinds.PerTaskIntegration, "AGT-3852", CancellationToken.None);
+        var batch = reservation.AcquireBatchAsync("project", null, CancellationToken.None, batchId: "b1");
+        var perTask = reservation.AcquireAsync("project",
+            IntegrationReservationKinds.PerTaskIntegration, "AGT-3870", CancellationToken.None);
+        var push = reservation.AcquireAsync("project",
+            IntegrationReservationKinds.IntegrationPush, "AGT-3868", CancellationToken.None);
+        var wait = reservation.GetBatchWait("project")!;
+        Assert.Equal("AGT-3868", Assert.Single(wait.QueuedAhead).TaskKey);
+        Assert.Equal("AGT-3868", Assert.Single(wait.PendingPushes).JobId);
+
+        running.Dispose();
+        using (await push.WaitAsync(TimeSpan.FromSeconds(10)))
+        {
+            Assert.False(batch.IsCompleted);
+            reservation.MarkPushVerified("project", "AGT-3868", "abc");
+        }
+        using (await batch.WaitAsync(TimeSpan.FromSeconds(10)))
+        {
+            await Task.Delay(50);
+            Assert.False(perTask.IsCompleted);
+        }
+        using var resumed = await perTask.WaitAsync(TimeSpan.FromSeconds(10));
+    }
 }

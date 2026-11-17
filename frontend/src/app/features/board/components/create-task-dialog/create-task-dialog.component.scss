@@ -74,8 +74,23 @@
   background: var(--studio-bg-editor);
 }
 
-.field__input:focus {
-  border-color: var(--studio-accent-4);
+/* Shared accent focus ring (AGT-3834): the 1 px border tint alone was too
+   faint to find the focused field. Text fields always match :focus-visible. */
+.field__input:focus-visible {
+  border-color: var(--studio-accent);
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
+}
+
+.create-tag-picker__chip:focus-visible,
+.create-dialog__prompt-actions button:focus-visible,
+.create-dialog__actions .btn:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
+}
+
+.create-dialog__prompt-actions .create-dialog__generate-btn {
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
 }
 
 .create-dialog__defaults-error {

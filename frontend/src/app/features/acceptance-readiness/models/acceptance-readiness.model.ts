@@ -79,3 +79,12 @@ export const READINESS_ORDER = Object.keys(READINESS_PRESENTATION) as Acceptance
 export function readinessPresentation(readiness: string): ReadinessPresentation {
   return READINESS_PRESENTATION[readiness as AcceptanceReadinessClass] ?? READINESS_PRESENTATION.blocked;
 }
+
+/**
+ * AGT-3867: whether a written operator override can admit a refused
+ * completion. The completion policy lets an override replace a content
+ * verdict, never a missing research report (AGT-3565).
+ */
+export function acceptanceOverrideAllowed(refusal: string | null | undefined): boolean {
+  return !/required report is missing/i.test(refusal ?? '');
+}

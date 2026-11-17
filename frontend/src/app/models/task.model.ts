@@ -939,6 +939,11 @@ export interface TaskInfo {
    * each parsing their own subset of review artifacts. Never persisted.
    */
   reviewProjection?: ReviewProjectionView | null;
+  /**
+   * AGT-3845: the current Remote Review attempt is settled but its grade
+   * report is not written yet, so `reviewProjection` does not carry it yet.
+   */
+  reviewEvidencePending?: boolean;
 
   /**
    * ASS-1751: read-time run-activity classification for `3-progress` cards,
@@ -1868,6 +1873,8 @@ export interface PromoteConceptResponse {
   targetState: string;
   watchPath: string;
   projectName: string;
+  /** Effective route used by each new implementation card. */
+  route?: { cliType: string; model: string | null; thinkingLevel: string | null } | null;
   /** Slices that already have a card from an earlier promotion. */
   promoted?: PromotedConceptTask[];
   recovery?: ConceptPromotionRecovery | null;
@@ -2236,6 +2243,24 @@ export interface TaskLiveQueue {
   lost?: TaskLiveReviewLoss | null;
   /** AGT-3690: the automatic retry that comes next; set only while `retry-scheduled`. */
   retry?: TaskLiveReviewRetry | null;
+  /**
+   * AGT-3840: the capability keys the review executor refused this attempt
+   * for. Outranks host load: load passes, a missing key does not.
+   */
+  unclaimable?: TaskLiveReviewUnclaimable | null;
+}
+
+/** AGT-3840: why the review executor could not claim the current attempt. */
+export interface TaskLiveReviewUnclaimable {
+  capabilities: readonly string[];
+  /** Runner identity that refused; the Execution Hosts row id. */
+  executorId?: string | null;
+  hostId?: string | null;
+  /** Backend `HeldCapabilityCauses` token for the first key. */
+  cause?: string | null;
+  /** Probe detail behind the first key, when the executor advertised it. */
+  detail?: string | null;
+  observedAt?: string | null;
 }
 
 /**
@@ -2441,6 +2466,7 @@ export interface ProjectSnapshot {
     maxDeliveredReviewRounds?: number;
     maxAutoReissueAttempts?: number;
     autoPushStrategy: 'never' | 'on-completed' | 'always-immediate';
+    integrationBranch?: string | null;
     runnerMode: string | null;
     orchestratorModel: string | null;
     /** AGT-2839: project override for integration-gate review reuse; null inherits. */
@@ -2467,7 +2493,7 @@ export interface ProjectSnapshot {
 
 /**
  * PUB-1 - a derived publish target for a project, rendered as a Hub badge like
- * "NuGet 0.3.1 -> 4 tasks pending". Repo-fact-derived and read-only. A package
+ * "NuGet 0.3.1 -> 4 commits pending". Repo-fact-derived and read-only. A package
  * that has never been released carries `firstPublishPending` (no version, no
  * count); `pendingCount === 0` is a quiet state (no badge). `pendingCount` is
  * null when no baseline could be derived from git (see `referenceKind === 'none'`).

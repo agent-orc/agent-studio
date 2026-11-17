@@ -1788,12 +1788,15 @@ public sealed partial class AttemptAuthorityService
     /// abandons it, so a tick can never fire the same due retry twice.
     /// </summary>
     public IReadOnlyList<ReviewInfrastructureRetryDue> DueReviewInfrastructureRetries()
+        => ScheduledReviewInfrastructureRetries().Where(retry => retry.DueAtUtc <= _utcNow()).ToList();
+
+    /// <summary>Current scheduled retries, including those still in backoff.</summary>
+    public IReadOnlyList<ReviewInfrastructureRetryDue> ScheduledReviewInfrastructureRetries()
     {
         lock (_gate)
         {
-            var now = _utcNow();
             return _state.ReviewAttempts
-                .Where(review => review.PendingInfrastructureRetryAt is { } due && due <= now)
+                .Where(review => review.PendingInfrastructureRetryAt is not null)
                 .Where(IsCurrentReview)
                 .OrderBy(review => review.PendingInfrastructureRetryAt)
                 .Select(review => new ReviewInfrastructureRetryDue(

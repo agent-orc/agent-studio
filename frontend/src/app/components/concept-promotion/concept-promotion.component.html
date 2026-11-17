@@ -2,6 +2,9 @@
   @if (!open()) {
     <div class="promotion__bar">
       <span class="promotion__label">Implementation cards</span>
+      @if (progressLabel(); as progress) {
+        <span class="promotion__progress" data-testid="concept-promotion-progress">{{ progress }}</span>
+      }
       <span class="promotion__hint">One card per Dossier slice. The concept card keeps its lane.</span>
       <button type="button" class="promotion__button" data-testid="concept-promotion-open"
               (click)="openPanel()">Create implementation cards</button>
@@ -42,6 +45,9 @@
               </label>
               <span class="promotion__meta" [attr.data-testid]="'concept-promotion-slice-decision-' + slice.order">
                 {{ slice.decision }}@if (slice.section) { · {{ slice.section }}}
+              </span>
+              <span class="promotion__meta" [attr.data-testid]="'concept-promotion-slice-route-' + slice.order">
+                {{ slice.route }}
               </span>
               @if (slice.card; as card) {
                 <app-status-indicator class="promotion__card" tone="success" [compact]="true"

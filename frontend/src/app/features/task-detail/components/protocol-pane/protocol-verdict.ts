@@ -160,13 +160,14 @@ function collectSignals(input: ProtocolVerdictInputs): RunOutcomeSignal[] {
   const pipeline = input.pipelineExecution;
   if (pipeline) {
     const failed = (pipeline.steps ?? []).filter(step => step.status === 'failed');
-    if (failed.length > 0) {
-      signals.push(signal(
-        'pipeline',
-        'failed',
-        'Pipeline failure',
-        `${failed.length} pipeline step${failed.length === 1 ? '' : 's'} failed: ${failed.map(step => step.stepId).join(', ')}.`,
-      ));
+    const steps = `${failed.length} pipeline step${failed.length === 1 ? '' : 's'} failed: ${failed.map(step => step.stepId).join(', ')}.`;
+    if (failed.length > 0 && deliveredAndReviewed(input)) {
+      // AGT-3873: a step that failed after the delivery was merged and its
+      // review passed (AGT-3534: the run wrote no status.md) is evidence,
+      // not the outcome. The card's lane and delivery state lead instead.
+      signals.push(signal('pipeline', 'unclear', 'Pipeline step failed', `${steps} The delivery is merged and its review passed.`));
+    } else if (failed.length > 0) {
+      signals.push(signal('pipeline', 'failed', 'Pipeline failure', steps));
     } else if ((pipeline.steps ?? []).some(step => step.status === 'needsDecision')) {
       // AGT-3045: a run parked on operator decisions (NeedsInput) is not a failure.
       signals.push(signal(
@@ -263,8 +264,13 @@ function executionOutcome(execution: CliExecution | null | undefined): RunOutcom
 }
 
 function textScanMayLead(input: ProtocolVerdictInputs): boolean {
+  return !deliveredAndReviewed(input);
+}
+
+/** The delivery is in the integration branch (or accepted) and its newest review passed. */
+function deliveredAndReviewed(input: ProtocolVerdictInputs): boolean {
   const deliverySettled = input.deliveryIntegrated || input.laneState === TaskState.Completed;
-  return !(deliverySettled && input.lastReviewPassed);
+  return !!deliverySettled && !!input.lastReviewPassed;
 }
 
 function markdownOutcome(

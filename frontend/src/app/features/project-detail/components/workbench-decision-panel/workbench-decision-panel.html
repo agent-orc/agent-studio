@@ -32,7 +32,7 @@
 
   @if (hasBrowserDraft() && !inline()) {
     <div class="decision-panel__draft" role="status" data-testid="workbench-decision-draft-notice">
-      <app-status-indicator tone="info" label="Draft saved for this browser session." [compact]="true"
+      <app-status-indicator tone="info" label="Draft saved in this browser. Save answers to keep it in the Dossier." [compact]="true"
                             testId="workbench-decision-draft-state" />
       <button type="button"
               class="decision-panel__discard"
@@ -54,7 +54,7 @@
     <p class="decision-panel__notice" role="status" data-testid="workbench-decision-gate">
       Decisions open when this Dossier's descriptor sets status decision-pending or phase decision-ready.
     </p>
-  } @else if (persistedDecision(); as decision) {
+  } @else if (!archiveOpen() && receiptDecision(); as decision) {
     <div class="decision-panel__receipt" data-testid="workbench-decision-receipt" tabindex="-1">
       <span>
         <app-status-indicator class="decision-panel__outcome" [tone]="outcomeTone(decision)" [compact]="true"
@@ -67,6 +67,11 @@
       @if (decision.cliType || decision.model || decision.thinkingLevel) {
         <span class="decision-panel__receipt-note" data-testid="workbench-decision-agent-receipt">
           {{ decision.cliType || 'CLI default' }} · {{ decision.model || 'model default' }}@if (decision.thinkingLevel) { · {{ decision.thinkingLevel }}}
+        </span>
+      }
+      @if (decision.outcome === 'rework' && decision.routeChangedFrom; as from) {
+        <span class="decision-panel__receipt-note" data-testid="workbench-decision-route-change-receipt">
+          Agent changed from {{ agentRouteText(from) }} to {{ agentRouteText(decision) }}
         </span>
       }
       <span class="decision-panel__receipt-note" data-testid="workbench-decision-response-receipt">
@@ -83,7 +88,10 @@
       @if (revisionRound(); as round) {
         <span class="decision-panel__receipt-note" data-testid="workbench-decision-revision-round"
               [attr.role]="round.status === 'failed' ? 'alert' : 'status'"
-              [attr.data-round-status]="round.status">{{ revisionRoundText(round) }}</span>
+              [attr.data-round-status]="round.status">{{ revisionRoundText(round) }}
+          <button type="button" class="decision-panel__round-link" data-testid="workbench-decision-open-revision-card"
+                  (click)="openRevisionCard(round.taskKey)">Open round {{ round.taskKey }}</button>
+        </span>
       } @else if (decision.outcome === 'rework' && decision.revisionTaskKey) {
         <span class="decision-panel__receipt-note" data-testid="workbench-decision-revision-round">
           Revision requested from {{ decision.revisionTaskKey }}
@@ -106,6 +114,13 @@
         </div>
       }
     </div>
+    @if (reworkRevisionLanded() || reworkRoundSettled()) {
+      <app-workbench-decision-actions
+        [projectName]="projectName()" [document]="document()"
+        [decisionPoints]="decisionPoints()" [responses]="responses()"
+        [actor]="actor()" [inline]="inline()" [settled]="false"
+        (archiveRequested)="beginArchive()" (decisionChanged)="decisionChanged.emit()" />
+    }
   } @else if (settled()) {
     <div class="decision-panel__receipt" data-testid="workbench-decision-receipt" tabindex="-1">
       <span><strong>In implementation</strong> · {{ decisionPoints().length }} decision point{{ decisionPoints().length === 1 ? '' : 's' }} recorded</span>

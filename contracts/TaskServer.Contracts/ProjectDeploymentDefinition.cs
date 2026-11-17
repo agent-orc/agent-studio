@@ -80,6 +80,8 @@ public sealed record ProjectDeploymentDefinition(
     public IReadOnlyList<ProjectRunbookDefinition> Runbooks { get; init; } = [];
     public IReadOnlyList<ProjectTenantDefinition> Tenants { get; init; } = [];
     public IReadOnlyList<ProjectChannelDefinition> Channels { get; init; } = [];
+    /// <summary>Managed databases the run zone provisions per environment (AGT-3877).</summary>
+    public IReadOnlyList<ProjectDatabaseDefinition> Databases { get; init; } = [];
     /// <summary>Regions, placements and managed services for the structure view (AGT-3349 S5).</summary>
     public ProjectStructureDefinition Structure { get; init; } = ProjectStructureDefinition.Empty;
     public IReadOnlyDictionary<string, IReadOnlyList<ProjectLifecyclePhase>> Lifecycles { get; init; }
@@ -91,7 +93,7 @@ public sealed record ProjectDeploymentDefinition(
 
     public bool IsConfigured => Artifacts.Count > 0 || Environments.Count > 0
         || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0 || Tenants.Count > 0 || Channels.Count > 0 || Runbooks.Count > 0
-        || Structure.IsConfigured;
+        || Databases.Count > 0 || Structure.IsConfigured;
 }
 
 /// <summary>
@@ -101,7 +103,7 @@ public sealed record ProjectDeploymentDefinition(
 public static class ProjectDeploymentVocabulary
 {
     public static readonly IReadOnlyList<string> Sections =
-        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "tenants", "channels", "runbooks", "structure"];
+        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "tenants", "channels", "runbooks", "databases", "structure"];
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
@@ -280,11 +282,12 @@ public static partial class ProjectDefinitionReader
                 return new ProjectRunbookDefinition(Get(item, "name") ?? "", List(item, "steps"),
                     List(item, "environments"));
             }).ToArray();
+        var databases = ParseDatabases(lines, issues);
 
         // Staging and Production with the standard lifecycle are the P1 default
         // once the file starts describing a deployment.
         var deploying = artifacts.Length > 0 || steps.Length > 0 || phases.Length > 0 || variables.Length > 0 || tenants.Length > 0 || channels.Length > 0 || runbooks.Length > 0
-            || structure.IsConfigured || Declared("environments");
+            || databases.Length > 0 || structure.IsConfigured || Declared("environments");
         var defaultEnvironments = deploying && !Declared("environments");
         var defaultLifecycle = deploying && !Declared("lifecycles");
         return new(NestedStringList(lines, "pipeline", "build"),
@@ -297,6 +300,7 @@ public static partial class ProjectDefinitionReader
             Runbooks = runbooks,
             Tenants = tenants,
             Channels = channels,
+            Databases = databases,
             Lifecycles = lifecycles,
             Structure = structure,
             EnvironmentsDefaulted = defaultEnvironments,
@@ -443,6 +447,7 @@ public static partial class ProjectDefinitionValidator
         ValidateTenants(value.Tenants, environments, issues);
         ValidateVariables(value.Variables, value.Tenants, environments, value.Channels, issues);
         ValidateStructure(value.Structure, environments, names, issues);
+        ValidateDatabases(value.Databases, value.Variables, environments, issues);
         var runbookNames = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < value.Runbooks.Count; i++)
         {

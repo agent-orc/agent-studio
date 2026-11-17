@@ -86,6 +86,7 @@
       [projectName]="job().projectName"
       (promoted)="referencesChanged.emit()" />
   }
+  <app-off-stable-grade-notice [job]="job()" />
   <app-delivery-claim-panel [job]="job()" />
   <app-human-review-decision-panel [job]="job()" />
   @if (!reviewsOnly()) {

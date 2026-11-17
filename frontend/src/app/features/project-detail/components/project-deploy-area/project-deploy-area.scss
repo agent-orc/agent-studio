@@ -26,6 +26,9 @@
 .deploy-area__link:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 .deploy-area__notices { border-radius: 8px; background: color-mix(in srgb, var(--studio-warn) 10%, var(--studio-surface)); padding: var(--studio-spacing-3); margin-bottom: var(--studio-spacing-4); }
 .deploy-area__notices p + p { margin-top: var(--studio-spacing-2); }
+.deploy-area__refusal { border-radius: 8px; background: color-mix(in srgb, var(--studio-warn) 10%, var(--studio-surface)); padding: var(--studio-spacing-3); margin-bottom: var(--studio-spacing-4); }
+.deploy-area__refusal h2 { font-size: 1rem; margin-bottom: var(--studio-spacing-2); }
+.deploy-area__refusal p + p { margin-top: var(--studio-spacing-2); }
 
 .deploy-section { @include deploy.panel; }
 .deploy-section h2 { margin-bottom: var(--studio-spacing-4); }

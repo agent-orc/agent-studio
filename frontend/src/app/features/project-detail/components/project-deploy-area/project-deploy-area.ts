@@ -12,11 +12,16 @@ import { ProjectEnvironmentOverviewComponent } from '../project-environment-over
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
+import { ManagedDatabasesPanelComponent } from '../managed-databases-panel/managed-databases-panel';
 import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-page/project-secrets-page.component';
 import { FlowHealthPageComponent, type FlowDetailTarget } from '../../../flow-health';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
 import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../services/project-deploy-data.service';
+import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
+import { LocalOwnerSessionService } from '../../../../services/local-owner-session.service';
+import { LocalOwnerDialogComponent } from '../../../../components/local-owner-dialog/local-owner-dialog';
+import { serverCheckoutMissing } from '../../../server-checkout/server-checkout.model';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import {
   DEPLOY_CLOCK,
@@ -34,6 +39,7 @@ import {
   type Release,
   type DeployRunFilter,
   type ArtifactReleaseLookup,
+  type ReleaseGateStatus,
 } from '../../state/deploy-area.model';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
@@ -47,7 +53,8 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
-    ProjectOperationsComponent, HostedDataPanelComponent, ProjectSecretsPageComponent, FlowHealthPageComponent,
+    ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
+    FlowHealthPageComponent, LocalOwnerDialogComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -55,8 +62,10 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
 })
 export class ProjectDeployAreaComponent {
   private readonly data = inject(ProjectDeployDataService);
+  private readonly serverCheckout = inject(ServerCheckoutStore);
   private readonly cardLookup = inject(OperationsCardLookupService);
   private readonly clock = inject(DEPLOY_CLOCK);
+  private readonly localOwner = inject(LocalOwnerSessionService);
   private subscriptions = new Subscription();
   private runReads = new Subscription();
   private releaseReads = new Subscription();
@@ -73,6 +82,12 @@ export class ProjectDeployAreaComponent {
   private openedTarget: { project: string; id: string } | null = null;
 
   readonly projectName = input.required<string>();
+  readonly checkoutMissing = computed(() => {
+    const project = this.serverCheckout.projectFor({ name: this.projectName() });
+    if (!project || !serverCheckoutMissing(project)) return false;
+    const state = this.serverCheckout.statusFor(project.id)?.state;
+    return state !== 'present' && state !== 'ready';
+  });
   readonly releaseTarget = input<{ project: string; id: string } | null>(null);
   readonly initialView = input<DeployView>('overview');
   readonly focusStepId = input<string | undefined>();
@@ -96,6 +111,9 @@ export class ProjectDeployAreaComponent {
   readonly releaseOffset = signal(0);
   readonly pipelinePanel = signal<DeployPanel<PipelineDefinitionResponse>>({ status: 'loading' });
   readonly healthPanel = signal<DeployPanel<EnvironmentHealthResponse>>({ status: 'loading' });
+  readonly releaseGatePanel = signal<DeployPanel<ReleaseGateStatus>>({ status: 'loading' });
+  /** F2: a refused release attempt shows its reason and next step here, not only in the API answer. */
+  readonly releaseRefusal = computed(() => ready(this.releaseGatePanel())?.refusal ?? null);
   readonly logPanel = signal<DeployPanel<DeploymentLogLine[]>>({ status: 'loading' });
   readonly actionState = signal<DeployRunActionState>(IDLE);
   readonly selectedRunId = signal<string | null>(null);
@@ -179,7 +197,8 @@ export class ProjectDeployAreaComponent {
     effect(() => this.view.set(this.initialView()));
     effect(onCleanup => {
       const project = this.projectName();
-      untracked(() => this.load(project, true));
+      const missingCheckout = this.checkoutMissing();
+      if (!missingCheckout) untracked(() => this.load(project, true));
       onCleanup(() => {
         this.subscriptions.unsubscribe();
         this.runReads.unsubscribe();
@@ -220,7 +239,7 @@ export class ProjectDeployAreaComponent {
   }
 
   show(view: DeployView): void {
-    if (view !== 'history' && this.historyFilter() !== ALL_DEPLOY_RUNS) {
+    if (!this.checkoutMissing() && view !== 'history' && this.historyFilter() !== ALL_DEPLOY_RUNS) {
       this.historyFilter.set(ALL_DEPLOY_RUNS);
       this.historyOffset.set(0);
       this.reloadRuns(this.projectName(), false);
@@ -229,7 +248,7 @@ export class ProjectDeployAreaComponent {
     this.viewChange.emit(view);
   }
 
-  refresh(): void { this.load(this.projectName(), false); }
+  refresh(): void { if (!this.checkoutMissing()) this.load(this.projectName(), false); }
 
   openFlowDetail(target: FlowDetailTarget): void {
     if (target === 'steps') this.show('steps');
@@ -265,6 +284,9 @@ export class ProjectDeployAreaComponent {
       || run.environmentName.toLowerCase() === 'production';
     if ((action === 'cancel' && run.state === 'running') || action === 'abort' ||
       (production && (action === 'approve' || action === 'reject'))) {
+      // The server lets only a signed-in Owner or Maintainer decide production; ask for the account first.
+      if (production && this.localOwner.missing() && (action === 'approve' || action === 'reject'))
+        return this.localOwner.run('Production approval needs the owner account.', () => this.act(action, reason));
       const verb = action === 'cancel' || action === 'abort' ? 'Abort' : action === 'approve' ? 'Approve' : 'Reject';
       if (!window.confirm(`${verb} ${run.environmentName} run ${run.id}?`)) return;
     }
@@ -307,7 +329,8 @@ export class ProjectDeployAreaComponent {
       this.releaseOffset.set(0);
       this.releaseTotal.set(0);
       this.artifactReleases.set(new Map());
-      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel] as const)
+      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel,
+        this.releaseGatePanel] as const)
         (target as WritableSignal<DeployPanel<unknown>>).set({ status: 'loading' });
     } else {
       // Refresh retries failed lookups; resolved release records do not change.
@@ -319,6 +342,7 @@ export class ProjectDeployAreaComponent {
     else this.loadReleases(projectName, !resetSelection);
     this.subscriptions.add(this.data.pipeline(projectName).subscribe(panel => this.pipelinePanel.set(panel)));
     this.subscriptions.add(this.data.health(projectName).subscribe(panel => this.healthPanel.set(panel)));
+    this.subscriptions.add(this.data.releaseGate(projectName).subscribe(panel => this.releaseGatePanel.set(panel)));
     this.reloadRuns(projectName, false);
   }
 

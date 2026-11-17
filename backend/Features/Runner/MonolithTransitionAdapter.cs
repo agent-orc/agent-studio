@@ -14,6 +14,12 @@ public static class MonolithTransitionAdapter
     public static AutoReviewStrandingAction AutoReviewBatchRoute(AutoReviewStrandingAction decided,
         AutoReviewStrandingFacts facts, AutoReviewBatchRouteFacts route)
         => AutoReviewStrandingPolicy.RouteBatch(decided, facts, route);
+    public static EngineDeliveryIntegrationAction EngineDeliveryIntegration(EngineDeliveryIntegrationFacts facts)
+        => EngineDeliveryIntegrationPolicy.Decide(facts);
+    public static bool EngineDeliveryIntegrationRetryable(string? integrationOutcome)
+        => EngineDeliveryIntegrationPolicy.IsRetryableOutcome(integrationOutcome);
+    public static bool EngineDeliveryIntegrationPublished(string? integrationOutcome)
+        => EngineDeliveryIntegrationPolicy.IsPublishedOutcome(integrationOutcome);
 
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
@@ -51,6 +57,12 @@ public static class MonolithTransitionAdapter
 
     public static TransitionDecision StageCoding(string taskId, string attemptId, string? targetState)
         => StageDecisionPolicy.Coding(taskId, attemptId, targetState);
+
+    public static bool ReportReviewHostRuns(bool reportOnly, bool monolithOwnsAutoReview)
+        => ReportReviewPolicy.HostRunsReportReview(reportOnly, monolithOwnsAutoReview);
+
+    public static ReportReviewDecision ReportReviewSettle(ReportReviewOutcomeFacts facts)
+        => ReportReviewPolicy.Settle(facts);
 
     public static StagePolicyDecision StageGateTransition(string taskId, string attemptId,
         int failed, int roundsUsed, int roundsAllowed,
@@ -191,6 +203,15 @@ public static class MonolithTransitionAdapter
     public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
         => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
 
+    public static string? BatchCompanionSuiteRefusal(int batchGatesRunning, int companionSuitesRunning)
+        => BatchGateLookAheadPlanner.CompanionSuiteRefusal(batchGatesRunning, companionSuitesRunning);
+
+    public static bool BatchPartnerMissingRoute(string? planEvent)
+        => BatchGateLookAheadPlanner.PartnerMissingRoute(planEvent);
+
+    public static string? PerTaskSuiteRefusal(PerTaskSuiteFacts facts)
+        => BatchGateLookAheadPlanner.PerTaskSuiteRefusal(facts);
+
     public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
         DateTimeOffset nowUtc)
         => BatchGateStartPolicy.Order(formed, nowUtc);
@@ -274,6 +295,14 @@ public static class MonolithTransitionAdapter
         => BatchGateStartPolicy.EndInterruptedIsolation(red, flightActive,
             hasPendingMember, allMembersHaveFindings);
 
+    // AGT-3858: a red cohort that no isolation child reproduced.
+    public static bool BatchRedIsFlakySuspect(int childRuns, bool everyChildPassed, bool everyChildOnCohortCode)
+        => BatchFlakySuspectPolicy.IsFlakySuspect(childRuns, everyChildPassed, everyChildOnCohortCode);
+
+    public static bool BatchRegatesFlakySuspectCohort(bool flakySuspect, bool alreadyRegated,
+        bool isolationRetry, int remainingMembers)
+        => BatchFlakySuspectPolicy.RegatesCohort(flakySuspect, alreadyRegated, isolationRetry, remainingMembers);
+
     public static string BatchFlightLeaseDeadlineReason(int deadlineMinutes)
         => BatchGateStartPolicy.LeaseDeadlineReason(deadlineMinutes);
 
@@ -301,8 +330,12 @@ public static class MonolithTransitionAdapter
         => BatchFlightClaimPolicy.DeadlineMinutes(stage, reservationDeadlineMinutes, gateTimeoutMinutes);
 
     public static string BatchFlightExpiryReason(BatchFlightStage stage, BatchFlightClaimExpiry expiry,
-        BatchFlightExpiryOutcome outcome, int deadlineMinutes)
-        => BatchFlightClaimPolicy.ExpiryReason(stage, expiry, outcome, deadlineMinutes);
+        BatchFlightExpiryOutcome outcome, int deadlineMinutes, string? heldBy = null)
+        => BatchFlightClaimPolicy.ExpiryReason(stage, expiry, outcome, deadlineMinutes, heldBy);
+
+    public static BatchFlightClaimExpiry BatchFlightClaimExpiryClassified(BatchFlightStage stage,
+        BatchFlightClaimExpiry expiry, bool perTaskJobHoldsReservation)
+        => BatchFlightClaimPolicy.Classify(stage, expiry, perTaskJobHoldsReservation);
 
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
 

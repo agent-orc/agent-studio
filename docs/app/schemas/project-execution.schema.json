@@ -882,6 +882,38 @@
         ]
       }
     },
+    "databases": {
+      "description": "Managed databases the run zone provisions per environment (AGT-3877, IP-D5 option B). Studio generates each password, stores it in the secret provider and binds it to the environment; the app container receives the connection string as a tmpfs file named by <variable>_FILE. Removing an entry keeps the data until an owner deletes it. A deploy may change the minor version; a major version change is refused.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "engine", "version"],
+        "properties": {
+          "name": {
+            "description": "Database, role and volume name; unique per environment.",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,30}$"
+          },
+          "engine": { "description": "Database engine.", "enum": ["postgres"] },
+          "version": {
+            "description": "PostgreSQL major version or major.minor, 14 to 17, such as 16 or 16.4.",
+            "type": "string",
+            "pattern": "^[1-9][0-9]?(?:\\.(?:0|[1-9][0-9]{0,2}))?$"
+          },
+          "size": {
+            "description": "Container limits: small 0.5 CPU and 512 MB, medium 1 CPU and 1 GB, large 2 CPUs and 4 GB. Default small.",
+            "enum": ["small", "medium", "large"]
+          },
+          "variable": {
+            "description": "Name of the connection string; the app reads it from the file named in <variable>_FILE. Default DATABASE_URL.",
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "environments": { "$ref": "#/$defs/environmentScope" }
+        }
+      }
+    },
     "structure": {
       "description": "Deployment structure for the Operations structure view: regions, placements (clusters, namespaces, VMs, servers or runner deploy target kinds) and managed services. Declares shape only; addresses and credentials stay in environment declarations and the operator inventory. Artifact registry destinations are declared per artifact, with secret references for private registries.",
       "type": "object",
@@ -1244,6 +1276,9 @@
             },
             {
               "required": ["runbooks"]
+            },
+            {
+              "required": ["databases"]
             },
             {
               "required": [

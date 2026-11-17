@@ -28,7 +28,8 @@ public sealed class RemoteDispatchRejectionStore
         string? runnerName,
         string code,
         string? reason,
-        DateTime? rejectedAtUtc = null)
+        DateTime? rejectedAtUtc = null,
+        string? capability = null)
     {
         var next = new RemoteDispatchRejection
         {
@@ -37,6 +38,7 @@ public sealed class RemoteDispatchRejectionStore
             RunnerName = Normalize(runnerName, 200, "unknown runner"),
             Reason = Normalize(reason, 1000, "Remote dispatch was rejected without a diagnostic."),
             RejectedAtUtc = (rejectedAtUtc ?? DateTime.UtcNow).ToUniversalTime(),
+            Capability = string.IsNullOrWhiteSpace(capability) ? null : Normalize(capability, 200, capability.Trim()),
         };
         var previous = Read(task.FolderPath);
         if (previous is not null
@@ -44,7 +46,8 @@ public sealed class RemoteDispatchRejectionStore
             && string.Equals(previous.Code, next.Code, StringComparison.Ordinal)
             && string.Equals(previous.RunnerId, next.RunnerId, StringComparison.Ordinal)
             && string.Equals(previous.RunnerName, next.RunnerName, StringComparison.Ordinal)
-            && string.Equals(previous.Reason, next.Reason, StringComparison.Ordinal))
+            && string.Equals(previous.Reason, next.Reason, StringComparison.Ordinal)
+            && string.Equals(previous.Capability, next.Capability, StringComparison.Ordinal))
             return previous;
 
         EnsureLaneEntryAnchor(task);

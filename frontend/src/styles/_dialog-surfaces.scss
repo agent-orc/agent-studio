@@ -726,6 +726,21 @@
   bottom: 14px;
   flex-direction: column-reverse;
 }
+/* Below-toolbar pile (AGT-3873): a refusal toast docks under the task tab
+   toolbar and the card's refusal banner, whose actions it repeats, instead
+   of covering them. The stack component sets `top` from the measured tab
+   bar; narrow screens stack it full width below the toolbar. */
+.app-notify-stack--below-toolbar {
+  top: 96px;
+  max-width: min(440px, 92vw);
+}
+@media (max-width: 720px) {
+  .app-notify-stack--below-toolbar {
+    left: var(--studio-spacing-2);
+    right: var(--studio-spacing-2);
+    max-width: none;
+  }
+}
 .app-notify {
   pointer-events: auto;
   display: block;

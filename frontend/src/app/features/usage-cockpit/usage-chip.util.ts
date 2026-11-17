@@ -1,3 +1,4 @@
+import { formatZonedWithUtc } from '../../services/usage-time.util';
 import type {
   UsageCli,
   UsageCliWindow,
@@ -72,34 +73,13 @@ export function formatUsdCompact(value: number | null | undefined): string | nul
 
 // ------------------------------------------------------------------ time
 
-function validZone(timeZone: string | null | undefined): string {
-  if (!timeZone) return 'UTC';
-  try {
-    new Intl.DateTimeFormat('en-GB', { timeZone });
-    return timeZone;
-  } catch {
-    return 'UTC';
-  }
-}
-
-function formatInZone(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone, weekday: 'short', day: 'numeric', month: 'short',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).format(date);
-}
-
 /**
  * Workspace-local time with its UTC equivalent (HUC-05):
- * `Mon 29 Sept, 09:00 Europe/Berlin (Mon 29 Sept, 07:00 UTC)`.
+ * `Mon 29 Sept, 09:00 Europe/Berlin (Mon 29 Sept, 07:00 UTC)`. The format is
+ * owned by `usage-time.util` and shared by every usage surface.
  */
 export function formatLocalWithUtc(iso: string | null | undefined, timeZone: string | null | undefined): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  const zone = validZone(timeZone);
-  const local = `${formatInZone(date, zone)} ${zone}`;
-  return zone === 'UTC' ? local : `${local} (${formatInZone(date, 'UTC')} UTC)`;
+  return formatZonedWithUtc(iso, timeZone);
 }
 
 // --------------------------------------------------------------- windows
@@ -161,10 +141,13 @@ function windowView(window: UsageCliWindow | null, kind: UsageWindowKind, timeZo
     };
   }
   const reset = formatLocalWithUtc(window?.resetAtUtc, timeZone) ?? window?.resetLabel ?? null;
+  const resetMs = window?.resetAtUtc ? Date.parse(window.resetAtUtc) : NaN;
+  const weeklyStart = kind === 'weekly' && Number.isFinite(resetMs)
+    ? formatLocalWithUtc(window?.startAtUtc ?? new Date(resetMs - 7 * 86_400_000).toISOString(), timeZone) : null;
   return {
     kind, tag, value: pct, reported: true,
       spoken: `${spokenName} ${percentSpoken(pct)} used`,
-    detail: `${providerLabel}: ${pct} used${reset ? `, resets ${reset}` : ''}`,
+    detail: `${providerLabel}: ${pct} used${reset ? `, resets ${reset}` : ''}${weeklyStart ? `; provider week ${weeklyStart} to ${reset}` : ''}`,
   };
 }
 
@@ -384,19 +367,23 @@ export function buildCostChipView(
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
   const dayStart = formatLocalWithUtc(cost.calendar?.dayStartUtc, zone);
   const updated = formatLocalWithUtc(coverage?.observedAt, zone);
-  const spokenValue = unknown ? 'unavailable' : `${exact} USD ledger estimate`;
+  const latestReceipt = formatLocalWithUtc(cost.latestReceiptAt, zone);
+  const missing = cost.unpricedTodayRuns ?? 0;
+  const missingText = missing > 0 ? ` priced subtotal + ${missing} ${missing === 1 ? 'run' : 'runs'} without price` : '';
+  const spokenValue = unknown ? 'unavailable' : `${exact} USD ledger estimate${missingText}`;
   const budget = budgetClause(cost, state, alarms, now);
   return {
     state,
     alarm,
-    value: unknown ? NOT_AVAILABLE : formatUsdCompact(cost.todayUsd) ?? NOT_AVAILABLE,
+    value: unknown ? NOT_AVAILABLE : `${formatUsdCompact(cost.todayUsd) ?? NOT_AVAILABLE}${missing > 0 ? '*' : ''}`,
     exact: unknown ? null : exact,
     ariaLabel: join(`Today's cost, ${spokenValue}.`, alarmText, stateClause, budget, 'Open cost detail.'),
     detail: [
-      unknown ? "Today's cost: unavailable" : `Today's cost: ${exact} USD, token-ledger estimate`,
+      unknown ? "Today's cost: unavailable" : `Today's cost: ${exact} USD, token-ledger estimate${missingText}`,
       ...alarms.map(a => a.label),
       dayStart ? `Day starts ${dayStart}` : null,
       updated ? `Updated ${updated}` : null,
+      latestReceipt ? `Latest receipt ${latestReceipt}` : null,
       stateClause || null,
       budget || null,
     ].filter(Boolean).join('\n'),

@@ -47,6 +47,14 @@ public sealed class QuotaWindowProjectionTests
         => Assert.Null(QuotaWindowProjection.InferWindowLength("credits"));
 
     [Fact]
+    public void QuotaWindow_ExposesBackendWindowLengthToClients()
+    {
+        Assert.Equal(5, new QuotaWindow { Label = "5-hour" }.WindowHours);
+        Assert.Equal(168, new QuotaWindow { Label = "Weekly" }.WindowHours);
+        Assert.Null(new QuotaWindow { Label = "credits" }.WindowHours);
+    }
+
+    [Fact]
     public void Project_HalfwayThrough5HourAt60Pct_ProjectsBreach()
     {
         // 5-hour window, resets in 2.5h -> 2.5h elapsed -> 50% of window gone.
