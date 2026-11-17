@@ -91,8 +91,15 @@ public sealed class ReviewDaemonDrainTests : IDisposable
         var options = Options();
         using var client = new TaskServerClient(http, options.RunnerId, usesDurableTaskServer: true, options: options);
         var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var reprobeObserved = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var sampler = new HostTelemetrySampler(options);
-        var daemon = new RemoteReviewDaemon(options, client, logs.Enqueue,
+        var daemon = new RemoteReviewDaemon(options, client, line =>
+            {
+                logs.Enqueue(line);
+                if (line.Contains("provider-auth reprobe-request capability=provider-auth:claude",
+                        StringComparison.Ordinal))
+                    reprobeObserved.TrySetResult(server.CapabilityAdvertisements);
+            },
             (activeSlots, _) => sampler.SampleNow(activeSlots) with
             { CpuPercent = 1, Load1 = 0, Load5 = 0, Load15 = 0, CpuCores = Environment.ProcessorCount },
             planeBudgetProbe: OpenPlane());
@@ -100,7 +107,8 @@ public sealed class ReviewDaemonDrainTests : IDisposable
         var run = daemon.RunAsync(shutdown.Token);
         try
         {
-            while (server.CapabilityAdvertisements < 2)
+            var advertisementsBeforeReprobe = await reprobeObserved.Task.WaitAsync(shutdown.Token);
+            while (server.CapabilityAdvertisements <= advertisementsBeforeReprobe)
                 await Task.Delay(20, shutdown.Token);
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
