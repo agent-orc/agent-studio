@@ -69,7 +69,7 @@ test('near-exhausted window shows what is left and the two Ready cards that woul
   await expect(footer.getByTestId('footer-usage-claude')).toContainText('97%', { timeout: 60_000 });
   // The capacity view is read only while the detail is open.
   expect(capacityReads).toBe(0);
-  await footer.getByTestId('footer-usage-claude').click();
+  await footer.getByTestId('footer-usage-cost').click();
   const surface = page.getByTestId('usage-detail-surface');
   await expect(surface).toBeVisible();
 
@@ -106,7 +106,7 @@ test('near-exhausted window shows what is left and the two Ready cards that woul
 
   await page.getByTestId('usage-detail-close').click();
   await page.setViewportSize({ width: 390, height: 900 });
-  await footer.getByTestId('footer-usage-claude').click();
+  await footer.getByTestId('footer-usage-cost').click();
   await expect(surface).toHaveAttribute('data-mode', 'sheet');
   await surface.getByTestId('usage-detail-jump-capacity').click();
   await expect(cards).toHaveCount(2);

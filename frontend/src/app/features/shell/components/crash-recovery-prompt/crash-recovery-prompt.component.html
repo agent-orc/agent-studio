@@ -2,10 +2,10 @@
   <button type="button"
           class="crp__entry"
           data-testid="crash-recovery-entry"
-          [attr.aria-label]="'Review ' + reviewPending().length + ' pending crash recovery ' + (reviewPending().length === 1 ? 'item' : 'items')"
+          [attr.aria-label]="entryLabel()"
           (click)="openRecovery()">
     <app-studio-icon name="archive" [size]="14"></app-studio-icon>
-    <span>Recovery pending</span>
+    <span>Recovery pending </span>
     <span class="crp__entry-count">{{ reviewPending().length }}</span>
   </button>
 }

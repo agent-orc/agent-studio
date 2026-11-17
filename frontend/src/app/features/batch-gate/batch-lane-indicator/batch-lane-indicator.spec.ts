@@ -69,6 +69,11 @@ describe('BatchLaneIndicatorComponent', () => {
     expect(alert()!.dataset['tone']).toBe('danger');
     expect(alert()!.textContent!.trim()).toBe('Batch batch-14 red');
     expect(button().textContent).toContain('AGT-2 proven red');
+    expect(button().querySelector('[data-testid="batch-lane-held"]')!.textContent).toBe('blocks no cards');
+    state.set({ ...isolatedRedState, batches: isolatedRedState.batches.map(batch => batch.batchId === 'batch-14'
+      ? { ...batch, heldTaskKeys: ['AGT-1', 'AGT-3'] } : batch) });
+    await fixture.whenStable();
+    expect(button().querySelector('[data-testid="batch-lane-held"]')!.textContent).toBe('2 cards wait on it');
     state.set(redHalvingState);
     await fixture.whenStable();
     expect(button().dataset['batchAlert']).toBe('isolating');
@@ -100,5 +105,27 @@ describe('BatchLaneIndicatorComponent', () => {
       await fixture.whenStable();
       expect(fixture.nativeElement.textContent).toContain('0 running');
     }
+  });
+  it('F14: leads with the red state and culprit and truncates only the counts line', async () => {
+    const state = signal<BatchGateState | null>(isolatedRedState);
+    await TestBed.configureTestingModule({ imports: [BatchLaneIndicatorComponent], providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService, useValue: { state: () => state.asReadonly(), watch: vi.fn(() => vi.fn()) },
+    }] }).compileComponents();
+    const fixture = TestBed.createComponent(BatchLaneIndicatorComponent);
+    fixture.componentRef.setInput('laneState', '5-human-review');
+    fixture.componentRef.setInput('jobs', [{ projectName: 'Demo App' }, { projectName: 'Other' }] as TaskInfo[]);
+    await fixture.whenStable();
+    const button = fixture.nativeElement.querySelector('[data-testid="batch-lane-indicator"]') as HTMLElement;
+    const alertLine = button.querySelector('[data-testid="batch-lane-alert-line"]') as HTMLElement;
+    const summary = button.querySelector('[data-testid="batch-lane-summary"]') as HTMLElement;
+    expect(button.firstElementChild).toBe(alertLine);
+    expect(alertLine.querySelector('[data-testid="batch-lane-alert"]')!.textContent!.trim()).toBe('Batch batch-14 red');
+    expect(alertLine.querySelector('[data-testid="batch-lane-culprits"]')!.textContent!.trim()).toBe('AGT-2 proven red');
+    expect(alertLine.textContent).not.toContain('Demo App');
+    expect(summary.textContent!.trim().startsWith('Demo App ·')).toBe(true);
+    expect(alertLine.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(getComputedStyle(button).whiteSpace).not.toBe('nowrap');
+    expect(getComputedStyle(alertLine).whiteSpace).not.toBe('nowrap');
+    expect(getComputedStyle(summary).textOverflow).toBe('ellipsis');
   });
 });

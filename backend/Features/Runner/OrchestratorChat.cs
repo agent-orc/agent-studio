@@ -1041,6 +1041,7 @@ public class OrchestratorChatService
                 Ts = turn.FinishedAt ?? turn.Ts,
                 Source = AdHocUsageSources.ChatTurn,
                 Model = usage.Model ?? turn.Model ?? "",
+                CliType = usage.CliType,
                 InputTokens = usage.InputTokens,
                 OutputTokens = usage.OutputTokens,
                 CacheReadTokens = usage.CacheReadTokens,

@@ -4,6 +4,7 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 import { withRouteSegment } from '../../../../services/url-hash.util';
 import { AcceptanceReadinessStore } from '../../state/acceptance-readiness.store';
 import { readinessPresentation } from '../../models/acceptance-readiness.model';
+import { acceptancePrimaryReason } from '../../models/acceptance-primary-reason';
 
 /**
  * AGT-3564 - a Human Review card's acceptance readiness in plain words: the
@@ -24,6 +25,8 @@ export class AcceptanceReadinessNoteComponent {
 
   readonly item = computed(() => this.job().state === TaskState.HumanReview ? this.store.itemFor(this.job()) : null);
   readonly tone = computed(() => readinessPresentation(this.item()?.readiness ?? 'blocked').tone);
+  /** F12: the same next step the toolbar and the acceptance grounds name. */
+  readonly nextStep = computed(() => acceptancePrimaryReason(this.item())?.nextStep ?? null);
 
   /** The card's review evidence tab, where the review report renders. */
   readonly reportHref = computed(() => {

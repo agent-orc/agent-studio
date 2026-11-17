@@ -87,13 +87,14 @@
           <button type="button"
                   class="cud__project-row"
                   [attr.data-testid]="'cli-usage-detail-project-' + p.slug"
-                  [attr.aria-label]="'Open ' + p.project + ' settings'"
+                  [attr.aria-label]="p.unattributed ? p.project : 'Open ' + p.project + ' settings'"
+                  [disabled]="p.unattributed"
                   [cacTooltip]="projectTooltip(p)"
                   (click)="openProjectSettings.emit(p.project)">
             <span class="cud__project-name">{{ p.project }}</span>
             <span class="cud__project-stat cud__num">{{ formatTokens(p.totalTokens) }}</span>
             <span class="cud__project-stat cud__num">{{ formatUsd(p.estimatedApiCostUsd) }}</span>
-            <span class="cud__project-go" aria-hidden="true">›</span>
+            @if (!p.unattributed) { <span class="cud__project-go" aria-hidden="true">›</span> }
           </button>
         }
       </div>
@@ -191,35 +192,26 @@
           </div>
         </div>
 
-        @if (sourceRowsFor(row.cliType).length > 0) {
-          <div class="cud__panel">
-            <h5>Top sources</h5>
-            <table>
-              <thead>
-                <tr>
-                  <th>Source</th>
-                  <th class="cud__num">Calls</th>
-                  <th class="cud__num">Tokens</th>
-                  <th class="cud__num">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                @for (source of sourceRowsFor(row.cliType); track source.source) {
-                  <tr>
-                    <td><code>{{ source.source }}</code></td>
-                    <td class="cud__num">{{ source.calls }}</td>
-                    <td class="cud__num">{{ formatTokens(source.inputTokens + source.outputTokens + source.cacheReadTokens + source.cacheCreationTokens) }}</td>
-                    <td class="cud__num">{{ formatUsd(source.estimatedApiCostUsd) }}</td>
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-        }
       </section>
     }
   </div>
 
+  }
+
+  @if (oneShotSources().length > 0) {
+    <section class="cud__panel" data-testid="cli-usage-one-shot-sources">
+      <h4>One-shot jobs by source (all time)</h4>
+      <table>
+        <thead><tr><th>Source</th><th class="cud__num">Calls</th><th class="cud__num">Tokens</th><th class="cud__num">Cost</th></tr></thead>
+        <tbody>
+          @for (source of oneShotSources(); track source.source) {
+            <tr><td><code>{{ source.source }}</code></td><td class="cud__num">{{ source.calls }}</td>
+              <td class="cud__num">{{ formatTokens(source.inputTokens + source.outputTokens + source.cacheReadTokens + source.cacheCreationTokens) }}</td>
+              <td class="cud__num">{{ formatUsd(source.estimatedApiCostUsd) }}</td></tr>
+          }
+        </tbody>
+      </table>
+    </section>
   }
 
   <section class="cud__jobs" data-testid="cli-usage-detail-top-jobs">

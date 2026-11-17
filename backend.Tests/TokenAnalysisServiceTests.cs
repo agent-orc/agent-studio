@@ -54,12 +54,29 @@ public sealed class TokenAnalysisServiceTests : IDisposable
         Assert.Equal(350, card.Slices.Where(slice => slice.Kind == TokenUsageKinds.ReviewAspect).Sum(TokenAnalysisFold.SliceTotal));
         Assert.Equal(7, result.Days);
         Assert.Equal(now.Date.AddDays(-6), result.From);
+        var unattributed = Assert.Single(result.Remainders, row => row.Project == "Unattributed one-shot jobs");
+        Assert.Equal(6, unattributed.TotalTokens);
+        Assert.Equal(TokenUsageKinds.Enrichment, Assert.Single(unattributed.Slices).Kind);
 
         var detail = service.CardDetail(new TokenAnalysisProjectSource("PROJ-1", Project, _watchPath), "AGT-1");
         Assert.NotNull(detail);
         Assert.Equal(card.TotalTokens, detail!.Events.Sum(e => e.Total));
         Assert.Contains(detail.Events, e => e.Kind == TokenUsageKinds.Coding && e.DurationMs == 600_000);
         Assert.Null(service.CardDetail(new TokenAnalysisProjectSource("PROJ-1", Project, _watchPath), "missing"));
+
+        var sources = new[] { new TokenAnalysisProjectSource("PROJ-1", Project, _watchPath) };
+        var claude = service.SubscriptionWeek("claude", "claude-account",
+            new QuotaWindow { Label = "Weekly", UsedPct = 35, ResetAt = now.AddDays(6).AddHours(9) },
+            now, sources, false);
+        var codex = service.SubscriptionWeek("codex", "codex-account",
+            new QuotaWindow { Label = "Weekly", UsedPct = 42, ResetAt = now.AddDays(6).AddHours(12) },
+            now, sources, false);
+        Assert.Equal(433, claude.TotalTokens);
+        Assert.Equal(1_100, codex.TotalTokens);
+        Assert.Equal(2, claude.ReceiptCount);
+        Assert.Contains(claude.Receipts, item => item.Card == "AGT-1" && item.Kind == TokenUsageKinds.ReviewAspect);
+        Assert.Equal(now.AddDays(-1).AddHours(9), claude.StartUtc);
+        Assert.Equal(now.AddDays(-1).AddHours(12), codex.StartUtc);
     }
 
     [Fact]

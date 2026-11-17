@@ -15,9 +15,12 @@ export type NotificationKind = 'success' | 'info' | 'warning' | 'error' | 'accen
  * notification pile). `bottom-right` is reserved for toasts that would
  * otherwise collide with a top-right surface — e.g. the Move/Undo action
  * toast, which must not cover the task-detail context menu that opens in
- * the same top-right corner.
+ * the same top-right corner. `below-toolbar` docks under the task tab
+ * toolbar and the card's refusal banner, for a refusal toast whose action
+ * also lives in that toolbar (AGT-3873); on a narrow screen it spans the
+ * width below them.
  */
-export type NotificationPosition = 'top-right' | 'bottom-right';
+export type NotificationPosition = 'top-right' | 'bottom-right' | 'below-toolbar';
 
 export type ConfirmDialogKind = 'danger' | 'primary';
 

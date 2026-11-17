@@ -153,6 +153,31 @@ function payloadField(error: HttpErrorResponse, field: string): string | null {
 }
 
 /**
+ * AGT-3873: a refused completion in the words of its actual gap. A concerns
+ * verdict on the current brief is not a brief mismatch, and a missing report
+ * cannot be overridden.
+ */
+function contentGapRefusal(message: string): LaneMoveRefusal {
+  if (/required report is missing/i.test(message)) {
+    return {
+      sentence: "This card's required report is missing, so it cannot be accepted.",
+      nextAction: 'Open the card and send the round that writes the report; an override cannot replace it.',
+    };
+  }
+  const verdict = /\b([a-z]+-fit) verdict was ([a-z]+)/i.exec(message);
+  if (verdict) {
+    return {
+      sentence: `The ${verdict[1]} review returned ${verdict[2]}, so this card needs your decision before it is accepted.`,
+      nextAction: 'Open the card to review it again, or accept it there with a written reason.',
+    };
+  }
+  return {
+    sentence: "This card's review does not cover its current brief, so it cannot be accepted yet.",
+    nextAction: 'Open the card and rerun its review, or accept it there with a written reason.',
+  };
+}
+
+/**
  * Plain wording for a lane move the server refused as an expected outcome
  * (HTTP 409), or null for a genuine failure that keeps the error dialog.
  */
@@ -165,10 +190,7 @@ export function describeMoveRefusal(
   const code = payloadField(error, 'code');
   const message = payloadField(error, 'error') ?? '';
   if (code === 'completion-content-gap' || message.startsWith('Completion refused:')) {
-    return {
-      sentence: "This card's review does not cover its current brief, so it cannot be accepted yet.",
-      nextAction: 'Open the card and rerun its review, or accept it there with a written reason.',
-    };
+    return contentGapRefusal(message);
   }
   if (code === 'run-attempt-missing') {
     return {

@@ -313,7 +313,9 @@ public sealed class TaskListGitProjectionCache
         _sidecarStamps.GetOrAdd(NormalizePath(path), _sidecarStamp);
     }
 
-    internal bool MarkTaskInputChanged(string path)
+    /// <param name="taskFolder">The task folder the input belongs to; defaults to
+    /// the review subject's folder two levels up (<c>&lt;task&gt;/logs/</c>).</param>
+    internal bool MarkTaskInputChanged(string path, string? taskFolder = null)
     {
         var key = NormalizePath(path);
         try
@@ -331,7 +333,7 @@ public sealed class TaskListGitProjectionCache
         }
         // ReviewSubjectStore writes under <task>/logs/. The version belongs to
         // the task folder used by ReadTask and the indexer's input signature.
-        var taskFolder = Path.GetDirectoryName(Path.GetDirectoryName(path) ?? path) ?? path;
+        taskFolder ??= Path.GetDirectoryName(Path.GetDirectoryName(path) ?? path) ?? path;
         _subjectVersions.AddOrUpdate(NormalizePath(taskFolder),
             1, (_, version) => version + 1);
         Interlocked.Increment(ref _generation);

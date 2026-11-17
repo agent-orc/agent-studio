@@ -218,27 +218,27 @@
                 <app-quality-studio-explorer-row [projectName]="p.name" [displayLabel]="p.displayLabel" />
                 @for (u of p.urls; track u.id) {
                   <app-tree-row level="child" glyph="link"
-                                [hasActions]="true"
+                                [hasActions]="u.id !== 'repo'"
                                 [label]="u.label"
-                                [ariaLabel]="u.label + ', opens ' + u.url + ' as an embedded preview tab'"
+                                [ariaLabel]="urlAriaLabel(p, u)"
                                 [tooltip]="urlTooltip(p, u)"
                                 [tooltipTestId]="'studio-explorer-project-url-tooltip-' + p.name + '-' + u.id"
                                 [testid]="'studio-explorer-project-url-' + p.name + '-' + u.id"
                                 (selectRequest)="openUrlPreview(p.name, u.id)">
-                    <span class="studio-url-status-dot"
+                    @if (u.id !== 'repo') { <span class="studio-url-status-dot"
                           [class.studio-url-status-dot--running]="urlProbe.statusFor(p.projectId ?? '', u.id) === 'running'"
                           [class.studio-url-status-dot--offline]="urlProbe.statusFor(p.projectId ?? '', u.id) === 'offline'"
                           [attr.data-testid]="'studio-explorer-project-url-dot-' + p.name + '-' + u.id"
                           [attr.data-status]="urlProbe.statusFor(p.projectId ?? '', u.id)"
-                          [attr.aria-label]="urlProbe.statusFor(p.projectId ?? '', u.id)"></span>
-                    <button rowActions type="button"
+                          [attr.aria-label]="urlProbe.statusFor(p.projectId ?? '', u.id)"></span> }
+                    @if (u.id !== 'repo') { <button rowActions type="button"
                             class="studio-tree-row__url-ext"
                             [attr.data-testid]="'studio-explorer-project-url-ext-' + p.name + '-' + u.id"
                             cacTooltip="Open in external browser"
                             aria-label="Open in external browser"
                             (click)="openUrlExternal(u.url, $event)">
                       <app-studio-icon name="send" [size]="10" />
-                    </button>
+                    </button> }
                   </app-tree-row>
                 }
               </div>

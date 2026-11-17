@@ -19,7 +19,7 @@
   </div>
 
   @if (typeBreakdown().length > 1) {
-    <span class="tup__section-title">By type</span>
+    <span class="tup__section-title">By type (current attempt)</span>
     <table class="tup__table" data-testid="token-usage-by-type">
       <tbody>
         @for (row of typeBreakdown(); track row.kind) {
@@ -30,6 +30,15 @@
           </tr>
         }
       </tbody>
+      @if (currentAttemptTotal(); as total) {
+        <tfoot>
+          <tr data-testid="token-usage-by-type-total">
+            <th>Current attempt total</th>
+            <td class="tup__num">{{ formatTokens(total.tokens) }}</td>
+            <td class="tup__num">{{ total.costLabel }}</td>
+          </tr>
+        </tfoot>
+      }
     </table>
   }
 

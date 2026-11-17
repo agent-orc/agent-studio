@@ -2,6 +2,15 @@ namespace AgentStudio.Pipeline;
 
 public sealed partial class MergeIntoDevelopRunner
 {
+    private string MergeSubjectFor(string jobId, string? watchPath = null)
+    {
+        var task = _taskScanner?.FindJob(jobId, watchPath);
+        var key = task?.Key ?? jobId;
+        var title = string.Join(' ', (task?.Title ?? "Task delivery")
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return $"Integrate {key}: {title}";
+    }
+
     /// <summary>
     /// Integrates a delivery that is behind the release line (AGT-3435). The
     /// rebased-onto-main rule of AGT-2224 only existed so the tested SHA could
@@ -58,8 +67,9 @@ public sealed partial class MergeIntoDevelopRunner
                     delivery.Ref,
                     delivery.ExpectedResultSha ?? string.Empty,
                     releaseBranch,
-                    ct)
-                : _git.MergeBranchIntoIntegration(repoRoot, delivery.Ref, releaseBranch, ct);
+                    ct, MergeSubjectFor(jobId))
+                : _git.MergeBranchIntoIntegration(repoRoot, delivery.Ref, releaseBranch, ct,
+                    MergeSubjectFor(jobId));
             if (!merge.Outcome.IsFreshMerge())
             {
                 // Conflict, error, or a release line that already carries the

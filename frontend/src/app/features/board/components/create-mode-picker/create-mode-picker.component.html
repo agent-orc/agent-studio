@@ -1,15 +1,19 @@
 <div class="field">
   <span class="field__label">Mode</span>
-  <app-segmented-control data-testid="create-mode" [options]="segmentedModeOptions" [value]="mode()" ariaLabel="Task mode" (valueChange)="setMode($event)" />
-  <button type="button"
-          class="create-web-toggle"
-          role="switch"
-          [class.create-web-toggle--on]="allowWebAccess()"
-          [attr.aria-checked]="allowWebAccess()"
-          data-testid="create-web-access"
-          [cacTooltip]="'Allow the agent to access the web during this task'"
-          (click)="toggleWebAccess()">
-    <span class="create-web-toggle__track" aria-hidden="true"><span class="create-web-toggle__thumb"></span></span>
-    <span class="create-web-toggle__text">🌐 Allow web access</span>
-  </button>
+  <!-- Mode and its web-access switch are one Tab stop; arrow keys move between them (AGT-3834). -->
+  <div class="create-mode-picker__toolbar" role="toolbar" aria-label="Mode and web access" data-testid="create-mode-toolbar" appRovingFocus>
+    <app-segmented-control data-testid="create-mode" [options]="segmentedModeOptions" [value]="mode()" ariaLabel="Task mode" [rovingFocus]="false" (valueChange)="setMode($event)" />
+    <button type="button"
+            class="create-web-toggle"
+            role="switch"
+            data-roving-item
+            [class.create-web-toggle--on]="allowWebAccess()"
+            [attr.aria-checked]="allowWebAccess()"
+            data-testid="create-web-access"
+            [cacTooltip]="'Allow the agent to access the web during this task'"
+            (click)="toggleWebAccess()">
+      <span class="create-web-toggle__track" aria-hidden="true"><span class="create-web-toggle__thumb"></span></span>
+      <span class="create-web-toggle__text">🌐 Allow web access</span>
+    </button>
+  </div>
 </div>

@@ -555,9 +555,12 @@ public sealed partial class BatchGateStore
     /// </summary>
     public IReadOnlyList<BatchGateManifest> ListManifests()
     {
+        Interlocked.Increment(ref _manifestListings);
         var manifests = new List<BatchGateManifest>();
-        foreach (var folder in ListManifestFolders())
+        var folders = ListManifestFolders();
+        foreach (var folder in folders)
             if (TryReadManifestIn(folder, out var manifest)) manifests.Add(manifest);
+        ForgetRemovedManifests(folders);
         return InFormationOrder(manifests);
     }
 
@@ -566,8 +569,8 @@ public sealed partial class BatchGateStore
             .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
 
     /// <summary>
-    /// Folders that hold a closed manifest. A manifest is written once, so a
-    /// caller that polls can read each folder's manifest once and cache it.
+    /// Folders that hold a closed manifest. A manifest is written once; the
+    /// store parses each one once and serves later reads from its cache (AGT-3864).
     /// </summary>
     public IReadOnlyList<string> ListManifestFolders()
         => !Directory.Exists(_root) ? []
@@ -655,8 +658,11 @@ public sealed partial class BatchGateStore
             var projection = FailureProjection(project, now: now);
             projection.Failures.RemoveAll(failure => failure.AtUtc < now.AddDays(-90));
             projection.UnreadableFacts.RemoveAll(fact => fact.CompletedAtUtc < now.AddDays(-90));
+            var suspects = ListFlakySuspects(project).Where(view => view.Active)
+                .Select(view => view.Mark.BatchId + "/" + view.Mark.RedRunId)
+                .ToHashSet(StringComparer.Ordinal);
             return new BatchTestFailureReport(project, windowDays,
-                BatchGateFailureRanking.Rank(projection.Failures, now, windowDays),
+                BatchGateFailureRanking.Rank(projection.Failures, now, windowDays, suspects),
                 projection.UnreadableFacts.Count(fact => fact.CompletedAtUtc >= now.AddDays(-windowDays)
                     && fact.CompletedAtUtc <= now));
         }
