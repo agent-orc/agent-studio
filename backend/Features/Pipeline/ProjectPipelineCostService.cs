@@ -154,7 +154,7 @@ public sealed class ProjectPipelineCostService
             {
                 // Every execution of the step in this attempt, repeats across
                 // review rounds included, each priced at its own model.
-                foreach (var run in StepCostMeasurement.Executions(pricing, s))
+                foreach (var run in PipelineStoredUsageNormalization.CostExecutions(pricing, s))
                 {
                     var stepTokens = StepCostMeasurement.Tokens(run);
                     var est = stepTokens > 0
@@ -372,7 +372,7 @@ public sealed class ProjectPipelineCostService
             foreach (var step in attempts.SelectMany(attempt => attempt.Steps))
             {
                 if (ReconciledFamily(step.Kind) is not { } family) continue;
-                foreach (var run in StepCostMeasurement.Executions(pricing, step))
+                foreach (var run in PipelineStoredUsageNormalization.CostExecutions(pricing, step))
                 {
                     if (StepCostMeasurement.Tokens(run) <= 0) continue;
                     measuredCalls.Add(ReceiptMatchKey(jobId, family, run.Model, run.InputTokens, run.OutputTokens,

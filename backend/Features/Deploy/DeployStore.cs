@@ -77,6 +77,26 @@ public sealed class DeployStore
         File.Move(WriteFlushed(path, deployments), path, true);
     }
 
+    /// <summary>The last refused release attempt of the project, until a release is created (F2).</summary>
+    public ReleaseGateRefusal? ReadReleaseRefusal(string project)
+    {
+        var path = Path.Combine(ProjectRoot(project), "release-refusal.json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<ReleaseGateRefusal>(File.ReadAllText(path), _json) : null;
+    }
+
+    public void SaveReleaseRefusal(string project, ReleaseGateRefusal? refusal)
+    {
+        var root = ProjectRoot(project);
+        var path = Path.Combine(root, "release-refusal.json");
+        if (refusal is null)
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return;
+        }
+        Directory.CreateDirectory(root);
+        File.Move(WriteFlushed(path, refusal), path, true);
+    }
+
     public IReadOnlyList<RunbookRun> ReadRunbookRuns(string project)
     {
         var path = Path.Combine(ProjectRoot(project), "runbooks.json");

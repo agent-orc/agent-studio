@@ -3,7 +3,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ProjectDeployOverviewComponent } from './project-deploy-overview';
-import { buildEnvironmentCards, declaredEnvironments, type DeployPanel, type EnvironmentCardView } from '../../state/deploy-area.model';
+import { buildEnvironmentCards, type DeployPanel, type EnvironmentCardView } from '../../state/deploy-area.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
 import { DEPLOY_FIXTURE_NOW, deploySourcesFixture } from '../../testing/deploy-fixtures';
 
@@ -96,7 +96,6 @@ describe('ProjectDeployOverviewComponent', () => {
   async function renderDeclared(definition: PipelineDefinitionResponse): Promise<void> {
     fixture.componentRef.setInput('projectName', 'Shop');
     fixture.componentRef.setInput('definition', definition);
-    fixture.componentRef.setInput('declared', declaredEnvironments(definition, []));
     await render({ status: 'ready', value: {} }, []);
   }
 

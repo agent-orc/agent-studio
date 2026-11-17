@@ -72,7 +72,8 @@ test.describe('DEMO-19 acceptance refusal in the card detail (AGT-3867)', () => 
           const body = await response.json() as { code?: string; error?: string };
           expect(body.code).toBe('completion-content-gap');
           const reason = (body.error ?? '').replace(/^Completion refused:\s*/, '');
-          const toast = page.getByTestId('notification-stack');
+          // AGT-3873: the refusal toast docks below the toolbar with its actions.
+          const toast = page.getByTestId('notification-stack-below-toolbar');
           await expect(toast).toContainText(`Acceptance refused: ${reason}`);
           await expect(toast).not.toContainText('does not match the current brief');
           const banner = page.getByTestId('task-move-refusal');
@@ -80,7 +81,12 @@ test.describe('DEMO-19 acceptance refusal in the card detail (AGT-3867)', () => 
           await expect(banner).toContainText('Acceptance next steps');
           await expect(page.getByTestId('acceptance-refusal')).toHaveAttribute('data-refusal-source', 'server');
           await expect(page.getByTestId('acceptance-refusal-action')).toHaveText('Accept with override…');
+          await expect(toast.getByTestId('acceptance-refusal-toast-override')).toBeVisible();
+          await expect(banner.getByTestId('task-move-refusal-override')).toBeVisible();
+          // The refused Accept opened the written-reason form in place, focused.
+          await expect(page.getByTestId('acceptance-refusal-override-reason')).toBeFocused();
           await shot(page, `demo-19-refused-click-${tag}`);
+          await page.getByTestId('acceptance-refusal-cancel').click();
         }
       }
 

@@ -5,7 +5,7 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 import { DeployEnvironmentCardComponent } from '../deploy-environment-card/deploy-environment-card';
 import { ProjectDeployStepsFormComponent } from '../project-deploy-steps-form/project-deploy-steps-form';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
-import type { DeclaredEnvironmentView, DeployPanel, EnvironmentCardView } from '../../state/deploy-area.model';
+import { declaredEnvironments, type DeployPanel, type EnvironmentCardView } from '../../state/deploy-area.model';
 
 /**
  * Overview: one status card per declared environment. Environments project.yml
@@ -29,7 +29,6 @@ export class ProjectDeployOverviewComponent {
   readonly projectName = input('');
   /** The parsed project.yml, or null while it loads or when it is unavailable. */
   readonly definition = input<PipelineDefinitionResponse | null>(null);
-  readonly declared = input<readonly DeclaredEnvironmentView[]>([]);
   readonly openRun = output<string>();
   readonly openTools = output<void>();
   /** project.yml changed; the owner reloads the Deploy sources. */
@@ -37,6 +36,7 @@ export class ProjectDeployOverviewComponent {
 
   readonly addingSteps = signal(false);
   readonly canAddSteps = computed(() => !!this.definition()?.deployStepsAvailable && this.projectName() !== '');
+  readonly declared = computed(() => declaredEnvironments(this.definition(), this.cards()));
   readonly environmentNames = computed(() => this.definition()?.diagram?.environments.map(item => item.name) ?? []);
 
   readonly errorBody = computed(() => {

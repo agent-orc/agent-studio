@@ -1,14 +1,17 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatchMoveJobResponse, TaskInfo } from '../../../models/task.model';
+import { TaskState } from '../../../models/task.model';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { NotificationService } from '../../../services/notification.service';
 import { TaskService } from '../../../services/task.service';
 import { UndoController } from '../../../services/undo.service';
 import { TaskSelectionService } from '../../task-detail/state/task-selection.service';
+import { AcceptanceRefusalActions } from '../../task-detail/runtime';
 import { BoardMutationsService } from './board-mutations.service';
 
 function batch(
@@ -261,6 +264,48 @@ describe('BoardMutationsService Ready queue edge (AGT-3588)', () => {
   });
 });
 
+describe('BoardMutationsService detail lane move', () => {
+  function setup(execution: TaskInfo['execution'] = null) {
+    const info = { id: 'AGT-1', taskKey: '/project::AGT-1', title: 'First task',
+      watchPath: '/project', state: TaskState.Preparation, execution } as TaskInfo;
+    const moved = { info: { ...info, state: TaskState.Ready } };
+    const taskService = {
+      findLaneIndex: vi.fn(() => 0), applyOptimisticMove: vi.fn(),
+      beginOptimisticPersist: vi.fn(), endOptimisticPersist: vi.fn(),
+      moveJob: vi.fn(() => of({})), getDetail: vi.fn(() => of(moved)),
+    };
+    const selection = {
+      selected: signal(null), triageLaneState: TaskState.Preparation,
+      advanceAfterMutation: vi.fn(() => false),
+    };
+    const undo = { offerLaneRevert: vi.fn(), cancelActive: vi.fn() };
+    TestBed.configureTestingModule({ providers: [
+      provideZonelessChangeDetection(), BoardMutationsService, NotificationService,
+      { provide: TaskService, useValue: taskService },
+      { provide: TaskSelectionService, useValue: selection },
+      { provide: ErrorDialogService, useValue: { show: vi.fn() } },
+      { provide: ConfirmDialogService, useValue: { confirm: vi.fn() } },
+      { provide: UndoController, useValue: undo },
+    ] });
+    return { service: TestBed.inject(BoardMutationsService), info, moved, taskService, selection, undo };
+  }
+
+  it('keeps a lone Preparation card in detail after promotion and calls the first queue Queued', () => {
+    const { service, info, moved, selection, undo } = setup();
+    service.changeStateFromDetail(info, TaskState.Ready);
+    expect(selection.advanceAfterMutation).toHaveBeenCalledWith(info.taskKey, true);
+    expect(selection.selected()).toEqual(moved);
+    expect(selection.triageLaneState).toBe(TaskState.Ready);
+    expect(undo.offerLaneRevert).toHaveBeenCalledWith(expect.objectContaining({ actionLabel: 'Queued' }));
+  });
+
+  it('calls a return to Ready Requeued after a recorded execution', () => {
+    const { service, info, undo } = setup({ status: 'completed' } as TaskInfo['execution']);
+    service.changeStateFromDetail(info, TaskState.Ready);
+    expect(undo.offerLaneRevert).toHaveBeenCalledWith(expect.objectContaining({ actionLabel: 'Requeued' }));
+  });
+});
+
 describe('BoardMutationsService active batch move', () => {
   it('shows the refusal and retries only after explicit withdrawal confirmation', async () => {
     const job = { id: 'AGT-3609', taskKey: 'AGT-3609', title: 'Batch member',
@@ -297,5 +342,70 @@ describe('BoardMutationsService active batch move', () => {
     expect(moveJob).toHaveBeenCalledTimes(2);
     expect(moveJob).toHaveBeenLastCalledWith(job.id, '0-backlog', job.watchPath, undefined,
       expect.stringContaining('withdrew'), false, 'revoke', true);
+  });
+});
+
+/**
+ * AGT-3873: Accept from the board lane (card menu or drag) that the server
+ * refuses for a reason the owner may override opens the card with the
+ * written-reason form focused; any other refusal keeps the dialog, which says
+ * what to do instead.
+ */
+describe('BoardMutationsService refused Accept (AGT-3873)', () => {
+  const job = { id: 'agt-3534', taskKey: 'wp::agt-3534', title: 'Large board', watchPath: '/project',
+    state: '5-human-review', integration: { status: 'integrated', integrationBranch: 'develop' } } as TaskInfo;
+
+  function setup(error: unknown, handled: boolean) {
+    const errorDialog = { show: vi.fn() };
+    const acceptRefusedOnBoard = vi.fn(() => handled);
+    const tasks = { jobs: signal([job]), moveJob: vi.fn(() => throwError(() => error)), error: signal(''),
+      applyOptimisticMove: vi.fn(() => ({ fromLane: [], toLane: [] })), findLaneIndex: vi.fn(() => 0),
+      revertOptimisticMove: vi.fn(), beginOptimisticPersist: vi.fn(), endOptimisticPersist: vi.fn() };
+    TestBed.configureTestingModule({ providers: [
+      provideZonelessChangeDetection(), BoardMutationsService, NotificationService,
+      { provide: TaskService, useValue: tasks },
+      { provide: ErrorDialogService, useValue: errorDialog },
+      { provide: ConfirmDialogService, useValue: { confirm: vi.fn() } },
+      { provide: TaskSelectionService, useValue: { selected: signal(null) } },
+      { provide: UndoController, useValue: { offerLaneRevert: vi.fn(), cancelActive: vi.fn() } },
+      { provide: AcceptanceRefusalActions, useValue: { acceptRefusedOnBoard } },
+    ] });
+    return { service: TestBed.inject(BoardMutationsService), errorDialog, acceptRefusedOnBoard, tasks };
+  }
+
+  afterEach(() => TestBed.resetTestingModule());
+
+  it('opens the card with the override when the refusal may be overridden', () => {
+    const refusal = { status: 409, error: { code: 'completion-content-gap',
+      error: 'Completion refused: requirement-fit verdict was concerns.' } };
+    const { service, errorDialog, acceptRefusedOnBoard, tasks } = setup(refusal, true);
+
+    service.changeStateFromDetail(job, '6-completed', false);
+
+    expect(acceptRefusedOnBoard).toHaveBeenCalledWith(job, refusal);
+    expect(tasks.revertOptimisticMove).toHaveBeenCalled();
+    expect(errorDialog.show).not.toHaveBeenCalled();
+  });
+
+  it('keeps the plain-words dialog for a refusal no override can admit', () => {
+    const refusal = new HttpErrorResponse({ status: 409, error: { code: 'completion-content-gap',
+      error: 'Completion refused: the required report is missing (results/report.md).' } });
+    const { service, errorDialog, acceptRefusedOnBoard } = setup(refusal, false);
+
+    service.changeStateFromDetail(job, '6-completed', false);
+
+    expect(acceptRefusedOnBoard).toHaveBeenCalled();
+    expect(errorDialog.show).toHaveBeenCalledWith(refusal, expect.objectContaining({
+      title: 'Cannot move to Accepted',
+      refusal: expect.objectContaining({
+        nextAction: 'Open the card and send the round that writes the report; an override cannot replace it.' }),
+    }));
+  });
+
+  it('never routes a refused move to another lane through the override', () => {
+    const refusal = { status: 409, error: { code: 'integration-dead-end', error: 'Not in develop.' } };
+    const { service, acceptRefusedOnBoard } = setup(refusal, true);
+    service.changeStateFromDetail(job, '7-archive', false);
+    expect(acceptRefusedOnBoard).not.toHaveBeenCalled();
   });
 });
