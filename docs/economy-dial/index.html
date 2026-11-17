@@ -341,11 +341,11 @@
 <header class="page">
   <p class="kicker">Concept Dossier · AGT-3951 · 17 November 2026</p>
   <h1>Economy dial: one control from frugal to strong</h1>
-  <p class="lede">Today nine separate controls decide which CLI, model and reasoning level a run uses, and an operator script re-pins dozens of cards whenever one provider's weekly window runs short. This Dossier proposes one workspace control with five positions. Each position selects, per task kind, a rung from the provider-neutral ladder that Token Economy delivers. Usage and cost follow from the position; the dial is not a weekly budget target. Explicit pins, correctness floors and quota admission keep their current meaning.</p>
-  <div class="meta"><span><b>Status</b> decision pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-3951</span><span><b>Related</b> AGT-2815, model selection and fallback (MS-1 to MS-8), Token Economy card "Economy dial: one value from frugal to strong"</span></div>
+  <p class="lede">Today nine separate controls decide which CLI, model and reasoning level a run uses, and an operator script re-pins dozens of cards whenever one provider's weekly window runs short. This Dossier proposes one workspace control with five positions. Each position selects, per task kind, a rung from the provider-neutral ladder that Token Economy delivers. Usage and cost follow from the position; the dial is not a weekly budget target. Explicit pins, correctness floors and quota admission keep their current meaning. Creative and visual work is a task kind of its own with its own ladder and its own acceptance: tests are not enough, someone has to look at the result.</p>
+  <div class="meta"><span><b>Status</b> decision pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-3951</span><span><b>Related</b> AGT-2815, model selection and fallback (MS-1 to MS-8), Token Economy cards "Economy dial: one value from frugal to strong" and TE-83 (creative ladder)</span></div>
 </header>
 
-<nav class="contents" aria-label="Contents"><a href="#occasion">Occasion</a> · <a href="#current-state">Current state</a> · <a href="#dial">The dial</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#surface">Surface</a> · <a href="#measurement">Measurement plan</a> · <a href="#migration">Migration</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#slices">Slices</a> · <a href="#sources">Sources</a> · <a href="#implementation">Implementation</a></nav>
+<nav class="contents" aria-label="Contents"><a href="#occasion">Occasion</a> · <a href="#current-state">Current state</a> · <a href="#dial">The dial</a> · <a href="#creative">Creative and visual work</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#surface">Surface</a> · <a href="#measurement">Measurement plan</a> · <a href="#migration">Migration</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#slices">Slices</a> · <a href="#sources">Sources</a> · <a href="#implementation">Implementation</a></nav>
 
 <section id="occasion">
 <h2><span class="number">01</span> Occasion</h2>
@@ -357,6 +357,7 @@
   <li>Reviews stay on Claude Opus 5.5 at <code>low</code> for now.</li>
 </ul>
 <p>The operator switched new work between Claude and Codex about 15 times in 2026, each time following whichever weekly window was tighter. Each switch meant a script run that re-pinned cards, adjusted client defaults and touched pipeline steps. This Dossier answers the seven questions of the brief as decision cards D1 to D12, each with a recommended working option, and prepares eight implementation slices. It contains no implementation.</p>
+<p>Robert added a second brief the same evening (21:50 and 22:00 UTC). Creativity, visual design, UI aesthetics, interactive 3D scenes and games are a task kind of their own with their own benchmarks. Coding benchmarks such as Terminal-Bench, SWE-bench and ARC say nothing about whether a model builds a beautiful, original and pleasant-to-play result; human-preference arenas and rated generation tests measure that. Token Economy takes this kind as (i) with its own ladder (card TE-83). Section 04 answers the four questions of that addition and the acceptance raster for a 3D game; it adds decisions D13 to D17 and slices ED-9 to ED-11.</p>
 </section>
 
 <section id="current-state">
@@ -406,7 +407,7 @@
 </svg>
 <figcaption><span class="figure-claim"><b>Figure 1.</b> Five sources act at card creation and four at launch. The stamped card model is what usually runs, which is why a provider switch needs a re-pin script today.</span></figcaption></figure>
 
-<p>Figures 5 to 8 in Evidence show the CLI Management, pipeline and header surfaces as they read today. Seven findings shape the design:</p>
+<p>Figures 6 to 9 in Evidence show the CLI Management, pipeline and header surfaces as they read today. Seven findings shape the design:</p>
 <ol>
   <li><b>The route is decided at creation.</b> <code>TaskCrudEndpoints.cs:1141-1172</code> stamps the recommendation onto a card without a pin. At launch <code>ProjectRunner.cs:2957</code> takes <code>route?.Model ?? qualification?.SelectedModel ?? info.Model</code>; the route is normally present, so qualification only decides when the card has no model. A control that should take effect for waiting work must resolve at claim time.</li>
   <li><b>The Claude side of the ladder still points at Sonnet and Haiku.</b> The registry's <code>vendorOverrides</code> map <code>sol-medium</code> to Claude Sonnet 5 at <code>medium</code> and <code>luna-medium</code> to Claude Haiku 4.5. Robert's decision (Opus 5.5 at <code>medium</code> as the Claude standard) and the 17 November research (Sonnet 5.5 is not a cheap Opus) both contradict that mapping.</li>
@@ -433,20 +434,21 @@
     <tr><td><code>xhigh</code></td><td>Claude Opus 5.5, <code>xhigh</code></td><td><code>gpt-6.1-sol</code>, <code>xhigh</code></td><td>Correctness-critical work (decided: deliberate use)</td></tr>
   </tbody>
 </table>
-<p class="dim">This is the proposed first ladder revision. Sonnet 5.5 is not on it: at the same level it is clearly weaker and uses more tokens (Terminal-Bench 22.22 USD per attempt against 14.30 for Opus). <code>gpt-6.1-sol</code> replaces <code>gpt-6-sol</code> at the same list price. A level a model does not offer runs at the highest offered rung below it, as the existing ladder rule already does.</p>
+<p class="dim">This is the proposed first revision of the coding ladder. Sonnet 5.5 is not on it: at the same level it is clearly weaker on coding and uses more tokens (Terminal-Bench 22.22 USD per attempt against 14.30 for Opus). That conclusion holds for the coding kinds only; the creative kind (i) has its own ladder, on which Sonnet 5.5 is a candidate (section 04). <code>gpt-6.1-sol</code> replaces <code>gpt-6-sol</code> at the same list price. A level a model does not offer runs at the highest offered rung below it, as the existing ladder rule already does.</p>
 
 <h3>Matrix</h3>
-<p>Each cell is the rung a task kind gets at a position. A floor is the lowest rung the task kind may ever run on; the dial cannot go below it. Balanced is the column the operator decided on 17 November.</p>
+<p>Each cell is the rung a task kind gets at a position. A floor is the lowest rung the task kind may ever run on; the dial cannot go below it. Balanced is the column the operator decided on 17 November. The standard feature row is (b) feature logic; UI work whose acceptance is visual quality moves to row (i), whose <code>c-</code> rungs are on the creative ladder of section 04.</p>
 <table id="matrix" class="breakout">
   <thead><tr><th>Task kind</th><th>Frugal</th><th>Lean</th><th>Balanced</th><th>Thorough</th><th>Strong</th><th>Floor</th></tr></thead>
   <tbody>
     <tr><td>Enrichment: auto-tag, summaries, classification</td><td>light</td><td>light</td><td>light</td><td>light</td><td>low</td><td>light</td></tr>
     <tr><td>Chore</td><td>light</td><td>light</td><td>low</td><td>medium</td><td>medium</td><td>light</td></tr>
-    <tr><td>Standard card (feature)</td><td>low</td><td>medium</td><td><b>medium</b></td><td>medium</td><td>high</td><td>low</td></tr>
+    <tr><td>(b) Standard card: feature logic</td><td>low</td><td>medium</td><td><b>medium</b></td><td>medium</td><td>high</td><td>low</td></tr>
     <tr><td>Standard card (bug)</td><td>medium</td><td>medium</td><td><b>medium</b></td><td>medium</td><td>high</td><td>medium</td></tr>
     <tr><td>Hard card</td><td>medium</td><td>medium</td><td><b>high</b></td><td>high</td><td>xhigh</td><td>medium</td></tr>
     <tr><td>Correctness-critical (P0, fencing, leases, security, data loss)</td><td>xhigh</td><td>xhigh</td><td><b>xhigh</b></td><td>xhigh</td><td>xhigh</td><td>xhigh</td></tr>
     <tr><td>Research, concept, planning</td><td>low</td><td>medium</td><td>medium</td><td>high</td><td>high</td><td>low</td></tr>
+    <tr><td>(i) Creative and visual: UI work accepted on visual quality, design variants, generated apps, 3D scenes, games</td><td>c-low</td><td>c-low</td><td><b>c-medium</b></td><td>c-high</td><td>c-max</td><td>c-low</td></tr>
     <tr><td>Follow-up and fix round</td><td colspan="5">Keeps the card's current route; a semantic failure raises the next fresh attempt one rung (existing reissue rule)</td><td>card floor</td></tr>
     <tr><td>Review aspect and grade</td><td colspan="5">Claude Opus 5.5 <code>low</code> at every position until the review measurement exists (decided 17 November)</td><td>same capability class</td></tr>
     <tr><td>Deep review</td><td>medium</td><td>medium</td><td>medium</td><td>high</td><td>high</td><td>medium; xhigh for P0</td></tr>
@@ -488,8 +490,112 @@
 </ul>
 </section>
 
+<section id="creative">
+<h2><span class="number">04</span> Creative and visual work</h2>
+<p>Creativity, visual design, UI aesthetics, interactive 3D scenes and games are task kind (i). Token Economy keeps a separate ladder for it (TE-83), and its acceptance needs someone to look at the result. This section covers the four points of Robert's addition of 17 November 2026 and the acceptance raster from his 22:00 UTC note.</p>
+
+<div class="callout" data-tone="warn"><h3>Coding conclusions stay with coding kinds</h3><p>All findings of the 17 November research come from Terminal-Bench and from coding cards: "Sonnet 5.5 is not a cheap Opus", "<code>gpt-6.1-sol</code> is better and cheaper than <code>gpt-6-sol</code>", the cost per accepted card per route and the first-review pass rates. They apply to the coding kinds (every row of the matrix except (i)) and are not evidence for (i). Coding benchmarks such as Terminal-Bench, SWE-bench and ARC measure whether a result works. They do not measure whether it is beautiful, original or pleasant to play. For (i) the only evidence so far is Robert's observation: on interactive 3D scenes, Sonnet 5.5 and Opus 5.5 at <code>max</code> are practically level. Data on Sonnet 5.5 at <code>high</code> against Opus 5.5 at <code>low</code> is thin.</p></div>
+
+<h3>Task kinds (b) and (i)</h3>
+<p>Token Economy letters its task kinds. The brief names two of them: (b) is the standard feature card and (i) is creative and visual work. (b) is split by its acceptance criterion:</p>
+<table>
+  <thead><tr><th>Kind</th><th>Accepted when</th><th>Ladder</th><th>Examples</th></tr></thead>
+  <tbody>
+    <tr><td>(b) Feature logic</td><td>Tests and review prove the behaviour</td><td>Coding</td><td>An endpoint, state handling, form validation, a UI change built entirely from existing components and tokens</td></tr>
+    <tr><td>(i) Creative and visual</td><td>Visual quality is part of acceptance, so someone has to look at the result and judge it</td><td>Creative (TE-83)</td><td>Layout and hierarchy of a new surface, design variants as in the Platform UI Lab, the look of a generated app, a 3D scene, a game</td></tr>
+  </tbody>
+</table>
+<p>The acceptance criterion decides the kind, not the file types touched. A card that changes templates but is accepted by tests is (b). A card whose result has to be looked at before it can be accepted is (i). A mixed card runs as (i) for the whole card. Two existing rules still apply: the correctness-critical kind wins over (i) (P0, security and data-loss signals keep coding <code>xhigh</code>), and the hard flag raises (i) by one rung, as it does for coding.</p>
+
+<h3>Creative ladder</h3>
+<p>Token Economy owns the creative ladder (TE-83), just as it owns the coding ladder. Until TE-83 ships, Studio uses a provisional, versioned mirror. Each cell shows its evidence state, so the surface can label it.</p>
+<table>
+  <thead><tr><th>Rung</th><th>Claude</th><th>Codex</th><th>Evidence for (i)</th></tr></thead>
+  <tbody>
+    <tr><td><code>c-low</code></td><td>Claude Opus 5.5, <code>low</code></td><td><code>gpt-6.1-sol</code>, <code>low</code></td><td>None; coding rung reused</td></tr>
+    <tr><td><code>c-medium</code></td><td>Claude Opus 5.5, <code>medium</code></td><td><code>gpt-6.1-sol</code>, <code>medium</code></td><td>None; coding rung reused</td></tr>
+    <tr><td><code>c-high</code></td><td>Claude Opus 5.5, <code>high</code>; A/B arm Sonnet 5.5 <code>high</code></td><td><code>gpt-6.1-sol</code>, <code>high</code></td><td>Thin (Sonnet <code>high</code> against Opus <code>low</code>)</td></tr>
+    <tr><td><code>c-max</code></td><td>Claude Sonnet 5.5, <code>max</code></td><td><code>gpt-6.1-sol</code>, <code>xhigh</code></td><td>Operator observation: Sonnet 5.5 and Opus 5.5 at <code>max</code> level on interactive 3D scenes</td></tr>
+  </tbody>
+</table>
+<p class="dim">At <code>c-max</code>, Sonnet replaces Opus because the reported quality is level and Anthropic's stated direction is that Opus costs several times more per turn. The measured Claude weights (section 08) confirm or reverse that choice. Sonnet's higher token volume on coding is not evidence for (i). The Codex rungs have no creative measurement. A same-rung fallback to Codex is allowed for (i), and the selection ledger marks it "unmeasured for creative". Haiku 5.5 and Luna are not on the creative ladder.</p>
+
+<h3>Detection</h3>
+<p>Today the runner sends a coding card to <code>ui-iteration-task-pipeline</code> when <code>EvidenceGate.MatchesUiHeuristic</code> matches and the change set touches a frontend template, style or component. The heuristic matches every bug, the tags <code>ui</code>, <code>ux</code>, <code>frontend</code>, <code>css</code>, <code>visual</code>, <code>e2e</code>, <code>playwright</code> and <code>area-frontend</code>, and title words such as layout, button or modal (<code>EvidenceGate.cs:56-72, 129-144</code>). It answers "can this be proved with a screenshot", not "is visual quality the acceptance criterion". Used as the (i) signal, it would put every UI bug on the creative ladder. The resolver of slice ED-2 therefore uses these signals, in this order:</p>
+<table>
+  <thead><tr><th>Order</th><th>Signal</th><th>Source</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Explicit kind on the card: <code>creative</code> or <code>feature-logic</code></td><td>New optional field, set at creation, by a planner or later; the AGT-2815 plan step may set it</td><td>That kind; only correctness-critical wins over it</td></tr>
+    <tr><td>2</td><td>Project default kind</td><td>New project setting; set for projects whose product is visual: the Platform UI Lab, apps generated from the <code>static-web</code> template, games and 3D scenes</td><td>(i) for feature cards; bugs stay bugs unless signal 3 or 4 applies</td></tr>
+    <tr><td>3</td><td>Card origin</td><td>A card that asks for design variants to compare; a playthrough finding classified as design or game feel (not as a technical failure); a Human Gate feedback round of an (i) card</td><td>(i); a feedback round inherits its card's kind</td></tr>
+    <tr><td>4</td><td>Tags and acceptance text together with UI pipeline routing</td><td>Tags <code>visual</code>, <code>design</code>, <code>creative</code>, <code>game</code>, <code>3d</code>; acceptance text that names look, layout, hierarchy, animation, camera or game feel</td><td>(i); text alone does not count, so prose about design does not move a backend card</td></tr>
+    <tr><td>5</td><td>UI pipeline routing alone</td><td><code>EvidenceGate</code> as today</td><td>Coding kind; the visual QA pair still runs as today</td></tr>
+  </tbody>
+</table>
+<p>The resolver records which signal decided, for example "project default: creative" or "playthrough finding: design". That reason appears in the selection ledger and in the dial's deviation list. With kind (i), the dial selects the (i) row of the matrix: <code>c-medium</code> at Balanced, so Opus 5.5 <code>medium</code> on Claude. Reviews stay as decided: code-review aspects and grade run on Opus 5.5 <code>low</code>. The visual verdict stays a bounded defect gate on its supporting model. The visual grade proposed below is a review consumer and is held at Opus 5.5 <code>low</code> together with the other reviews.</p>
+
+<h3>Acceptance</h3>
+<p>Tests are necessary but not enough for (i). The UI pipeline already has three of the parts needed (<code>docs/system/contracts/ui-task-pipeline.md</code>):</p>
+<ul>
+  <li><code>post-ui-iteration-artifact</code>: each iteration has to write <code>changes.md</code> and at least one image.</li>
+  <li><code>post-ui-visual-capture</code> and <code>post-ui-visual-verdict</code>: up to four 1440 by 1000 captures from the delivered checkout, judged by a multimodal one-shot. The one-shot returns <code>acceptable</code> or <code>clear-defect</code>, using the bounded categories truncation, misalignment, placeholder noise, design-token violation, overlap, overflow, unreadable and broken layout.</li>
+  <li><code>post-ui-human-review-gate</code>: the person chooses finish or feedback, with at most four iterations by default.</li>
+</ul>
+<p>Three things are missing for (i): a judgement of quality rather than defects, video for motion and play, and a variant comparison. A record that Token Economy can use is also missing. The Quality Studio visual quality step (<code>post-analysis-visual-quality</code>) is still a stub (<code>PipelineCatalogue.cs:758-768</code>). The aspect visual review checks layout against the style guide (<code>prompts/runtime/review-aspect-visual-review.md</code>).</p>
+
+<h3>Acceptance raster</h3>
+<p>Robert's four dimensions, with the example of a 3D game. For in-product UI work, game feel means interaction feel: focus, hover, transitions and response. Each dimension is scored from 1 to 5: 1 means broken or absent, 3 acceptable, 5 worth showing.</p>
+<table class="breakout">
+  <thead><tr><th>Dimension</th><th>Example in a 3D game</th><th>Automatic check</th><th>Agent with screenshots or video</th><th>Robert</th><th>Counts as ladder evidence</th></tr></thead>
+  <tbody>
+    <tr><td>Originality</td><td>Does the game have an interesting idea or mechanic?</td><td class="no">Not checkable</td><td>Advisory score with one sentence of reasoning, compared with earlier variants in the project</td><td>Decides, by score or by variant pick</td><td>Robert's score or pick only</td></tr>
+    <tr><td>Design</td><td>Do colours, lighting, shapes, animation and interface fit together?</td><td class="mid">Partly: visual verdict defect categories; for UI also the style-guide and token rules and contrast (axe)</td><td>Score from light and dark captures, or from frame captures of the scene</td><td>Confirms or corrects</td><td>Robert's score; the agent's after calibration</td></tr>
+    <tr><td>Game feel</td><td>Are controls, camera, tempo and feedback pleasant?</td><td class="mid">Proxies only: input-to-response latency, frame-time stability, camera clipping in the scripted run</td><td>Plays a scripted and a free session through Playwright, records video, scores</td><td>Decides</td><td>Robert's score; the proxies as context</td></tr>
+    <tr><td>Technical</td><td>Do collisions, game states, restart and performance work?</td><td class="yes">Yes: a scripted playthrough checks collisions, the states start, pause, win and lose, restart to a clean state, a frame-time budget, and no page errors</td><td>Explains failures</td><td>Not needed</td><td>Yes, directly</td></tr>
+  </tbody>
+</table>
+<p>An (i) card is accepted when three conditions hold. The technical check passes; it is a gate like the build-test gate. The visual verdict reports no clear defect. Robert chooses finish in the Human Gate. The Human Gate shows the agent's advisory scores next to four optional rating controls. A rating counts as Robert's only when he sets it. Choosing finish without ratings records "accepted" and keeps the agent's scores labelled as advisory. When a card produces variants, the Human Gate shows them side by side without model names, and Robert's pick is recorded.</p>
+
+<h3>Evidence back into the ladder</h3>
+<figure class="media-breakout" id="fig-creative"><svg class="diagram" viewBox="0 0 1120 460" role="img" aria-labelledby="cre-title cre-desc"><title id="cre-title">Acceptance and evidence loop for creative and visual cards</title><desc id="cre-desc">From left to right. A card is detected as kind (i) from an explicit kind, a project default, its origin, or signals together with UI pipeline routing. The dial's (i) row selects a creative rung, and the creative ladder gives model and level. The result passes three checks stacked in a column: automatic checks for the technical dimension and the visual verdict's defect categories; an agent grade from light and dark screenshots and video, with advisory scores for design, feel and originality; and Robert in the Human Gate, who chooses finish or feedback, may rate the four dimensions and picks between blind variants. Feedback starts the next iteration, at most four by default. All results form one evidence record with route, scores, rater, iterations, cost and pairwise picks. Token Economy card TE-83 aggregates the records into a new creative ladder version, which reaches the dial at the next claim.</desc>
+  <defs><marker id="arrow-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead"/></marker></defs>
+  <text x="20" y="28" class="zone-label">One (i) card, from detection to ladder evidence</text>
+  <rect x="20" y="170" width="180" height="110" rx="10" class="node"/><text x="36" y="198" class="label">Kind (i) detected</text><text x="36" y="224" class="sub">explicit kind, project</text><text x="36" y="244" class="sub">default, card origin,</text><text x="36" y="264" class="sub">signals with UI pipeline</text>
+  <rect x="240" y="170" width="180" height="110" rx="10" class="focus"/><text x="256" y="198" class="label">Creative rung</text><text x="256" y="224" class="sub">dial row (i) picks</text><text x="256" y="244" class="sub">c-low to c-max; ladder</text><text x="256" y="264" class="sub">gives model and level</text>
+  <rect x="460" y="50" width="280" height="96" rx="10" class="node"/><text x="476" y="76" class="label">Automatic checks</text><text x="476" y="100" class="sub">technical: scripted playthrough,</text><text x="476" y="118" class="sub">states, restart, frame time;</text><text x="476" y="136" class="sub">visual verdict defect categories</text>
+  <rect x="460" y="166" width="280" height="96" rx="10" class="node"/><text x="476" y="192" class="label">Agent grade</text><text x="476" y="216" class="sub">light and dark captures, video;</text><text x="476" y="234" class="sub">advisory 1 to 5 for design,</text><text x="476" y="252" class="sub">feel and originality</text>
+  <rect x="460" y="282" width="280" height="96" rx="10" class="node"/><text x="476" y="308" class="label">Robert in the Human Gate</text><text x="476" y="332" class="sub">finish or feedback; optional</text><text x="476" y="350" class="sub">ratings; blind variant pick</text>
+  <rect x="790" y="170" width="150" height="110" rx="10" class="node"/><text x="806" y="198" class="label">Evidence record</text><text x="806" y="224" class="sub">route, scores, rater,</text><text x="806" y="244" class="sub">iterations, cost,</text><text x="806" y="264" class="sub">pairwise picks</text>
+  <rect x="965" y="170" width="140" height="110" rx="10" class="ext"/><text x="981" y="198" class="label">Token Economy</text><text x="981" y="224" class="sub">TE-83 aggregates;</text><text x="981" y="244" class="sub">new creative</text><text x="981" y="264" class="sub">ladder version</text>
+  <path d="M200 225 L 237 225" class="edge" marker-end="url(#arrow-c)"/>
+  <path d="M420 225 C 440 225, 436 98, 457 98" class="edge" marker-end="url(#arrow-c)"/>
+  <path d="M420 225 C 440 225, 440 214, 457 214" class="edge" marker-end="url(#arrow-c)"/>
+  <path d="M420 225 C 440 225, 436 330, 457 330" class="edge" marker-end="url(#arrow-c)"/>
+  <path d="M740 98 C 765 98, 765 225, 787 225" class="edge"/>
+  <path d="M740 214 C 765 214, 765 225, 787 225" class="edge"/>
+  <path d="M740 330 C 765 330, 765 225, 787 225" class="edge" marker-end="url(#arrow-c)"/>
+  <path d="M940 225 L 962 225" class="edge" marker-end="url(#arrow-c)"/>
+  <path d="M460 360 C 300 360, 290 330, 290 284" class="edge-warn" marker-end="url(#arrow-c)"/>
+  <path d="M1035 280 L 1035 415 L 370 415 L 370 284" class="edge-muted" marker-end="url(#arrow-c)"/>
+  <text x="20" y="352" class="warn-label">Feedback in the Human Gate:</text>
+  <text x="20" y="370" class="warn-label">next iteration, at most 4</text>
+  <text x="390" y="442" class="sub">The next ladder version reaches the dial at the next claim; no card is rewritten.</text>
+</svg>
+<figcaption><span class="figure-claim"><b>Figure 3.</b> Proposed acceptance and evidence loop for (i). Only Robert's ratings and picks, plus automatic technical results, count as ladder evidence until the agent grade is calibrated.</span></figcaption></figure>
+<p>For every (i) card that is finished, abandoned or reaches the iteration cap, Studio writes one <code>creative-evidence</code> record to the selection ledger and exports it to Token Economy for TE-83:</p>
+<ul>
+  <li><b>Route:</b> provider, model, level, rung, ladder version and dial position.</li>
+  <li><b>Course:</b> iterations until finish, whether the cap was reached, and the visual verdict result per iteration.</li>
+  <li><b>Cost:</b> the full-lifecycle cost per card from slice ED-5.</li>
+  <li><b>Scores:</b> per dimension, the score and its rater (<code>automatic</code>, <code>agent</code> or <code>operator</code>); for agent scores, also the grader's route.</li>
+  <li><b>Pairwise picks:</b> when variants from different routes were compared blind, the winning and losing route per pair.</li>
+</ul>
+<p>Pairwise picks are the same kind of signal as a human-preference arena, measured on our own work. TE-83 aggregates them per route, for example with a Bradley-Terry fit. As a proposal, a rung's model changes only after at least 20 comparisons and only when the interval excludes parity. Robert's open question, Sonnet 5.5 at <code>high</code> against Opus 5.5 at <code>low</code>, is answered this way (section 08). The first-iteration finish rate per route is the creative counterpart of the coding first-review pass rate.</p>
+<p>Agent scores count as ladder evidence for a dimension only after calibration. The agent's scores must lie within one point of Robert's on at least 80 percent of the last 20 cards they both rated. Originality and game feel will probably stay human-only. Technical results count directly.</p>
+</section>
+
 <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
-<h2><span class="number">04</span> Alternatives</h2>
+<h2><span class="number">05</span> Alternatives</h2>
 <p>Four ways to reach one control were compared.</p>
 <div class="variant-grid">
   <article class="variant"><h3>A · Rung dial over the selection service</h3><p>Five positions, a matrix from position and task kind to a provider-neutral rung, Token Economy's ladder turns the rung into model and level. Resolved at claim time as one rule inside <code>ModelSelectionService</code>. Existing overrides become expert settings shown as deviations. Provider choice is separate and quota fallback means "same rung, other provider".</p></article>
@@ -510,17 +616,26 @@
     <tr><td>Effort</td><td class="mid">medium</td><td class="yes">small</td><td class="no">large</td><td class="yes">small</td></tr>
   </tbody>
 </table>
+
+<h3>Creative and visual work</h3>
+<p>Three ways to handle kind (i) inside alternative A were compared.</p>
+<div class="variant-grid">
+  <article class="variant"><h3>I-1 · Own kind, own ladder, visual acceptance</h3><p>(i) is a row of the matrix on the creative ladder of TE-83. It is detected by explicit kind, project default, card origin and signals together with UI pipeline routing. It is accepted by the four-dimension raster, and Robert's ratings and blind picks flow back to Token Economy as evidence.</p></article>
+  <article class="variant"><h3>I-2 · Feature on the coding ladder plus the visual verdict</h3><p>No new kind. UI cards stay (b) and the existing defect verdict and Human Gate stay as they are. Nothing new to build. The coding conclusions, including the exclusion of Sonnet, would then govern creative work without evidence, and nothing would be learned about which route builds better-looking results.</p></article>
+  <article class="variant"><h3>I-3 · Creative work always at the top rung</h3><p>Every (i) card runs at <code>max</code> regardless of the dial. Safe for quality and simple. It removes (i) from the dial, the most expensive setting becomes the default for a growing share of work, and the cheaper Sonnet <code>high</code> against Opus <code>low</code> question is never tested.</p></article>
+</div>
 </section>
 
 <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
-<h2><span class="number">05</span> Recommendation</h2>
+<h2><span class="number">06</span> Recommendation</h2>
 <div class="callout" data-tone="accent"><h3>Recommended default</h3><p>Build alternative A. One workspace dial with five positions, Balanced as the default, optional per-project position. Resolve it at claim time inside the existing model selection service, after pins and expert overrides and before floors. Take the ladder from Token Economy, with a versioned Studio mirror until the Token Economy card ships. Make the provider a separate preference that follows weekly headroom with the existing hysteresis, sticky within a card, and let quota fallback mean the same rung on the other provider. Show position, matrix, expected cost per accepted card and expected weekly percent per provider on CLI Management. Replace economy mode and the operator scripts; keep step, project and orchestrator routes as expert settings.</p></div>
 <p>The main reason is the first finding: the cost of today's setup is not the number of controls but that the route is fixed when a card is created. Only a claim-time rule lets one change reach every waiting card. The rung abstraction is the second reason: a provider switch and a quota fallback become the same operation, and a model release is a ladder update instead of a migration.</p>
 <p>At Balanced the dial reproduces the 17 November decisions exactly: normal cards at <code>medium</code>, hard cards at <code>high</code>, <code>xhigh</code> only through the correctness floor, reviews on Opus 5.5 <code>low</code>. Turning the dial on is therefore not itself a behaviour change for normal cards; it removes the stamped Sonnet and Haiku routes on the Claude side and moves Codex from <code>gpt-6-sol</code> to <code>gpt-6.1-sol</code>.</p>
+<p>For creative and visual work, take I-1. Split (b) into feature logic and (i). Detect (i) from the explicit kind, the project default and the card origin, and from signals only together with UI pipeline routing. Run (i) on the creative ladder at <code>c-medium</code> at Balanced, with Sonnet 5.5 <code>max</code> at the top rung. Accept (i) with the four-dimension raster: the technical check is automatic, design and feel are graded by an agent from captures and video, and Robert decides in the Human Gate. Return per-card evidence records and blind pairwise picks to TE-83. The coding conclusions of 17 November stay limited to the coding rows.</p>
 </section>
 
 <section id="surface">
-<h2><span class="number">06</span> Surface</h2>
+<h2><span class="number">07</span> Surface</h2>
 <p>The dial replaces the economy mode toggle at the top of CLI Management (<code>#/workspace/settings/caps</code>). It adds no new header element: the header usage cockpit decided against a global model chip because concurrent runs use different routes, and a dial position chip would carry the same problem. The usage sheet names the position in one line.</p>
 <figure class="media-breakout" id="fig-mockup"><svg class="diagram" viewBox="0 0 1120 560" role="img" aria-labelledby="mock-title mock-desc"><title id="mock-title">Proposed dial section on CLI Management</title><desc id="mock-desc">A section titled Economy dial. A five-stop control with Frugal, Lean, Balanced, Thorough and Strong; Balanced is selected. Next to it the provider preference reads Follow headroom, currently Claude. Below, a table lists task kinds with the route at the current position, expected cost per accepted card and the share of the week. Standard card: Opus 5.5 medium, 4.57 USD measured. Hard card: Opus 5.5 high, 9.65 USD measured. Enrichment: Haiku 5.5 medium, estimate. Review: Opus 5.5 low, held by decision. To the right, expected weekly percent per provider at this position as placeholder bars, Claude labelled estimate and Codex computed from credits. At the bottom, a deviations line with example counts of card pins, step overrides and projects at another position, and a history line with actor, time and note.</desc>
   <rect x="20" y="20" width="1080" height="520" rx="12" class="node"/>
@@ -537,7 +652,7 @@
   <text x="44" y="336" class="label">Critical</text><text x="300" y="336" class="sub">Opus 5.5 · xhigh</text><text x="520" y="336" class="sub">floor · not dial</text>
   <text x="44" y="366" class="label">Enrichment</text><text x="300" y="366" class="sub">Haiku 5.5 · medium</text><text x="520" y="366" class="sub">estimate</text>
   <text x="44" y="396" class="label">Review aspect</text><text x="300" y="396" class="sub">Opus 5.5 · low</text><text x="520" y="396" class="sub">held by decision</text>
-  <text x="44" y="420" class="sub">… seven more task kinds</text>
+  <text x="44" y="420" class="sub">… eight more task kinds, including (i) creative and visual</text>
   <text x="700" y="210" class="zone-label">Expected week at this position</text>
   <rect x="700" y="232" width="376" height="18" rx="4" class="ext"/><rect x="700" y="232" width="233" height="18" rx="4" class="focus"/><text x="700" y="272" class="sub">Claude · n % · estimate until weights are measured</text>
   <rect x="700" y="296" width="376" height="18" rx="4" class="ext"/><rect x="700" y="296" width="68" height="18" rx="4" class="focus"/><text x="700" y="336" class="sub">Codex · n % · credits = list price × 25</text>
@@ -545,7 +660,7 @@
   <text x="44" y="476" class="label">Deviations</text><text x="160" y="476" class="sub">4 card pins · 2 step overrides · 1 project at Strong</text>
   <text x="44" y="510" class="label">History</text><text x="160" y="510" class="sub">Lean → Balanced · actor · time · optional note</text>
 </svg>
-<figcaption><span class="figure-claim"><b>Figure 3.</b> Proposed surface, not a capture of the product. Cost figures are the 17 November medians; weekly bars, deviation counts and the history line are placeholders.</span></figcaption></figure>
+<figcaption><span class="figure-claim"><b>Figure 4.</b> Proposed surface, not a capture of the product. Cost figures are the 17 November medians; weekly bars, deviation counts and the history line are placeholders.</span></figcaption></figure>
 <p>The section shows:</p>
 <ul>
   <li><b>Position</b> and the provider preference, both editable by a holder of <code>workspace.settings.write</code>.</li>
@@ -555,15 +670,16 @@
   <li><b>Deviations</b>: counts of card pins, expert overrides and project positions that differ from the dial, each linking to its list.</li>
   <li><b>History</b>: who moved the dial or the provider preference, when, from where to where, with an optional note. The same events go to the selection ledger.</li>
 </ul>
+<p>The (i) row shows its route, the cost per accepted card labelled "estimate" until enough cards exist, and a second line with the number of operator ratings and blind picks behind the current creative ladder version.</p>
 <p>A card whose pin differs from the dial shows the existing model chip with a second line, for example "Pinned Opus 5.5 high · dial: medium". Hovering over a position shows its column of the matrix and the expected week before the operator commits.</p>
 </section>
 
 <section id="measurement">
-<h2><span class="number">07</span> Measurement plan</h2>
+<h2><span class="number">08</span> Measurement plan</h2>
 <p>Codex is computable: OpenAI states that credits equal list price times 25, so a run's credit cost follows from its token counters and the Token Economy price snapshot. The plan's weekly allowance is not published per account; it is calibrated by comparing computed credits with the change in the weekly percent that <code>CodexQuotaProbe</code> reads over the same interval.</p>
 <p>Claude is not computable. Anthropic only states the direction ("Opus costs several times more per turn than Sonnet, and Sonnet more than Haiku"). To show real subscription cost the dial needs a measured weight per model: weekly percentage points per accepted card.</p>
 <ol>
-  <li><b>Cells.</b> Opus 5.5 at <code>low</code>, <code>medium</code> and <code>high</code>; Haiku 5.5 at <code>medium</code>; Sonnet 5.5 at <code>medium</code> as the reference that justifies its absence from the ladder. Five cells.</li>
+  <li><b>Cells.</b> Opus 5.5 at <code>low</code>, <code>medium</code> and <code>high</code>; Haiku 5.5 at <code>medium</code>; Sonnet 5.5 at <code>medium</code>, as the reference that justifies its absence from the coding ladder and as the weight the creative ladder needs, because Sonnet 5.5 is a creative candidate. Five cells. A weight is per model and token class, so the Sonnet cell also covers Sonnet at <code>high</code> and <code>max</code>.</li>
   <li><b>Fixtures.</b> Twelve comparable cards per cell, drawn from the Token Economy task data set, each with a deterministic acceptance check. The same twelve cards run in every cell.</li>
   <li><b>Isolation.</b> A measurement lease holds the Claude account for the batch: quota admission sends every other Claude launch to Codex or makes it wait while the lease is held. Batches run in a quiet window, one cell per window.</li>
   <li><b>Readings.</b> The Claude weekly percent from <code>ClaudeQuotaProbe</code> before the first and after the last card of the batch, plus each card's four token counters (input, cache write, cache read, output) from the ledger. A batch must move the weekly figure by at least five points so that whole-percent rounding stays below ten percent of the signal.</li>
@@ -571,10 +687,19 @@
   <li><b>Publication.</b> A versioned weight table with date, sample and interval. The dial shows Claude weekly percent from this table and labels cells without a measured weight "estimate". Re-measure each quarter, and after any Anthropic plan or model change.</li>
 </ol>
 <p>Budget: 60 cards per round, two rounds. At the 17 November medians (about 4.57 USD per accepted Opus medium card as list-price equivalent) that is in the order of 500 to 1,000 USD list-price equivalent, spent inside the subscription during quiet windows.</p>
+<h3>Creative quality batches</h3>
+<p>The weight measurement shows what a creative route costs. It does not show whether the route builds better results. That needs a separate, blind batch judged by a person:</p>
+<ol>
+  <li><b>Briefs.</b> Twelve creative fixture briefs: three in-product UI surfaces, three design-variant requests, three small generated apps and three interactive 3D scenes or games. TE-83's creative task set replaces them once it exists.</li>
+  <li><b>Arms.</b> Sonnet 5.5 <code>high</code> against Opus 5.5 <code>low</code>, the pair with thin data. On the 3D subset, also Sonnet 5.5 <code>max</code> against Opus 5.5 <code>max</code>, to confirm the reported parity on our own work.</li>
+  <li><b>Judgement.</b> Each brief runs once per arm with explicit pins. The technical check runs automatically. Robert sees each pair side by side without model names, picks one and may score the four dimensions. The agent grade runs too, as calibration data.</li>
+  <li><b>Use.</b> The picks and scores become <code>creative-evidence</code> records with rater <code>operator</code>. TE-83 decides whether a rung changes. Cost per brief comes from the ledger, Claude weekly percent from the weight table.</li>
+</ol>
+<p>Budget: 30 runs per round (12 plus 12 plus 6), each a full UI iteration, and about one hour of Robert's time for 15 blind comparisons.</p>
 </section>
 
 <section id="migration">
-<h2><span class="number">08</span> Migration</h2>
+<h2><span class="number">09</span> Migration</h2>
 <table>
   <thead><tr><th>Control today</th><th>With the dial</th><th>Migration</th></tr></thead>
   <tbody>
@@ -595,7 +720,7 @@
 </section>
 
 <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
-<h2><span class="number">09</span> Evidence</h2>
+<h2><span class="number">10</span> Evidence</h2>
 <figure class="media-breakout" id="fig-cost"><svg class="diagram" viewBox="0 0 1120 330" role="img" aria-labelledby="cost-title cost-desc"><title id="cost-title">Median list-price cost per accepted card by route</title><desc id="cost-desc">Horizontal bars, cost in USD on one axis from 0 to 16. Opus 5.5 medium 4.57 USD with 98 percent first-review pass. Opus 5.5 high 9.65 USD, 91 percent. gpt-6-sol medium 8.25 USD, 99 percent. gpt-6-sol high 10.80 USD, 85 percent. gpt-6-sol xhigh 14.53 USD, 75 percent. Selection of cards per route was not random.</desc>
   <g class="axis">
     <line x1="260" y1="40" x2="260" y2="270" class="edge-muted"/>
@@ -610,10 +735,10 @@
   </g>
   <text x="24" y="318" class="sub">Higher levels cost more per accepted card and passed first review less often. Harder cards went to higher levels, so the pass rates are not a causal comparison.</text>
 </svg>
-<figcaption><span class="figure-claim"><b>Figure 4.</b> Median list-price cost per accepted card and first-review pass rate per route, from the operator's research of 17 November 2026. Selection was not random.</span></figcaption></figure>
+<figcaption><span class="figure-claim"><b>Figure 5.</b> Median list-price cost per accepted card and first-review pass rate per route, from the operator's research of 17 November 2026. Selection was not random.</span></figcaption></figure>
 
 <table>
-  <caption class="dim">Table view of Figure 4</caption>
+  <caption class="dim">Table view of Figure 5</caption>
   <thead><tr><th>Route</th><th>Median USD per accepted card</th><th>First-review pass</th></tr></thead>
   <tbody>
     <tr><td>Opus 5.5 medium</td><td>4.57</td><td>98 %</td></tr>
@@ -629,16 +754,22 @@
   <a class="evidence" href="#current-state"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-vendor">Claude routes point at Sonnet and Haiku</b><small><code>backend/Policies/model-routing-policy.v1.json</code> version 2026-10-11: <code>sol-medium</code> maps to Claude Sonnet 5 <code>medium</code>, <code>luna-medium</code> to Claude Haiku 4.5, <code>sol-xhigh</code> to Claude Opus 5 <code>xhigh</code>. No tier uses Opus 5.5.</small></span></a>
   <a class="evidence" href="#current-state"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-economy">Economy mode is one boolean and one step</b><small><code>economyMode.downgradeSteps = 1</code>; the policy rates Terra/medium, the downgrade target for features and bugs, at 0 percent savings against GPT-6 Sol/medium.</small></span></a>
   <a class="evidence" href="#occasion"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-spend">Where the money goes</b><small>Research of 17 November: about 12,500 USD list-price equivalent in 28 days, 98 percent coding runs, <code>gpt-6-sol</code> at <code>high</code> alone 38 percent; about three quarters of <code>gpt-6-sol</code> cost is cache reads.</small></span></a>
-  <a class="evidence" href="#dial"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-61">gpt-6.1-sol is better and cheaper</b><small>Terminal-Bench 4.1: 60.9 percent at 1.92 USD per attempt against 50.3 percent at 4.40 USD for <code>gpt-6-sol</code>; same list price, cache read 0.10 instead of 0.20 USD per MTok. Running on the hosts since 17 November with codex-cli 0.166.0.</small></span></a>
-  <a class="evidence" href="#dial"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-sonnet">Sonnet 5.5 is not a cheap Opus</b><small>At the same level clearly weaker and higher token volume; Terminal-Bench 22.22 USD per attempt against 14.30 for Opus. Haiku 5.5 and Luna suit bounded tasks only.</small></span></a>
+  <a class="evidence" href="#dial"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-61">gpt-6.1-sol is better and cheaper</b><small>Terminal-Bench 4.1: 60.9 percent at 1.92 USD per attempt against 50.3 percent at 4.40 USD for <code>gpt-6-sol</code>; same list price, cache read 0.10 instead of 0.20 USD per MTok. Running on the hosts since 17 November with codex-cli 0.166.0. Coding benchmark: applies to the coding kinds, not to (i).</small></span></a>
+  <a class="evidence" href="#dial"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-sonnet">Sonnet 5.5 is not a cheap Opus, on coding</b><small>At the same level clearly weaker and higher token volume; Terminal-Bench 22.22 USD per attempt against 14.30 for Opus. Haiku 5.5 and Luna suit bounded tasks only. Coding benchmark: applies to the coding kinds, not to (i).</small></span></a>
   <a class="evidence" href="#recommendation"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-cache">Moving Codex to gpt-6.1-sol cuts its cost by about a third</b><small>If three quarters of Sol cost is cache reads and the cache-read price halves at equal token volume, Sol cost falls to about 62.5 percent. On the 38 percent share of Sol/high that is roughly 1,800 USD list-price equivalent per 28 days. Token volumes per card may differ between versions.</small></span></a>
   <a class="evidence" href="#recommendation"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-medium">Medium as the standard halves Claude cost per card</b><small>Opus medium at 4.57 USD against Opus high at 9.65 USD per accepted card, with a higher first-review pass rate. The cohorts are not randomised, so the saving is an upper estimate.</small></span></a>
   <a class="evidence" href="#measurement"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-ledger">No full-lifecycle cost per card, no Codex credits probe</b><small><code>ReviewStatisticsFold</code> computes USD per accepted card over review rows; <code>CodexQuotaProbe</code> reads weekly percent left only.</small></span></a>
   <a class="evidence" href="#dial"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-ladder">Provider-neutral rungs</b><small>Five rungs with one concrete model and level per provider, owned by Token Economy. A quota fallback and a provider switch become the same operation.</small></span></a>
+  <a class="evidence" href="#creative"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-creative-parity">Sonnet and Opus level on interactive 3D at max</b><small>Operator statement of 17 November 2026, 21:50 UTC: on interactive 3D scenes, Sonnet 5.5 and Opus 5.5 at <code>max</code> are practically level; data for Sonnet <code>high</code> against Opus <code>low</code> is thin. Token Economy takes the kind as (i) with its own ladder (TE-83). This is the only creative evidence in this Dossier.</small></span></a>
+  <a class="evidence" href="#creative"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-ui-heuristic">The UI routing heuristic matches every bug</b><small><code>EvidenceGate.MatchesUiHeuristic</code> returns true for task type bug, for frontend tags including <code>visual</code>, and for UI words in the title (<code>backend/Features/Runner/EvidenceGate.cs:56-72, 129-144</code> at <code>8ed02c605</code>). It decides screenshot provability, not visual acceptance.</small></span></a>
+  <a class="evidence" href="#creative"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-visual-verdict">The visual verdict judges defects, not quality</b><small><code>post-ui-visual-verdict</code> returns <code>acceptable</code> or <code>clear-defect</code> using eight bounded defect categories, on up to four 1440 by 1000 captures, with one steer before the Human Gate (<code>docs/system/contracts/ui-task-pipeline.md</code>; step ids in <code>PipelineCatalogue.cs:51-56</code>). The aspect visual review runs on the Codex support model (<code>PipelineCatalogue.cs:617-618</code>). The Quality Studio visual quality step is a stub (<code>PipelineCatalogue.cs:758-768</code>).</small></span></a>
+  <a class="evidence" href="#creative"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-human-gate">The Human Gate already loops on visual feedback</b><small>After each complete UI iteration the card waits in Human Review with marker kind <code>ui-iteration-review</code>: finish completes it, feedback starts the next iteration, and <code>maxIterations</code> defaults to 4 (<code>docs/system/contracts/ui-task-pipeline.md</code>). The marker carries no ratings and no route.</small></span></a>
+  <a class="evidence" href="#creative"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-transfer">Coding results do not transfer to creative work</b><small>Terminal-Bench, SWE-bench and ARC score whether a task is solved, not how the result looks or plays. A route that is weaker at coding can be level or better on visual work, as the 3D observation shows. The creative ladder is therefore filled from creative evidence only.</small></span></a>
+  <a class="evidence" href="#creative"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-pairwise">Blind pairwise picks as ladder evidence</b><small>Robert's picks between variants from different routes, shown without model names, give the same signal as a human-preference arena on our own work. TE-83 aggregates them per route and changes a rung only when the preference is clear.</small></span></a>
 </div>
 
 <h3>Current surfaces</h3>
-<p>The captures below come from the isolated pinned demo workspace, not from a production installation. They prove where the controls are and how they read today; the demo seed's route values are not the operator's live configuration.</p>
+<p>The creative section makes no new claim about the look of a product surface. Its facts are cited from code and contracts at <code>8ed02c605</code>, and its Human Gate ratings are a proposal. The captures below come from the isolated pinned demo workspace, not from a production installation. They prove where the controls are and how they read today; the demo seed's route values are not the operator's live configuration.</p>
 
 <figure class="evidence-figure media-breakout" id="fig-consumer-policy">
   <div class="evidence-captures">
@@ -653,7 +784,7 @@
     </div>
   </div>
   <figcaption>
-    <span class="figure-claim"><b>Figure 5.</b> CLI Management sets the route per consumer class in ten separate rows, each with its own primary and fallback; there is no single value that moves them together.</span>
+    <span class="figure-claim"><b>Figure 6.</b> CLI Management sets the route per consumer class in ten separate rows, each with its own primary and fallback; there is no single value that moves them together.</span>
     <span class="figure-as-of">
       <span><b>Light:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the isolated pinned demo workspace (worktree test stack, commit 2adbb4f5d, route <code>#/workspace/settings/caps</code>), Playwright Chromium at 1440 by 1000.</span>
       <span><b>Dark:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the same stack and route.</span>
@@ -673,7 +804,7 @@
     </div>
   </div>
   <figcaption>
-    <span class="figure-claim"><b>Figure 6.</b> Today's economy control is one checkbox, "Economy mode off", whose only effect is "Lower eligible tiers by one step".</span>
+    <span class="figure-claim"><b>Figure 7.</b> Today's economy control is one checkbox, "Economy mode off", whose only effect is "Lower eligible tiers by one step".</span>
     <span class="figure-as-of">
       <span><b>Light:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the isolated pinned demo workspace (commit 2adbb4f5d, <code>#/workspace/settings/caps</code>).</span>
       <span><b>Dark:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the same stack and route.</span>
@@ -690,7 +821,7 @@
     </div>
   </div>
   <figcaption>
-    <span class="figure-claim"><b>Figure 7.</b> Every pipeline step carries its own model setting, and the route that runs can differ from it: Conflict resolution is set to codex gpt-5.6-luna and runs claude-opus-5, with "reason not recorded".</span>
+    <span class="figure-claim"><b>Figure 8.</b> Every pipeline step carries its own model setting, and the route that runs can differ from it: Conflict resolution is set to codex gpt-5.6-luna and runs claude-opus-5, with "reason not recorded".</span>
     <span class="figure-as-of">
       <span><b>Light:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the isolated pinned demo workspace (commit 2adbb4f5d, Demo App, <code>#/projects/PROJ-001/deploy?view=steps</code>, Post steps group).</span>
     </span>
@@ -705,7 +836,7 @@
     </div>
   </div>
   <figcaption>
-    <span class="figure-claim"><b>Figure 8.</b> A third place to choose CLI and model sits in the header: "Defaults for new tasks", stored per client identity.</span>
+    <span class="figure-claim"><b>Figure 9.</b> A third place to choose CLI and model sits in the header: "Defaults for new tasks", stored per client identity.</span>
     <span class="figure-as-of">
       <span><b>Light:</b> captured <time datetime="2026-11-17">17 November 2026</time> from the isolated pinned demo workspace (commit 2adbb4f5d), header defaults control opened on <code>#/workspace/settings/caps</code>.</span>
     </span>
@@ -715,7 +846,7 @@
 </section>
 
 <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
-<h2><span class="number">10</span> Open decisions</h2>
+<h2><span class="number">11</span> Open decisions</h2>
 <p>Each question has a preselected recommendation. Implementation cards work with it unless another answer is recorded.</p>
 
 <div class="decision" data-decision-id="ed-scope" data-decision-kind="single" data-decision-label="D1 Scope">
@@ -810,11 +941,51 @@
   <label data-option-id="layer-only" data-option-label="Add the dial and keep every existing control unchanged"><input type="radio" name="ed-migration" value="layer-only"><span><b>Add only</b><span class="d">No migration work; ten controls instead of nine.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
 </div>
+
+<div class="decision" data-decision-id="ed-creative-kind" data-decision-kind="single" data-decision-label="D13 Creative task kind">
+  <h3>D13 · How is creative and visual work handled?</h3>
+  <label data-option-id="own-kind-ladder" data-option-label="Own task kind (i) on the creative ladder of TE-83; (b) split into feature logic and UI work accepted on visual quality, which is (i); the acceptance criterion decides; correctness-critical wins over (i); coding benchmark conclusions apply to coding kinds only (Recommendation)"><input type="radio" name="ed-creative-kind" value="own-kind-ladder" checked><span><b>Own kind (i), own ladder, (b) split by acceptance (Recommendation)</b><span class="d">Follows Token Economy's kind list and keeps coding evidence out of creative routing.</span></span></label>
+  <label data-option-id="feature-coding" data-option-label="No new kind; UI cards stay standard features on the coding ladder with the existing visual verdict"><input type="radio" name="ed-creative-kind" value="feature-coding"><span><b>Stay on the coding ladder</b><span class="d">Nothing new to build; coding conclusions then decide creative routes without evidence.</span></span></label>
+  <label data-option-id="always-max" data-option-label="Creative work always at the top rung, outside the dial"><input type="radio" name="ed-creative-kind" value="always-max"><span><b>Always at the top rung</b><span class="d">Safe for quality; the most expensive route becomes the default for all visual work.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-creative-detect" data-decision-kind="single" data-decision-label="D14 Detecting the creative kind">
+  <h3>D14 · How does Studio recognise an (i) card?</h3>
+  <label data-option-id="layered-signals" data-option-label="In order: explicit kind on the card; project default kind (Platform UI Lab, generated apps and games); card origin (design variants, playthrough findings on design or game feel, feedback rounds); tags and acceptance text only together with UI pipeline routing; UI pipeline routing alone keeps the coding kind; the deciding signal is recorded (Recommendation)"><input type="radio" name="ed-creative-detect" value="layered-signals" checked><span><b>Explicit, project, origin, then signals with UI routing (Recommendation)</b><span class="d">Reliable for visual projects from day one; does not move UI bugs onto the creative ladder.</span></span></label>
+  <label data-option-id="ui-pipeline" data-option-label="Every card routed to the UI iteration pipeline is (i)"><input type="radio" name="ed-creative-detect" value="ui-pipeline"><span><b>UI pipeline routing means (i)</b><span class="d">No new field; the heuristic matches every bug, so most (i) cards would be defect fixes.</span></span></label>
+  <label data-option-id="explicit-only" data-option-label="Only an explicit kind on the card"><input type="radio" name="ed-creative-detect" value="explicit-only"><span><b>Explicit only</b><span class="d">Never wrong; generated and playthrough cards would miss it.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-creative-ladder" data-decision-kind="single" data-decision-label="D15 Provisional creative ladder">
+  <h3>D15 · What does the creative ladder use until TE-83 ships?</h3>
+  <label data-option-id="opus-sonnet-max" data-option-label="Provisional mirror: Opus 5.5 low, medium, high for c-low to c-high, Sonnet 5.5 max for c-max, gpt-6.1-sol at the same levels on Codex marked unmeasured; matrix row (i) c-low, c-low, c-medium, c-high, c-max with floor c-low; Sonnet 5.5 high against Opus 5.5 low decided by the blind batch (Recommendation)"><input type="radio" name="ed-creative-ladder" value="opus-sonnet-max" checked><span><b>Opus rungs, Sonnet at max, A/B for the cheap rungs (Recommendation)</b><span class="d">Uses the only creative evidence where it applies and measures the open question before it changes routes.</span></span></label>
+  <label data-option-id="opus-only" data-option-label="Opus 5.5 at every creative rung until measured"><input type="radio" name="ed-creative-ladder" value="opus-only"><span><b>Opus only until measured</b><span class="d">One fewer model in play; ignores the reported parity at max.</span></span></label>
+  <label data-option-id="sonnet-throughout" data-option-label="Sonnet 5.5 at every creative rung"><input type="radio" name="ed-creative-ladder" value="sonnet-throughout"><span><b>Sonnet throughout</b><span class="d">Cheaper per turn; extends one observation at max to every level without data.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-creative-acceptance" data-decision-kind="single" data-decision-label="D16 Creative acceptance raster">
+  <h3>D16 · Who judges an (i) card, and on what?</h3>
+  <label data-option-id="raster-mixed" data-option-label="Four dimensions scored 1 to 5: technical by an automatic scripted check as a gate; design partly automatic (defect verdict, style and token rules, contrast) plus agent grade from captures; game feel by agent with video plus Robert; originality by Robert; acceptance = technical passes, no clear defect, Robert finishes in the Human Gate; ratings optional, agent scores labelled advisory (Recommendation)"><input type="radio" name="ed-creative-acceptance" value="raster-mixed" checked><span><b>Automatic, agent and Robert by dimension (Recommendation)</b><span class="d">Each dimension is judged by whoever can judge it; Robert spends time only on taste.</span></span></label>
+  <label data-option-id="robert-only" data-option-label="Robert judges all four dimensions"><input type="radio" name="ed-creative-acceptance" value="robert-only"><span><b>Robert judges everything</b><span class="d">Highest fidelity; Robert's time becomes the throughput limit and technical faults reach him.</span></span></label>
+  <label data-option-id="agent-only" data-option-label="An agent judges all four dimensions"><input type="radio" name="ed-creative-acceptance" value="agent-only"><span><b>Agent judges everything</b><span class="d">Fast; originality and feel by an uncalibrated model are not evidence.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ed-creative-evidence" data-decision-kind="single" data-decision-label="D17 Creative evidence to Token Economy">
+  <h3>D17 · How do creative results reach the ladder?</h3>
+  <label data-option-id="records-pairwise" data-option-label="One creative-evidence record per finished, abandoned or capped (i) card with route, course, cost, scores with rater, and blind pairwise picks, exported to TE-83; agent scores count only after calibration (within one point on at least 80 percent of the last 20 jointly rated cards); a rung changes only after at least 20 comparisons with a clear preference (Recommendation)"><input type="radio" name="ed-creative-evidence" value="records-pairwise" checked><span><b>Per-card records plus blind pairwise picks (Recommendation)</b><span class="d">Arena-style evidence from our own work, with the rater recorded so taste and checks stay apart.</span></span></label>
+  <label data-option-id="finish-only" data-option-label="Only finish or feedback per card"><input type="radio" name="ed-creative-evidence" value="finish-only"><span><b>Finish or feedback only</b><span class="d">No new UI; a binary signal per card separates routes very slowly.</span></span></label>
+  <label data-option-id="external-only" data-option-label="Use external arena results only"><input type="radio" name="ed-creative-evidence" value="external-only"><span><b>External benchmarks only</b><span class="d">No Studio work; says nothing about our briefs, our design system or our games.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
 </section>
 
 <section id="slices">
-<h2><span class="number">11</span> Slices</h2>
-<p>Eight implementation slices are prepared in <code>workbench.json</code>. They are promoted after the decisions above are recorded; each uses the recommended option unless another is recorded.</p>
+<h2><span class="number">12</span> Slices</h2>
+<p>Eleven implementation slices are prepared in <code>workbench.json</code>. They are promoted after the decisions above are recorded; each uses the recommended option unless another is recorded.</p>
 <table>
   <thead><tr><th>Slice</th><th>Scope</th><th>Depends on</th></tr></thead>
   <tbody>
@@ -826,12 +997,15 @@
     <tr><td>ED-6</td><td>Dial surface on CLI Management, deviations, card chip second line, history</td><td>ED-3, ED-5</td></tr>
     <tr><td>ED-7</td><td>Claude weight measurement: batch harness, measurement lease, weight table</td><td>ED-5</td></tr>
     <tr><td>ED-8</td><td>Migration of the scattered controls and documentation update</td><td>ED-3, ED-4, ED-6</td></tr>
+    <tr><td>ED-9</td><td>Creative kind (i): provisional creative ladder, matrix row, explicit and project default kind, origin and signal detection, same-rung fallback marked unmeasured</td><td>ED-1, ED-2, ED-3</td></tr>
+    <tr><td>ED-10</td><td>Creative acceptance raster: scripted playthrough check, agent grade from captures and video, Human Gate ratings and blind variant comparison</td><td>ED-9</td></tr>
+    <tr><td>ED-11</td><td>Creative evidence: per-card records, pairwise picks, grader calibration, export to TE-83, blind A/B batch harness</td><td>ED-5, ED-10</td></tr>
   </tbody>
 </table>
 </section>
 
 <section id="sources">
-<h2><span class="number">12</span> Sources</h2>
+<h2><span class="number">13</span> Sources</h2>
 <ul>
   <li>Operator brief AGT-3951, 17 November 2026, with the research figures quoted in Evidence.</li>
   <li><a href="../system/domains/model-routing-policy.md">Model routing policy</a>: tiers, intake convention, floors, economy mode, consumer policy and API contract.</li>
@@ -839,13 +1013,18 @@
   <li><a href="../model-routing-by-complexity/index.html">Model routing by assessed complexity</a> (AGT-2815): analysis and plan steps as the later source of task kind.</li>
   <li><a href="../header-usage-cockpit/index.html">Header usage cockpit</a>: no global model chip in the header.</li>
   <li><a href="../system/domains/cli.md">CLI domain</a>: quota admission, caps, probes and fallback receipts.</li>
+  <li>Operator addition AGT-3951, 17 November 2026, 21:50 and 22:00 UTC: creative kind (i), Token Economy card TE-83, acceptance dimensions for a 3D game.</li>
+  <li><a href="../system/contracts/ui-task-pipeline.md">UI task iteration pipeline contract</a>: iteration evidence, visual capture and verdict, Human Gate marker.</li>
+  <li><a href="../concepts/visual-quality-and-proof.md">Visual quality and proof</a>: design contract, visual proof skill, integrated watch.</li>
+  <li><a href="../operations/testing/product-scenario.md">Product scenario</a>: scripted playthrough of a generated app with a designer role.</li>
+  <li><code>backend/Features/Runner/EvidenceGate.cs</code>, <code>backend/Features/Pipeline/PipelineCatalogue.cs</code>, <code>prompts/runtime/review-aspect-visual-review.md</code>, <code>backend/Shared/Models/CliModels.cs</code> (Sonnet 5.5 and Opus 5.5 offer <code>max</code>) at <code>8ed02c605</code>.</li>
   <li><code>backend/Policies/model-routing-policy.v1.json</code>, <code>backend/Features/Tasks/TaskCrudEndpoints.cs</code>, <code>backend/Features/Runner/ProjectRunner.cs</code>, <code>backend/Features/Pipeline/ModelRoutingPolicyRegistry.cs</code>, <code>backend/Features/Cli/Selection/ModelSelectionService.cs</code>, <code>backend/Features/Tokens/Aggregation/ReviewStatisticsFold.cs</code> at <code>2adbb4f5d</code>.</li>
 </ul>
 </section>
 
   <!-- agent-studio:implementation-section:start -->
   <section id="implementation" data-document-section="implementation">
-    <h2><span class="number">13</span> Implementation</h2>
+    <h2><span class="number">14</span> Implementation</h2>
     <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
     <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
