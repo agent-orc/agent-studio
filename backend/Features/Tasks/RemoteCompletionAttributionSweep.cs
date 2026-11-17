@@ -17,7 +17,7 @@ public sealed partial class RemoteCompletionAttributionSweep
 {
     public const string ReportFileName = "remote-completion-attribution-v1.json";
     public const string SalvageSubjectReportFileName = "salvage-subject-attribution-v1.json";
-    public const string IntegrationHistoryReportFileName = "integration-history-attribution-v1.json";
+    public const string IntegrationHistoryReportFileName = "integration-history-attribution-v2.json";
     public const string CommitSubjectKeyReportFileName = "commit-subject-key-attribution-v1.json";
     private static readonly TimeSpan Lookback = TimeSpan.FromDays(8);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -461,7 +461,10 @@ public sealed partial class RemoteCompletionAttributionSweep
                 deliveryRef,
                 range.Commits,
                 subject.Repository,
-                RemoteCommitAttributionGuard.CardReferencedKeys(task));
+                RemoteCommitAttributionGuard.CardReferencedKeys(task),
+                task.Commits,
+                parent => _git.IsAncestor(repository, parent,
+                    "refs/remotes/origin/" + TaskIntegrationBranch.Name(range.IntegrationBranch)));
             if (!attribution.Accepted)
             {
                 if (!string.IsNullOrWhiteSpace(attribution.Warning)) warnings.Add(attribution.Warning);

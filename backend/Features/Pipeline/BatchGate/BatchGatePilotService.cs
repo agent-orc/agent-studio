@@ -166,7 +166,7 @@ public sealed partial class BatchGatePilotService
     {
         if (!HasAttributedCurrentDelivery(task, sourceRun))
             throw new InvalidOperationException(
-                "Commit attribution is missing for this reviewed delivery. The card cannot enter a batch.");
+                MissingAttributionMessage(task, sourceRun));
         var priorOwnership = BatchGateOwnershipStore.Read(task.FolderPath);
         if (task.State == TaskStates.AutoReview
             && priorOwnership?.ReviewAttemptId == review.AttemptId
@@ -201,7 +201,7 @@ public sealed partial class BatchGatePilotService
         if (!HasAttributedCurrentDelivery(task, sourceRun))
         {
             await EscalateFallbackAsync(task, pending,
-                "Commit attribution is missing for this reviewed delivery. Check the run completion warning before retrying the batch.",
+                MissingAttributionMessage(task, sourceRun),
                 infrastructure: false, recordInStore: false, ct,
                 resolution: "release-unattributed").ConfigureAwait(false);
             return;
@@ -216,6 +216,38 @@ public sealed partial class BatchGatePilotService
         => sourceRun.ResultEnvelope is { } envelope && task.Commits.Any(commit =>
             string.Equals(commit.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
             && string.Equals(commit.ResultSha, envelope.ResultSha, StringComparison.OrdinalIgnoreCase));
+
+    private string MissingAttributionMessage(TaskInfo task, RunAttemptDto sourceRun)
+    {
+        var subject = ReviewSubjectStore.Read(task.FolderPath);
+        var envelope = sourceRun.ResultEnvelope;
+        var repo = _git.ResolveRepoRootForWatchPath(task.WatchPath);
+        var deliveryRef = subject?.ImmutableResultRef ?? subject?.ResultRef
+            ?? envelope?.ImmutableRemoteRef;
+        var resultSha = envelope?.ResultSha ?? subject?.ResultSha;
+        var missing = new List<string>();
+        if (!string.IsNullOrWhiteSpace(repo) && !string.IsNullOrWhiteSpace(deliveryRef)
+            && !string.IsNullOrWhiteSpace(resultSha))
+        {
+            var range = _git.InspectRemoteDeliveryCommitRange(repo, deliveryRef, resultSha,
+                subject?.IntegrationBranch ?? task.IntegrationBranch,
+                subject?.BaseSha, taskKey: task.Key ?? task.Id);
+            if (range.Success)
+                missing.AddRange(range.Commits.Where(commit => !task.Commits.Any(recorded =>
+                        string.Equals(recorded.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(recorded.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(recorded.ResultSha, resultSha, StringComparison.OrdinalIgnoreCase)))
+                    .Select(commit => $"{commit.ShortSha} ({commit.Subject})"));
+        }
+        if (missing.Count == 0 && !string.IsNullOrWhiteSpace(resultSha))
+            missing.Add(resultSha[..Math.Min(12, resultSha.Length)]);
+        if (missing.Count == 0)
+            missing.Add("result SHA unavailable");
+        return "Commit attribution is missing for this reviewed delivery. "
+            + $"Commits missing this delivery's attribution: {string.Join(", ", missing)}. "
+            + "The next round must publish task-owned commits that name this card and leave merging develop to the runner. "
+            + "The card cannot enter a batch until the result SHA has a commit entry for its run attempt.";
+    }
 
     public void ReportAdmissionFailure(TaskInfo task, ReviewAttemptDto review, string reason)
         => _healthAlerts?.BatchAdmissionFailed(task.ProjectName, task.WatchPath,

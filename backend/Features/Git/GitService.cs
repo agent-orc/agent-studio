@@ -359,7 +359,10 @@ public record GitCommitInfo(
     int Added,
     int Removed,
     string? Body = null,
-    bool IsMerge = false);
+    bool IsMerge = false)
+{
+    public IReadOnlyList<string> ParentShas { get; init; } = [];
+}
 
 public sealed record RemoteDeliveryCommitRange(
     bool Success,
@@ -5177,16 +5180,19 @@ public partial class GitService
                     .Select(path => path.Trim()).Where(path => path.Length > 0).Distinct().ToArray()
                 : [];
             var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
-                "--format=%H%x1f%h%x1f%aI%x1f%aN%x1f%s", sha);
+                "--format=%H%x1f%h%x1f%aI%x1f%aN%x1f%s%x1f%P", sha);
             if (metadataCode != 0) continue;
             var parts = metadata.Trim().Split('\x1f');
-            if (parts.Length < 5 || !DateTime.TryParse(parts[2],
+            if (parts.Length < 6 || !DateTime.TryParse(parts[2],
                     System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.AssumeUniversal
                     | System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)) continue;
             commits.Add(new GitCommitInfo(parts[0], parts[1],
                 DateTime.SpecifyKind(at, DateTimeKind.Utc), parts[3], parts[4],
-                changed.Length, 0, 0, IsMerge: true));
+                changed.Length, 0, 0, IsMerge: true)
+            {
+                ParentShas = parts[5].Split(' ', StringSplitOptions.RemoveEmptyEntries),
+            });
         }
         if (commits.Count == 0) return commits;
         string[] orderArgs = ["rev-list", revisions, .. exclusion, RevisionsOnly];
