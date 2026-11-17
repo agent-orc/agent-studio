@@ -1565,7 +1565,7 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(await pilot.ReleaseQueueStalledAsync(projectName,
                 AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted));
         });
-        app.MapPost("/api/projects/{projectName}/batch-gate/infrastructure/{taskKey}/retry", async (
+        app.MapPost("/api/projects/{projectName}/batch-gate/infrastructure/{taskKey}/retry", (
             string projectName, string taskKey, HttpContext context, BatchGatePilotService pilot,
             TaskScannerService scanner, ProjectSettingsService settings, IConfiguration configuration) =>
         {
@@ -1580,9 +1580,10 @@ public static class ProjectSettingsEndpoints
             }
             if (!settings.Get(projectName).BatchGate.Enabled)
                 return Results.Conflict(new { error = "Re-enable batch verification after restoring the remote gate host, then retry this card's gate." });
-            return await pilot.RetryInfrastructureGateAsync(projectName, taskKey,
-                AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted)
-                ? Results.Ok(new { retried = true })
+            var request = pilot.RequestInfrastructureRetry(projectName, taskKey,
+                AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context));
+            return request is not null
+                ? Results.Accepted(value: request)
                 : Results.Conflict(new { error = "This card no longer has a current reviewed delivery waiting on gate infrastructure." });
         });
 

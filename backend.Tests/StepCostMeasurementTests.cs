@@ -14,6 +14,7 @@ namespace AgentStudio.Tests;
 public sealed class StepCostMeasurementTests : IDisposable
 {
     private const string PricedModel = "claude-haiku-4-5";
+    private const string LegacyCodexModel = "gpt-5.6-sol";
     private const string UnpricedModel = "unpriced-test-model";
     // clock-independent: all dated rows and price windows use an injected date.
     private static readonly DateTime TestAt = new(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
@@ -29,6 +30,97 @@ public sealed class StepCostMeasurementTests : IDisposable
     }
 
     private static PipelineExecutionLog NewLog() => new(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+
+    [Fact]
+    public void Recording_legacy_step_preserves_counters_while_cost_reads_normalize_them()
+    {
+        var log = NewLog();
+        var legacy = Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core,
+            LegacyCodexModel, 2_000_000, 100_000) with
+        {
+            CacheReadTokens = 1_500_000,
+            StartedAt = TestAt,
+            CompletedAt = TestAt,
+        };
+        log.Begin(_folder, PipelineCatalogue.Standard, "P", "J1", TestAt);
+        log.RecordStep(_folder, legacy);
+
+        var stored = Row(log, legacy.StepId);
+        Assert.Equal(2_000_000, stored.InputTokens);
+        Assert.Null(stored.InputIncludesCached);
+        Assert.Null(stored.UsageNormalization);
+        var expected = TokenTestServices.Pricing().Estimate(legacy.Model, 500_000, 100_000,
+            1_500_000, 0, TestAt);
+        Assert.True(expected.ModelKnown);
+        Assert.Equal(expected.Total, stored.EstimatedCostUsd);
+
+        var cost = new PipelineCostCalculator(TokenTestServices.Pricing()).Summarize(log.Read(_folder));
+        Assert.Equal(500_000, Assert.Single(cost.Steps, step => step.StepId == legacy.StepId).InputTokens);
+    }
+
+    [Fact]
+    public void Legacy_codex_step_reconciles_card_and_project_cost_with_ledger()
+    {
+        var pricing = TokenTestServices.Pricing();
+        var legacy = Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core,
+            LegacyCodexModel, 2_000_000, 100_000) with { CacheReadTokens = 1_500_000 };
+        var record = Record("J1", TestAt, legacy);
+        var expected = pricing.Estimate(legacy.Model, 500_000, 100_000, 1_500_000, 0, TestAt).Total;
+        Assert.True(pricing.Estimate(legacy.Model, 500_000, 100_000, 1_500_000, 0, TestAt).ModelKnown);
+
+        var card = new PipelineCostCalculator(pricing).Summarize(record);
+        var ledgerCall = new TaskTokenCall
+        {
+            Ts = TestAt,
+            Model = legacy.Model!,
+            InputTokens = 500_000,
+            OutputTokens = 100_000,
+            CacheReadTokens = 1_500_000,
+        };
+        var allRuns = new PipelineCostCalculator(pricing).SummarizeWithLedger(record,
+            new Dictionary<string, IReadOnlyList<TaskTokenCall>>
+            {
+                [legacy.StepId] = [ledgerCall],
+            });
+        var project = ProjectPipelineCostService.BuildFromRecords(pricing, "P", [record], 7, TestAt);
+
+        Assert.Equal(500_000, Assert.Single(card.Steps).InputTokens);
+        Assert.Equal(2_100_000, card.TotalTokens);
+        Assert.Equal(expected, card.TotalCostUsd);
+        Assert.Equal(allRuns.TotalCostUsd, card.TotalCostUsd);
+        Assert.Equal(expected, Assert.Single(project.Kinds, kind => kind.Kind == "core").TotalCostUsd);
+        Assert.Equal(expected, project.TotalCostUsd);
+        Assert.Equal(2_100_000, project.TotalTokens);
+    }
+
+    [Fact]
+    public void Explicit_exclusive_input_and_legacy_earlier_run_keep_their_distinct_semantics()
+    {
+        var pricing = TokenTestServices.Pricing();
+        var earlier = new PipelineStepRunSummary
+        {
+            Status = PipelineStepStatus.Passed,
+            Model = LegacyCodexModel,
+            InputTokens = 2_000_000,
+            CacheReadTokens = 1_500_000,
+            StartedAt = TestAt,
+        };
+        var current = Step("aspect-code-quality", StepKind.Aspect,
+            LegacyCodexModel, 100_000, 10_000) with
+        {
+            CacheReadTokens = 50_000,
+            InputIncludesCached = false,
+            EarlierRuns = [earlier],
+        };
+        var card = new PipelineCostCalculator(pricing).Summarize(Record("J1", TestAt, current));
+
+        Assert.Equal(600_000, Assert.Single(card.Steps).InputTokens);
+        Assert.Equal(2_160_000, card.TotalTokens);
+        Assert.Equal(
+            pricing.Estimate(LegacyCodexModel, 500_000, 0, 1_500_000, 0, TestAt).Total
+            + pricing.Estimate(LegacyCodexModel, 100_000, 10_000, 50_000, 0, TestAt).Total,
+            card.TotalCostUsd);
+    }
 
     // ---- model-backed policy matrix -------------------------------------
 
