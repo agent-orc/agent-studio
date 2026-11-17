@@ -64,7 +64,7 @@ use no proxy and close the connection after each request.
 | Addresses | Policy |
 |---|---|
 | Loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`, `fe80::/10`), unspecified (`0.0.0.0/8`, `::`), multicast and reserved (`224.0.0.0/3`, `ff00::/8`), cloud metadata (`169.254.169.254`, `100.100.100.200`, `168.63.129.16`, `fd00:ec2::254`), and IPv4-mapped forms of these | Always refused |
-| RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), shared address space (`100.64.0.0/10`), IPv6 unique-local (`fc00::/7`) | Only with `"healthChecksAllowPrivateNetwork": true` on the environment |
+| RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), shared address space (`100.64.0.0/10`), IPv6 unique-local (`fc00::/7`) | Only with `"healthChecksAllowPrivateNetwork": true` on the environment (in schema 2, `healthChecksAllowPrivateNetwork: true` on the environment entry under `environments` in `project.yml`) |
 | Everything else | Allowed |
 
 IPv4 addresses embedded in `64:ff9b::/96` and `2002::/16` follow the same
@@ -72,7 +72,9 @@ blocked, private, or public classification as the embedded IPv4 address.
 
 A refused target fails with `address-blocked` before a byte is sent. That is a
 declaration problem, not an outage: the check shows `invalid`, and the result
-is neither stored in the series nor counted toward an incident.
+is neither stored in the series nor counted toward an incident. The environment
+carries the refused target and its fix in `error`, and the Deploy overview card
+shows it beside a warning-toned Misconfigured badge (F16).
 
 ## Runtime
 
