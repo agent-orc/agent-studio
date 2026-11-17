@@ -476,11 +476,12 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), Service<GateRunLedger>(), reviewFixWaits,
             Service<GateCapacitySettings>()?.Current(), DetachedFlights(project),
-            HasLiveFlight, RecoveryStatus,
+            HasLiveFlight, RecoveryStatus, LaneIdle(project),
             ActiveIsolationFlights(project), LeaseDeadlineDeferred()(project),
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
             _diskPauseReason, ConfiguredGateSlots(),
-            CodeBatchEnabled(project) ? _reservations?.GetBatchWait(project) : null);
+            CodeBatchEnabled(project) ? _reservations?.GetBatchWait(project) : null,
+            Service<BatchLaneAdmission>()?.Snapshot());
     }
 
     private IReadOnlySet<string> ActiveIsolationFlights(string project)
@@ -556,7 +557,11 @@ public sealed partial class BatchGatePilotService
                     _logger.LogWarning(error, "host-storage-retention-failed");
                 }
             }
-            if (DiskPressure().Level == HostDiskPressureLevel.Critical) return;
+            if (DiskPressure().Level == HostDiskPressureLevel.Critical)
+            {
+                ObserveLaneIdle("critical disk pressure pauses the batch gate");
+                return;
+            }
             var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
             if (_reservations is not null)
                 foreach (var project in _reservations.ProjectsWithPending())
@@ -794,6 +799,7 @@ public sealed partial class BatchGatePilotService
             }
             await RepackFormedBatchesAsync(ct).ConfigureAwait(false);
             StartClosedBatches(ct);
+            ObserveLaneIdle();
             if (WaitForFlightsInTick)
                 await WaitForFlightsAsync(includeFallbacks: true, ct).ConfigureAwait(false);
             RecordInvariants();
@@ -3040,6 +3046,13 @@ public sealed partial class BatchGatePilotService
                     FallbackStage(pending, PerTaskFallbackWaitKinds.BatchSlot);
                     await Task.Delay(250, ct).ConfigureAwait(false);
                 }
+                // AGT-3856: partners can arrive while the suite waits. A card a
+                // batch gates anyway returns to the batch queue instead.
+                if (recordInStore && PerTaskSuiteRefusal(pending, subject.BaseSha) is { } refusal)
+                {
+                    RefusePerTaskSuite(task, pending, refusal);
+                    return false;
+                }
                 FallbackStage(pending, PerTaskFallbackWaitKinds.GateRunning);
                 started = _time.GetUtcNow();
                 // AGT-3466: the per-task slot taken above already keeps the batch slot free.
@@ -3055,6 +3068,12 @@ public sealed partial class BatchGatePilotService
                         RequiredTestLevel = level,
                         ReserveBatchSlot = ConfiguredGateSlots() > 1,
                         TestExecution = _settings.Get(pending.Subject.Project).TestExecution,
+                        // AGT-3856: the suite waits while a batch gate and one other full suite run.
+                        OnBatchLaneWaiting = reason =>
+                        {
+                            FallbackStage(pending, PerTaskFallbackWaitKinds.BatchSlot);
+                            Lane(pending, "gate-token-waiting", level: level, reason: reason);
+                        },
                         OnMachineGateSlotWaiting = (busy, total) =>
                         {
                             FallbackStage(pending, PerTaskFallbackWaitKinds.MachineGateSlot);

@@ -3,16 +3,17 @@
       [attr.data-refusal-source]="refusal().source"
       [attr.data-refusal-action]="refusal().action"
       [attr.data-replaces-accept]="refusal().replacesAccept ? 'true' : null"
+      [attr.data-readiness-ranked]="refusal().headline ? 'true' : null"
       role="status">
   <span #reasonEl class="acceptance-refusal__focus" data-testid="acceptance-refusal-focus" tabindex="-1">
     @if (layout() === 'stacked') {
       <app-status-indicator tone="warning" [compact]="true" testId="acceptance-refusal-state"
                             [label]="refusal().replacesAccept ? 'Acceptance needs a decision' : 'Accept is held'" />
-      <span class="acceptance-refusal__text" data-testid="acceptance-refusal-reason">{{ refusal().reason }}</span>
+      <span class="acceptance-refusal__text" data-testid="acceptance-refusal-reason">{{ detail() }}</span>
     } @else {
       <app-status-indicator class="acceptance-refusal__reason" tone="warning" [compact]="true"
                             testId="acceptance-refusal-reason"
-                            [label]="refusal().reason" [detail]="refusal().reason" />
+                            [label]="refusal().reason" [detail]="detail()" />
     }
   </span>
   <span class="acceptance-refusal__buttons">
@@ -24,7 +25,7 @@
             [disabled]="disabled() || busy()"
             [cacTooltip]="actionTooltip()"
             (click)="onAction($event)">{{ refusal().actionLabel }}</button>
-    @if (refusal().secondary; as secondary) {
+    @if (refusal().secondaryAction; as secondary) {
       <button type="button"
               [class]="secondaryClass()"
               [attr.data-testid]="secondary.action === 'send-round' ? 'acceptance-refusal-send-round' : 'acceptance-refusal-override'"
@@ -50,6 +51,14 @@
        (keydown.escape)="cancelOverride()">
     <label class="acceptance-refusal__label" for="acceptance-refusal-reason-{{ job().id }}">Reason for the override</label>
     <p class="acceptance-refusal__hint">{{ refusal().reason }} The reason is recorded on the card.</p>
+    @if (refusal().nextStep; as step) {
+      <p class="acceptance-refusal__hint" data-testid="acceptance-refusal-next-step">Next step: {{ step }}</p>
+    }
+    @if (refusal().secondary?.length) {
+      <ul class="acceptance-refusal__secondary" data-testid="acceptance-refusal-secondary">
+        @for (gap of refusal().secondary; track gap) { <li>{{ gap }}</li> }
+      </ul>
+    }
     <textarea id="acceptance-refusal-reason-{{ job().id }}"
               class="acceptance-refusal__input"
               data-testid="acceptance-refusal-override-reason"

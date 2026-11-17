@@ -81,6 +81,24 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
       .toBe('Accept with override…');
   });
 
+  it('carries the ranked reason, its next step and the gaps under it (F12)', async () => {
+    const { host, find, click } = await mount({
+      ...OVERRIDE,
+      reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+      headline: 'No content verdict',
+      nextStep: 'Run the requirement-fit review for the current run.',
+      secondary: ['No delivery branch or commit was found for this card.'],
+    });
+    expect(host.querySelector('[data-testid="acceptance-refusal"]')?.getAttribute('data-readiness-ranked')).toBe('true');
+    expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent)
+      .toContain('The current run has no requirement-fit verdict');
+    await click('acceptance-refusal-action');
+    expect(find('acceptance-refusal-next-step')?.textContent)
+      .toContain('Next step: Run the requirement-fit review for the current run.');
+    expect(find('acceptance-refusal-secondary')?.textContent)
+      .toContain('No delivery branch or commit was found for this card.');
+  });
+
   it('accepts with an owner override only after a written reason', async () => {
     const { find, click, typeReason, moveJob, refresh, success } = await mount(OVERRIDE);
     TestBed.inject(AcceptanceRefusalStore).record({ taskKey: JOB.taskKey, code: 'integration-dead-end', message: 'x' });
@@ -125,7 +143,7 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
     const CONTENT: AcceptanceRefusal = {
       reason: 'The requirement-fit review returned concerns: The result SHA is absent from the delivery brief.',
       action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
-      secondary: { action: 'override', actionLabel: 'Accept with a reason…' },
+      secondaryAction: { action: 'override', actionLabel: 'Accept with a reason…' },
     };
 
     it('offers Review again as the primary and Accept with a reason beside the reason', async () => {
@@ -143,7 +161,7 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
 
     it('opens the round beside Review again when no override can admit the card (AGT-3867)', async () => {
       const { click, find, moveJob } = await mount({ ...CONTENT,
-        secondary: { action: 'send-round', actionLabel: 'Send a round…' } });
+        secondaryAction: { action: 'send-round', actionLabel: 'Send a round…' } });
       const open = vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'openRound').mockImplementation(() => undefined);
       await click('acceptance-refusal-send-round');
       expect(open).toHaveBeenCalledWith(JOB, 'toolbar');
@@ -204,7 +222,7 @@ describe('AcceptanceRefusalComponent · content verdict (AGT-3874)', () => {
       code: 'completion-content-gap', error: `Completion refused: requirement-fit verdict was concerns.` } });
     const refusal = acceptanceRefusalFor(DELIVERED, server, false)!;
     expect(refusal).toMatchObject({ source: 'server', action: 'review-again', replacesAccept: true,
-      secondary: { action: 'override', actionLabel: 'Accept with a reason…' } });
+      secondaryAction: { action: 'override', actionLabel: 'Accept with a reason…' } });
 
     const { host, find, click, typeReason, moveJob } = await mount(refusal);
     expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent)

@@ -95,10 +95,58 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
         return Task.FromResult(RunTargetDockerResult.Success);
     }
 
+    /// <summary>Named volumes that exist; a deleted volume takes its data with it.</summary>
+    public HashSet<string> Volumes { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Database containers whose <c>pg_isready</c> fails.</summary>
+    public HashSet<string> NotReady { get; } = new(StringComparer.Ordinal);
+
+    public Task<RunTargetDockerResult> EnsureVolumeAsync(string volume, CancellationToken ct)
+    {
+        Calls.Add("volume " + volume);
+        Volumes.Add(volume);
+        return Task.FromResult(RunTargetDockerResult.Success);
+    }
+
+    public Task<RunTargetDockerResult> RemoveVolumeAsync(string volume, CancellationToken ct)
+    {
+        Calls.Add("volume-rm " + volume);
+        Volumes.Remove(volume);
+        return Task.FromResult(RunTargetDockerResult.Success);
+    }
+
+    public Task<RunTargetDockerResult> ExecAsync(string container, IReadOnlyList<string> command, CancellationToken ct)
+    {
+        Calls.Add($"exec {container} {command[0]}");
+        if (!Containers.TryGetValue(container, out var status) || status.State != RunTargetContainerState.Running)
+            return Task.FromResult(new RunTargetDockerResult(false, "container is not running"));
+        return Task.FromResult(command[0] switch
+        {
+            "pg_isready" => NotReady.Contains(container)
+                ? new RunTargetDockerResult(false, "no response") : RunTargetDockerResult.Success,
+            "du" => new RunTargetDockerResult(true, "2048\t" + command[^1] + "\n"),
+            _ => new RunTargetDockerResult(false, "unexpected command"),
+        });
+    }
+
     /// <summary>The container exits after Docker's own <c>on-failure:3</c> restarts.</summary>
     public void Crash(string project)
         => Containers[project] = new(RunTargetContainerState.Exited,
             (Containers.TryGetValue(project, out var status) ? status.RestartCount : 0) + 3);
+}
+
+/// <summary>Credentials Studio issues, keyed by <c>project/environment/reference</c>; <see cref="Reads"/> records each request.</summary>
+internal sealed class FakeRunTargetCredentials(Dictionary<string, string> values) : IRunTargetCredentialSource
+{
+    public List<string> Reads { get; } = [];
+    public bool Unreachable { get; set; }
+
+    public Task<string?> ReadAsync(string project, string environmentId, string reference, CancellationToken ct)
+    {
+        Reads.Add(reference);
+        if (Unreachable) throw new HttpRequestException("connection refused");
+        return Task.FromResult(values.TryGetValue($"{project}/{environmentId}/{reference}", out var value) ? value : null);
+    }
 }
 
 /// <summary>Secret values keyed by <c>project/secretRef</c>, like the per-project host secret roots.</summary>

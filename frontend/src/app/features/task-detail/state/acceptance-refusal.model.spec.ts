@@ -54,6 +54,44 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
       .toBeNull();
   });
 
+  describe('ranked by the acceptance-readiness answer (F12)', () => {
+    const noVerdict = readinessItem('AGT-1', 'no-content-verdict', {
+      taskKey: 'wp::AGT-1',
+      headline: 'No content verdict',
+      reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+    });
+
+    it('leads with the readiness reason and lists the integration hold under it', () => {
+      expect(acceptanceRefusalFor(card({ status: 'no-branch' }), null, false, noVerdict)).toMatchObject({
+        reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+        headline: 'No content verdict',
+        nextStep: 'Run the requirement-fit review for the current run.',
+        secondary: ['No delivery branch or commit was found for this card.'],
+        action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
+        secondaryAction: { action: 'override', actionLabel: 'Accept with a reason…' },
+      });
+    });
+
+    it('keeps the integration action when integration is the gap to resolve', () => {
+      const refusal = acceptanceRefusalFor(card({ status: 'conflict-skipped' }), null, false,
+        readinessItem('AGT-1', 'not-integrated', { reason: 'Integration into develop failed.' }));
+      expect(refusal).toMatchObject({ action: 'retry-integration', reason: 'Integration into develop failed.', secondary: [] });
+    });
+
+    it('shows a readiness refusal although the integration hold has none', () => {
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, noVerdict))
+        .toMatchObject({ headline: 'No content verdict', secondary: [] });
+    });
+
+    it('falls back to the integration hold for a ready card, and a server refusal still leads', () => {
+      expect(acceptanceRefusalFor(card({ status: 'pending' }), null, false, readinessItem('AGT-1', 'ready'))?.reason)
+        .toBe('The delivery is not in develop yet.');
+      const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap', message: 'Completion refused.' };
+      expect(acceptanceRefusalFor(card({ status: 'pending' }), server, false, noVerdict))
+        .toMatchObject({ reason: noVerdict.reason, action: 'review-again', source: 'server' });
+    });
+  });
+
   it('holds Accept on a content verdict that is not pass, in the verdict summary (AGT-3874)', () => {
     const reviewed = (status: string, summary: string, extra: Partial<TaskInfo> = {}) => card({ status: 'integrated' }, {
       reviewProjection: { attempts: [{ aspects: [
@@ -85,10 +123,10 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
       reason: 'The requirement-fit review returned concerns: The result SHA is absent from the delivery brief.' });
 
     it('replaces Accept with Review again for review concerns, in the readiness words', () => {
-      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, concerns)).toEqual({
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, concerns)).toMatchObject({
         reason: 'The requirement-fit review returned concerns: The result SHA is absent from the delivery brief.',
         action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
-        secondary: { action: 'override', actionLabel: 'Accept with a reason…' },
+        secondaryAction: { action: 'override', actionLabel: 'Accept with a reason…' },
       });
     });
 
@@ -135,7 +173,8 @@ describe('acceptance readiness before and after the click (AGT-3867)', () => {
     expect(refusal).toMatchObject({
       reason: 'The requirement-fit review returned concerns: The lane hides the reason.',
       action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
-      secondary: { action: 'override', actionLabel: 'Accept with a reason…' },
+      secondaryAction: { action: 'override', actionLabel: 'Accept with a reason…' },
+      headline: 'Review concerns', nextStep: 'Send a round to close the gap the review raised.', secondary: [],
     });
     expect(acceptanceRefusalTooltip(refusal!)).toBe('The requirement-fit review returned '
       + 'concerns: The lane hides the reason. Next step: Review again.');
@@ -157,6 +196,14 @@ describe('acceptance readiness before and after the click (AGT-3867)', () => {
       .toMatchObject({ action: 'send-round', actionLabel: 'Send a round…' });
   });
 
+  it('leads with the round over a pending integration and lists the integration under it (F12)', () => {
+    const report = { ...concerns, readiness: 'blocked' as const,
+      refusal: 'Completion refused: the required report is missing (results/report.md).' };
+    expect(acceptanceRefusalFor(card({ status: 'conflict-skipped' }), null, false, report)).toMatchObject({
+      reason: concerns.reason, action: 'send-round', secondary: ['Integration into develop failed.'],
+    });
+  });
+
   it('records a content refusal in the server words, never as a brief mismatch', () => {
     const server = serverAcceptanceRefusal(card({ status: 'integrated' }), { status: 409, error: {
       code: 'completion-content-gap', error: 'Completion refused: requirement-fit verdict was concerns.' } });
@@ -175,7 +222,7 @@ describe('content refusal next steps after the merge of AGT-3867 (AGT-3830)', ()
 
   it('offers the round beside Review again when an override cannot admit the card', () => {
     const report = { ...concerns, refusal: 'Completion refused: the required report is missing (results/report.md).' };
-    expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, report)?.secondary)
+    expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, report)?.secondaryAction)
       .toEqual({ action: 'send-round', actionLabel: 'Send a round…' });
   });
 

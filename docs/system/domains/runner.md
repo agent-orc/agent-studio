@@ -653,6 +653,20 @@ Every free-text value in a generated compose file has `$` doubled, so Compose
 interpolates no variable from the agent's environment. Egress allowlists and
 host firewall rules for the run zone belong to IP-2.
 
+A spec can carry managed databases (AGT-3877,
+[managed databases](../../operations/managed-databases/README.md)). Before
+the app revision that uses them starts, the host provisions one
+`postgres:<version>-alpine` container per database on the environment's own
+internal data network, which the edge never joins, with an external named
+volume and the declared size limits. Studio sends only the password's
+`secret://` reference; the host resolves it with the `run-target` workload on
+`POST /api/runner/secrets/resolve`, keeps the value in memory, and writes it
+and the app's connection string to tmpfs files like other secrets (the app
+reads `<variable>_FILE`). A database the desired state stops declaring is
+stopped after the new revision is live and its volume kept; only an owner's
+deletion in `databaseDeletions` removes the volume, and the host refuses it
+while a spec still declares the database. A changed major version is refused.
+
 ### Integration host (standalone review loop)
 
 `RUNNER_ROLE=integration` starts `RemoteIntegrationDaemon` (AGT-3061, AGT-W65

@@ -364,17 +364,6 @@ export class App implements OnInit, OnDestroy {
   readonly triage = inject(TriageController);
   private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
   private readonly acceptanceReadiness = inject(AcceptanceReadinessStore);
-  /**
-   * AGT-3830: the open Human Review card reads the completion dry run the
-   * board and Needs you read, also when no board lane has loaded it.
-   */
-  private readonly checkOpenCardReadiness = effect(() => {
-    const info = this.selectedJob()?.info;
-    const key = info?.taskKey;
-    const state = info?.state;
-    if (!info || !key || state !== TaskState.HumanReview) return;
-    untracked(() => { if (!this.acceptanceReadiness.itemFor(info)) void this.acceptanceReadiness.checkCard(info); });
-  });
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
   /**
@@ -840,6 +829,11 @@ export class App implements OnInit, OnDestroy {
         if ('requestIdleCallback' in window) window.requestIdleCallback(preload, { timeout: 1000 });
         else setTimeout(preload, 0);
       }));
+    });
+    // F12: the open Human Review card ranks its gaps by its readiness answer.
+    effect(() => {
+      const info = this.selectedJob()?.info;
+      if (info?.state === TaskState.HumanReview) untracked(() => void this.acceptanceReadiness.ensure(info));
     });
     effect(() => {
       if (this.shellAccess.operator() || !this.projectLookup.loaded()) return;

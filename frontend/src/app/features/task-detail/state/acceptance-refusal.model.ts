@@ -1,7 +1,13 @@
 import { Injectable, computed, inject, signal, type Signal } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../models/task.model';
 import { serverErrorMessage } from '../../../utils/server-error-message';
-import { AcceptanceReadinessStore, acceptanceOverrideAllowed, type AcceptanceReadinessItem } from '../../acceptance-readiness';
+import {
+  AcceptanceReadinessStore,
+  acceptanceOverrideAllowed,
+  acceptancePrimaryReason,
+  secondaryAcceptanceGaps,
+  type AcceptanceReadinessItem,
+} from '../../acceptance-readiness';
 
 /**
  * AGT-3704: why the Human Review Accept cannot act now, shown next to the
@@ -33,7 +39,14 @@ export interface AcceptanceRefusal {
    * a written reason when policy lets an override admit the card, else the
    * round that closes the gap (AGT-3867).
    */
-  secondary?: Pick<AcceptanceRefusal, 'action' | 'actionLabel'>;
+  secondaryAction?: Pick<AcceptanceRefusal, 'action' | 'actionLabel'>;
+  /**
+   * F12: set when the acceptance-readiness answer ranks the reason. `reason`
+   * is then its primary sentence, and other gaps of the card are secondary.
+   */
+  headline?: string;
+  nextStep?: string;
+  secondary?: readonly string[];
 }
 
 /** A server refusal of the move to Accepted, kept for the card it refused. */
@@ -64,11 +77,15 @@ const CONTENT_REFUSAL_CLASSES: ReadonlySet<string> = new Set(['review-concerns',
 const CONTENT_REFUSAL_CODE = 'completion-content-gap';
 
 function contentRefusal(reason: string, source: AcceptanceRefusal['source'], refusal: string,
-  readiness: AcceptanceReadinessItem | null): AcceptanceRefusal {
-  const secondary = nextAction(refusal, readiness);
+  readiness: AcceptanceReadinessItem | null, hold: AcceptanceRefusal | null = null): AcceptanceRefusal {
+  const secondaryAction = nextAction(refusal, readiness);
+  const primary = readiness ? acceptancePrimaryReason(readiness) : null;
   return {
     reason, action: 'review-again', actionLabel: 'Review again', source, replacesAccept: true,
-    secondary: secondary.action === 'override' ? { action: 'override', actionLabel: 'Accept with a reason…' } : secondary,
+    ...(primary ? { headline: primary.headline, nextStep: primary.nextStep,
+      secondary: secondaryAcceptanceGaps(primary, [hold?.reason]) } : {}),
+    secondaryAction: secondaryAction.action === 'override'
+      ? { action: 'override', actionLabel: 'Accept with a reason…' } : secondaryAction,
   };
 }
 
@@ -83,8 +100,10 @@ function readinessReason(item: AcceptanceReadinessItem): string {
  * The refusal for `info`, or null when Accept may act. `awaitingGit` is the
  * bounded provenance wait: that state renders its own progress skeleton, so
  * a speculative hold reason is not added beside it. `readiness` is the
- * card's completion dry run (AGT-3867): an integrated card whose content
- * review returned concerns says why Accept will be refused before the click.
+ * card's completion dry run (AGT-3867): when it refuses, its reason leads and
+ * the integration hold is listed under it (F12), so an integrated card whose
+ * content review returned concerns says why Accept will be refused before
+ * the click.
  */
 export function acceptanceRefusalFor(
   info: TaskInfo,
@@ -96,6 +115,7 @@ export function acceptanceRefusalFor(
   // The attempt-gap notice owns the run-attempt refusal and its override.
   if (info.acceptanceAttemptGap) return null;
   const ownReadiness = readiness && (readiness.taskKey === info.taskKey || readiness.jobId === info.id) ? readiness : null;
+  const hold = integrationHold(info);
   // AGT-3830: a server content refusal, or the readiness check that predicts
   // it, makes the next step (review again, or accept with a written reason)
   // the primary instead of an Accept that can only be refused again.
@@ -103,17 +123,31 @@ export function acceptanceRefusalFor(
   if (server && server.taskKey === info.taskKey && server.code === CONTENT_REFUSAL_CODE
     && ownReadiness?.readiness !== 'ready')
     return ownReadiness && CONTENT_REFUSAL_CLASSES.has(ownReadiness.readiness)
-      ? contentRefusal(readinessReason(ownReadiness), 'server', ownReadiness.refusal, ownReadiness)
-      : contentRefusal(server.message, 'server', server.message, ownReadiness);
+      ? contentRefusal(readinessReason(ownReadiness), 'server', ownReadiness.refusal, ownReadiness, hold)
+      : contentRefusal(server.message, 'server', server.message, ownReadiness, hold);
   if (server && server.taskKey === info.taskKey && server.code !== 'run-attempt-missing'
     && server.code !== CONTENT_REFUSAL_CODE)
     return { reason: server.message, ...nextAction(server.message, ownReadiness), source: 'server' };
   if (ownReadiness && CONTENT_REFUSAL_CLASSES.has(ownReadiness.readiness))
-    return contentRefusal(readinessReason(ownReadiness), 'readiness', ownReadiness.refusal, ownReadiness);
+    return contentRefusal(readinessReason(ownReadiness), 'readiness', ownReadiness.refusal, ownReadiness, hold);
   if (awaitingGit) return null;
+  const refused = readinessHold(ownReadiness);
+  const primary = refused && ownReadiness ? acceptancePrimaryReason(ownReadiness) : null;
   // AGT-3874: until the dry run answers (after a reload), a content verdict
   // that is not `pass` already says why Accept will be refused.
-  return integrationHold(info) ?? (ownReadiness ? readinessHold(ownReadiness) : contentVerdictHold(info));
+  if (!refused || !primary) return hold ?? (ownReadiness ? null : contentVerdictHold(info));
+  // A round is the only step when policy forbids the override; otherwise the
+  // integration hold keeps its own action (a retry after a conflict).
+  const action = refused.action === 'send-round' || !hold ? refused : hold;
+  return {
+    reason: primary.reason,
+    headline: primary.headline,
+    nextStep: primary.nextStep,
+    secondary: secondaryAcceptanceGaps(primary, [hold?.reason]),
+    action: action.action,
+    actionLabel: action.actionLabel,
+    source: 'hold',
+  };
 }
 
 /**
@@ -143,6 +177,7 @@ function readinessHold(item: AcceptanceReadinessItem | null): AcceptanceRefusal 
   return { reason: item.reason, ...nextAction(item.refusal, item), source: 'hold' };
 }
 
+/** The client-side integration hold: why the board projection keeps Accept disabled. */
 function integrationHold(info: TaskInfo): AcceptanceRefusal | null {
   const integration = info.integration;
   const status = integration?.status;

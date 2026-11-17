@@ -12,7 +12,8 @@ public sealed record RunTargetDesiredState(
     DateTime GeneratedAt,
     IReadOnlyList<RunTargetEnvironmentSpec> Environments,
     IReadOnlyList<RunTargetSkip>? Skipped = null,
-    IReadOnlyList<RunTargetRemoval>? Removals = null);
+    IReadOnlyList<RunTargetRemoval>? Removals = null,
+    IReadOnlyList<RunTargetDatabaseDeletion>? DatabaseDeletions = null);
 
 public sealed record RunTargetSkip(string Project, string Reason);
 
@@ -33,9 +34,32 @@ public sealed record RunTargetEnvironmentSpec(
     string? JobId,
     string? LeaseToken,
     bool IsRollback,
-    IReadOnlyList<string>? RefusedDomains = null);
+    IReadOnlyList<string>? RefusedDomains = null,
+    IReadOnlyList<RunTargetDatabaseSpec>? Databases = null);
 
-public sealed record RunTargetObservedReport(IReadOnlyList<RunTargetObservation> Environments);
+/// <summary>A managed database (AGT-3877). The password arrives as a <c>secret://</c> reference only.</summary>
+public sealed record RunTargetDatabaseSpec(
+    string Name,
+    string Engine,
+    string Version,
+    string Size,
+    RunTargetResources Resources,
+    string Variable,
+    string PasswordRef);
+
+public sealed record RunTargetDatabaseDeletion(string Project, string EnvironmentId, string Name);
+
+public sealed record RunTargetDatabaseObservation(
+    string Project,
+    string EnvironmentId,
+    string Name,
+    string State,
+    string? Version,
+    long? VolumeBytes,
+    DateTime ObservedAt);
+
+public sealed record RunTargetObservedReport(IReadOnlyList<RunTargetObservation> Environments,
+    IReadOnlyList<RunTargetDatabaseObservation>? Databases = null);
 
 public sealed record RunTargetObservation(
     string Project,

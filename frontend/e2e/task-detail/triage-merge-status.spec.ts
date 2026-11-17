@@ -343,6 +343,66 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
       expect(override?.['reason']).toBe('I compared the changed requirement and accept this delivery.');
     }
   });
+  // F12 (the playthrough, DEMO-18): no delivery branch, no content verdict and
+  // no recorded delivery brief. The toolbar, the acceptance next steps and the
+  // board note lead with the readiness answer; the other gaps are listed under it.
+  test('unrecorded brief and ranked reasons: one primary reason with its next step in both themes', async ({ page }) => {
+    await installBaseRoutes(page);
+    await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only' });
+    await page.route('**/api/usage/cockpit**', (route) => route.fulfill({ status: 503, body: '{}' }));
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) => {
+      const current = detail(null);
+      return json(route, { ...current, info: {
+        ...current.info,
+        integration: { status: 'no-branch', integrationBranch: 'develop', deliveryRef: null, sha: null, detail: null },
+      } });
+    });
+    await page.route(new RegExp(`/api/tasks/${JOB_ID}/delivery-claim(\\?|$)`), route => json(route, {
+      taskKey: JOB_ID, jobId: JOB_ID, lane: '5-human-review', deliveryRef: null,
+      integrationBranch: 'develop', releaseBranch: 'main', containmentStatus: 'pending',
+      integrated: false, released: null, integratedSha: null, mergeCommit: null,
+      hasIntegrationRecord: false, class: 'integrated-delivery', findings: [], completionClaim: null,
+      commits: [], detail: null,
+      contentReview: {
+        mode: 'coding', currentBriefVersion: 'cccccccccccccccc', deliveryBriefVersion: null,
+        reviewBriefVersion: null, requiredAspect: 'requirement-fit', contentStatus: null,
+        ranAspects: ['build-tests'], skippedAspects: [],
+      },
+    }));
+    const reason = 'The current run has no requirement-fit verdict: Only build-tests ran.';
+    await page.route('**/api/tasks/acceptance-readiness', route => json(route, {
+      checkedAtUtc: '2026-11-16T08:00:00Z', counts: {},
+      items: [{
+        jobId: JOB_ID, taskKey: `${WATCH_PATH}::${JOB_ID}`, key: null, projectName: PROJECT, title: 'Fixture',
+        readiness: 'no-content-verdict', headline: 'No content verdict', reason, stage: 'content',
+        refusal: 'Completion refused: delivery brief version is missing; no content verdict (requirement-fit).',
+        aspect: 'requirement-fit', contentStatus: null, concern: null, missing: null,
+        latestResultRef: null, round: null,
+      }],
+    }));
+    await openJob(page);
+
+    const primary = page.getByTestId('acceptance-next-steps');
+    await expect(primary).toHaveAttribute('data-readiness', 'no-content-verdict');
+    await expect(primary).toContainText('No content verdict');
+    await expect(primary).toContainText(reason);
+    await expect(page.getByTestId('acceptance-primary-next-step'))
+      .toContainText('Run the requirement-fit review for the current run.');
+    await expect(page.getByTestId('acceptance-secondary-gaps')).toContainText('No delivery branch or commit was found for this card.');
+    await expect(page.getByTestId('acceptance-secondary-gaps')).toContainText('No brief version was recorded for this delivery or its content verdict.');
+    await expect(page.getByTestId('stale-brief-acceptance')).toHaveCount(0);
+    await expect(page.getByTestId('delivery-claim-panel')).not.toContainText('changed brief');
+    await expect(page.getByTestId('acceptance-refusal-reason')).toContainText(reason);
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await dismissDevErrorDialog(page);
+      if (RESULTS_DIR) {
+        fs.mkdirSync(RESULTS_DIR, { recursive: true });
+        await page.screenshot({ path: path.join(RESULTS_DIR, `f12-ranked-reasons-${theme}-1280.png`) });
+        await page.getByTestId('delivery-claim-panel').screenshot({ path: path.join(RESULTS_DIR, `f12-grounds-${theme}.png`) });
+      }
+    }
+  });
   // AGT-3076: the rebuilt attempt authority store lost this integrated card's
   // run attempt. The delivery panel says why acceptance needs an override
   // before the operator tries to accept.

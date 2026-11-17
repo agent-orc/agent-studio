@@ -61,6 +61,15 @@ export class AcceptanceRefusalComponent {
   readonly reason = signal('');
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
+  /** The ranked readiness reason and other gaps, also exposed to assistive technology. */
+  readonly detail = computed(() => {
+    const refusal = this.refusal();
+    return [
+      refusal.headline ? `${refusal.headline}: ${refusal.reason}` : refusal.reason,
+      refusal.nextStep ? `Next step: ${refusal.nextStep}` : null,
+      ...(refusal.secondary ?? []).map(gap => `Also: ${gap}`),
+    ].filter(Boolean).join(' ');
+  });
   /** The action's button classes: the toolbar's vocabulary inline, the phone's own when stacked. */
   readonly actionClass = computed(() => {
     const primary = !!this.refusal().replacesAccept;
@@ -76,7 +85,7 @@ export class AcceptanceRefusalComponent {
     'retry-integration': 'Run the integration into the target branch again',
     'send-round': 'Review and send the prefilled round that closes the gap',
   })[this.refusal().action]);
-  readonly secondaryTooltip = computed(() => this.refusal().secondary?.action === 'send-round'
+  readonly secondaryTooltip = computed(() => this.refusal().secondaryAction?.action === 'send-round'
     ? 'Review and send the prefilled round that closes the gap'
     : 'Accept now and record a written reason on the card');
   readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length > 0);
@@ -134,7 +143,7 @@ export class AcceptanceRefusalComponent {
 
   onSecondary(event: MouseEvent): void {
     if (this.disabled() || this.busy()) return;
-    if (this.refusal().secondary?.action === 'send-round') {
+    if (this.refusal().secondaryAction?.action === 'send-round') {
       this.readiness.openRound(this.job(), 'toolbar');
       return;
     }

@@ -118,6 +118,28 @@ describe('AcceptanceNextStepsComponent (AGT-3867)', () => {
     expect(testId(host, 'acceptance-next-steps-send-round')).not.toBeNull();
   });
 
+  it('says no brief version was recorded for a missing delivery brief, not that it changed (F12)', async () => {
+    const { host } = await mount(null, { ...currentBriefConcerns, contentStatus: null, deliveryBriefVersion: null });
+    const gap = testId(host, 'stale-brief-acceptance');
+    expect(gap?.getAttribute('data-brief-gap')).toBe('unrecorded');
+    expect(gap?.textContent).toContain('No brief version was recorded for this delivery');
+    expect(gap?.textContent).not.toContain('changed brief');
+    expect(testId(host, 'brief-difference-link')).toBeNull();
+    expect(testId(host, 'review-current-brief')).not.toBeNull();
+  });
+
+  it('leads with the readiness reason and its next step and lists the brief gap and other gaps under it (F12)', async () => {
+    const { fixture, host } = await mount(readinessItem('DEMO-19', 'no-content-verdict', { headline: 'No content verdict' }),
+      { ...currentBriefConcerns, contentStatus: null, deliveryBriefVersion: null });
+    fixture.componentRef.setInput('otherGaps', ['No delivery branch or commit was found for this card.']);
+    fixture.detectChanges();
+    expect(testId(host, 'acceptance-next-steps-status')?.textContent).toContain('No content verdict');
+    expect(testId(host, 'acceptance-primary-next-step')?.textContent).toContain('Next step: Run the requirement-fit review for the current run.');
+    expect(testId(host, 'stale-brief-acceptance')).toBeNull();
+    expect([...host.querySelectorAll('[data-testid="acceptance-secondary-gaps"] li')].map(li => li.textContent?.trim()))
+      .toEqual(['No delivery branch or commit was found for this card.', 'No brief version was recorded for this delivery.']);
+  });
+
   it('renders nothing for a ready card on the current brief', async () => {
     const { host } = await mount(readinessItem('DEMO-19', 'ready'), { ...currentBriefConcerns, contentStatus: 'pass' });
     expect(testId(host, 'acceptance-next-steps')).toBeNull();

@@ -10,6 +10,8 @@ The fixed receipts and bus fixture in [`TokenUsageCharacterizationTests`](../../
 
 `ProjectTokenLedger.LoadSnapshot` merges project bus history, durable `task.json.tokenSummary` calls, and chat fallback receipts. `ProjectTokenReceiptReader` reads both legacy lane folders and bucketed task folders, including archived tasks. `TokenLedgerMerge` removes bus/receipt overlap; `TokenLedgerDuplicates` collapses duplicate calls within a source. Receipt calls are authoritative for a task's coding run. A task without a coding receipt keeps its historical `pipeline-execution.json` cost record. A failed source is represented in `ProjectTokenDataFreshness` as partial or unavailable instead of silently becoming a zero.
 
+The usage cockpit cost projection sets `coverage.observedAt` to the time it read the ledgers, not the timestamp of the newest usage event. Its refresh TTL describes the read itself. `latestReceiptAt` separately identifies the latest durable receipt; an idle ledger can be current even if that receipt is hours old. Partial coverage retains the names and reasons of incomplete project sources and unpriced models in the workspace summary.
+
 The separate task usage resource reads this merged ledger after the core card
 has painted. One single-flight priced fold per project supplies per-card
 summaries. A change to that card's receipt bytes or a matching token bus append

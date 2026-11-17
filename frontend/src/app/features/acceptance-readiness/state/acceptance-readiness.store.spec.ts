@@ -176,6 +176,38 @@ describe('AcceptanceReadinessStore', () => {
     expect(store.itemFor(cards[0])).toBe(lane);
   });
 
+  it('asks for the open card once per activity when no lane check covered it (F12)', async () => {
+    const done = store.ensure(cards[0]);
+    const request = http.expectOne('/api/tasks/acceptance-readiness');
+    expect(request.request.body).toEqual({ items: [{ jobId: 'a', watchPath: '/tmp/watch' }] });
+    request.flush({ checkedAtUtc: '2026-11-09T10:00:00Z', counts: {},
+      items: [readinessItem('a', 'no-content-verdict', { headline: 'No content verdict' })] });
+    await done;
+
+    expect(store.itemFor(cards[0])?.readiness).toBe('no-content-verdict');
+    // The lane grouping waits for its own check.
+    expect(store.checked()).toBe(false);
+    await store.ensure(cards[0]);
+    http.expectNone('/api/tasks/acceptance-readiness');
+  });
+
+  it('asks a failed card again only after its next activity', async () => {
+    const done = store.ensure(cards[1]);
+    http.expectOne('/api/tasks/acceptance-readiness').flush('down', { status: 503, statusText: 'Unavailable' });
+    await done;
+    await store.ensure(cards[1]);
+    http.expectNone('/api/tasks/acceptance-readiness');
+
+    void store.ensure({ ...cards[1], lastActivity: '2026-11-09T11:00:00Z' });
+    http.expectOne('/api/tasks/acceptance-readiness').flush([]);
+    expect(store.itemFor(cards[1])).toBeNull();
+  });
+
+  it('does not ask for a card outside Human Review', async () => {
+    await store.ensure(reviewCard('d', { state: '2-ready' }));
+    http.expectNone('/api/tasks/acceptance-readiness');
+  });
+
   it('does not check a card outside Human Review (AGT-3830)', async () => {
     await store.checkCard(reviewCard('e', { state: '2-ready' }));
     http.expectNone('/api/tasks/acceptance-readiness');

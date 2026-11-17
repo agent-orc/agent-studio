@@ -91,7 +91,7 @@ export class UsageDetailSurfaceComponent {
    * The panel always holds every CLI, capacity and cost section; the focus only
    * picks the section it opens at. One title names that content (AGT-3794-F14).
    */
-  readonly title = signal('Cost and usage').asReadonly();
+  readonly title = signal('Cost and usage across all projects').asReadonly();
 
   /** Last focus that was open, for restoring focus after the dialog closes. */
   private lastFocus: UsageDetailFocus | null = null;

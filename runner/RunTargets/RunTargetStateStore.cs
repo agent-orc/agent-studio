@@ -9,9 +9,31 @@ namespace AgentRunner.RunTargets;
 /// restore it without a spec from Studio.
 /// </summary>
 public sealed record RunTargetSlot(string Revision, string Artifact, string ComposeProject, string ComposeFile,
-    int ContainerPort, string HealthPath, IReadOnlyList<string>? SecretRefs = null)
+    int ContainerPort, string HealthPath, IReadOnlyList<string>? SecretRefs = null,
+    IReadOnlyList<RunTargetSlotDatabase>? Databases = null)
 {
     public string Upstream => $"{ComposeProject}:{ContainerPort}";
+}
+
+/// <summary>How a revision reaches one managed database; the password stays a <c>secret://</c> reference.</summary>
+public sealed record RunTargetSlotDatabase(string Name, string DatabaseKey, string PasswordRef);
+
+/// <summary>
+/// Host-local state of one managed database (AGT-3877). It outlives its app:
+/// a database Studio no longer declares, or whose environment left the host,
+/// is <c>retained</c> with its volume until Studio sends an owner's deletion.
+/// </summary>
+public sealed class RunTargetDatabaseState
+{
+    public string Project { get; set; } = "";
+    public string EnvironmentId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string ComposeFile { get; set; } = "";
+    public string PasswordRef { get; set; } = "";
+    public string Status { get; set; } = "provisioning";
+    public long? VolumeBytes { get; set; }
+    public DateTime? MeasuredAt { get; set; }
 }
 
 /// <summary>Host-local state of one project environment. Holds no secret values.</summary>
@@ -55,6 +77,9 @@ public sealed class RunTargetHostState
 
     /// <summary>Domain to app key. The first app that routed a domain keeps it (<see cref="RunTargetCaddyfile.ClaimDomains"/>).</summary>
     public Dictionary<string, string> DomainOwners { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Managed databases by <see cref="RunTargetNames.DatabaseKey"/>.</summary>
+    public Dictionary<string, RunTargetDatabaseState> Databases { get; set; } = new(StringComparer.Ordinal);
 }
 
 /// <summary>
@@ -70,6 +95,7 @@ public sealed class RunTargetStateStore(string stateDirectory, Action<string>? l
 
     public string Directory { get; } = stateDirectory;
     public string AppsDirectory => Path.Combine(Directory, "apps");
+    public string DatabasesDirectory => Path.Combine(Directory, "databases");
     public string EdgeDirectory => Path.Combine(Directory, "edge");
     public string CaddyDirectory => Path.Combine(EdgeDirectory, "caddy");
     public string CaddyfilePath => Path.Combine(CaddyDirectory, "Caddyfile");
