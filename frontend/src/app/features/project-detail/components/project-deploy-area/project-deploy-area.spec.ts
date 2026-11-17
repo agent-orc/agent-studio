@@ -10,6 +10,7 @@ import { ServerCheckoutStore } from '../../../server-checkout';
 import { urlProject } from '../../../server-checkout/testing/server-checkout.fixtures';
 import type { RegistryProjectSummary } from '../../../../models/task.model';
 import { DEPLOY_CLOCK, type DeployPanel } from '../../state/deploy-area.model';
+import { AuthSessionState } from '../../../../services/auth.service';
 import {
   ARTIFACT_B,
   DEPLOY_FIXTURE_NOW,
@@ -598,6 +599,33 @@ describe('ProjectDeployAreaComponent', () => {
     await click('deploy-run-approve');
     expect(window.confirm).toHaveBeenCalledWith('Approve Production run run-c-production?');
     expect(data.actions).toEqual(['approve:run-c-production']);
+  });
+
+  it('asks a local session without sign-in to create the owner, then approves the Production run', async () => {
+    const auth = TestBed.inject(AuthSessionState);
+    auth.status.set({ profile: 'local', bootstrapRequired: true, authenticated: false });
+    data.serveEverything();
+    await settle();
+    await click('deploy-environment-review-approval');
+    await click('deploy-run-approve');
+    expect(data.actions).toEqual([]);
+    expect(window.confirm).not.toHaveBeenCalled();
+    const dialog = document.querySelector('[data-testid="local-owner-dialog"]') as HTMLElement;
+    expect(dialog.querySelector('[data-testid="local-owner-purpose"]')?.textContent).toContain('Production approval needs the owner account.');
+    for (const [id, value] of [['local-owner-username', 'local.owner'], ['local-owner-password', 'correct-horse-battery']]) {
+      const input = dialog.querySelector<HTMLInputElement>(`[data-testid="${id}"]`)!;
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+    }
+    (dialog.querySelector('[data-testid="local-owner-submit"]') as HTMLButtonElement).click();
+    TestBed.inject(HttpTestingController).expectOne('/api/v1/studio/auth/bootstrap').flush({
+      profile: 'local', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_1', username: 'local.owner', displayName: 'local.owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
+    });
+    await settle();
+    expect(window.confirm).toHaveBeenCalledWith('Approve Production run run-c-production?');
+    expect(data.actions).toEqual(['approve:run-c-production']);
+    expect(document.querySelector('[data-testid="local-owner-dialog"]')).toBeNull();
   });
 
   it('reads a selected run by id when no page or status contains it, and refreshes it after an action', async () => {
