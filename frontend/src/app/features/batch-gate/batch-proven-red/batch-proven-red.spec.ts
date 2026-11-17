@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { ApplicationRef, provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection } from '@angular/core';
 import { describe, expect, it } from 'vitest';
 import { isolatedRedState } from '../testing/batch-fixtures';
 import { BatchProvenRedComponent, shortEvidenceName } from './batch-proven-red';
@@ -24,18 +24,11 @@ describe('BatchProvenRedComponent', () => {
       .toBe('/api/projects/Demo/batch-gate/isolation-evidence?parentBatchId=batch-14&taskKey=AGT-2');
   });
 
-  it('shows the evidence folder and file name and the full path only on demand', async () => {
+  it('shows the evidence folder and file name, never the host path', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="batch-proven-red-evidence-name"]')!.textContent).toBe('batch-17/gate-evidence.jsonl');
-    expect(host.querySelector('[data-testid="batch-proven-red-evidence-path"]')).toBeNull();
-    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="batch-proven-red-path-toggle"]')!;
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-
-    toggle.click();
-    await TestBed.inject(ApplicationRef).whenStable();
-    expect(host.querySelector('[data-testid="batch-proven-red-evidence-path"]')!.textContent).toBe(culprit.evidencePath);
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(toggle.textContent!.trim()).toBe('Hide full path');
+    expect(host.textContent).not.toContain(culprit.evidencePath);
+    expect(host.querySelector('button')).toBeNull();
   });
 
   it('shortens Windows and bare evidence paths', () => {

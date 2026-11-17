@@ -7,13 +7,20 @@ namespace AgentStudio.Projects;
 /// One external probe of an environment (IP-14). <c>http</c> uses <see cref="Url"/>,
 /// <c>tcp</c> and <c>tls</c> use <see cref="Host"/> and <see cref="Port"/>. <see cref="AllowPrivateNetwork"/>
 /// carries the environment's opt-in to RFC 1918 targets (<see cref="HealthCheckAddressPolicy"/>).
+/// <c>database</c> (AGT-3878) names a managed database in <see cref="Host"/>; it opens no
+/// connection and judges the run host's reports instead.
 /// </summary>
 public sealed record HealthCheckDefinition(
     string Id, string Kind, string? Url, string? Host, int? Port, int ExpectedStatus, string? BodyContains,
     int IntervalSeconds, int TimeoutSeconds, int FailureThreshold, int RecoveryThreshold, bool Derived = false,
     bool AllowPrivateNetwork = false)
 {
-    public string Target => Kind == "http" ? Url ?? "" : $"{Host}:{Port}";
+    public string Target => Kind switch
+    {
+        "http" => Url ?? "",
+        "database" => "database " + Host,
+        _ => $"{Host}:{Port}",
+    };
 }
 
 /// <summary>How a target appears in cards, Activity and the UI.</summary>
@@ -120,10 +127,19 @@ public static class HealthCheckDeclarations
 
     /// <summary>
     /// The checks that run for an environment: the declared list when present (an empty
-    /// list turns checks off), otherwise defaults derived from the health URL and address.
-    /// Each carries the environment's private-network opt-in.
+    /// list turns the network checks off), otherwise defaults derived from the health URL
+    /// and address. Each carries the environment's private-network opt-in. Every managed
+    /// database of the environment adds a <c>database</c> check either way (AGT-3878).
     /// </summary>
     public static IReadOnlyList<HealthCheckDefinition> Effective(EnvironmentDeclaration environment)
+        => Network(environment).Concat(environment.Databases.Select(database => new HealthCheckDefinition(
+            DatabaseCheckId(database.Name), "database", null, database.Name, null, 0, null, DefaultIntervalSeconds,
+            DefaultTimeoutSeconds, DefaultFailureThreshold, DefaultRecoveryThreshold, Derived: true))).ToArray();
+
+    /// <summary>Check ids allow no underscore; database names allow no hyphen, so the mapping is unique.</summary>
+    public static string DatabaseCheckId(string database) => "database-" + database.Replace('_', '-');
+
+    private static IReadOnlyList<HealthCheckDefinition> Network(EnvironmentDeclaration environment)
     {
         var allowPrivate = environment.HealthChecksAllowPrivateNetwork;
         if (environment.HealthChecks is { } declared)

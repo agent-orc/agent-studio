@@ -666,6 +666,14 @@ reads `<variable>_FILE`). A database the desired state stops declaring is
 stopped after the new revision is live and its volume kept; only an owner's
 deletion in `databaseDeletions` removes the volume, and the host refuses it
 while a spec still declares the database. A changed major version is refused.
+`RunTargetDatabaseBackups` (AGT-3878) checks readiness every cycle, counts
+connections every minute, dumps each database on its spec's `backup` policy
+into `RUN_TARGET_BACKUP_DIR` (default `$RUNNER_STATE_DIR/run-target-backups`,
+mounted at `/backups` in the environment's database containers), prunes
+dumps past their retention, and runs the `databaseOperations` Studio sends
+(backup, a verification restore into a networkless scratch container, an
+approved restore) once per id. Dumps and readiness checks also run in the
+supervise-only pass while Studio is unreachable.
 
 ### Integration host (standalone review loop)
 

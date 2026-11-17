@@ -287,6 +287,11 @@ test('isolated owner-day seed writes a readable red batch ledger beside its disp
     const findings = readdirSync(join(findingsFolder, readdirSync(findingsFolder)[0]))
       .map(name => readJson(join(findingsFolder, readdirSync(findingsFolder)[0], name)));
     assert.deepEqual(findings.map(finding => finding.status).sort(), ['proven-green', 'proven-red']);
+    // The failed-test ranking only excerpts a dotnet-test 'Error Message:' block
+    // that follows the failed test's header line.
+    const [evidence] = readFileSync(findings[0].evidencePath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.match(evidence.output,
+      /Failed ReportExportTests\.EmptyReportKeepsExportDisabled \[\d+ ms\]\n\s*Error Message:\n\s*Assert\.False\(\) Failure/);
     assert.equal(readJson(join(root, 'project-settings.json'))['Demo App'].BatchGate.Enabled, true);
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -69,6 +69,11 @@ describe('BatchLaneIndicatorComponent', () => {
     expect(alert()!.dataset['tone']).toBe('danger');
     expect(alert()!.textContent!.trim()).toBe('Batch batch-14 red');
     expect(button().textContent).toContain('AGT-2 proven red');
+    expect(button().querySelector('[data-testid="batch-lane-held"]')!.textContent).toBe('blocks no cards');
+    state.set({ ...isolatedRedState, batches: isolatedRedState.batches.map(batch => batch.batchId === 'batch-14'
+      ? { ...batch, heldTaskKeys: ['AGT-1', 'AGT-3'] } : batch) });
+    await fixture.whenStable();
+    expect(button().querySelector('[data-testid="batch-lane-held"]')!.textContent).toBe('2 cards wait on it');
     state.set(redHalvingState);
     await fixture.whenStable();
     expect(button().dataset['batchAlert']).toBe('isolating');

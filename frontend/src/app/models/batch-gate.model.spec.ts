@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isolatedRedState, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
 import {
-  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine,
+  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine, batchDateTime, BATCH_TIME_ZONE_NOTE,
   type BatchGateState,
 } from './batch-gate.model';
 
@@ -9,8 +9,15 @@ const root = (state: BatchGateState) => state.batches.find(batch => batch.batchI
 
 it('formats the UTC start and elapsed gate time', () => {
   expect(batchTimeLine('2026-11-09T21:11:00Z', null, Date.parse('2026-11-10T00:41:00Z')))
-    .toBe('since 21:11 UTC, 3 h 30 min');
-  expect(batchTimeLine('2026-11-09T21:11:00Z', '2026-11-09T21:14:00Z')).toBe('since 21:11 UTC, 3 min');
+    .toBe('since 21:11, 3 h 30 min');
+  expect(batchTimeLine('2026-11-09T21:11:00Z', '2026-11-09T21:14:00Z')).toBe('since 21:11, 3 min');
+});
+
+it('formats batch dates in UTC like the time lines, without repeating the zone', () => {
+  expect(batchDateTime('2026-11-15T21:50:00Z')).toBe('15 Nov 2026, 21:50');
+  expect(batchDateTime('2026-11-15T23:50:00+02:00')).toBe('15 Nov 2026, 21:50');
+  expect(batchDateTime(null)).toBe('Unknown');
+  expect(BATCH_TIME_ZONE_NOTE).toBe('Times in UTC');
 });
 
 describe('batch waiting projection', () => {
@@ -49,7 +56,7 @@ describe('batch isolation model (AGT-3577)', () => {
   });
 
   it('reports a red batch with its culprit until a newer batch publishes', () => {
-    expect(batchAlert(isolatedRedState)).toEqual({ state: 'red', batchId: 'batch-14', culprits: ['AGT-2'] });
+    expect(batchAlert(isolatedRedState)).toEqual({ state: 'red', batchId: 'batch-14', culprits: ['AGT-2'], held: [] });
     const moved = { ...isolatedRedState, batches: [
       { ...isolatedRedState.batches[0], batchId: 'batch-19', parentBatchId: null, phase: 'published' },
       ...isolatedRedState.batches] };
@@ -57,12 +64,22 @@ describe('batch isolation model (AGT-3577)', () => {
   });
 
   it('reports isolating while a child of the red batch is active', () => {
-    expect(batchAlert(redHalvingState)).toEqual({ state: 'isolating', batchId: 'batch-7', culprits: [] });
+    expect(batchAlert(redHalvingState)).toEqual({ state: 'isolating', batchId: 'batch-7', culprits: [], held: [] });
     expect(batchAlert({ ...redHalvingState, batches: redHalvingState.batches.map(batch =>
       batch.batchId === 'batch-7' ? { ...batch, isolationActive: false } : batch) }))
-      .toEqual({ state: 'red', batchId: 'batch-7', culprits: [] });
+      .toEqual({ state: 'red', batchId: 'batch-7', culprits: [], held: [] });
     expect(batchAlert({ ...redHalvingState, batches: [] })).toBeNull();
     expect(batchAlert(null)).toBeNull();
+  });
+
+  it('counts the cards a red batch holds on the alert, not as waiting for a batch (F13)', () => {
+    const state = { ...redHalvingState,
+      pending: [...redHalvingState.pending, { ...redHalvingState.pending[0], taskKey: 'AGT-5', reviewAttemptId: 'review-5' }],
+      batches: redHalvingState.batches.map(batch => batch.batchId === 'batch-7'
+        ? { ...batch, isolationActive: false, heldTaskKeys: ['AGT-5'],
+          members: [...batch.members, { taskKey: 'AGT-5', replay: 'applied', released: false }] } : batch) };
+    expect(batchAlert(state)?.held).toEqual(['AGT-5']);
+    expect(batchWaitingCards(state).map(item => item.taskKey)).toEqual(['AGT-1']);
   });
 
   it('marks only the current delivery of a card proven red', () => {

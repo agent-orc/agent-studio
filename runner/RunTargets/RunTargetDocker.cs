@@ -39,6 +39,20 @@ public interface IRunTargetDocker
 
     /// <summary>Runs a command inside a running container; <see cref="RunTargetDockerResult.Detail"/> holds its output on success.</summary>
     Task<RunTargetDockerResult> ExecAsync(string container, IReadOnlyList<string> command, CancellationToken ct);
+
+    /// <summary>
+    /// Starts a throwaway PostgreSQL container without a network (AGT-3878) that
+    /// mounts <paramref name="hostDirectory"/> read-only at <paramref name="mountPath"/>.
+    /// Its data lives in the container layer and goes with the container.
+    /// </summary>
+    Task<RunTargetDockerResult> StartScratchAsync(string container, string image, string hostDirectory, string mountPath,
+        CancellationToken ct);
+
+    /// <summary>Force-removes a container; a missing container is a success.</summary>
+    Task<RunTargetDockerResult> RemoveContainerAsync(string container, CancellationToken ct);
+
+    /// <summary>Runs one command in a throwaway container without a network that mounts <paramref name="hostDirectory"/> at <see cref="RunTargetNames.BackupMount"/>.</summary>
+    Task<RunTargetDockerResult> RunOnceAsync(string image, string hostDirectory, IReadOnlyList<string> command, CancellationToken ct);
 }
 
 /// <summary>Docker CLI implementation. Every process goes through <see cref="ProcessRunner"/>.</summary>
@@ -145,6 +159,31 @@ public sealed class DockerCliRunTarget(string docker = "docker") : IRunTargetDoc
 
     public Task<RunTargetDockerResult> ExecAsync(string container, IReadOnlyList<string> command, CancellationToken ct)
         => RunWithOutput(["exec", container, .. command], ct);
+
+    public Task<RunTargetDockerResult> StartScratchAsync(string container, string image, string hostDirectory,
+        string mountPath, CancellationToken ct)
+        => Run(ScratchArguments(container, image, hostDirectory, mountPath), ct);
+
+    internal static string[] ScratchArguments(string container, string image, string hostDirectory, string mountPath) =>
+        ["run", "--detach", "--rm", "--name", container, "--network", "none",
+            "--cpus", "1", "--memory", "1g", "--pids-limit", "512",
+            "--security-opt", "no-new-privileges:true", "--cap-drop", "NET_RAW", "--cap-drop", "MKNOD",
+            "--label", "agent-studio.run-target=verify",
+            // Without a network nobody but docker exec reaches the scratch server, so it needs no password.
+            "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", "POSTGRES_DB=scratch",
+            "--mount", $"type=bind,source={hostDirectory},target={mountPath},readonly", image];
+
+    public async Task<RunTargetDockerResult> RemoveContainerAsync(string container, CancellationToken ct)
+    {
+        var removed = await RunWithOutput(["rm", "--force", container], ct);
+        return removed.Ok || removed.Detail.Contains("No such container", StringComparison.Ordinal)
+            ? RunTargetDockerResult.Success : removed;
+    }
+
+    public Task<RunTargetDockerResult> RunOnceAsync(string image, string hostDirectory, IReadOnlyList<string> command,
+        CancellationToken ct)
+        => Run(["run", "--rm", "--network", "none", "--security-opt", "no-new-privileges:true",
+            "--mount", $"type=bind,source={hostDirectory},target={RunTargetNames.BackupMount}", image, .. command], ct);
 
     private async Task<RunTargetDockerResult> Run(IReadOnlyList<string> arguments, CancellationToken ct)
     {

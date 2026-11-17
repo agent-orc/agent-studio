@@ -17,6 +17,4 @@
 .batch-proven-red__evidence a { color: var(--studio-accent); }
 .batch-proven-red__evidence a:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 .batch-proven-red__evidence code { color: var(--studio-fg-muted); font-size: .75rem; overflow-wrap: anywhere; }
-.batch-proven-red__evidence .studio-button { display: inline-flex; align-items: center; gap: var(--studio-spacing-1); margin: 0; padding: var(--studio-spacing-1) var(--studio-spacing-2); }
-.batch-proven-red__path { display: block; color: var(--studio-fg-muted); font-size: .75rem; overflow-wrap: anywhere; user-select: all; }
 .batch-proven-red__run { color: var(--studio-fg-muted); font-size: .75rem; overflow-wrap: anywhere; }
