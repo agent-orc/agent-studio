@@ -89,6 +89,32 @@ async function plantReadyJob(wp: WatchPath): Promise<{ id: string; title: string
   return { id: created.id, title };
 }
 
+for (const theme of ['light', 'dark'] as const) {
+  test(`Preparation explains how to start and first promotion says Queued (${theme})`, async ({ page }) => {
+    const wp = await getFirstWatchPath();
+    const id = uid('first-queue');
+    const title = `first queue fixture ${id}`;
+    const job = await createJob({ id, title, watchPath: wp.path,
+      targetState: '1-preparation', mode: 'coding', requiresIntegration: false });
+    try {
+      await page.setViewportSize({ width: 1280, height: 820 });
+      await openJobInDetail(page, job.id, wp.path);
+      await setTheme(page, theme);
+      await page.getByTestId('inspector-tab-activity').click();
+      await expect(page.getByTestId('activity-panel')).toContainText('Use Promote to Ready, then Run now');
+      await expect(page.getByTestId('studio-triage-action-run-now')).toHaveCount(0);
+      await page.getByTestId('studio-triage-action-promote-ready').click();
+      await expect(page.getByText(/Queued .* → Ready/).first()).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'No task selected' })).toBeHidden();
+      await expect(page.getByTestId('studio-triage-action-run-now')).toBeVisible();
+      const dir = process.env.JOB_RESULTS_DIR;
+      if (dir) await page.screenshot({ path: join(dir, `first-queue-${theme}.png`) });
+    } finally {
+      await deleteJob(job.id, wp.path).catch(() => {});
+    }
+  });
+}
+
 /**
  * The dev frontend boots with the `vsCodeLayout` flag on by default, so
  * the lane-action cluster lives in the studio slim tab-bar header
@@ -187,13 +213,16 @@ for (const view of [
       });
       await clickAcceptAndWaitForMove(page, () => moveCount);
 
-      await expect(page.getByTestId('task-move-refusal')).toContainText('Send a round to close the gap, review again, or accept with a written reason');
+      const refusalBanner = page.getByTestId('task-move-refusal');
+      await expect(refusalBanner).toContainText('Acceptance refused: no content verdict for the current brief.');
+      await expect(refusalBanner.getByTestId('task-move-refusal-override')).toBeVisible();
+      await expect(refusalBanner.getByTestId('task-move-refusal-review')).toBeVisible();
       // AGT-3830: the content refusal's next step replaces Accept, and its reason takes focus.
       await expect(page.locator('[data-testid="acceptance-refusal-action"]:visible')).toHaveText('Review again');
       await expect(page.locator('[data-testid="acceptance-refusal-override"]:visible')).toBeVisible();
       await expect(page.locator('[data-testid="acceptance-refusal-focus"]:visible')).toBeFocused();
       await expect(page.getByTestId('studio-triage-action-mark-done')).toHaveCount(0);
-      await expect(page.getByTestId('notification-warning')).toHaveCount(0);
+      await expect(page.getByTestId('notification-stack-below-toolbar').getByTestId('notification-warning')).toBeVisible();
       await expect(page.getByRole('heading', { name: 'No task selected' })).toBeHidden();
       await expect(page).toHaveURL(originalUrl);
       expect((await getJob(job.id, wp.path)).state).toBe('5-human-review');

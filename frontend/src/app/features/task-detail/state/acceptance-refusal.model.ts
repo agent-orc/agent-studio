@@ -40,6 +40,8 @@ export interface AcceptanceRefusal {
    * round that closes the gap (AGT-3867).
    */
   secondaryAction?: Pick<AcceptanceRefusal, 'action' | 'actionLabel'>;
+  /** The content review's own concern, if the current dry run names it. */
+  concern?: string | null;
   /**
    * F12: set when the acceptance-readiness answer ranks the reason. `reason`
    * is then its primary sentence, and other gaps of the card are secondary.
@@ -58,6 +60,7 @@ export interface ServerAcceptanceRefusal {
 
 const OVERRIDE_LABEL = 'Accept with override…';
 const ROUND_LABEL = 'Send a round…';
+const CONTENT_GAP = 'completion-content-gap';
 
 /** The completion's own refusal as an acceptance sentence. */
 export function acceptanceRefusalSentence(text: string): string {
@@ -77,11 +80,14 @@ const CONTENT_REFUSAL_CLASSES: ReadonlySet<string> = new Set(['review-concerns',
 const CONTENT_REFUSAL_CODE = 'completion-content-gap';
 
 function contentRefusal(reason: string, source: AcceptanceRefusal['source'], refusal: string,
-  readiness: AcceptanceReadinessItem | null, hold: AcceptanceRefusal | null = null): AcceptanceRefusal {
+  readiness: AcceptanceReadinessItem | null, hold: AcceptanceRefusal | null = null,
+  info: TaskInfo | null = null): AcceptanceRefusal {
   const secondaryAction = nextAction(refusal, readiness);
   const primary = readiness ? acceptancePrimaryReason(readiness) : null;
+  const concern = info ? acceptanceRefusalConcern(info, readiness) : null;
   return {
     reason, action: 'review-again', actionLabel: 'Review again', source, replacesAccept: true,
+    ...(concern ? { concern } : {}),
     ...(primary ? { headline: primary.headline, nextStep: primary.nextStep,
       secondary: secondaryAcceptanceGaps(primary, [hold?.reason]) } : {}),
     secondaryAction: secondaryAction.action === 'override'
@@ -119,17 +125,17 @@ export function acceptanceRefusalFor(
   // AGT-3830: a server content refusal, or the readiness check that predicts
   // it, makes the next step (review again, or accept with a written reason)
   // the primary instead of an Accept that can only be refused again.
-  // A dry run that turned ready since (after a review again) supersedes the refusal.
-  if (server && server.taskKey === info.taskKey && server.code === CONTENT_REFUSAL_CODE
-    && ownReadiness?.readiness !== 'ready')
+  // The server's actual refusal outranks a stale ready dry run. A successful
+  // review request clears the recorded refusal before refreshing readiness.
+  if (server && server.taskKey === info.taskKey && server.code === CONTENT_REFUSAL_CODE)
     return ownReadiness && CONTENT_REFUSAL_CLASSES.has(ownReadiness.readiness)
-      ? contentRefusal(readinessReason(ownReadiness), 'server', ownReadiness.refusal, ownReadiness, hold)
-      : contentRefusal(server.message, 'server', server.message, ownReadiness, hold);
+      ? contentRefusal(readinessReason(ownReadiness), 'server', ownReadiness.refusal, ownReadiness, hold, info)
+      : contentRefusal(server.message, 'server', server.message, null, hold, info);
   if (server && server.taskKey === info.taskKey && server.code !== 'run-attempt-missing'
     && server.code !== CONTENT_REFUSAL_CODE)
-    return { reason: server.message, ...nextAction(server.message, ownReadiness), source: 'server' };
+    return { reason: server.message, ...nextAction(server.message, ownReadiness), source: 'server', concern: null };
   if (ownReadiness && CONTENT_REFUSAL_CLASSES.has(ownReadiness.readiness))
-    return contentRefusal(readinessReason(ownReadiness), 'readiness', ownReadiness.refusal, ownReadiness, hold);
+    return contentRefusal(readinessReason(ownReadiness), 'readiness', ownReadiness.refusal, ownReadiness, hold, info);
   if (awaitingGit) return null;
   const refused = readinessHold(ownReadiness);
   const primary = refused && ownReadiness ? acceptancePrimaryReason(ownReadiness) : null;
@@ -218,13 +224,44 @@ export function contentRefusalReason(refusal: AcceptanceRefusal | null): string 
  * card with no content verdict yet adds no hold here.
  */
 export function contentVerdictHold(info: TaskInfo): AcceptanceRefusal | null {
+  const verdict = contentVerdict(info);
+  const status = verdict?.status?.trim().toLowerCase();
+  if (!verdict || !status || status === 'pass') return null;
+  const reason = verdict.summary?.trim() || `The ${verdict.aspect} review returned ${status}.`;
+  return { reason, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' };
+}
+
+function contentVerdict(info: TaskInfo) {
   const aspect = info.mode === 'concept' ? 'concept-fit' : 'requirement-fit';
   const verdict = info.reviewProjection?.attempts?.[0]?.aspects
     ?.find(row => row.aspect?.toLowerCase() === aspect);
+  return verdict ? { ...verdict, aspect } : null;
+}
+
+/**
+ * AGT-3873: the concern the content review raised, in its own words: the
+ * dry run's concern, else the summary of the latest content verdict that is
+ * not `pass`. Null when neither names one.
+ */
+export function acceptanceRefusalConcern(
+  info: TaskInfo,
+  readiness: AcceptanceReadinessItem | null = null,
+): string | null {
+  const fromReadiness = readiness?.concern?.trim();
+  if (fromReadiness) return fromReadiness;
+  const verdict = contentVerdict(info);
   const status = verdict?.status?.trim().toLowerCase();
-  if (!verdict || !status || status === 'pass') return null;
-  const reason = verdict.summary?.trim() || `The ${aspect} review returned ${status}.`;
-  return { reason, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' };
+  return status && status !== 'pass' ? verdict?.summary?.trim() || null : null;
+}
+
+/**
+ * AGT-3873: a content refusal the owner may override with a written reason,
+ * and that a content review against the current brief may also resolve. The
+ * completion policy lets an override replace a content verdict, never a
+ * missing research report.
+ */
+export function acceptanceRefusalOverridable(refusal: Pick<ServerAcceptanceRefusal, 'code' | 'message'>): boolean {
+  return refusal.code === CONTENT_GAP && acceptanceOverrideAllowed(refusal.message);
 }
 
 /** The refusal sentence of a failed move to Accepted, in the server's words. */
@@ -253,6 +290,8 @@ export class AcceptanceRefusalStore {
    * one), and only shortly after the refused click.
    */
   readonly focusRequest = this.focus.asReadonly();
+  /** An explicit action from a toast or banner opens the written-reason form. */
+  readonly overrideRequest = signal<string | null>(null);
 
   requestFocus(taskKey: string): void {
     this.focus.set({ taskKey, at: Date.now() });
@@ -266,7 +305,19 @@ export class AcceptanceRefusalStore {
     this.refusals.update(current => new Map(current).set(refusal.taskKey, refusal));
   }
 
+  requestOverride(taskKey: string): void {
+    this.overrideRequest.set(taskKey);
+  }
+
+  /** Consumes the pending override request of `taskKey`; true when there was one. */
+  takeOverrideRequest(taskKey: string): boolean {
+    if (this.overrideRequest() !== taskKey) return false;
+    this.overrideRequest.set(null);
+    return true;
+  }
+
   clear(taskKey: string): void {
+    if (this.overrideRequest() === taskKey) this.overrideRequest.set(null);
     if (!this.refusals().has(taskKey)) return;
     this.refusals.update(current => {
       const next = new Map(current);

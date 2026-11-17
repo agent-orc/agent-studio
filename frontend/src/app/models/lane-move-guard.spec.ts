@@ -142,6 +142,26 @@ describe('describeMoveRefusal', () => {
     expect(refusal?.sentence).toBe("This card's review does not cover its current brief, so it cannot be accepted yet.");
   });
 
+  it('names a concerns verdict on the current brief as a decision, not a brief mismatch (AGT-3873)', () => {
+    const refusal = describeMoveRefusal(conflict({
+      error: 'Completion refused: requirement-fit verdict was concerns.',
+      code: 'completion-content-gap',
+    }), pendingCard, TaskState.Completed);
+    expect(refusal).toEqual({
+      sentence: 'The requirement-fit review returned concerns, so this card needs your decision before it is accepted.',
+      nextAction: 'Open the card to review it again, or accept it there with a written reason.',
+    });
+  });
+
+  it('says what to do instead when no override can replace a missing report (AGT-3873)', () => {
+    const refusal = describeMoveRefusal(conflict({
+      error: 'Completion refused: the required report is missing (results/report.md); requirement-fit verdict was pass.',
+      code: 'completion-content-gap',
+    }), pendingCard, TaskState.Completed);
+    expect(refusal?.sentence).toBe("This card's required report is missing, so it cannot be accepted.");
+    expect(refusal?.nextAction).toBe('Open the card and send the round that writes the report; an override cannot replace it.');
+  });
+
   it('falls back to a plain sentence for an unknown refusal', () => {
     const refusal = describeMoveRefusal(conflict({ error: 'Something internal' }), job(), TaskState.Archive);
     expect(refusal?.sentence).toBe('This card cannot move to Archive right now.');

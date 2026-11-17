@@ -191,8 +191,10 @@ async function installMockedBoard(page: Page, onDelete: (url: URL) => void): Pro
     }
     if ((request.method() === 'PUT' || request.method() === 'POST')
       && url.pathname.includes('/tasks/agt3624-demo-integrated/')) {
+      // AGT-3873: a refusal an override can admit opens the card with the
+      // override form instead; a missing report is the one that cannot.
       return json(route, {
-        error: 'Completion refused: delivery brief version is missing; no content verdict (requirement-fit); only no aspects ran.',
+        error: 'Completion refused: the required report is missing (results/report.md).',
         code: 'completion-content-gap',
       }, 409);
     }
@@ -242,9 +244,9 @@ test.describe('Card menu refusals and delete with the API mocked', () => {
     await expect(dialog).toContainText('Move refused');
     await expect(dialog).toContainText('Cannot move to Accepted');
     await expect(page.getByTestId('error-dialog-message'))
-      .toHaveText("This card's review does not cover its current brief, so it cannot be accepted yet.");
-    await expect(page.getByTestId('error-dialog-next-action')).toContainText('rerun its review');
-    await expect(dialog).not.toContainText('requirement-fit');
+      .toHaveText("This card's required report is missing, so it cannot be accepted.");
+    await expect(page.getByTestId('error-dialog-next-action')).toContainText('an override cannot replace it');
+    await expect(dialog).not.toContainText('results/report.md');
     await expect(dialog).not.toContainText('Stack trace');
     await expect(page.getByTestId('error-dialog-technical')).toHaveCount(0);
     await captureThemes(page, 'agt3624-refusal-dialog', async () => undefined);
@@ -253,7 +255,7 @@ test.describe('Card menu refusals and delete with the API mocked', () => {
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByTestId('error-dialog-server-message')).toContainText('delivery brief version');
+    await expect(page.getByTestId('error-dialog-server-message')).toContainText('required report is missing');
     await expect(page.getByTestId('error-dialog-output')).toContainText('409');
     await captureThemes(page, 'agt3624-refusal-dialog-technical', async () => undefined);
 

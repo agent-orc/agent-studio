@@ -72,6 +72,7 @@ export interface UsageCostProjection {
   unpricedTodayRuns?: number;
   unpricedWeekRuns?: number;
   projects: UsageProjectCost[];
+  oneShotSources?: { source: string; todayUsd: number; weekUsd: number }[];
   coverage: UsageSourceState;
   pricingVersion: string;
   normalizationVersion: string;

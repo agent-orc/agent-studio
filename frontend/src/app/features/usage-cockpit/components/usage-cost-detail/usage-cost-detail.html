@@ -81,6 +81,18 @@
       <p class="usage-detail__note" data-testid="usage-detail-reconcile-partial">Some amounts are unavailable, so the rows may not add up to the total.</p>
     }
 
+    @if (c.oneShotSources.length > 0) {
+      <table class="usage-detail__table" data-testid="usage-detail-one-shot-sources">
+        <caption class="usage-detail__caption">One-shot cost by source, included in the totals above</caption>
+        <thead><tr><th scope="col">Source</th><th scope="col" class="usage-detail__num">Today</th><th scope="col" class="usage-detail__num">This week</th></tr></thead>
+        <tbody>
+          @for (row of c.oneShotSources; track row.source) {
+            <tr><th scope="row">{{ row.source }}</th><td class="usage-detail__num">{{ row.today }}</td><td class="usage-detail__num">{{ row.week }}</td></tr>
+          }
+        </tbody>
+      </table>
+    }
+
     <h4 class="usage-detail__subtitle">Live runs</h4>
     <p class="usage-detail__muted">Live spend is part of the totals above, not added to them.</p>
     @if (c.liveRuns.length === 0) {

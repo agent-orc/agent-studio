@@ -54,6 +54,9 @@ public sealed class TokenAnalysisServiceTests : IDisposable
         Assert.Equal(350, card.Slices.Where(slice => slice.Kind == TokenUsageKinds.ReviewAspect).Sum(TokenAnalysisFold.SliceTotal));
         Assert.Equal(7, result.Days);
         Assert.Equal(now.Date.AddDays(-6), result.From);
+        var unattributed = Assert.Single(result.Remainders, row => row.Project == "Unattributed one-shot jobs");
+        Assert.Equal(6, unattributed.TotalTokens);
+        Assert.Equal(TokenUsageKinds.Enrichment, Assert.Single(unattributed.Slices).Kind);
 
         var detail = service.CardDetail(new TokenAnalysisProjectSource("PROJ-1", Project, _watchPath), "AGT-1");
         Assert.NotNull(detail);

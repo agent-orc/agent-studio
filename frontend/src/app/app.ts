@@ -45,6 +45,7 @@ import {
   TaskDetailComponent,
   DetailLoadErrorComponent,
   TaskDetailLoadSectionsComponent,
+  TaskMoveRefusalComponent,
 } from './features/task-detail/lazy';
 import {
   TaskSelectionService,
@@ -184,6 +185,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     TaskDetailComponent,
     DetailLoadErrorComponent,
     TaskDetailLoadSectionsComponent,
+    TaskMoveRefusalComponent,
     OrchestratorSideSheetHostComponent,
     OrchestratorFeedComponent,
     ProjectOverlaysComponent,

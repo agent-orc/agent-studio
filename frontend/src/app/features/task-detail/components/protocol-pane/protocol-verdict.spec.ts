@@ -102,6 +102,35 @@ describe('deriveProtocolVerdict', () => {
     expect(v.signals?.find(signal => signal.label === 'Needs decision')?.status).toBe('needs-decision');
   });
 
+  /**
+   * AGT-3873: AGT-3534 was merged into develop and its review passed, yet the
+   * Result head said "Pipeline failure" because a step failed on the missing
+   * status.md. The step stays as evidence; the lane leads.
+   */
+  it('does not call a merged, reviewed delivery a Pipeline failure', () => {
+    const pipelineExecution = {
+      pipelineId: 'standard', pipelineVersion: 1, jobId: 'AGT-3534', project: 'agt',
+      startedAt: '2026-11-09T08:00:00Z', completedAt: '2026-11-09T09:35:00Z',
+      steps: [{ stepId: 'core-agent-run', status: 'completed' }, { stepId: 'post-status-report', status: 'failed' }],
+    } as never;
+    const merged = deriveProtocolVerdict(baseInputs({
+      laneState: '5-human-review', pipelineExecution, deliveryIntegrated: true, lastReviewPassed: true,
+    }));
+    expect(merged.label).toBe('Human review');
+    expect(merged.status).toBe('needs-decision');
+    expect(merged.signals?.find(signal => signal.label === 'Pipeline failure')).toBeUndefined();
+    expect(merged.signals?.find(signal => signal.source === 'pipeline')).toMatchObject({
+      status: 'unclear', label: 'Pipeline step failed',
+      detail: '1 pipeline step failed: post-status-report. The delivery is merged and its review passed.',
+    });
+
+    // Not merged, or not reviewed: the failed step still leads.
+    for (const facts of [{ deliveryIntegrated: false, lastReviewPassed: true }, { deliveryIntegrated: true, lastReviewPassed: false }]) {
+      const v = deriveProtocolVerdict(baseInputs({ laneState: '5-human-review', pipelineExecution, ...facts }));
+      expect(v.label).toBe('Pipeline failure');
+    }
+  });
+
   it('is unclear (running) when isRunning beats every other signal', () => {
     const v = deriveProtocolVerdict(baseInputs({
       isRunning: true,

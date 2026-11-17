@@ -99,17 +99,17 @@ for (const view of VIEWS) {
     await expect(shown).toBeVisible({ timeout: 15_000 });
     await expect(shown.getByTestId('acceptance-refusal-focus')).toBeFocused();
     await expect(page.getByTestId('task-move-refusal')).toBeVisible();
-    await expect(page.getByTestId('notification-warning')).toHaveCount(0);
+    const refusalToast = page.getByTestId('notification-stack-below-toolbar').getByTestId('notification-warning');
+    await expect(refusalToast).toBeVisible();
+    await expect(refusalToast).toHaveAttribute('role', /status|alert/);
     await expect(page.getByRole('heading', { name: 'No task selected' })).toBeHidden();
     await expect(page.getByTestId('studio-task').locator('app-job-detail')).toBeVisible();
     await expect(plainAccept(page, view.width)).toHaveCount(0);
     await page.screenshot({ path: path.join(shots, `demo19-${view.name}-refused-focus.png`) });
 
-    // 3. A sticky notice is announced, closes with Escape before the card does, and on a
+    // 3. The refusal notice closes with Escape before the card does, and on a
     //    phone stays clear of the header controls.
-    await page.evaluate(() => (window as unknown as { __notifications: { warning(m: string, t: string): number } })
-      .__notifications.warning('Acceptance was refused. See Acceptance grounds.', 'Accept refused'));
-    const notice = page.getByTestId('notification-warning');
+    const notice = refusalToast;
     await expect(notice).toBeVisible();
     await expect(notice).toHaveAttribute('role', /status|alert/);
     if (view.width < 600) {

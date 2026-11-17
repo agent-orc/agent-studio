@@ -10,6 +10,7 @@ const RESULTS = join(process.env.JOB_RESULTS_DIR ?? 'test-results', 'owner-day-d
 const VARIANTS: readonly { theme: Theme; width: number }[] = [
   { theme: 'light', width: 1280 },
   { theme: 'light', width: 390 },
+  { theme: 'dark', width: 390 },
   { theme: 'dark', width: 1280 },
 ];
 

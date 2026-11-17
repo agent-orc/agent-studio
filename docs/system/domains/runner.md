@@ -1200,7 +1200,9 @@ unreported claim expires with its lease and is queued again.
   completions clear it. A rebase conflict at
   integration ends in the existing AGT-2909 dead-end exit
   (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
-  the base in one sentence and names no SHA.
+  the base in one sentence and names no SHA. This steer tells the agent to
+  leave the develop merge to the runner, which merges current develop at the
+  start of the round.
 - Operator continue, steer and extend rounds carry the result ref (AGT-3483,
   [operator-agent-level Dossier](../../operator-agent-level/index.html) OP-3).
   A round queued for a runner claim on a card with a recorded result ref saves

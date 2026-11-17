@@ -22,6 +22,7 @@ interface SparkPoint {
 
 interface ProjectUsageRow {
   project: string;
+  unattributed: boolean;
   slug: string;
   orchestratorLlmCalls: number;
   totalTokens: number;
@@ -84,6 +85,7 @@ export class CliUsageDetailComponent {
       .filter((p) => !!p.project)
       .map((p) => ({
         project: p.project,
+        unattributed: p.project === 'Unattributed one-shot jobs',
         slug: this.toSlug(p.project),
         orchestratorLlmCalls: p.orchestratorLlmCalls,
         totalTokens:
@@ -104,7 +106,8 @@ export class CliUsageDetailComponent {
   }
 
   projectTooltip(project: ProjectUsageRow): string {
-    return `${project.project} · ${this.formatTokens(project.totalTokens)} tokens · ${project.orchestratorLlmCalls} calls · ${this.formatUsd(project.estimatedApiCostUsd)} - open project settings`;
+    return `${project.project} · ${this.formatTokens(project.totalTokens)} tokens · ${project.orchestratorLlmCalls} calls · ${this.formatUsd(project.estimatedApiCostUsd)}`
+      + (project.unattributed ? '' : ' - open project settings');
   }
 
   limitText(window: QuotaWindow): string {
@@ -130,10 +133,11 @@ export class CliUsageDetailComponent {
     return modelUsageRows(cliType, this.tokens(), this.adhoc(), 'orchestrator', false).slice(0, 5);
   }
 
-  sourceRowsFor(cliType: CliType) {
-    if (cliType !== 'claude') return [];
-    return (this.adhoc()?.bySource ?? []).slice(0, 5);
-  }
+  readonly oneShotSources = computed(() => (this.adhoc()?.bySource ?? [])
+    .filter(row => ['auto-tag', 'tagging', 'tag-maintenance', 'tag-classification-evaluation',
+      'title-generation', 'summary-generation',
+      'prompt-enhancement', 'commit-message', 'task-spawner', 'prompt-enrichment',
+      'model-qualification', 'qualification'].includes(row.source)));
 
   topJobs(): WorkspaceExpensiveJob[] {
     return this.expensiveJobs().slice(0, 6);

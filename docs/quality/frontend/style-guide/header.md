@@ -18,6 +18,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | App 5 | Theme, Needs you, Settings, account | User actions and the operator attention count | Needs you always; its count takes the warning tint only when nonzero | Icon or text buttons plus account control; theme `d6b11df5d`, settings/account `7fb0177069`, AGT-3356 moved usage to footer, AGT-3576 replaced the stall bell with `app-attention-control`. |
 | Task 1 | Tab strip | Open tabs and active task identity | Editor open | One row; `d6b11df5d`, AGT-2963 responsive fix. |
 | Task 2 | Task toolbar | Run activity, execution host, pane toggles, lane pager, paging lane, acceptance refusal, primary action, menu | Task tab active; individual controls follow their capability | One action row; `ccc0039eb` (AGT-2819 extraction). Host belongs here and nowhere in the Overview title. |
+| Task 2a | `app-task-move-refusal` | Why this card's last move was refused; for a content refusal the review's concern, Accept with a written reason and Review again | The open card's last move was refused | Acute notice below the toolbar; its refusal toast docks below it and the toolbar (`below-toolbar`), never over them. AGT-3873. |
 | Task 3 | Global alert banner | Cross-task integration alert | Alert threshold reached | Single alert banner in `app-workspace-banner`; `5d496e73e`. |
 | Task 3a | Phone primary lane action | Current lane decision, or the acceptance refusal that replaces it | Primary action or refusal available below 600 px | Full-width shared primary button above task notices; a content refusal renders as a stacked block (AGT-3830). |
 | Task 4 | `app-task-resource-status` | Resource limitation affecting this task | Resource finding exists | Notice; `2b1436acc`. |
@@ -57,22 +58,23 @@ execution host (a concrete execution location), pane toggles (task tab),
 previous task, pager position, next task, paging lane select, acceptance
 refusal, primary lane action (only when available), and text-only overflow
 menu. `studio-tab-actions` owns these controls (`ccc0039eb`, AGT-2819).
-The acceptance refusal (`app-acceptance-refusal`, AGT-3704) renders only for a
-Human Review Accept that is held by its integration verdict or was refused by
-the server. It shows the reason as a compact warning indicator and exactly one
-action: Retry integration for a failed integration, Send a round… when no
+The acceptance refusal (`app-acceptance-refusal`, AGT-3704) renders for a
+Human Review Accept held by its integration verdict, refused by the server,
+or refused by the card's acceptance readiness. It shows the reason beside its
+next action: Retry integration for a failed integration, Send a round… when no
 override can admit the card (AGT-3867), otherwise Accept with override, which
-asks for a written reason. It is omitted during the bounded
-Git wait (the primary's skeleton is that progress) and when the attempt-gap
-notice owns the refusal. The reason truncates first at narrow widths; its
-tooltip keeps the full sentence. AGT-3830: a content refusal (acceptance readiness
+asks for a written reason. The attempt-gap notice owns its own refusal.
+The reason truncates first at narrow widths; its tooltip keeps the full
+sentence. AGT-3830: a content refusal (acceptance readiness
 `review-concerns` or `no-content-verdict`, or a server `completion-content-gap`)
 replaces Accept instead of preceding it: Review again is the primary, Accept
 with a reason… sits beside it (Send a round… where the completion policy lets
 no override admit the card, AGT-3867), and the reason reads the same words as the board
 and Needs you. The open card checks its own readiness through
 `POST /api/tasks/acceptance-readiness`. After a refused click the visible
-refusal takes focus; refusals do not raise a sticky notice over the header. The primary action can be Run now
+refusal takes focus; its actionable status toast docks below the toolbar and
+the phone's full-width refusal actions, stays above the status bar, and closes
+with Escape. The primary action can be Run now
 or the current lane's decision; its label comes from triage policy. The host
 chip is a factual badge, the pager is a compact action group, and the lane
 select is a navigation control. The menu owns secondary task actions.

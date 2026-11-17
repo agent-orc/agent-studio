@@ -508,6 +508,34 @@ describe('BatchPanelComponent', () => {
       .toEqual(['flight queue position 2 of 2', 'flight queue position 1 of 2']);
     http.verify();
   });
+  it('F14: opens with the red batch and running batches before statistics and history', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({ ...isolatedRedState,
+      gateSlots: { busy: 1, total: 3 },
+      batches: [{ ...isolatedRedState.batches[0], batchId: 'batch-19', parentBatchId: null, phase: 'running' },
+        ...isolatedRedState.batches] });
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const body = document.body.querySelector('[data-testid="batch-panel-body"]') as HTMLElement;
+    const active = body.querySelector('[data-testid="batch-active"]') as HTMLElement;
+    expect(body.firstElementChild).toBe(active);
+    expect(active.querySelector('h3')!.textContent).toBe('Red and running batches');
+    expect([...active.querySelectorAll('article')].map(article => article.id)).toEqual(['batch-batch-14', 'batch-batch-19']);
+    const slots = body.querySelector('[data-testid="batch-gate-slot-usage"]') as HTMLElement;
+    expect(active.compareDocumentPosition(slots) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const recent = body.querySelector('[data-testid="batch-recent"]') as HTMLElement;
+    expect(recent.querySelector('h3')!.textContent).toBe('Recent batches');
+    expect(recent.querySelector('#batch-batch-14')).toBeNull();
+    expect(recent.querySelector('#batch-batch-18')).not.toBeNull();
+    expect(document.body.querySelectorAll('#batch-batch-14')).toHaveLength(1);
+  });
   it('names the current lane idle cause and the idle minutes per cause', async () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
     const fixture = TestBed.createComponent(BatchPanelComponent);

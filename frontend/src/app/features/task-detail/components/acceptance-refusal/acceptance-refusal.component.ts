@@ -1,5 +1,5 @@
 import {
-  ChangeDetectionStrategy, Component, ElementRef, Injector, afterNextRender, computed, effect, inject, input, signal, viewChild,
+  ChangeDetectionStrategy, Component, ElementRef, Injector, afterNextRender, computed, effect, inject, input, signal, untracked, viewChild,
 } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
@@ -54,6 +54,10 @@ export class AcceptanceRefusalComponent {
   /** `inline`: a toolbar item. `stacked`: the phone's full-width block. */
   readonly layout = input<'inline' | 'stacked'>('inline');
   private readonly reasonEl = viewChild<ElementRef<HTMLElement>>('reasonEl');
+  private readonly actionButton = viewChild<ElementRef<HTMLButtonElement>>('actionButton');
+  private readonly secondaryButton = viewChild<ElementRef<HTMLButtonElement>>('secondaryButton');
+  private readonly reasonInput = viewChild<ElementRef<HTMLTextAreaElement>>('reasonInput');
+  private readonly focusOverrideInput = signal(false);
   private readonly injector = inject(Injector);
 
   readonly overrideOpen = signal(false);
@@ -111,6 +115,30 @@ export class AcceptanceRefusalComponent {
     afterNextRender(() => {
       for (const delay of FOCUS_ATTEMPTS_MS) setTimeout(() => this.takeFocus(request.at), delay);
     }, { injector: this.injector });
+  });
+
+  private readonly openOnRequest = effect(() => {
+    const requested = this.refusals.overrideRequest();
+    const refusal = this.refusal();
+    const button = (refusal.action === 'override' ? this.actionButton() :
+      refusal.secondaryAction?.action === 'override' ? this.secondaryButton() : null)?.nativeElement;
+    if (!requested || requested !== this.job().taskKey || !button) return;
+    untracked(() => {
+      if (!this.refusals.takeOverrideRequest(requested) || this.disabled()) return;
+      this.error.set(null);
+      this.overrideAnchor.set(button);
+      this.overrideOpen.set(true);
+      this.focusOverrideInput.set(true);
+    });
+  });
+
+  private readonly focusOnOverrideOpen = effect(() => {
+    const input = this.reasonInput()?.nativeElement;
+    if (!input || !this.focusOverrideInput()) return;
+    untracked(() => {
+      this.focusOverrideInput.set(false);
+      input.focus({ preventScroll: true });
+    });
   });
 
   private takeFocus(requestedAt: number): void {

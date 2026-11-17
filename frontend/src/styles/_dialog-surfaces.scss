@@ -745,6 +745,35 @@
     bottom: calc(2 * var(--studio-target-coarse-min) + var(--studio-spacing-5));
   }
 }
+/* Refusal notices follow the measured task toolbar and banner. The phone's
+   default toast dock must not pull this dedicated pile over header controls. */
+.app-notify-stack--below-toolbar {
+  top: 96px;
+  bottom: auto;
+  max-width: min(440px, 92vw);
+}
+@media (max-width: 720px) {
+  .app-notify-stack--below-toolbar {
+    left: var(--studio-spacing-2);
+    right: var(--studio-spacing-2);
+    max-width: none;
+  }
+}
+@media (max-width: 599px) {
+  .app-notify-stack--below-toolbar {
+    --notify-footer-clearance: calc(var(--studio-target-coarse-min) + var(--studio-spacing-3));
+    bottom: var(--notify-footer-clearance);
+  }
+  .app-notify-stack--below-toolbar .notification {
+    max-height: calc(100dvh - var(--notify-dock-top) - var(--notify-footer-clearance));
+    overflow-y: auto;
+  }
+}
+@media (max-width: 460px) {
+  .app-notify-stack--below-toolbar {
+    --notify-footer-clearance: calc(2 * var(--studio-target-coarse-min) + var(--studio-spacing-5));
+  }
+}
 .app-notify {
   pointer-events: auto;
   display: block;
