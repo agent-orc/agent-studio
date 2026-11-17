@@ -57,6 +57,43 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
       .toBeNull();
   });
 
+  describe('ranked by the acceptance-readiness answer (F12)', () => {
+    const noVerdict = readinessItem('AGT-1', 'no-content-verdict', {
+      taskKey: 'wp::AGT-1',
+      headline: 'No content verdict',
+      reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+    });
+
+    it('leads with the readiness reason and lists the integration hold under it', () => {
+      expect(acceptanceRefusalFor(card({ status: 'no-branch' }), null, false, noVerdict)).toEqual({
+        reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
+        headline: 'No content verdict',
+        nextStep: 'Run the requirement-fit review for the current run.',
+        secondary: ['No delivery branch or commit was found for this card.'],
+        action: 'override', actionLabel: 'Accept with override…', source: 'hold',
+      });
+    });
+
+    it('keeps the integration action when integration is the gap to resolve', () => {
+      const refusal = acceptanceRefusalFor(card({ status: 'conflict-skipped' }), null, false,
+        readinessItem('AGT-1', 'not-integrated', { reason: 'Integration into develop failed.' }));
+      expect(refusal).toMatchObject({ action: 'retry-integration', reason: 'Integration into develop failed.', secondary: [] });
+    });
+
+    it('shows a readiness refusal although the integration hold has none', () => {
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, noVerdict))
+        .toMatchObject({ headline: 'No content verdict', secondary: [] });
+    });
+
+    it('falls back to the integration hold for a ready card, and a server refusal still leads', () => {
+      expect(acceptanceRefusalFor(card({ status: 'pending' }), null, false, readinessItem('AGT-1', 'ready'))?.reason)
+        .toBe('The delivery is not in develop yet.');
+      const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap', message: 'Completion refused.' };
+      expect(acceptanceRefusalFor(card({ status: 'pending' }), server, false, noVerdict))
+        .toEqual({ reason: 'Completion refused.', action: 'override', actionLabel: 'Accept with override…', source: 'server' });
+    });
+  });
+
   it('holds Accept on a content verdict that is not pass, in the verdict summary (AGT-3874)', () => {
     const reviewed = (status: string, summary: string, extra: Partial<TaskInfo> = {}) => card({ status: 'integrated' }, {
       reviewProjection: { attempts: [{ aspects: [
@@ -97,6 +134,7 @@ describe('acceptance readiness before and after the click (AGT-3867)', () => {
     expect(refusal).toEqual({
       reason: 'The requirement-fit review returned concerns: The lane hides the reason.',
       action: 'override', actionLabel: 'Accept with override…', source: 'hold',
+      headline: 'Review concerns', nextStep: 'Send a round to close the gap the review raised.', secondary: [],
     });
     expect(acceptanceRefusalTooltip(refusal!)).toBe('Accept will be refused. The requirement-fit review returned '
       + 'concerns: The lane hides the reason. Next step: Accept with override.');
@@ -116,6 +154,14 @@ describe('acceptance readiness before and after the click (AGT-3867)', () => {
       refusal: 'Completion refused: the required report is missing (results/report.md).' };
     expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, report))
       .toMatchObject({ action: 'send-round', actionLabel: 'Send a round…' });
+  });
+
+  it('leads with the round over a pending integration and lists the integration under it (F12)', () => {
+    const report = { ...concerns, readiness: 'blocked' as const,
+      refusal: 'Completion refused: the required report is missing (results/report.md).' };
+    expect(acceptanceRefusalFor(card({ status: 'conflict-skipped' }), null, false, report)).toMatchObject({
+      reason: concerns.reason, action: 'send-round', secondary: ['Integration into develop failed.'],
+    });
   });
 
   it('records a content refusal in the server words, never as a brief mismatch', () => {

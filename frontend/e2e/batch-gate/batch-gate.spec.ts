@@ -236,7 +236,8 @@ test('stale running batch from the real backend shows timing and attention', asy
           .selectOption('4-auto-review');
       await page.getByTestId('batch-lane-indicator').filter({ visible: true }).first().click();
       const panel = page.getByTestId('batch-panel');
-      await expect(panel.getByTestId('batch-phase-time').first()).toContainText(/running since \d{2}:\d{2} UTC, 3 h \d+ min/);
+      await expect(panel.getByTestId('batch-phase-time').first()).toContainText(/running since \d{2}:\d{2}, 3 h \d+ min/);
+      await expect(panel.getByTestId('batch-time-zone')).toHaveText('Times in UTC');
       await expect(panel).toContainText('gate-host-01 · running · since');
       await panel.getByTestId('batch-panel-body').evaluate(element => { element.scrollTop = element.scrollHeight; });
       if (process.env.JOB_RESULTS_DIR) await panel.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `stale-batch-panel-${theme}-${width}.png`) });
@@ -257,7 +258,12 @@ for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 800 });
     await routeBoard(page, state);
     await page.goto('/?includeFixtures=true');
-    await page.getByRole('tab', { name: 'All projects · Board' }).click();
+    const boardTab = page.getByRole('tab', { name: 'All projects · Board' });
+    // AGT-3836: at 390 px only the active tab shows; the others open from the tab overflow menu.
+    if (width === 390 && !await boardTab.isVisible()) {
+      await page.getByTestId('studio-tab-overflow').click();
+      await page.getByTestId('studio-tab-overflow-menu-item-board:__all__').click();
+    } else await boardTab.click();
     if (width === 390) await page.getByRole('combobox', { name: 'Board lane' })
       .selectOption({ label: 'Post Processing' });
     const opener = page.getByTestId('batch-lane-indicator').first();
@@ -395,7 +401,6 @@ test('board badge, batch panel and project settings save use batch contract', as
   await page.locator('#batch-settings-title').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings');
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.getByTestId('studio-ab-explorer').click();
   await page.getByTestId('batch-phase-metrics').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings-390');
   await page.getByTestId('batch-pre-check-yield').scrollIntoViewIfNeeded();
@@ -423,7 +428,6 @@ test('batch settings explain the missing gate host before a save can succeed', a
   await page.locator('#batch-scope-help').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings-scope-help');
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.getByTestId('studio-ab-explorer').click();
   await page.getByTestId('batch-settings-error').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings-missing-host-390');
   await page.locator('#batch-scope-help').scrollIntoViewIfNeeded();
@@ -457,10 +461,20 @@ test('failed-test ranking stays readable at wide and mobile widths in both theme
   }
   await page.getByRole('link', { name: 'batch-1' }).click();
   await expect(page.locator('#batch-batch-1')).toBeVisible();
+  // AGT-3872: the fix card is created in the backlog, not in the legacy editor.
+  const created = new Promise<Record<string, unknown>>(resolve => {
+    void page.route(url => url.pathname === '/api/tasks', async route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      resolve(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'fix-card-1' }) });
+    });
+  });
   await page.getByRole('button', { name: 'Create fix card for Product.Tests.Unstable' }).click();
-  await expect(page.getByTestId('create-title')).toHaveValue('Fix flaky test: Product.Tests.Unstable');
-  await expect(page.getByTestId('create-prompt')).toHaveValue(/Batches: batch-7, batch-5, batch-3, batch-1/);
-  await expect(page.getByTestId('create-task-type-bug')).toHaveAttribute('aria-pressed', 'true');
+  const body = await created;
+  expect(body).toMatchObject({ title: 'Fix flaky test: Product.Tests.Unstable', targetState: '0-backlog', taskType: 'bug' });
+  expect(String(body['promptMarkdown'])).toMatch(/Batches: batch-7, batch-5, batch-3, batch-1/);
+  await expect(page.getByTestId('batch-panel')).toBeHidden();
+  await expect(page.getByTestId('create-dialog-legacy-notice')).toHaveCount(0);
 });
 
 test('ejected batch member badge names why it went to the per-task gate', async ({ page }) => {
@@ -722,6 +736,46 @@ test('review concern fix wait is visible on the card and batch gate', async ({ p
   await captureThemes(page, evidence, 'batch-review-fix-wait');
 });
 
+test('refused per-card suite and a suite held for the batch lane are visible on the card and batch panel', async ({ page }) => {
+  const evidence = process.env.JOB_RESULTS_DIR;
+  if (evidence) fs.mkdirSync(evidence, { recursive: true });
+  const reason = '1 batch partner waits: the next batch gates this card instead of a per-card suite';
+  await routeBoard(page, {
+    ...state,
+    suiteRefusals: [{ taskKey: 'AGT-2', reviewAttemptId: 'review-1', rule: 'planner-per-task', reason,
+      refusedAtUtc: '2026-11-16T10:00:00Z' }],
+    laneAdmission: { batchGates: 1, companionSuites: 1, limit: 1, waiting: [{ runId: 'run-x', project: 'other',
+      gateId: 'merge-into-develop-build-gate', cards: ['WEB-40'], sinceUtc: '2026-11-16T10:01:00Z',
+      reason: 'a batch gate runs and one other full suite already shares the gate host' }] },
+    members: { 'AGT-2': { status: 'pending', reason: 'per-task-suite-refused', reasonDetail: reason } },
+  }, () => undefined, grouped);
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
+  await expect(card.getByTestId('batch-member-badge')).toContainText('Batch pending · per-card suite not started');
+  await expect(card.getByTestId('batch-member-badge')).toHaveAttribute('title', reason);
+  if (evidence) {
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await card.screenshot({ path: nodePath.join(evidence, `batch-suite-refusal-card-${theme}.png`) });
+    }
+  }
+  await page.getByTestId('batch-lane-indicator').first().click();
+  const lane = page.getByTestId('batch-lane-admission');
+  await expect(lane).toContainText('While a batch gate runs, at most 1 other full suite runs. Running now: 1 batch, 1 other.');
+  await expect(lane.getByTestId('batch-lane-waiting')).toContainText('WEB-40');
+  await expect(lane.getByTestId('batch-lane-waiting')).toContainText('one other full suite already shares the gate host');
+  await expect(lane.getByTestId('batch-suite-refusal')).toContainText('AGT-2');
+  await expect(lane.getByTestId('batch-suite-refusal')).toContainText(reason);
+  if (evidence) {
+    await lane.scrollIntoViewIfNeeded();
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await lane.screenshot({ path: nodePath.join(evidence, `batch-lane-admission-section-${theme}.png`) });
+    }
+  }
+});
+
 test('red, abandoned and running batches show truthful status and evidence at desktop and mobile widths', async ({ page }) => {
   const batchState = {
     ...state,
@@ -730,6 +784,9 @@ test('red, abandoned and running batches show truthful status and evidence at de
     pending: [],
     batches: [
       { ...state.batches[0], phase: 'red', phaseReason: 'Suite failed; isolate the culprit',
+        isolationActive: false, isolationPending: true,
+        nextAction: { actor: 'planner', dueAtUtc: null,
+          action: 'No isolation flight is active; on its next tick the planner pauses this batch and returns the unresolved members to planning' },
         phaseHistory: [{ phase: 'running', atUtc: '2026-10-11T13:00:00Z' },
           { phase: 'red', reason: 'Suite failed; isolate the culprit', atUtc: '2026-10-11T13:05:00Z' }],
         runs: [{ batchRunId: 'run-7', host: 'agent-runner-01', startedAtUtc: '2026-10-11T13:00:00Z', evidenceAvailable: true }] },
@@ -761,7 +818,9 @@ test('red, abandoned and running batches show truthful status and evidence at de
   await expect(panel.locator('#batch-batch-7')).toContainText('interrupted');
   await expect(panel.locator('#batch-batch-abandoned')).toContainText('interrupted');
   await expect(panel.locator('#batch-batch-running')).toContainText('running');
-  await expect(panel.getByTestId('batch-red-next')).toContainText('waits for a gate slot');
+  await expect(panel.locator('#batch-batch-7').getByTestId('batch-next-action'))
+    .toHaveText(/^Next \(planner\): No isolation flight is active; on its next tick the planner pauses this batch/);
+  await expect(panel.getByTestId('batch-red-next')).toHaveCount(0);
   await expect(panel.getByTestId('batch-close-now')).toBeDisabled();
   await expect(panel.getByTestId('batch-close-unavailable')).toHaveText('No eligible cards to close.');
   await expect(panel.locator('#batch-batch-7').getByRole('link', { name: /Batch fixture task/ })).toHaveAttribute('href', '#/tasks/AGT-2');
@@ -770,9 +829,9 @@ test('red, abandoned and running batches show truthful status and evidence at de
   await expect(panel.locator('#batch-batch-7').getByRole('link', { name: 'Run log' }))
     .toHaveAttribute('href', /run-log\?batchId=batch-7&runId=run-7/);
   await expect(panel.locator('#batch-batch-7').getByText('Phase history')).toBeVisible();
-  await expect(panel.locator('#batch-batch-7').getByText('Oct 11, 2026', { exact: false }).first()).toBeHidden();
+  await expect(panel.locator('#batch-batch-7').getByText('11 Oct 2026', { exact: false }).first()).toBeHidden();
   await panel.locator('#batch-batch-7 summary').click();
-  await expect(panel.locator('#batch-batch-7').getByText('Oct 11, 2026', { exact: false }).first()).toBeVisible();
+  await expect(panel.locator('#batch-batch-7').getByText('11 Oct 2026', { exact: false }).first()).toBeVisible();
   if (!evidence) return;
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });

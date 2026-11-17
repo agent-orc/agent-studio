@@ -832,6 +832,11 @@ export class App implements OnInit, OnDestroy {
         else setTimeout(preload, 0);
       }));
     });
+    // F12: the open Human Review card ranks its gaps by its readiness answer.
+    effect(() => {
+      const info = this.selectedJob()?.info;
+      if (info?.state === TaskState.HumanReview) untracked(() => void this.acceptanceReadiness.ensure(info));
+    });
     effect(() => {
       if (this.shellAccess.operator() || !this.projectLookup.loaded()) return;
       this.watchPaths.set(this.projectLookup.allProjects().map(project => ({

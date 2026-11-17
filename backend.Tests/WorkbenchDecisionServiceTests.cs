@@ -116,6 +116,70 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
     }
 
     [Fact]
+    public void SaveAnswers_RecordsCompleteAnswersWithNotesWithoutSettlingTheDossier()
+    {
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+        var first = catalogue.Read("Project", "routing-policy")!;
+        var responses = new List<WorkbenchDecisionResponse>
+        {
+            new() { DecisionId = "route", Kind = "single", SelectedOptionIds = ["direct"] },
+            new() { DecisionId = "proof", Kind = "single", SelectedOptionIds = ["receipt"],
+                Comment = "Unsure here; I want a Dossier that explains this first." },
+        };
+
+        // A fully answered Dossier is saved without starting a card (AGT-3875).
+        var saved = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "save-all-answers", Outcome = "record-only", Actor = "Robert",
+            ExpectedFingerprint = first.Fingerprint, Responses = responses, Confirmed = true,
+        });
+
+        Assert.True(saved.Success, saved.Error);
+        var open = catalogue.Read("Project", "routing-policy")!;
+        Assert.Null(open.Workbench.Decision);
+        Assert.Equal("review-requested", open.Workbench.LifecycleState);
+        Assert.Equal(["direct"], open.Workbench.RecordedResponses[0].SelectedOptionIds);
+        Assert.Equal("Unsure here; I want a Dossier that explains this first.",
+            open.Workbench.RecordedResponses[1].Comment);
+
+        // A note alone is worth saving, and a later save replaces the earlier one.
+        var noteOnly = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "save-note-only", Outcome = "record-only", Actor = "Robert",
+            ExpectedFingerprint = open.Fingerprint, Confirmed = true,
+            Responses =
+            [
+                new() { DecisionId = "route", Kind = "single", SelectedOptionIds = [], Comment = "Ask the team." },
+                new() { DecisionId = "proof", Kind = "single", SelectedOptionIds = [] },
+            ],
+        });
+
+        Assert.True(noteOnly.Success, noteOnly.Error);
+        var replaced = catalogue.Read("Project", "routing-policy")!.Workbench.RecordedResponses;
+        Assert.Equal("Ask the team.", replaced[0].Comment);
+        Assert.Empty(replaced[1].SelectedOptionIds);
+    }
+
+    [Fact]
+    public void SaveAnswers_RefusesAnEmptyAnswerSet()
+    {
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+        var first = catalogue.Read("Project", "routing-policy")!;
+
+        var refused = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "save-nothing", Outcome = "record-only", Actor = "Robert",
+            ExpectedFingerprint = first.Fingerprint, Confirmed = true,
+            Responses = [new() { DecisionId = "route", Kind = "single", SelectedOptionIds = [], Comment = " " }],
+        });
+
+        Assert.False(refused.Success);
+        Assert.Contains("write a note", refused.Error);
+    }
+
+    [Fact]
     public void Confirm_WritesTheDecisionIntoWorkbenchJsonWithLifecycleHistory()
     {
         WriteSchemaTwo("routing-policy");

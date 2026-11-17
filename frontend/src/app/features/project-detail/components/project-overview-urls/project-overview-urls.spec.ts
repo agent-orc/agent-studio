@@ -32,6 +32,27 @@ function workspace(name: string, id: string) {
 }
 
 describe('ProjectOverviewUrlsComponent', () => {
+  it('does not count the well-known repository URL as a live surface', async () => {
+    const registered = workspace('Demo', 'PROJ-1');
+    (registered[0].projects[0].urls as unknown[]).push({ id: 'repo', label: 'Repository',
+      url: 'https://example.test/library.git', sortOrder: 1, startRule: null });
+    await TestBed.configureTestingModule({
+      imports: [ProjectOverviewUrlsComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        { provide: TaskService, useValue: { getRegistryWorkspaces: () => of(registered) } },
+        { provide: ProjectLookupService, useValue: { setWorkspaces: vi.fn() } },
+        { provide: ProjectUrlProbeService, useValue: { statusFor: () => 'running' } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectOverviewUrlsComponent);
+    fixture.componentRef.setInput('projectName', 'Demo');
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="project-overview-urls-summary"]')?.textContent).toContain('1 / 1');
+    expect(host.querySelector('[data-testid="project-overview-url-repo"]')).toBeNull();
+  });
+
   it('keeps an unknown URL quiet and offers Start only after it is known offline', async () => {
     const status = signal<ProjectUrlStatus>('unknown');
     const startProjectUrl = vi.fn(() => NEVER);

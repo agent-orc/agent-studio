@@ -10,12 +10,15 @@ import {
 } from '@angular/core';
 import type { PromoteConceptResponse, PromotedConceptTask } from '../../models/task.model';
 import { TaskService } from '../../services/task.service';
+import { ActionPanelCoordinator, closeWhenAnotherPanelOpens } from '../../services/action-panel-coordinator.service';
 import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import {
   cardLabel,
   promotionErrorMessage,
   promotionSlices,
 } from './concept-promotion.util';
+
+const PROMOTION_PANEL = 'concept-promotion';
 
 /**
  * Create implementation cards from a concept Dossier (AGT-3701). Lists every
@@ -36,6 +39,7 @@ import {
 })
 export class ConceptPromotionComponent {
   private readonly tasks = inject(TaskService);
+  private readonly panels = inject(ActionPanelCoordinator, { optional: true });
 
   /** Concept card id or key. */
   readonly taskRef = input.required<string>();
@@ -81,7 +85,17 @@ export class ConceptPromotionComponent {
     this.createError.set(null);
   });
 
+  constructor() {
+    // Another action panel of the view opened: close so neither covers the other (AGT-3875).
+    closeWhenAnotherPanelOpens(this.panels, PROMOTION_PANEL, () => {
+      if (!this.open() || this.creating()) return;
+      this.open.set(false);
+      this.createError.set(null);
+    });
+  }
+
   openPanel(): void {
+    this.panels?.claim(PROMOTION_PANEL);
     this.open.set(true);
     this.lastCreated.set([]);
     this.load();
@@ -92,6 +106,7 @@ export class ConceptPromotionComponent {
     if (this.creating()) return;
     this.open.set(false);
     this.createError.set(null);
+    this.panels?.release(PROMOTION_PANEL);
   }
 
   toggle(index: number): void {

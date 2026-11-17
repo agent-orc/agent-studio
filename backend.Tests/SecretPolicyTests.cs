@@ -212,5 +212,6 @@ public sealed class SecretPolicyTests
     {
         public DeployJobLease? FindClaimedDeployJob(string project, string jobId, string leaseToken) => null;
         public TaskRunLease? FindLiveTaskRun(string taskKey) => null;
+        public RunTargetCredentialLease? FindRunTargetCredentials(string project, string environmentId) => null;
     }
 }

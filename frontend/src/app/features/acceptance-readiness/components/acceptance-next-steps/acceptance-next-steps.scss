@@ -14,6 +14,12 @@
 
 .next-steps p { margin: 0; overflow-wrap: anywhere; }
 .next-steps__missing { color: var(--studio-fg-dim); }
+// F12: the card's other gaps, under the readiness reason.
+.next-steps__secondary {
+  margin: 0;
+  padding-inline-start: var(--studio-spacing-4);
+  color: var(--studio-fg-muted);
+}
 .next-steps__actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
 
 .next-steps__actions button,

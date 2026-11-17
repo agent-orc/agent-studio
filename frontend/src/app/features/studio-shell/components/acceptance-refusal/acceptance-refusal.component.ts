@@ -42,6 +42,15 @@ export class AcceptanceRefusalComponent {
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
   readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length > 0);
+  /** F12: the ranked reason in full, with its next step and the gaps under it. */
+  readonly detail = computed(() => {
+    const refusal = this.refusal();
+    return [
+      refusal.headline ? `${refusal.headline}: ${refusal.reason}` : refusal.reason,
+      refusal.nextStep ? `Next step: ${refusal.nextStep}` : null,
+      ...(refusal.secondary ?? []).map(gap => `Also: ${gap}`),
+    ].filter(Boolean).join(' ');
+  });
 
   private readonly actionButton = viewChild<ElementRef<HTMLButtonElement>>('actionButton');
   private readonly reasonInput = viewChild<ElementRef<HTMLTextAreaElement>>('reasonInput');

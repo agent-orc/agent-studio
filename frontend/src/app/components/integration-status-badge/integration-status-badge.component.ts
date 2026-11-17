@@ -13,10 +13,10 @@ import { TaskService } from '../../services/task.service';
  * {@link TaskIntegrationStatus} on an accepted card (5-human-review / 6-completed
  * / 7-archive) so "Accept != Merge" is impossible to miss:
  *   - green  "merged @sha"          — every attributed commit is provably in develop,
- *   - orange "teilweise integriert" — some attributed commits are in develop, some are not,
- *   - amber  "NICHT integriert"     — accepted work is still not in develop,
+ *   - orange "Partly integrated"    — some attributed commits are in develop, some are not,
+ *   - amber  "Not integrated"       — accepted work is still not in develop,
  *   - red    "Integration failed"   — the integration step reached a failed outcome,
- *   - grey   "kein Branch"          — nothing to integrate (read-only / no code).
+ *   - grey   "No branch"            — nothing to integrate (read-only / no code).
  *
  * AGT-3002: a merged verdict also says whether a gate passed on the tree that
  * carries the delivery ("· verified" / "· unverified"). Containment without a
@@ -24,7 +24,7 @@ import { TaskService } from '../../services/task.service';
  *
  * Membership is derived from the SAME attributed `commits[]` list the card's
  * commit widget renders. Branch presence comes from the acceptance resolver's
- * projected `deliveryRef`, so a remote delivery cannot render as "kein Branch".
+ * projected `deliveryRef`, so a remote delivery cannot render as "No branch".
  *
  * Renders through the shared status indicator (AGT-3403). Purely
  * presentational; hidden when the card carries no integration verdict.
@@ -147,14 +147,14 @@ export class IntegrationStatusBadgeComponent {
       case 'integrated': return value.sha ? `merged @${value.sha}` : 'merged';
       case 'not-applicable': return 'No integration needed';
       case 'merged-locally': return 'merged locally, not pushed';
-      case 'partial': return 'teilweise integriert';
-      case 'pending': return 'NICHT integriert';
+      case 'partial': return 'Partly integrated';
+      case 'pending': return 'Not integrated';
       case 'conflict-skipped': {
         const base = value.failure?.label ?? 'Integration failed';
         const requeueLabel = this.requeueClassLabel();
         return requeueLabel ? `${base} · ${requeueLabel}` : base;
       }
-      default: return 'kein Branch';
+      default: return 'No branch';
     }
   });
 

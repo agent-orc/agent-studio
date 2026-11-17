@@ -22,6 +22,7 @@ function slugFor(name: string): string {
 }
 
 const urls = [
+  { id: 'repo', label: 'Repository', url: 'https://example.test/library.git', sortOrder: -1, startRule: null },
   { id: 'frontend', label: 'Operator UI', url: 'http://127.0.0.1:4310', sortOrder: 0,
     startRule: { command: 'npm run start', cwd: null, port: 4310, source: 'manual' } },
   { id: 'storybook', label: 'Component preview', url: 'http://127.0.0.1:4311', sortOrder: 1,
@@ -480,7 +481,7 @@ test.describe('Project Overview · operator dashboard', () => {
     await openDashboard(page);
 
     await page.getByTestId('project-overview-open-deployment').click();
-    await page.getByRole('button', { name: 'Existing deployment tools' }).click();
+    await page.getByTestId('deploy-open-tools').click();
     const launcher = page.getByTestId('project-deployment-launcher');
     await expect(launcher).toBeVisible();
     await expect(launcher).toContainText('Run TR-202607110930-green');
@@ -546,6 +547,7 @@ test.describe('Project Overview · operator dashboard', () => {
     await expect.poll(mocked.startedUrl).toBe(true);
     await expect(page.getByTestId('project-overview-url-status-storybook')).toHaveAttribute('data-status', 'running');
     await expect(page.getByTestId('project-overview-urls-summary')).toContainText('2 / 2');
+    await expect(page.getByTestId('project-overview-url-repo')).toHaveCount(0);
 
     await page.getByTestId('project-overview-deployment-details').locator('summary').click();
     await expect(page.getByTestId('project-overview-deployment-details')).toContainText('Operator-first project overview');
@@ -553,7 +555,7 @@ test.describe('Project Overview · operator dashboard', () => {
     await expect(page.getByTestId('project-overview-last-deployment-details')).toContainText('Operator-first project overview');
 
     await page.getByTestId('project-overview-open-deployment').click();
-    await page.getByRole('button', { name: 'Existing deployment tools' }).click();
+    await page.getByTestId('deploy-open-tools').click();
     await expect(page.getByTestId('project-deployment-panel')).toBeVisible();
     await expect(page.getByTestId('environment-stage')).toContainText('healthy');
     await expect(page.getByTestId('pending-promotion')).toBeVisible();
@@ -696,7 +698,7 @@ test.describe('Project Overview · operator dashboard', () => {
       });
     }
     await page.getByTestId('project-overview-open-deployment').click();
-    await page.getByRole('button', { name: 'Existing deployment tools' }).click();
+    await page.getByTestId('deploy-open-tools').click();
     await expect(page.getByTestId('project-deployment-panel')).toBeVisible();
     await expect(page.getByTestId('project-deployment-refresh')).toHaveText('Refresh', { timeout: 20_000 });
     for (const theme of ['light', 'dark'] as const) {
