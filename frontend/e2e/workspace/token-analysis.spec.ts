@@ -57,6 +57,33 @@ test('the analysis page reads the real backend endpoint', async ({ page }) => {
   await expect(page.getByTestId('token-analysis-stats').or(page.getByTestId('token-analysis-empty')).first()).toBeVisible();
 });
 
+test('mixed reasoning level shows priced subtotal and an unpriced model keeps its diagnostic link', async ({ page }) => {
+  mkdirSync(RESULT_DIR, { recursive: true });
+  const analysis = fixtureResponse();
+  const unpriced = analysis.cards[0].slices[1];
+  unpriced.model = 'demo-unpriced-model';
+  unpriced.level = 'high';
+  unpriced.costUsd = 0;
+  unpriced.priced = false;
+  await pin(page, analysis);
+  await page.setViewportSize({ width: 1280, height: 2600 });
+  await open(page);
+
+  const high = page.getByTestId('token-analysis-distribution-level').getByRole('row', { name: /^high\b/ });
+  await expect(high.getByRole('cell').last()).toContainText('$0.600');
+  await expect(high.getByRole('link', { name: 'Incomplete price data; view unpriced models' }))
+    .toHaveAttribute('href', '#/workspace/settings/tokens');
+  const model = page.getByTestId('token-analysis-distribution-model')
+    .getByRole('row', { name: /^demo-unpriced-model\b/ });
+  await expect(model.getByRole('link', { name: 'no price data' }))
+    .toHaveAttribute('href', '#/workspace/settings/tokens');
+
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await shoot(page, 'token-analysis-view', `token-analysis-distribution-mixed-${theme}.png`);
+  }
+});
+
 test('operator filters cards, opens a drill-down, and the URL restores both', async ({ page }) => {
   mkdirSync(RESULT_DIR, { recursive: true });
   await pin(page);
