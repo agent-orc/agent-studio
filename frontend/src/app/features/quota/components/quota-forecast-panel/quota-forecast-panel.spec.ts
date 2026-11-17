@@ -80,6 +80,8 @@ describe('QuotaForecastPanelComponent', () => {
     const card = el.querySelector('[data-testid="quota-forecast-cli"]');
     expect(card?.getAttribute('data-cli')).toBe('claude');
     expect(el.querySelector('[data-testid="quota-stat-current"]')?.textContent?.trim()).toBe('83%');
+    expect(el.querySelector('[data-testid="quota-weekly-period"]')?.textContent)
+      .toContain('Provider week: estimated start 2026-09-25T08:00:00.000Z to reset 2026-10-02T08:00:00.000Z.');
     expect(el.querySelector('[data-testid="quota-stat-rate"]')?.textContent?.trim()).toBe('2.0%/h');
     expect(el.querySelector('[data-testid="quota-forecast-sentence"]')?.textContent).toContain('before the reset');
     expect(el.querySelector('[data-testid="quota-curve"]')).not.toBeNull();
