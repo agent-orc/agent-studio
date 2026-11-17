@@ -67,6 +67,8 @@ test('operator filters cards, opens a drill-down, and the URL restores both', as
   await expect(page.getByTestId('token-analysis-table-total')).toHaveText('2.6K');
   await expect(page.getByTestId('token-analysis-time-chart').locator('[data-incomplete="true"]')).toHaveCount(1);
   await expect(page.getByTestId('token-analysis-quota-table')).toContainText('100K');
+  await expect(page.getByTestId('token-analysis-quota-table').locator('tbody td').nth(1))
+    .toContainText(/Mon 19 Oct, \d\d:00 .*UTC\)?/);
   for (const theme of ['dark', 'light'] as const) {
     await setTheme(page, theme);
     await shoot(page, 'token-analysis-view', `token-analysis-1280-${theme}.png`);
@@ -78,6 +80,8 @@ test('operator filters cards, opens a drill-down, and the URL restores both', as
 
   await page.getByTestId('token-analysis-row-AGT-1').getByRole('button').click();
   await expect(page.getByTestId('card-token-drilldown-events').locator('li')).toHaveCount(2);
+  await expect(page.getByTestId('card-token-drilldown-events').locator('.dd__when span').first())
+    .toContainText(/Mon 19 Oct, \d\d:00 .*UTC\)?/);
   await expect(page.getByTestId('card-token-drilldown-summary')).toContainText('3 rounds');
   await shoot(page, 'card-token-drilldown', 'token-analysis-drilldown-1280-light.png');
 
