@@ -24,7 +24,9 @@ public sealed class BatchGateStoreTests : IDisposable
         Assert.True(oldest.GetProperty("ageMinutes").GetDouble() >= 160);
         var batch = Assert.Single(state.GetProperty("batches").EnumerateArray());
         Assert.Equal("formed", batch.GetProperty("phase").GetString());
-        Assert.Equal(at.AddSeconds(30), batch.GetProperty("nextAction").GetProperty("dueAtUtc").GetDateTimeOffset());
+        // F13: no stored record sets a deadline for starting a formed batch, so none is shown.
+        Assert.Equal(JsonValueKind.Null, batch.GetProperty("nextAction").GetProperty("dueAtUtc").ValueKind);
+        Assert.Equal("planner", batch.GetProperty("nextAction").GetProperty("actor").GetString());
         Assert.All(batch.GetProperty("members").EnumerateArray(), member =>
             Assert.Equal("claimed", member.GetProperty("disposition").GetString()));
     }

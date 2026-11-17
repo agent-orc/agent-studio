@@ -62,6 +62,24 @@ describe('CliUsageDetailComponent (smoke)', () => {
     expect(rows[1].totalTokens).toBe(20);
   });
 
+  it('shows unattributed one-shot usage without a project settings link', async () => {
+    await TestBed.configureTestingModule({
+      imports: [CliUsageDetailComponent], providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CliUsageDetailComponent);
+    fixture.componentRef.setInput('tokens', { byProject: [{
+      project: 'Unattributed one-shot jobs', orchestratorLlmCalls: 1,
+      inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+      estimatedApiCostUsd: 0.01,
+    }] } as never);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const row = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="cli-usage-detail-project-unattributed-one-shot-jobs"]') as HTMLButtonElement;
+    expect(row.disabled).toBe(true);
+    expect(row.textContent).toContain('Unattributed one-shot jobs');
+  });
+
   it('assigns models to the backend CLI regardless of the display label', async () => {
     await TestBed.configureTestingModule({
       imports: [CliUsageDetailComponent],
@@ -88,5 +106,24 @@ describe('CliUsageDetailComponent (smoke)', () => {
     fixture.componentInstance.openProjectSettings.subscribe((name) => (emitted = name));
     fixture.componentInstance.openProjectSettings.emit('Agent Taskboard');
     expect(emitted).toBe('Agent Taskboard');
+  });
+
+  it('shows every one-shot source in workspace mode', async () => {
+    await TestBed.configureTestingModule({
+      imports: [CliUsageDetailComponent], providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CliUsageDetailComponent);
+    fixture.componentRef.setInput('workspaceOnly', true);
+    fixture.componentRef.setInput('adhoc', { bySource: [
+      { source: 'auto-tag', calls: 2, inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 0.01 },
+      { source: 'title-generation', calls: 1, inputTokens: 5, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 0.02 },
+      { source: 'review-decision', calls: 1, inputTokens: 5, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 0.03 },
+    ] } as never);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const sourceTable = fixture.nativeElement.querySelector('[data-testid="cli-usage-one-shot-sources"]') as HTMLElement;
+    expect(sourceTable.textContent).toContain('auto-tag');
+    expect(sourceTable.textContent).toContain('title-generation');
+    expect(sourceTable.textContent).not.toContain('review-decision');
   });
 });

@@ -97,6 +97,14 @@ test('a second URL project creates its server checkout from the UI and integrate
   await expect(settingsNotice).toHaveAttribute('data-state', 'missing', { timeout: 30_000 });
   await expect(settingsNotice).toContainText(FIRST_RUN_ORIGIN);
   await capture(page, settingsNotice, 'settings-notice');
+  const verifyNotice = page.getByTestId('project-settings-no-verify-commands').first();
+  await expect(verifyNotice).toContainText('repository checkout is missing');
+  await expect(verifyNotice).not.toContainText('cannot be derived');
+  await expect(verifyNotice.getByTestId('project-settings-verify-example')).toHaveCount(0);
+  await expect(verifyNotice.getByRole('link', { name: 'Set the repository checkout path' }))
+    .toHaveAttribute('href', '#project-basics-repository-path');
+  await expect(page.locator('#project-basics-repository-path')).toBeVisible();
+  await capture(page, verifyNotice, 'settings-verify-without-checkout');
 
   // Board and Ready card show the same notice.
   await page.goto('/');

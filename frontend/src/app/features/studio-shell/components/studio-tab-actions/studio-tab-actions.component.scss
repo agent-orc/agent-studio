@@ -35,3 +35,10 @@
   text-align: center;
   pointer-events: none;
 }
+
+/* AGT-3833: a card opened from Needs you puts focus on its decision group. */
+.studio-tab-action__triage:focus-visible {
+  outline: 2px solid var(--studio-accent-strong);
+  outline-offset: 2px;
+  border-radius: var(--studio-action-radius-sm);
+}

@@ -17,6 +17,8 @@ import { TreeRowComponent } from '../../../../components/tree-row/tree-row.compo
 import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
+import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
+import { serverCheckoutMissing } from '../../../server-checkout/server-checkout.model';
 import {
   DossierSectionStateService,
   type DossierSectionId,
@@ -55,12 +57,19 @@ export class ExplorerWorkbenchListComponent {
   readonly openWiki = output<void>();
 
   private readonly docs = inject(ProjectDocsService);
+  private readonly serverCheckout = inject(ServerCheckoutStore);
   private readonly hub = inject(JobsHubClient);
   private readonly navigationState = inject(ExplorerWorkbenchStateService);
   private readonly sectionState = inject(DossierSectionStateService);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly loading = signal(false);
   readonly catalogue = signal<WorkbenchCatalogue | null>(null);
+  readonly checkoutMissing = computed(() => {
+    const project = this.serverCheckout.projectFor({ name: this.projectName() });
+    if (!project || !serverCheckoutMissing(project)) return false;
+    const state = this.serverCheckout.statusFor(project.id)?.state;
+    return state !== 'present' && state !== 'ready';
+  });
   readonly expanded = computed(() =>
     this.navigationState.stateFor(this.projectName()).dossiersExpanded);
   readonly styleGuide = computed(() =>
@@ -99,6 +108,7 @@ export class ExplorerWorkbenchListComponent {
   constructor() {
     effect(() => {
       const projectName = this.projectName();
+      const checkoutMissing = this.checkoutMissing();
       const activeWorkbenchId = this.activeWorkbenchId();
       const catalogue = this.catalogue();
       if (projectName !== this.lastProjectName) {
@@ -106,10 +116,11 @@ export class ExplorerWorkbenchListComponent {
         this.lastRevealedWorkbench = null;
         untracked(() => {
           this.catalogue.set(null);
-          this.loadCatalogue();
+          if (!checkoutMissing) this.loadCatalogue();
         });
         return;
       }
+      if (!checkoutMissing && !catalogue) untracked(() => this.loadCatalogue());
       if (activeWorkbenchId && catalogue?.projectName === projectName) {
         untracked(() => this.revealActiveWorkbench(activeWorkbenchId));
       } else if (!activeWorkbenchId) {
@@ -230,7 +241,7 @@ export class ExplorerWorkbenchListComponent {
   }
 
   private loadCatalogue(): void {
-    if (this.catalogue() || this.loading()) return;
+    if (this.checkoutMissing() || this.catalogue() || this.loading()) return;
     this.loading.set(true);
     this.docs.getWorkbenches(this.projectName(), true).subscribe({
       next: value => {
@@ -242,6 +253,7 @@ export class ExplorerWorkbenchListComponent {
   }
 
   private refreshCatalogue(): void {
+    if (this.checkoutMissing()) return;
     this.docs.getWorkbenches(this.projectName(), true).subscribe({
       next: value => this.catalogue.set(value),
       error: () => undefined,

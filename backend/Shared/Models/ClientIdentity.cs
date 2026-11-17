@@ -80,6 +80,13 @@ public record ClientIdentity
     public DateTime? DrainRequestedAt { get; init; }
     public DateTime? RetireRequestedAt { get; init; }
 
+    /// <summary>
+    /// AGT-3852: when an operator started the deploy host switch at the quiet
+    /// point of a drain. Resume clears it, so a reload or a second operator
+    /// sees that verification is pending.
+    /// </summary>
+    public DateTime? DeploySwitchStartedAt { get; init; }
+
     /// <summary>Latest daemon activity projection, reported on every claim poll.</summary>
     public string? RunnerDaemonState { get; init; }
     public DateTime? RunnerLastClaimAt { get; init; }
@@ -287,6 +294,7 @@ public sealed record RunnerProjectPreflight
     public string Status { get; init; } = "failed";
     public string Detail { get; init; } = "";
     public DateTime CheckedAt { get; init; }
+    public DateTime? FirstFailedAt { get; init; }
     /// <summary>The host's repository credential generation the proof ran with; null from an older host.</summary>
     public string? CredentialGeneration { get; init; }
 }

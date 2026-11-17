@@ -1,7 +1,14 @@
 # Review Domain Map
 
 Acceptance checks the first-parent line after a delivery's verified tree. A
-server-authored document-key discovery commit is gate-neutral only when its
+later card's exact published merge with a verified `gate-not-applicable`
+integration record counts as a covered publication: the integration lane
+already applied the project's gate policy to that merge. The record must name
+the same project, branch, and first-parent SHA. Other uncovered commits still
+refuse acceptance. Their refusal names the source card when known, or the
+commit author, and omits batch diagnostics when the project has no batch gate.
+
+A server-authored document-key discovery commit is gate-neutral only when its
 first-parent diff changes existing `docs/**/workbench.json` descriptors solely
 by adding `key`. A server-authored Dossier decision-receipt commit
 (`chore(workbench): request revision for|record decision for|archive <id>`)
@@ -65,10 +72,16 @@ Concept-fit receives a bounded snapshot of the published Dossier index,
 `workbench.json`, and local files linked from them. Its round diff shows what
 changed, while the snapshot supplies unchanged Dossier content. A missing,
 unreadable, or over-budget file is named in the prompt so the aspect cannot
-infer completeness from a truncated excerpt. For older settled concept reviews,
-completion accepts a whole-prompt review hash as current only while the current
-authored version equals the delivery version and the reviewed whole-prompt hash
-still matches `prompt.md`.
+infer completeness from a truncated excerpt. The plan builder wraps the
+snapshot in `ConceptDossierSnapshotSpan` markers. The review runner keeps that
+span whole: its 120,000-character authored-context cap applies only to the
+brief and instructions around it. The span counts against the diff budget, so
+on a large Dossier the diff is cut (and named) instead of the snapshot
+(AGT-3881, after the AGT-3876 Dossier lost its middle).
+
+For older settled concept reviews, completion accepts a whole-prompt review
+hash as current only while the current authored version equals the delivery
+version and the reviewed whole-prompt hash still matches `prompt.md`.
 
 ## Aspect prompt cache
 
@@ -465,7 +478,12 @@ queue carries `retry.parkAt`, the latest minute the watchdog parks such a
 card; past `dueAt` the card reads "Automatic retry 1 of 2 overdue since ... ·
 parks in Escalated by ..." instead of repeating the past due time. A
 card with none gets a durable intervention receipt in the existing stall-intervention feed and
-its timeline. Report-only cards restart post-processing; coding cards with a
+its timeline. Report-only cards restart post-processing; while the engine owns
+Auto Review that is the report review of `EngineReportReviewService`, and a
+report review that cannot start is recorded as not started (AGT-3797). Report
+cards stranded before AGT-3797, in Auto Review past the threshold or parked
+`auto-review-stranded` with an unchanged park, take the same report review once
+per run attempt (receipt kind `report-review-recovery`). Coding cards with a
 completed run request a fresh ReviewAttempt; a passed review resumes delivery
 integration or re-enters the batch gate only when its source RunAttempt and
 result SHA match the current completed delivery and the completed review tested
@@ -478,6 +496,22 @@ its own receipt. After a successful intervention, the watchdog waits another
 threshold interval before intervening again. It can advance from review recovery
 to batch recovery in the same visit. If the same recovery leaves the card
 ownerless again, it escalates the card with the reason.
+
+When the Orchestrator Engine owns delivery, the monolith resume answers
+`engine-owned`, so the watchdog asks the engine instead (AGT-3883,
+`EngineDeliveryIntegrationService`, `EngineDeliveryIntegrationPolicy`). It reads
+the engine's state for the passed review: running (an open engine decision,
+the gate journal, a per-task gate, or a pending push), published at a SHA,
+failed with a reason, or not started. A running integration owns the card. A
+published delivery, an unstarted one, or a gate environment failure gets one
+fresh `ReviewReport` decision on the same passed review per lane visit; a
+retry first reopens the delivery settlement so the engine integrates again.
+Any other failure escalates with the engine's reason, and the receipt always
+names the engine's state. The stage-complete endpoint applies an engine
+decision under the host lifetime, not the engine's 60-second request, so a
+long per-task gate still ends in its lane move. A delivery the integration
+branch already carries as a net-change publication of its result reads
+`integrated`, also after the branch moved on, and is never integrated twice.
 The threshold starts at the latest ownership change, including a review terminal,
 a batch state event, or a recovery intervention, rather than at lane entry. A
 current-delivery infrastructure failure with no scheduled retry gets one through

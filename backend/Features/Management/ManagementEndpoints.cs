@@ -173,6 +173,22 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(await watchdog.RefreshAsync(ct: ct));
         });
+        // AGT-3845: the cards a review role graded while it differed from
+        // Stable, from the same published projection the card detail reads.
+        group.MapGet("/host-releases/off-stable-grades", (
+            HttpContext context,
+            TaskIndexCache index,
+            TaskListGitProjectionCache snapshots,
+            AgentStudio.Registry.ProjectRegistry projects,
+            IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            var tasks = AgentStudio.Security.ProjectAccessAuthorization.FilterTasks(
+                context, index.GetResidentTasks(), projects).ToArray();
+            return Results.Ok(AgentStudio.Review.OffStableGradedCards.Collect(tasks,
+                snapshots.ReadCacheOnly(tasks).ReviewProjection));
+        });
         group.MapGet("/provider-refusals", (
             HttpContext context,
             int? days,

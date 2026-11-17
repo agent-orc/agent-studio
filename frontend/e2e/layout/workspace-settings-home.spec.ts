@@ -57,14 +57,23 @@ async function stubBackgroundApis(page: Page) {
   }));
   await page.route('**/api/cli/quota', json({ at: new Date().toISOString(), ttlSeconds: 600, snapshots: [
     { cliType: 'claude', fetchedAt: new Date().toISOString(), plan: 'Max', source: 'local probe', error: null, windows: [
-      { label: '5h session', usedPct: 42, used: null, limit: null, unit: '%', resetAt: new Date(Date.now() + 3 * 3600_000).toISOString(), resetLabel: 'in 3 hours' },
-      { label: '7d weekly', usedPct: 61, used: null, limit: null, unit: '%', resetAt: new Date(Date.now() + 4 * 86400_000).toISOString(), resetLabel: 'in 4 days' },
+      { label: '5h session', windowHours: 5, usedPct: 42, used: null, limit: null, unit: '%', resetAt: new Date(Date.now() + 3 * 3600_000).toISOString(), resetLabel: 'in 3 hours' },
+      { label: '7d weekly', windowHours: 168, usedPct: 61, used: null, limit: null, unit: '%', resetAt: new Date(Date.now() + 4 * 86400_000).toISOString(), resetLabel: 'in 4 days' },
     ] },
     { cliType: 'codex', fetchedAt: new Date().toISOString(), plan: 'Pro', source: 'local probe', error: null, windows: [
-      { label: '5h session', usedPct: 36, used: null, limit: null, unit: '%', resetAt: new Date(Date.now() + 2 * 3600_000).toISOString(), resetLabel: 'in 2 hours' },
-      { label: '7d weekly', usedPct: 24, used: null, limit: null, unit: '%', resetAt: new Date(Date.now() + 5 * 86400_000).toISOString(), resetLabel: 'in 5 days' },
+      { label: '5h session', windowHours: 5, usedPct: 36, used: null, limit: null, unit: '%', resetAt: new Date(Date.now() + 2 * 3600_000).toISOString(), resetLabel: 'in 2 hours' },
+      { label: '7d weekly', windowHours: 168, usedPct: 24, used: null, limit: null, unit: '%', resetAt: new Date(Date.now() + 5 * 86400_000).toISOString(), resetLabel: 'in 5 days' },
     ] },
   ] }));
+  await page.route('**/api/workspace/tokens/cli-window?*', route => {
+    const cli = new URL(route.request().url()).searchParams.get('cliType');
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      fromUtc: new Date(Date.now() - 3600_000).toISOString(), toUtc: new Date().toISOString(),
+      durationHours: 5, calls: 1, inputTokens: cli === 'codex' ? 20 : 10,
+      outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+      totalTokens: cli === 'codex' ? 20 : 10,
+    }) });
+  });
   await page.route('**/api/cli/quota/caps', json({ defaultCapPct: 95, caps: {} }));
   // The CLI-admin (Usage caps) section pulls model-route profiles via the quota
   // feature. Stub it too, else an unstubbed call falls through to the dev
@@ -306,6 +315,10 @@ test.describe('Workspace settings home (Dach)', () => {
     await expect(page.getByTestId('cli-window-analysis-claude')).toBeVisible();
     await expect(page.getByTestId('cli-window-analysis-claude')).toContainText('CLI account level');
     await expect(page.getByTestId('cli-window-cards')).toContainText('5h session');
+    await expect(page.getByTestId('cli-window-cards')).toContainText('in 3 hours');
+    await expect(page.getByTestId('cli-window-cards')).toContainText('UTC');
+    await expect(page.getByTestId('cli-window-cards')).toContainText('Recorded attribution');
+    await expect(page.getByTestId('cli-window-attribution').first()).toHaveText('10');
     // AGT-3794-F14: no shipped placeholder and no claim that effort is missing.
     await expect(page.getByTestId('cli-token-streams')).toContainText('Token streams');
     await expect(page.getByTestId('cli-plausibility')).not.toContainText('Placeholder');
@@ -322,6 +335,8 @@ test.describe('Workspace settings home (Dach)', () => {
     await page.getByTestId('token-usage-nav-codex').click();
     await expect(page).toHaveURL(/#\/workspace\/settings\/tokens\/codex$/);
     await expect(page.getByTestId('cli-window-analysis-codex')).toContainText('Codex usage windows');
+    await expect(page.getByTestId('cli-window-attribution').first()).toHaveText('20');
+    await expect(page.getByTestId('cli-window-cards')).toContainText('12.0% / h');
     await page.getByTestId('cli-window-period-7d').click();
     await expect(page.getByTestId('cli-window-period-7d')).toHaveAttribute('aria-pressed', 'true');
 

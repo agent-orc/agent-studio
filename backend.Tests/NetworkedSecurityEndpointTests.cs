@@ -23,14 +23,123 @@ using RComplete = Runner::AgentRunner.RemoteRunCompletionRequest;
 
 namespace AgentStudio.Tests;
 
-public sealed class NetworkedSecurityEndpointTests : IDisposable
+/// <summary>
+/// Sign-in, bootstrap, runner enrollment and address checks through the real
+/// networked pipeline.
+///
+/// <para>The tests share two hosts (AGT-3861): one behind a private edge and
+/// one behind the public Cloudflare edge, the only setting a test chose that
+/// the host reads at start. The client address and the clock of the access
+/// store are chosen per test through <see cref="Ready"/>, and
+/// <see cref="NetworkedHost.Reset"/> gives each test an empty access store, a
+/// healthy login address and an empty project, as a fresh host showed
+/// them. Passwords are hashed with <see cref="LowCostPasswordHashes"/>.</para>
+/// </summary>
+[TestCaseOrderer(SharedHostTestOrder.TypeName, SharedHostTestOrder.AssemblyName)]
+public sealed class NetworkedSecurityEndpointTests
+    : IClassFixture<NetworkedSecurityEndpointTests.PrivateEdgeHost>, IClassFixture<NetworkedSecurityEndpointTests.PublicEdgeHost>
 {
-    private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-networked-endpoints-" + Guid.NewGuid().ToString("N"));
+    private readonly PrivateEdgeHost _host;
+    private readonly PublicEdgeHost _publicEdge;
+    private readonly string _workspace;
+
+    public NetworkedSecurityEndpointTests(PrivateEdgeHost host, PublicEdgeHost publicEdge)
+    {
+        _host = host;
+        _publicEdge = publicEdge;
+        _workspace = host.Workspace;
+        host.Reset();
+        publicEdge.Reset();
+    }
+
+    public sealed class PrivateEdgeHost() : NetworkedHost("studio-networked-endpoints-", publicCloudflareEdge: false);
+
+    public sealed class PublicEdgeHost() : NetworkedHost("studio-networked-public-edge-", publicCloudflareEdge: true);
+
+    /// <summary>The networked host with the project <c>networked-smoke</c>.</summary>
+    public abstract class NetworkedHost(string prefix, bool publicCloudflareEdge) : SharedTestHost(prefix)
+    {
+        private readonly SwitchableClock _clock = new();
+        private NetworkedLoginAddressHealth? _addressHealth;
+        private IPAddress? _remoteIp;
+
+        public string Workspace => Path.Combine(Root, "workspace");
+
+        public string ProjectPath => Path.Combine(Workspace, "projects", "networked-smoke");
+
+        protected override void ConfigureHost(IWebHostBuilder builder)
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureServices(services =>
+            {
+                services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(() => _remoteIp));
+                services.AddSingleton(provider =>
+                {
+                    _clock.Current = provider.GetRequiredService<TimeProvider>();
+                    return LowCostPasswordHashes.Store(provider, _clock);
+                });
+                // Resolved per request, so each test reads one made after its Reset.
+                services.AddTransient(provider => _addressHealth ??=
+                    new NetworkedLoginAddressHealth(provider.GetRequiredService<TimeProvider>()));
+            });
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = Workspace,
+                ["Secrets:KeyFile"] = Path.Combine(Root, "secrets.kek"),
+                ["Security:Profile"] = "networked",
+                ["Security:BootstrapCode"] = "website-setup-code",
+                ["Security:TrustedProxyAddresses"] = "172.30.83.3",
+                ["Security:PublicCloudflareEdge"] = publicCloudflareEdge ? "true" : "false",
+                ["AllowedHosts"] = "studio.test",
+                ["WatchPaths:0:Name"] = "networked-smoke",
+                ["WatchPaths:0:Path"] = ProjectPath,
+                ["WatchPaths:0:RootPath"] = ProjectPath,
+                ["WatchPaths:0:RepositoryPath"] = ProjectPath,
+            }));
+        }
+
+        public override Task InitializeAsync()
+        {
+            Directory.CreateDirectory(ProjectPath);
+            return base.InitializeAsync();
+        }
+
+        /// <summary>
+        /// Empties the access store and the project, and puts back a healthy
+        /// login address, no client address and the host's clock.
+        /// </summary>
+        public void Reset()
+        {
+            _remoteIp = null;
+            _clock.Current = Services.GetRequiredService<TimeProvider>();
+            _addressHealth = null;
+            Services.GetRequiredService<AccessSecurityStore>().ResetForTests();
+            foreach (var entry in new DirectoryInfo(ProjectPath).EnumerateFileSystemInfos())
+            {
+                if (entry is DirectoryInfo directory) directory.Delete(recursive: true);
+                else entry.Delete();
+            }
+            Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        }
+
+        /// <summary>The host as a test sees it, after a rescan of what the test wrote so far.</summary>
+        public WebApplicationFactory<Program> Ready(string? remoteIp, TimeProvider? clock)
+        {
+            _remoteIp = remoteIp is null ? null : IPAddress.Parse(remoteIp);
+            if (clock is not null) _clock.Current = clock;
+            Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+            return Factory;
+        }
+    }
+
+    private WebApplicationFactory<Program> Ready(string? remoteIp = null, bool publicCloudflareEdge = false,
+        TimeProvider? clock = null)
+        => publicCloudflareEdge ? _publicEdge.Ready(remoteIp, clock) : _host.Ready(remoteIp, clock);
 
     [Fact]
     public async Task Bootstrap_and_invitation_routes_record_the_browser_and_resolved_address()
     {
-        using var factory = BuildFactory("203.0.113.15");
+        var factory = Ready("203.0.113.15");
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
@@ -60,7 +169,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task Signed_in_viewer_can_read_names_without_access_administration_fields()
     {
-        using var factory = BuildFactory("203.0.113.15");
+        var factory = Ready("203.0.113.15");
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
@@ -86,7 +195,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     public async Task Authenticator_code_cannot_sign_in_twice_in_one_step()
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
-        using var factory = BuildFactory("203.0.113.15", clock: clock);
+        var factory = Ready("203.0.113.15", clock: clock);
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var password = "long pass phrase " + Guid.NewGuid().ToString("N");
         var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
@@ -112,7 +221,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     public async Task Networked_host_execution_and_url_targets_require_owner()
     {
         var projectPath = Directory.CreateDirectory(Path.Combine(_workspace, "projects", "networked-smoke")).FullName;
-        using var factory = BuildFactory(projectPath: projectPath);
+        var factory = Ready();
         Assert.IsType<RemoteRequiredBuildCommandRunner>(
             factory.Services.GetRequiredService<IBuildCommandRunner>());
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -169,7 +278,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     public async Task CheckoutSyncAndRunnerHostSignInRequireOwnerInNetworkedProfile()
     {
         var projectPath = Directory.CreateDirectory(Path.Combine(_workspace, "projects", "networked-smoke")).FullName;
-        using var factory = BuildFactory(projectPath: projectPath);
+        var factory = Ready();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
@@ -272,7 +381,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         File.WriteAllText(Path.Combine(taskPath, "prompt.md"), "Complete the fixture task.");
         File.WriteAllText(Path.Combine(taskPath, "status.md"), "Result: pending.");
 
-        using var factory = BuildFactory(projectPath: projectPath);
+        var factory = Ready();
         using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         using var probe = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -334,7 +443,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     public async Task Real_endpoints_bootstrap_session_csrf_and_runner_enrollment_fail_closed()
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
-        using var factory = BuildFactory(clock: clock);
+        var factory = Ready(clock: clock);
         using var anonymous = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/tasks")).StatusCode);
@@ -448,14 +557,14 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task Untrusted_forwarded_https_is_ignored_but_named_proxy_is_trusted()
     {
-        using var untrusted = BuildFactory("203.0.113.15");
+        var untrusted = Ready("203.0.113.15");
         using var untrustedClient = untrusted.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://studio.test") });
         using var spoof = new HttpRequestMessage(HttpMethod.Get, "/api/auth/status");
         spoof.Headers.Add("X-Forwarded-Proto", "https");
         spoof.Headers.Add("X-Forwarded-For", "127.0.0.1");
         Assert.Equal(HttpStatusCode.UpgradeRequired, (await untrustedClient.SendAsync(spoof)).StatusCode);
 
-        using var trusted = BuildFactory("172.30.83.3");
+        var trusted = Ready("172.30.83.3");
         using var trustedClient = trusted.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://studio.test") });
         using var forwarded = new HttpRequestMessage(HttpMethod.Get, "/api/auth/status");
         forwarded.Headers.Add("X-Forwarded-Proto", "https");
@@ -468,7 +577,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [InlineData("100.64.2.3")]
     public async Task Login_from_private_address_is_refused_on_public_edge(string address)
     {
-        using var factory = BuildFactory(address, publicCloudflareEdge: true);
+        var factory = Ready(address, publicCloudflareEdge: true);
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
@@ -486,7 +595,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [InlineData("172.30.83.3")]
     public async Task Private_address_can_sign_in_without_public_cloudflare_edge(string address)
     {
-        using var factory = BuildFactory(address);
+        var factory = Ready(address);
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -502,7 +611,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task Private_address_login_is_allowed_without_public_cloudflare_edge()
     {
-        using var factory = BuildFactory("192.168.1.25");
+        var factory = Ready("192.168.1.25");
         factory.Services.GetRequiredService<AccessSecurityStore>()
             .Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -518,7 +627,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task Private_address_login_is_refused_with_public_cloudflare_edge()
     {
-        using var factory = BuildFactory("192.168.1.25", publicCloudflareEdge: true);
+        var factory = Ready("192.168.1.25", publicCloudflareEdge: true);
         factory.Services.GetRequiredService<AccessSecurityStore>()
             .Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -534,7 +643,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task Networked_operator_cannot_create_or_start_rules_or_change_repository_identity()
     {
-        using var factory = BuildFactory("203.0.113.15");
+        var factory = Ready("203.0.113.15");
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
@@ -590,7 +699,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task First_remote_owner_requires_the_installer_code()
     {
-        using var factory = BuildFactory("203.0.113.15");
+        var factory = Ready("203.0.113.15");
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test") });
         client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
         var status = await client.GetFromJsonAsync<AuthStatusResponse>("/api/auth/status");
@@ -623,7 +732,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task Loopback_bootstrap_and_named_host_health_remain_available()
     {
-        using var factory = BuildFactory("127.0.0.1");
+        var factory = Ready("127.0.0.1");
         using var namedHost = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://studio.test") });
         Assert.Equal(HttpStatusCode.OK, (await namedHost.GetAsync("/healthz")).StatusCode);
         using var wrongHost = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://127.0.0.1") });
@@ -636,48 +745,36 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         })).EnsureSuccessStatusCode();
     }
 
-    private WebApplicationFactory<Program> BuildFactory(string? remoteIp = null, string? projectPath = null,
-        bool publicCloudflareEdge = false, TimeProvider? clock = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-    {
-        builder.UseEnvironment("Test");
-        if (remoteIp is not null)
-            builder.ConfigureServices(services => services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(IPAddress.Parse(remoteIp))));
-        if (clock is not null)
-            builder.ConfigureServices(services => services.AddSingleton(provider => new AccessSecurityStore(
-                provider.GetRequiredService<IConfiguration>(), NullLogger<AccessSecurityStore>.Instance, clock)));
-        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["TaskRepository"] = _workspace,
-            ["Secrets:KeyFile"] = _workspace + ".kek",
-            ["Security:Profile"] = "networked",
-            ["Security:BootstrapCode"] = "website-setup-code",
-            ["Security:TrustedProxyAddresses"] = "172.30.83.3",
-            ["Security:PublicCloudflareEdge"] = publicCloudflareEdge ? "true" : "false",
-            ["AllowedHosts"] = "studio.test",
-            ["WatchPaths:0:Name"] = projectPath is null ? null : "networked-smoke",
-            ["WatchPaths:0:Path"] = projectPath,
-            ["WatchPaths:0:RootPath"] = projectPath,
-            ["WatchPaths:0:RepositoryPath"] = projectPath,
-        }));
-    });
-
-    private sealed class RemoteIpStartupFilter(IPAddress address) : IStartupFilter
+    /// <summary>Sets the client address a test chose; with none chosen the test server's own stays.</summary>
+    private sealed class RemoteIpStartupFilter(Func<IPAddress?> address) : IStartupFilter
     {
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
             => app =>
             {
                 app.Use((context, proceed) =>
                 {
-                    context.Connection.RemoteIpAddress = address;
+                    if (address() is { } chosen)
+                        context.Connection.RemoteIpAddress = chosen;
                     return proceed();
                 });
                 next(app);
             };
     }
 
-    public void Dispose()
+    /// <summary>The access store's clock: the host's clock unless a test chose its own.</summary>
+    private sealed class SwitchableClock : TimeProvider
     {
-        try { Directory.Delete(_workspace, true); } catch { }
-        File.Delete(_workspace + ".kek");
+        public TimeProvider Current { get; set; } = null!;
+
+        public override DateTimeOffset GetUtcNow() => Current.GetUtcNow();
+
+        public override TimeZoneInfo LocalTimeZone => Current.LocalTimeZone;
+
+        public override long TimestampFrequency => Current.TimestampFrequency;
+
+        public override long GetTimestamp() => Current.GetTimestamp();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+            => Current.CreateTimer(callback, state, dueTime, period);
     }
 }

@@ -1,15 +1,6 @@
 import {
-  ChangeDetectionStrategy,
-  Component,
-  ElementRef,
-  HostListener,
-  computed,
-  effect,
-  inject,
-  input,
-  output,
-  signal,
-  viewChild,
+  ChangeDetectionStrategy, Component, ElementRef, HostListener, OnDestroy,
+  computed, effect, inject, input, output, signal, untracked, viewChild,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
@@ -42,9 +33,12 @@ import { PublicDemoModeService } from '../../../../services/public-demo-mode.ser
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
 import { tabbableIn } from '../workbench-decision-panel/workbench-decision-focus.util';
-import { carryRecordedSelections } from '../workbench-decision-panel/workbench-decision-panel.util';
+import { carryRecordedSelections, hasUnsavedAnswers } from '../workbench-decision-panel/workbench-decision-panel.util';
 import { DossierCardListComponent } from '../dossier-card-list/dossier-card-list.component';
 import { ConceptPromotionComponent } from '../../../../components/concept-promotion/concept-promotion.component';
+import { ActionPanelCoordinator } from '../../../../services/action-panel-coordinator.service';
+import { NotificationService } from '../../../../services/notification.service';
+import { DossierPromotionNoticeComponent } from '../dossier-promotion-notice/dossier-promotion-notice.component';
 import { ThemeService } from '../../../studio-shell/services/theme.service';
 
 /**
@@ -65,12 +59,15 @@ import { ThemeService } from '../../../studio-shell/services/theme.service';
     WorkbenchDecisionPanelComponent,
     DossierCardListComponent,
     ConceptPromotionComponent,
+    DossierPromotionNoticeComponent,
   ],
+  // One open action panel per Dossier view (AGT-3875).
+  providers: [ActionPanelCoordinator],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-viewer.component.html',
   styleUrl: './workbench-viewer.component.scss',
 })
-export class WorkbenchViewerComponent {
+export class WorkbenchViewerComponent implements OnDestroy {
   readonly projectName = input.required<string>();
   readonly workbenchId = input.required<string>();
   readonly openWiki = output<{ relPath: string; reuse: 'replace-current' | 'new' }>();
@@ -89,6 +86,7 @@ export class WorkbenchViewerComponent {
   private readonly publicDemo = inject(PublicDemoModeService);
   readonly theme = inject(ThemeService).theme;
   private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly notifications = inject(NotificationService);
   private readonly frame = viewChild<ElementRef<HTMLIFrameElement>>('workbenchFrame');
   private readonly inlineActionHost = viewChild<ElementRef<HTMLElement>>('inlineActionHost');
   private requestGeneration = 0;
@@ -106,14 +104,24 @@ export class WorkbenchViewerComponent {
   readonly connectionChangedAtUtc = this.hub.connectionChangedAtUtc;
   readonly readOnly = this.publicDemo.readOnly;
   /**
-   * The concept card that published this Dossier, when the Dossier proposes
-   * implementation slices. Its promotion creates one card per slice (AGT-3701).
+   * The concept card that published this Dossier, when the server says its
+   * promotion can work. Its promotion creates one card per slice (AGT-3701).
    */
   readonly promotionSource = computed(() => {
-    const document = this.document();
-    if (!document || this.readOnly() || (document.cards?.implementationSlices ?? 0) === 0) return null;
-    return document.workbench.sourceTaskKeys.find(key => key.trim().length > 0) ?? null;
+    const promotion = this.document()?.promotion;
+    if (this.readOnly() || !promotion?.available) return null;
+    return promotion.sourceTaskKey;
   });
+  /** Why a Dossier that proposes slices cannot promote them, with its next step (AGT-3875). */
+  readonly promotionBlocked = computed(() => {
+    const promotion = this.document()?.promotion;
+    const noSlices = (this.document()?.cards?.implementationSlices ?? 0) === 0;
+    return !promotion || promotion.available || (promotion.reason === 'no-proposals' && noSlices) ? null : promotion;
+  });
+  /** Answers changed in this browser that the Dossier does not hold yet (AGT-3875). */
+  readonly unsavedAnswers = computed(() => !this.readOnly() && this.document() !== null && hasUnsavedAnswers(
+    this.document()!, this.decisionDrafts.draft(this.projectName(), this.document()!.workbench.id)?.responses));
+  private viewedDossier: { project: string; id: string; title: string } | null = null;
 
   readonly srcdoc = computed(() => {
     const document = this.document();
@@ -146,6 +154,7 @@ export class WorkbenchViewerComponent {
     effect(() => {
       const project = this.projectName();
       const id = this.workbenchId();
+      untracked(() => this.warnUnsavedOnLeave());
       this.maximized.set(false);
       this.loadDocument(project, id);
     });
@@ -209,6 +218,34 @@ export class WorkbenchViewerComponent {
     }
   }
 
+  /** Closing or reloading the browser tab with unsaved answers asks first. */
+  @HostListener('window:beforeunload', ['$event'])
+  onBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!this.unsavedAnswers()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  }
+
+  ngOnDestroy(): void {
+    this.warnUnsavedOnLeave();
+  }
+
+  /**
+   * Leaving a Dossier with unsaved answers warns once per unsaved state: the
+   * answers stay as a draft in this browser, but the Dossier does not hold them.
+   */
+  private warnUnsavedOnLeave(): void {
+    const viewed = this.viewedDossier;
+    this.viewedDossier = null;
+    const document = this.document();
+    const draft = viewed && this.decisionDrafts.draft(viewed.project, viewed.id);
+    if (!viewed || !draft || draft.leaveWarned || document?.workbench.id !== viewed.id || this.readOnly()
+      || !hasUnsavedAnswers(document, draft.responses)) return;
+    this.decisionDrafts.markLeaveWarned(viewed.project, viewed.id);
+    this.notifications.warning(`Your answers in ${viewed.title} are not saved in the Dossier. They stay as a `
+      + 'draft in this browser; open the Dossier and choose Save answers.', 'Answers not saved');
+  }
+
   toggleMaximize(): void {
     this.maximized.update((value) => !value);
   }
@@ -256,6 +293,13 @@ export class WorkbenchViewerComponent {
   documentationReady(): boolean {
     const workbench = this.document()?.workbench;
     return workbench?.status === 'decided' && workbench.documentation?.eligible === true;
+  }
+
+  /** Why a decided item cannot be marked documented yet, for example open implementation slices. */
+  documentationBlockedReason(): string | null {
+    const workbench = this.document()?.workbench;
+    if (workbench?.status !== 'decided' || workbench.documentation?.eligible !== false) return null;
+    return workbench.documentation.blockedReason || null;
   }
 
   documentCurrent(): void {
@@ -328,11 +372,12 @@ export class WorkbenchViewerComponent {
       next: (document) => {
         if (generation !== this.requestGeneration) return;
         this.document.set(document);
+        this.viewedDossier = { project, id, title: document.workbench.title };
         this.documentResolved.emit(document);
         this.lastUpdatedAtUtc.set(new Date().toISOString());
         if (document.workbench.decision?.state === 'succeeded')
           this.decisionDrafts.discard(project, id);
-        if (reworkRevisionLanded(document)) this.decisionDrafts.discard(project, id);
+        if (reworkRevisionSettled(document)) this.decisionDrafts.discard(project, id);
         this.decisionResponses.set(initialDecisionResponses(
           document, this.decisionDrafts.draft(project, id)?.responses ?? null));
         this.loading.set(false);
@@ -349,7 +394,8 @@ export class WorkbenchViewerComponent {
 /**
  * The responses the Dossier opens with. A landed revision shows the owner's
  * recorded selections from the rework receipt, not the authored defaults
- * (AGT-3703); otherwise the receipt, then the browser draft, then the markup.
+ * (AGT-3703); otherwise the receipt, then the browser draft, then the saved
+ * answers, then the markup.
  */
 function initialDecisionResponses(
   document: WorkbenchDocument,
@@ -357,11 +403,13 @@ function initialDecisionResponses(
 ): WorkbenchDecisionResponse[] {
   const discovered = discoverWorkbenchDecisionMarkup(document.html);
   const decision = document.workbench.decision;
-  if (reworkRevisionLanded(document))
+  if (reworkRevisionSettled(document))
     return carryRecordedSelections(decision?.responses ?? document.workbench.recordedResponses,
       discovered.points, discovered.responses);
   const restored = saved ? normalizeWorkbenchDecisionResponses(saved, discovered.points) : null;
-  return decision?.responses ?? document.workbench.recordedResponses ?? restored ?? discovered.responses;
+  // A saved answer set discards the draft, so a draft is newer than the saved answers (AGT-3875).
+  const recorded = document.workbench.recordedResponses?.length ? document.workbench.recordedResponses : null;
+  return decision?.responses ?? restored ?? recorded ?? discovered.responses;
 }
 
 function reworkRevisionLanded(document: WorkbenchDocument): boolean {
@@ -370,6 +418,13 @@ function reworkRevisionLanded(document: WorkbenchDocument): boolean {
     && Boolean(decision.sourceEntryFingerprint)
     && Boolean(document.entryFingerprint)
     && decision.sourceEntryFingerprint !== document.entryFingerprint;
+}
+
+function reworkRevisionSettled(document: WorkbenchDocument): boolean {
+  return reworkRevisionLanded(document)
+    || document.revisionRound?.status === 'updated'
+    || document.revisionRound?.status === 'unchanged'
+    || document.revisionRound?.status === 'failed';
 }
 
 /** `entryPath` is repo-root relative (`docs/...`); the asset resolver wants it docs-root relative. */

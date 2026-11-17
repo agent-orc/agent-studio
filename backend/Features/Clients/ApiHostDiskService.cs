@@ -6,8 +6,11 @@ namespace AgentStudio.Clients;
 /// <summary>Samples the API host even when no Operations browser is open.</summary>
 public sealed class ApiHostDiskService(IConfiguration configuration, HostTelemetryStore telemetry,
     BatchGateStore batches,
-    ILogger<ApiHostDiskService> logger) : BackgroundService
+    ILogger<ApiHostDiskService> logger, IHostFilesystemProbe? probe = null) : BackgroundService
 {
+    // AGT-3866: lease admission reads this; a test host pins the probe.
+    private readonly IHostFilesystemProbe _probe = probe ?? HostFilesystemProbes.Default;
+
     public HostDiskPressureDecision Admission()
         => telemetry.DiskPressure("api-host", Measure(includeConsumers: false));
 
@@ -40,7 +43,7 @@ public sealed class ApiHostDiskService(IConfiguration configuration, HostTelemet
         if (!string.IsNullOrWhiteSpace(container)) paths.Add(("container storage", container));
         else foreach (var candidate in new[] { "/var/lib/docker", "/var/lib/containers" }.Where(Directory.Exists))
             paths.Add(("container storage", candidate));
-        var disks = HostFilesystemProbe.Measure(paths);
+        var disks = _probe.Measure(paths);
         var thresholds = new HostDiskPressureThresholds(
             configuration.GetValue("DiskPressure:WarningFreeBytes", 30L * 1024 * 1024 * 1024),
             configuration.GetValue("DiskPressure:WarningFreePercent", 15d),
@@ -48,7 +51,7 @@ public sealed class ApiHostDiskService(IConfiguration configuration, HostTelemet
             configuration.GetValue("DiskPressure:CriticalFreePercent", 5d));
         if (includeConsumers && HostDiskPressurePolicy.Decide(disks, thresholds).Level
             != HostDiskPressureLevel.Healthy)
-            disks = HostFilesystemProbe.Measure(paths,
+            disks = _probe.Measure(paths,
                 [("runner worktrees", work ?? ""), ("gate evidence", gateEvidence),
                  ("logs", Path.Combine(data, "logs")), ("result archives", Path.Combine(data, "tasks"))]);
         return disks;

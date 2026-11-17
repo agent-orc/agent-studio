@@ -164,9 +164,14 @@ public sealed class WorkbenchDecisionService
     /// The card the caller resolved to run a rework revision; recorded in the
     /// receipt so the Dossier names the card that owes the revision.
     /// </param>
+    /// <param name="revisionRoute">
+    /// That card's route before the round. When the confirmed route differs,
+    /// the receipt records it under <c>routeChangedFrom</c> so the change is
+    /// never silent (AGT-3838).
+    /// </param>
     public WorkbenchDecisionResult Confirm(
         string projectName, string id, ConfirmWorkbenchDecisionRequest body,
-        string? revisionTaskKey = null)
+        string? revisionTaskKey = null, WorkbenchAgentRoute? revisionRoute = null)
     {
         if (!body.Confirmed)
             return Failure(id, body.OperationId, "validation",
@@ -189,7 +194,7 @@ public sealed class WorkbenchDecisionService
         writeGate.Wait();
         try
         {
-            result = ConfirmSerialized(projectName, id, body, revisionTaskKey);
+            result = ConfirmSerialized(projectName, id, body, revisionTaskKey, revisionRoute);
         }
         finally
         {
@@ -241,6 +246,15 @@ public sealed class WorkbenchDecisionService
         };
     }
 
+    private static JsonObject RouteNode(WorkbenchAgentRoute route)
+    {
+        var node = new JsonObject();
+        if (!string.IsNullOrWhiteSpace(route.CliType)) node["cliType"] = route.CliType.Trim();
+        if (!string.IsNullOrWhiteSpace(route.Model)) node["model"] = route.Model.Trim();
+        if (!string.IsNullOrWhiteSpace(route.ThinkingLevel)) node["thinkingLevel"] = route.ThinkingLevel.Trim();
+        return node;
+    }
+
     private static string Capitalize(string text) =>
         text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
@@ -266,7 +280,8 @@ public sealed class WorkbenchDecisionService
     }
 
     private WorkbenchDecisionResult ConfirmSerialized(
-        string projectName, string id, ConfirmWorkbenchDecisionRequest body, string? revisionTaskKey)
+        string projectName, string id, ConfirmWorkbenchDecisionRequest body, string? revisionTaskKey,
+        WorkbenchAgentRoute? revisionRoute)
     {
         var gate = Gate(projectName, id, body.OperationId, body.Outcome, body.Actor,
             body.ArchiveReason, body.Task, body.Responses,
@@ -321,6 +336,9 @@ public sealed class WorkbenchDecisionService
         {
             if (!string.IsNullOrWhiteSpace(body.Request)) receipt["request"] = body.Request.Trim();
             if (!string.IsNullOrWhiteSpace(revisionTaskKey)) receipt["revisionTaskKey"] = revisionTaskKey.Trim();
+            if (rework && revisionRoute != null
+                && !revisionRoute.SameAs(revisionRoute.After(new(body.CliType, body.Model, body.ThinkingLevel))))
+                receipt["routeChangedFrom"] = RouteNode(revisionRoute);
         }
         descriptor["decision"] = receipt;
         if (spawned.Length > 0)
@@ -465,9 +483,11 @@ public sealed class WorkbenchDecisionService
             if (task != null || !string.IsNullOrWhiteSpace(archiveReason))
                 return new(Failure(id, operationId, "validation",
                     "A recorded choice cannot carry a task draft or archive reason."));
-            if (!responses.Any(response => response.SelectedOptionIds.Count > 0))
+            // A note alone is an answer worth keeping (AGT-3875).
+            if (!responses.Any(response => response.SelectedOptionIds.Count > 0
+                    || !string.IsNullOrWhiteSpace(response.Comment)))
                 return new(Failure(id, operationId, "validation",
-                    "Select at least one decision option to record."));
+                    "Select at least one decision option or write a note to save."));
             if (spawnedTaskKeys?.Any(key => !string.IsNullOrWhiteSpace(key)) == true)
                 return new(Failure(id, operationId, "validation",
                     "A recorded choice cannot carry spawned task keys."));

@@ -1285,7 +1285,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         new("requirement-fit", "pass", "Product", "The fixture delivery answers its brief."),
     ];
 
-    private StrandingStack StrandingFixture(Deps deps)
+    private StrandingStack StrandingFixture(Deps deps, IEngineDeliveryIntegration? engine = null)
     {
         deps.Settings.SetBatchGate(Project, new BatchGateFormationOptions(
             Enabled: true, DocumentationOnly: false, Scope: "code"));
@@ -1315,7 +1315,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             reviewLifecycle, batches, null!, deps.Settings, deps.Pipeline,
             new AutoReviewPostProcessingQueue(), deps.Transitions, resume, escalation,
             records, receipts, deps.Configuration, NullLogger<AutoReviewStrandingWatchdog>.Instance,
-            coordinator);
+            coordinator, engine: engine);
         return new StrandingStack(watchdog, records, batches);
     }
 
@@ -2024,6 +2024,55 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(
                 factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!.FolderPath),
             row => row.Kind == TimelineEventKinds.ContentReviewRequested);
+    }
+
+    [Fact]
+    public async Task FullScopeReview_RequestsEveryAspectAgainForTheSameDeliveryRun()
+    {
+        // AGT-3845: a card a non-Stable review host graded offers a fresh
+        // review on the current build, not only the brief-fit aspect.
+        var deliverySha = PublishDelivery("release-review.txt", "delivered result\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, briefVersion: "brief-v1");
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _tempDir,
+                    ["WatchPaths:0:Name"] = Project,
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _repo,
+                    ["WatchPaths:0:RepositoryPath"] = _repo,
+                    ["DeliveryChain:Guarded"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<ProjectSettingsService>();
+                services.AddSingleton(deps.Settings);
+                services.RemoveAll<AttemptAuthorityService>();
+                services.AddSingleton(deps.Authority);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var response = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/content-review?scope=full&watchPath={Uri.EscapeDataString(_watchPath)}", new { });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var review = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(review);
+        Assert.Equal(run.AttemptId, review.SourceRunAttemptId);
+        Assert.Contains(review.Subject.Plan!.Commands, command => command.Aspect != "requirement-fit");
+        Assert.Null(review.Subject.Plan.VerifyReuseFromAttemptIds);
+        Assert.Equal(TaskStates.AutoReview, factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(Slug, _watchPath)!.State);
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(
+                factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!.FolderPath),
+            row => row.Kind == TimelineEventKinds.ContentReviewRequested
+                && row.Details?.GetValueOrDefault("scope") == "full");
     }
 
     /// <summary>
@@ -3712,8 +3761,10 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
             // AGT-3753: the refusal names the newest uncovered commit, not project.yml.
             var uncovered = gateSecondPublication ? first : second;
-            Assert.Contains($"{uncovered[..7]} \"later published delivery\" has none", accepted.Message);
+            Assert.Contains($"later publication {uncovered[..7]} \"later published delivery\"", accepted.Message);
             Assert.Contains("no published gate evidence for that tree", accepted.Message);
+            Assert.Contains("Commit author: test", accepted.Message);
+            Assert.DoesNotContain("batch", accepted.Message, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("`.agent-studio/project.yml`", accepted.Message);
         }
     }
@@ -3730,6 +3781,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
         RunGit(_repo, "fetch", "-q", "origin", "develop");
         var deps = Build(deliverySha);
+        deps.Settings.SetBatchGate(Project, new BatchGateFormationOptions(
+            Enabled: true, DocumentationOnly: false, Scope: "code"));
         var card = deps.Scanner.FindJob(Slug, _watchPath)!;
         var netChangeSha = PublishLaterCommit("net-change-publication.txt", deliverySha);
         var laterSha = PublishLaterCommit("after-net-change.txt");
@@ -5020,8 +5073,11 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Func<DateTime>? authorityClock = null,
         BatchGateStore? batchGates = null,
         string contentStatus = "pass",
-        string contentSummary = "The fixture delivery answers its brief.")
+        string contentSummary = "The fixture delivery answers its brief.",
+        string taskKey = TaskKey,
+        string slug = Slug)
     {
+        var deliveryRef = taskKey == TaskKey ? DeliveryRef : $"runner/agent-runner-01/{taskKey}";
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -5063,7 +5119,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             authorityClock);
         var deliveryBriefVersion = briefVersion ?? RunDispositionPolicy.BriefVersion("Fixture brief");
         var sourceRun = authority.AcquireRun(
-            TaskKey,
+            taskKey,
             "PROJ-FIXTURE",
             null,
             "agent-runner-01",
@@ -5085,7 +5141,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
                 sourceRun.AttemptId,
                 Git(_repo, "rev-parse", $"{deliverySha}^").Out.Trim(),
                 deliverySha,
-                $"refs/heads/{DeliveryRef}",
+                $"refs/heads/{deliveryRef}",
                 null,
                 new string('a', 64),
                 RepositoryUrl: _origin),
@@ -5104,7 +5160,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             preDevelopTimeout: TimeSpan.FromSeconds(30));
         var integration = new TaskIntegrationStatusService(
             git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance,
-            batchGates: batchGates);
+            batchGates: batchGates, scanner: scanner);
         var provenance = new TaskProvenanceService(
             git,
             settings,
@@ -5112,13 +5168,13 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             NullLogger<TaskProvenanceService>.Instance);
         var acceptedQueue = backgroundIntegration ? new AcceptedIntegrationQueue() : null;
 
-        var jobFolder = Path.Combine(_watchPath, initialState, Slug);
+        var jobFolder = Path.Combine(_watchPath, initialState, slug);
         Directory.CreateDirectory(jobFolder);
         BriefVersionStore.Record(jobFolder, "Fixture brief");
         var job = new
         {
-            id = Slug,
-            key = TaskKey,
+            id = slug,
+            key = taskKey,
             title = "Remote delivery",
             state = initialState,
             order = 1,
@@ -5141,26 +5197,26 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         {
             ReviewSubjectStore.Write(jobFolder, new ReviewSubjectRecord
             {
-                TaskKey = TaskKey,
+                TaskKey = taskKey,
                 RunAttemptId = sourceRun.AttemptId,
                 Project = Project,
                 Repository = _origin,
                 ResultSha = deliverySha,
-                ResultRef = DeliveryRef,
+                ResultRef = deliveryRef,
                 AttemptChainId = sourceRun.Lease!.LeaseId,
                 Executor = "agent-runner-01",
                 LeaseId = sourceRun.Lease.LeaseId,
                 FencingToken = sourceRun.LastFence,
-                ImmutableResultRef = $"refs/heads/{DeliveryRef}",
+                ImmutableResultRef = $"refs/heads/{deliveryRef}",
                 IntegrationBranch = recordedIntegrationBranch,
                 CompletedAtUtc = DateTimeOffset.UtcNow,
             });
         }
         if (seedContent)
             SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion,
-                reviewPlan, reviewVerdicts, contentStatus, contentSummary);
-        pipeline.Begin(jobFolder, PipelineCatalogue.Standard, Project, Slug);
-        Assert.NotNull(scanner.FindJob(Slug, _watchPath));
+                reviewPlan, reviewVerdicts, contentStatus, contentSummary, taskKey, deliveryRef);
+        pipeline.Begin(jobFolder, PipelineCatalogue.Standard, Project, slug);
+        Assert.NotNull(scanner.FindJob(slug, _watchPath));
         // AGT-3076: the 11.10. crash rebuilt the attempt authority store into
         // epoch 2; the card keeps its review subject and delivery evidence,
         // but the store no longer holds the RunAttempt the subject names.
@@ -5227,12 +5283,13 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         AttemptAuthorityService authority, RunAttemptDto sourceRun,
         string folder, string deliverySha, string briefVersion,
         Contract.ReviewPlanDto? plan = null, IReadOnlyList<Contract.ReviewVerdictDto>? verdicts = null,
-        string contentStatus = "pass", string contentSummary = "The fixture delivery answers its brief.")
+        string contentStatus = "pass", string contentSummary = "The fixture delivery answers its brief.",
+        string taskKey = TaskKey, string deliveryRef = DeliveryRef)
     {
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
-            TaskKey, "PROJ-FIXTURE", deliverySha, sourceRun.AttemptId,
+            taskKey, "PROJ-FIXTURE", deliverySha, sourceRun.AttemptId,
             briefVersion, AttemptAuthorityService.Hash("fixture-review-policy"), [],
-            "content-fixture", RepositoryUrl: _origin, ResultRef: DeliveryRef, Plan: plan));
+            "content-fixture", RepositoryUrl: _origin, ResultRef: deliveryRef, Plan: plan));
         Assert.True(created.Accepted, created.Message);
         var claimed = authority.ClaimReview(created.AttemptId, "fixture-reviewer", "fixture-host",
             60, "claim-content-fixture");
@@ -5252,7 +5309,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var entry = new RemoteReviewSettlementEntry
         {
             AttemptId = review.AttemptId,
-            TaskKey = TaskKey,
+            TaskKey = taskKey,
             IdempotencyKey = report.IdempotencyKey,
             ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
             Report = report,

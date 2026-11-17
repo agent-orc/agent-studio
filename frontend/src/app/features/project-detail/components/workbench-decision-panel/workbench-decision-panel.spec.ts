@@ -2,6 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -13,6 +14,9 @@ import { ModalStackService } from '../../../../services/modal-stack.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { TaskService } from '../../../../services/task.service';
 import { CliCatalogStore } from '../../../cli';
+import { ActionPanelCoordinator } from '../../../../services/action-panel-coordinator.service';
+import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
+import { WorkbenchDecisionActionsComponent } from '../workbench-decision-actions/workbench-decision-actions.component';
 import { WorkbenchDecisionPanelComponent } from './workbench-decision-panel';
 import { decisionOutcomeTone, decisionStageTone } from './workbench-decision-panel.util';
 
@@ -97,6 +101,7 @@ describe('WorkbenchDecisionPanelComponent', () => {
         provideZonelessChangeDetection(),
         provideHttpClient(),
         provideHttpClientTesting(),
+        ActionPanelCoordinator,
         {
           provide: TaskService,
           useValue: { createJob, getDetailByProject, getReferenceStatuses, getWatchPaths, refresh },
@@ -117,6 +122,30 @@ describe('WorkbenchDecisionPanelComponent', () => {
   });
 
   afterEach(() => http.verify());
+
+  it('returns actions and shows an unchanged round while retaining the rework receipt', () => {
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      entryFingerprint: 'a'.repeat(64),
+      workbench: { ...DOCUMENT.workbench, decision: {
+        outcome: 'rework', state: 'pending', operationId: 'rework-1',
+        sourceRevision: DOCUMENT.revision, sourceFingerprint: DOCUMENT.fingerprint,
+        sourceEntryFingerprint: 'a'.repeat(64),
+        preparedAt: '2026-11-15T10:00:00Z', preparedBy: 'Owner',
+        confirmedAt: '2026-11-15T10:00:00Z', confirmedBy: 'Owner',
+        decidedAt: null, reason: null, failure: null, spawnedTaskKeys: [],
+        responses: RESPONSES, taskDraft: null, revisionTaskKey: 'AGT-2300',
+      } },
+      revisionRound: { status: 'unchanged', taskKey: 'AGT-2300',
+        title: 'Concept: routing policy', queueReason: null, detail: null },
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-receipt"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-revision-round"]')?.textContent)
+      .toContain('unchanged');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-rework"]')).toBeTruthy();
+  });
 
   it('records one answer while leaving another explicitly open and does not create a card', () => {
     const partial = [RESPONSES[0], {
@@ -143,6 +172,60 @@ describe('WorkbenchDecisionPanelComponent', () => {
     confirm.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
       decisionStage: 'succeeded', revision: 'd'.repeat(40), fingerprint: 'e'.repeat(64), responses: partial });
     expect(createJob).not.toHaveBeenCalled();
+  });
+
+  it('saves a fully answered Dossier with its notes without starting a card (AGT-3875)', () => {
+    const record = fixture.nativeElement.querySelector('[data-testid="workbench-decision-record"]') as HTMLButtonElement;
+    expect(record.textContent).toContain('Save answers');
+    expect(record.disabled).toBe(false);
+    expect(fixture.nativeElement.textContent).toContain('1 of 1 answered');
+    expect(fixture.nativeElement.textContent).toContain('1 note');
+    record.click();
+    const prepare = http.expectOne('/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/prepare');
+    expect(prepare.request.body).toEqual(expect.objectContaining({ outcome: 'record-only', responses: RESPONSES, task: null }));
+    const operationId = prepare.request.body.operationId;
+    prepare.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
+      decisionStage: 'prepared', revision: 'c'.repeat(40), fingerprint: 'b'.repeat(64), responses: RESPONSES });
+    const confirm = http.expectOne('/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/confirm');
+    expect(confirm.request.body.responses[0].comment).toBe('Keep the boundary explicit.');
+    confirm.flush({ success: true, workbenchId: 'routing-policy', operationId, outcome: 'record-only',
+      decisionStage: 'succeeded', revision: 'd'.repeat(40), fingerprint: 'e'.repeat(64), responses: RESPONSES });
+    expect(createJob).not.toHaveBeenCalled();
+
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT, workbench: { ...DOCUMENT.workbench, recordedResponses: RESPONSES },
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-save-state"]')?.textContent)
+      .toContain('Saved in Dossier');
+    expect((fixture.nativeElement.querySelector('[data-testid="workbench-decision-record"]') as HTMLButtonElement)
+      .disabled).toBe(true);
+  });
+
+  it('marks answers that differ from the saved ones as not saved yet', () => {
+    const changed = [{ ...RESPONSES[0], selectedOptionIds: ['queue'] }];
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT, workbench: { ...DOCUMENT.workbench, recordedResponses: RESPONSES },
+    });
+    TestBed.inject(WorkbenchDecisionDraftStore).saveResponses('Agent Studio', 'routing-policy', changed);
+    fixture.componentRef.setInput('responses', changed);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-save-state"]')?.textContent)
+      .toContain('Not saved yet');
+    expect((fixture.nativeElement.querySelector('[data-testid="workbench-decision-record"]') as HTMLButtonElement)
+      .disabled).toBe(false);
+  });
+
+  it('closes the combined-task form when another action panel of the view opens (AGT-3875)', () => {
+    click('workbench-decision-start');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-feature-confirmation"]')).not.toBeNull();
+
+    TestBed.inject(ActionPanelCoordinator).claim('concept-promotion');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-feature-confirmation"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-start"]')).not.toBeNull();
   });
 
   it('shows recorded choices after concept acceptance without offering another decision', () => {
@@ -574,6 +657,114 @@ describe('WorkbenchDecisionPanelComponent', () => {
     }
   });
 
+  describe('a Codex concept card with a Claude browser default (AGT-3838)', () => {
+    const CODEX_DOCUMENT: WorkbenchDocument = {
+      ...DOCUMENT,
+      revisionCard: {
+        ...DOCUMENT.revisionCard!, cliType: 'codex', model: 'gpt-5-codex', thinkingLevel: 'medium',
+      },
+    };
+
+    beforeEach(() => {
+      localStorage.setItem('defaultCliType', 'claude');
+      localStorage.setItem('defaultModel:claude', 'claude-opus-5');
+      localStorage.setItem('defaultThinkingLevel:claude', 'high');
+      fixture = TestBed.createComponent(WorkbenchDecisionPanelComponent);
+      fixture.componentRef.setInput('projectName', 'Agent Studio');
+      fixture.componentRef.setInput('document', CODEX_DOCUMENT);
+      fixture.componentRef.setInput('decisionPoints', POINTS);
+      fixture.componentRef.setInput('responses', RESPONSES);
+      fixture.detectChanges();
+    });
+
+    it('preselects the card route and confirms the round on it', () => {
+      click('workbench-decision-rework');
+      const actions = actionsComponent();
+      expect([actions.cliType(), actions.model(), actions.thinkingLevel()])
+        .toEqual(['codex', 'gpt-5-codex', 'medium']);
+      expect(present('workbench-decision-route-change')).toBe(false);
+      expect(text('workbench-decision-route-kept')).toContain('AGT-2300');
+
+      const confirm = confirmRework();
+      expect(confirm.request.body).toEqual(expect.objectContaining({
+        cliType: 'codex', model: 'gpt-5-codex', thinkingLevel: 'medium',
+      }));
+      confirm.flush({ success: true, outcome: 'rework', decisionStage: 'pending' });
+    });
+
+    it('shows a chosen route change before confirmation and in the receipt', () => {
+      click('workbench-decision-rework');
+      actionsComponent().updateAgent({ cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' });
+      fixture.detectChanges();
+      const change = text('workbench-decision-route-change');
+      expect(change).toContain('from codex · gpt-5-codex · medium');
+      expect(change).toContain('to claude · claude-opus-5 · high');
+
+      const confirm = confirmRework();
+      expect(confirm.request.body).toEqual(expect.objectContaining({
+        cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high',
+      }));
+      const operationId = confirm.request.body.operationId;
+      confirm.flush({ success: true, outcome: 'rework', decisionStage: 'pending' });
+
+      fixture.componentRef.setInput('document', {
+        ...CODEX_DOCUMENT,
+        workbench: {
+          ...CODEX_DOCUMENT.workbench,
+          status: 'decision-pending',
+          decision: {
+            outcome: 'rework', action: 'rework-requested', state: 'pending', operationId,
+            sourceRevision: 'c'.repeat(40), sourceFingerprint: 'b'.repeat(64),
+            preparedAt: '2026-11-15T09:00:00Z', preparedBy: 'Operator',
+            confirmedAt: '2026-11-15T09:00:00Z', confirmedBy: 'Operator', decidedAt: null,
+            reason: null, failure: null, spawnedTaskKeys: [], responses: RESPONSES, taskDraft: null,
+            cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high',
+            request: 'Add a privacy section.', revisionTaskKey: 'AGT-2300',
+            routeChangedFrom: { cliType: 'codex', model: 'gpt-5-codex', thinkingLevel: 'medium' },
+          },
+        },
+      });
+      fixture.detectChanges();
+      expect(text('workbench-decision-route-change-receipt')).toContain(
+        'Agent changed from codex · gpt-5-codex · medium to claude · claude-opus-5 · high');
+    });
+
+    it('returns to the browser default for a combined task after a cancelled rework', () => {
+      click('workbench-decision-rework');
+      expect(actionsComponent().cliType()).toBe('codex');
+      const form = fixture.nativeElement.querySelector(
+        '[data-testid="workbench-decision-rework-confirmation"]') as HTMLFormElement;
+      form.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      fixture.detectChanges();
+      const actions = actionsComponent();
+      expect([actions.cliType(), actions.model(), actions.thinkingLevel()])
+        .toEqual(['claude', 'claude-opus-5', 'high']);
+    });
+
+    function confirmRework() {
+      setValue('workbench-decision-rework-request', 'Add a privacy section.');
+      click('workbench-decision-confirm-rework');
+      const prepare = http.expectOne(
+        '/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/prepare');
+      prepare.flush({
+        success: true, errorCode: null, error: null, workbenchId: 'routing-policy',
+        operationId: prepare.request.body.operationId, outcome: 'rework', decisionStage: 'prepared',
+        revision: 'c'.repeat(40), fingerprint: 'b'.repeat(64), spawnedTaskKeys: [],
+        responses: RESPONSES, idempotent: false,
+      });
+      return http.expectOne(
+        '/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/confirm');
+    }
+  });
+
+  function actionsComponent(): WorkbenchDecisionActionsComponent {
+    return fixture.debugElement.query(By.directive(WorkbenchDecisionActionsComponent)).componentInstance;
+  }
+
+  function present(testId: string): boolean {
+    return fixture.nativeElement.querySelector(`[data-testid="${testId}"]`) !== null;
+  }
+
   function click(testId: string): void {
     (fixture.nativeElement.querySelector(`[data-testid="${testId}"]`) as HTMLButtonElement).click();
     fixture.detectChanges();
@@ -610,7 +801,10 @@ describe('decision panel status tones', () => {
     expect(decisionStageTone('later', false)).toBe('neutral');
     expect(decisionOutcomeTone('feature-spawn')).toBe('success');
     expect(decisionOutcomeTone('archive')).toBe('neutral');
-    expect(decisionOutcomeTone('rework')).toBe('warning');
+    expect(decisionOutcomeTone('rework')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'succeeded')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'failed')).toBe('danger');
+    expect(decisionOutcomeTone('feature-spawn', 'pending')).toBe('running');
     expect(decisionOutcomeTone(null)).toBe('neutral');
   });
 });

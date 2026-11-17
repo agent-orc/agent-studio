@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DetailKeyboardSurfaceDirective } from './detail-keyboard-surface.directive';
+import { DecisionFocusRequestService } from '../../../../services/decision-focus-request.service';
 
 interface ScrollState {
   scrollHeight: number;
@@ -68,6 +69,23 @@ describe('DetailKeyboardSurfaceDirective', () => {
     expect(document.activeElement).toBe(
       fixture.nativeElement.querySelector('[data-testid="pane-protocol-body"]'),
     );
+    fixture.nativeElement.remove();
+    board.remove();
+  });
+
+  // AGT-3833: a card opened from Needs you keeps focus on its decision area.
+  it('leaves focus alone while a decision-focus request is open', async () => {
+    const board = document.createElement('button');
+    document.body.appendChild(board);
+    board.focus();
+    TestBed.inject(DecisionFocusRequestService).ask('demo::agt-1');
+    const fixture = TestBed.createComponent(SurfaceHostComponent);
+    document.body.appendChild(fixture.nativeElement);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(document.activeElement).toBe(board);
+    TestBed.inject(DecisionFocusRequestService).clear();
     fixture.nativeElement.remove();
     board.remove();
   });

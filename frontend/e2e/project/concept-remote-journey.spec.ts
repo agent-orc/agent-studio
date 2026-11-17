@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Response } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -7,11 +7,19 @@ import { setTheme } from '../helpers/theme';
 
 test.use({ trace: 'off', video: 'off', reducedMotion: 'reduce' });
 
+/** The runner refreshes provider-auth every five minutes (ProviderAuthProbe.DefaultTtl). */
+const AUTH_PROBE_TTL_MS = 5 * 60_000;
+/** The advertisement loop publishes the cached verdict every 60 s. */
+const ADVERTISEMENT_MS = 60_000;
+const REMOTE_HOSTS = ['first-run-coding', 'first-run-review'];
+
 test('a remote concept reaches a reviewed Dossier, owner choices, promotion and completion', async ({ page }) => {
-  test.setTimeout(30 * 60_000);
+  test.setTimeout(40 * 60_000);
   test.skip(process.env.PW_E2E_PROFILE !== 'concept-remote', 'Dedicated disposable concept profile.');
   const workspace = process.env.PW_E2E_WORKSPACE!;
-  expect(existsSync(join(workspace, 'bin', 'concept-codex'))).toBe(true);
+  // AGT-3839: the runner derives the provider from the CLI file name.
+  expect(existsSync(join(workspace, 'bin', 'concept', 'codex'))).toBe(true);
+  expect(existsSync(join(workspace, 'bin', 'concept-codex'))).toBe(false);
   const projectName = await prepareFirstRunProject(page, workspace, 'Remote Concept');
   await page.goto('/#/workspace/settings/first-run');
   await expect(page.getByTestId('first-run-git-setup')).toBeVisible({ timeout: 120_000 });
@@ -19,6 +27,9 @@ test('a remote concept reaches a reviewed Dossier, owner choices, promotion and 
   const projects = await json<{ id: string; displayName: string }[]>(page, '/api/projects');
   const project = projects.find(item => item.displayName === projectName);
   expect(project).toBeTruthy();
+  // AGT-3839: both hosts keep provider-auth:codex ready through two probe
+  // cycles, and nothing is dispatched until the concept starts below.
+  await expectProviderAuthReadyThroughTwoProbeCycles(page);
   let gate: ChildProcess | undefined;
   try {
     gate = await startPullGate(page, workspace);
@@ -58,6 +69,10 @@ test('a remote concept reaches a reviewed Dossier, owner choices, promotion and 
       headers: { 'X-Client-Id': 'local-default' }, data: {},
     });
     expect(started.ok(), `${started.status()}: ${await started.text()}`).toBe(true);
+    // A concept started after the idle window still reaches the coding host.
+    await expect.poll(() => existsSync(join(workspace, 'concept-round')),
+      { timeout: 3 * 60_000, intervals: [2_000],
+        message: 'The coding host did not run the concept after the idle window.' }).toBe(true);
     await waitForState(page, taskId, projectName, '5-human-review');
     const initial = await deliveryEvidence(page, taskId, projectName);
     expect(initial.contentReview.requiredAspect).toBe('concept-fit');
@@ -126,11 +141,7 @@ test('a remote concept reaches a reviewed Dossier, owner choices, promotion and 
     expect(plan.source.decisions).toHaveLength(6);
     expect(plan.source.decisions.filter(item => (item as { operatorSelected: boolean }).operatorSelected)).toHaveLength(3);
     expect(plan.items).toHaveLength(2);
-    const promoted = await page.request.post(`/api/tasks/${taskId}/promote-concept${query}`, {
-      headers: { 'X-Client-Id': 'local-default' }, data: {}, timeout: 120_000,
-    });
-    expect(promoted.ok(), `${promoted.status()}: ${await promoted.text()}`).toBe(true);
-    const promotion = await promoted.json() as { created: { jobId: string; taskKey: string }[] };
+    const promotion = await promoteThroughStudio(page, taskId, detail.info.watchPath);
     expect(promotion.created).toHaveLength(2);
     for (const [index, card] of promotion.created.entries()) {
       const related = await json<{ info: { dossier: { path: string; implementationIndex: number };
@@ -140,7 +151,13 @@ test('a remote concept reaches a reviewed Dossier, owner choices, promotion and 
       expect(related.info.dossier.implementationIndex).toBe(index);
       expect(related.info.references.relatedTo).toContain(key);
     }
+    // AGT-3701: promotion creates the slices and leaves the concept in Human Review.
+    await expectStateStays(page, taskId, projectName, '5-human-review', 15_000);
     await openCard(page, taskId, detail.info.watchPath, 'promoted');
+    // The owner accepts after reading the generated Result. Accepting while the
+    // summary still runs leaves only the transition scaffold on the card.
+    await waitForGeneratedResult(page, taskId, projectName);
+    await acceptThroughStudio(page, taskId, detail.info.watchPath);
     await waitForState(page, taskId, projectName, '6-completed');
     const completedCard = await json<{ info: { folderPath: string } }>(page,
       `/api/tasks/${taskId}?project=${encodeURIComponent(projectName)}`);
@@ -155,14 +172,7 @@ test('a remote concept reaches a reviewed Dossier, owner choices, promotion and 
       headers: { 'X-Client-Id': 'local-default' }, data: { cliType: 'codex' },
     });
     expect(cliType.ok(), `${cliType.status()}: ${await cliType.text()}`).toBe(true);
-    const implementationReady = await page.request.post(`/api/tasks/${implementation.jobId}/move${query}`, {
-      headers: { 'X-Client-Id': 'local-default' }, data: { targetState: '2-ready' },
-    });
-    expect(implementationReady.ok(), `${implementationReady.status()}: ${await implementationReady.text()}`).toBe(true);
-    const implementationStarted = await page.request.post(`/api/tasks/${implementation.jobId}/start${query}`, {
-      headers: { 'X-Client-Id': 'local-default' }, data: {},
-    });
-    expect(implementationStarted.ok(), `${implementationStarted.status()}: ${await implementationStarted.text()}`).toBe(true);
+    await startThroughStudio(page, implementation.jobId, detail.info.watchPath, projectName);
     await expect.poll(() => existsSync(join(workspace, 'concept-implementation-run')),
       { timeout: 8 * 60_000, intervals: [2_000] }).toBe(true);
     const gateStateUrl = `/api/projects/${encodeURIComponent(projectName)}/batch-gate/state`;
@@ -208,6 +218,119 @@ test('a remote concept reaches a reviewed Dossier, owner choices, promotion and 
     }
   }
 });
+
+type PromotionResult = { created: { jobId: string; taskKey: string }[] };
+
+/** Creates every implementation slice from the concept card's Overview. */
+async function promoteThroughStudio(page: Page, taskId: string, watchPath: string): Promise<PromotionResult> {
+  await openDetail(page, taskId, watchPath);
+  const promotion = page.getByTestId('concept-promotion');
+  await promotion.getByTestId('concept-promotion-open').click();
+  await expect(promotion.getByTestId('concept-promotion-slice-2')).toBeVisible({ timeout: 30_000 });
+  await expect(promotion.getByTestId('concept-promotion-confirm')).toHaveText('Create all 2 cards');
+  const response = page.waitForResponse((candidate: Response) => candidate.request().method() === 'POST'
+    && new URL(candidate.url()).pathname === `/api/tasks/${taskId}/promote-concept`, { timeout: 120_000 });
+  await promotion.getByTestId('concept-promotion-confirm').click();
+  const promoted = await response;
+  expect(promoted.ok(), `${promoted.status()}: ${await promoted.text()}`).toBe(true);
+  await expect(promotion.getByTestId('concept-promotion-created')).toContainText('Created 2 cards');
+  return await promoted.json() as PromotionResult;
+}
+
+/** Accepts a Human Review card with the tab bar's Accept action. */
+async function acceptThroughStudio(page: Page, taskId: string, watchPath: string): Promise<void> {
+  await openDetail(page, taskId, watchPath);
+  const accept = page.getByTestId('studio-triage-action-mark-done');
+  await expect(accept).toBeEnabled({ timeout: 60_000 });
+  await accept.click();
+  const confirm = page.getByRole('button', { name: 'Accept anyway' });
+  if (await confirm.isVisible({ timeout: 1_000 }).catch(() => false)) await confirm.click();
+}
+
+/** Moves a Preparation card to Ready and runs it with the tab bar actions. */
+async function startThroughStudio(page: Page, taskId: string, watchPath: string, project: string): Promise<void> {
+  await openDetail(page, taskId, watchPath);
+  const ready = page.getByTestId('studio-triage-action-promote-ready');
+  await expect(ready).toBeEnabled({ timeout: 30_000 });
+  await ready.click();
+  const state = async () => (await json<{ info: { state: string } }>(page,
+    `/api/tasks/${taskId}?project=${encodeURIComponent(project)}`)).info.state;
+  await expect.poll(state, { timeout: 60_000, intervals: [1_000] }).not.toBe('1-preparation');
+  // The move pages on to the next Preparation card, so reopen the slice. With
+  // auto-pickup on, the host may already have claimed it; Run now is offered
+  // only while it still waits in Ready.
+  await openDetail(page, taskId, watchPath);
+  const run = page.getByTestId('studio-triage-action-run-now');
+  if (await state() === '2-ready') {
+    await expect.poll(async () => await state() !== '2-ready' || await run.isEnabled().catch(() => false),
+      { timeout: 30_000, intervals: [1_000] }).toBe(true);
+    if (await state() === '2-ready') await run.click();
+  }
+  await expect.poll(state, { timeout: 3 * 60_000, intervals: [2_000] }).not.toBe('2-ready');
+}
+
+async function openDetail(page: Page, id: string, watchPath: string): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/?job=${encodeURIComponent(id)}&watchPath=${encodeURIComponent(watchPath)}`);
+  await expect(page.getByTestId('prompt-tab-overview')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('studio-triage-panel')).toBeVisible({ timeout: 30_000 });
+  await dismissNotifications(page);
+}
+
+type HostCapability = { key: string; advertisedStatus: string; healthState: string; isFresh: boolean };
+type RemoteHost = { name: string; registeredAt: string; capabilities: HostCapability[] };
+
+/**
+ * AGT-3839: samples the hosts until two provider-auth probe cycles have run
+ * since the later host registered, and fails as soon as either host stops
+ * advertising provider-auth:codex as ready. The playthrough saw it turn
+ * indeterminate after the first minute, which refused Codex work.
+ */
+async function expectProviderAuthReadyThroughTwoProbeCycles(page: Page): Promise<void> {
+  const readHosts = async () => {
+    // Task Server management answers only the loopback local-default operator.
+    const response = await page.request.get('/api/v1/management/remote-hosts',
+      { headers: { 'X-Client-Id': 'local-default' } });
+    expect(response.ok(), `${response.status()}: ${await response.text()}`).toBe(true);
+    const hosts = await response.json() as RemoteHost[];
+    return REMOTE_HOSTS.map(name => hosts.find(host => host.name === name));
+  };
+  const auth = (host: RemoteHost) => host.capabilities.find(capability => capability.key === 'provider-auth:codex');
+  await expect.poll(async () => (await readHosts()).map(host => host ? auth(host)?.advertisedStatus ?? 'absent' : 'absent'),
+    { timeout: 120_000, intervals: [2_000] }).toEqual(REMOTE_HOSTS.map(() => 'ready'));
+  const registered = Math.max(...(await readHosts()).map(host => Date.parse(host!.registeredAt)));
+  const until = registered + AUTH_PROBE_TTL_MS + 2 * ADVERTISEMENT_MS;
+  for (;;) {
+    const hosts = await readHosts();
+    for (const [index, host] of hosts.entries()) {
+      const capability = host ? auth(host) : undefined;
+      expect(capability, `${REMOTE_HOSTS[index]} provider-auth:codex`).toMatchObject(
+        { advertisedStatus: 'ready', healthState: 'healthy', isFresh: true });
+    }
+    if (Date.now() >= until) return;
+    await page.waitForTimeout(Math.min(15_000, until - Date.now()));
+  }
+}
+
+async function waitForGeneratedResult(page: Page, id: string, project: string): Promise<void> {
+  await expect.poll(async () => {
+    const current = await json<{ info: { folderPath: string }; summaryState?: { status: string } | null }>(page,
+      `/api/tasks/${id}?project=${encodeURIComponent(project)}`);
+    const path = join(current.info.folderPath, 'status.md');
+    const generated = existsSync(path) && !readFileSync(path, 'utf8').includes('agent-studio:result-scaffold');
+    return `${current.summaryState?.status ?? 'none'}:${generated ? 'generated' : 'scaffold'}`;
+  }, { timeout: 5 * 60_000, intervals: [2_000] }).toMatch(/^(ready|none):generated$/i);
+}
+
+async function expectStateStays(page: Page, id: string, project: string, state: string, durationMs: number): Promise<void> {
+  const until = Date.now() + durationMs;
+  do {
+    const current = await json<{ info: { state: string } }>(page,
+      `/api/tasks/${id}?project=${encodeURIComponent(project)}`);
+    expect(current.info.state).toBe(state);
+    await page.waitForTimeout(2_000);
+  } while (Date.now() < until);
+}
 
 async function json<T>(page: Page, url: string): Promise<T> {
   const response = await page.request.get(url);

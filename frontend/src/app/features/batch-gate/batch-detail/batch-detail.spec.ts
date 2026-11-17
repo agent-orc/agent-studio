@@ -51,8 +51,10 @@ describe('BatchDetailComponent', () => {
     const batch = { ...redHalvingState.batches[1], phaseAtUtc: '2026-11-09T21:11:00Z',
       runs: [{ ...redHalvingState.batches[1].runs[0], startedAtUtc: '2026-11-09T21:11:00Z' }] };
     const { host } = await mount({ ...redHalvingState, batches: [redHalvingState.batches[0], batch] }, { id: 'AGT-2' });
-    expect(host.querySelector('[data-testid="task-batch-phase-time"]')?.textContent).toContain('running since 21:11 UTC');
-    expect(host.textContent).toContain('since 21:11 UTC');
+    expect(host.querySelector('[data-testid="task-batch-phase-time"]')?.textContent).toContain('running since 21:11,');
+    expect(host.querySelector('[data-testid="task-batch-time-zone"]')?.textContent).toBe('Times in UTC');
+    expect(host.textContent).toContain('since 21:11,');
+    expect(host.textContent?.match(/UTC/g)).toHaveLength(1);
   });
 
   it('counts a queued member', async () => {

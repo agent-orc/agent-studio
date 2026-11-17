@@ -106,6 +106,16 @@ public sealed class AutoReviewStrandingPolicyTests
     }
 
     [Fact]
+    public void Undo_does_not_reset_ownerless_age_when_the_delivery_has_not_changed()
+    {
+        var now = new DateTime(2026, 11, 15, 22, 45, 0, DateTimeKind.Utc);
+        var ownerLostAt = now.AddMinutes(-18);
+        var undoLaneEntry = now.AddSeconds(-30);
+        Assert.Equal(TimeSpan.FromMinutes(18), AutoReviewStrandingWatchdog.TimeWithoutOwner(
+            now, undoLaneEntry, null, null, null, null, ownerLostAt));
+    }
+
+    [Fact]
     public void Report_only_summary_failure_restarts_post_processing()
         => Assert.Equal(AutoReviewStrandingAction.StartStep,
             AutoReviewStrandingPolicy.Decide(Stranded() with { ReportOnly = true, HasCompletedRun = false }));

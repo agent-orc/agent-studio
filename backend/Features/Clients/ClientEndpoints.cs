@@ -123,15 +123,25 @@ public static class ClientEndpoints
         {
             var record = store.Find(id);
             if (record is null) return Results.NotFound(new { error = "client-not-found" });
-            var running = authority.ListActiveAttemptsOfExecutor(id);
-            var draining = record.DrainRequestedAt is not null;
-            return Results.Ok(new ClientDrainStatus(
-                record.Id,
-                draining,
-                draining && running.Count == 0,
-                record.DrainRequestedAt,
-                record.RunnerActiveSlots ?? 0,
-                running));
+            return Results.Ok(ClientDrainStatus.From(record, authority.ListActiveAttemptsOfExecutor(id)));
+        });
+
+        // AGT-3852: the guided review host update records the switch start on
+        // the server, only at the quiet point, so its step survives a reload.
+        clients.MapPost("/{id}/deploy-switch", (
+            string id,
+            ClientIdentityStore store,
+            AgentStudio.Runner.AttemptAuthorityService authority) =>
+        {
+            var record = store.Find(id);
+            if (record is null) return Results.NotFound(new { error = "client-not-found" });
+            var status = ClientDrainStatus.From(record, authority.ListActiveAttemptsOfExecutor(id));
+            if (record.DeploySwitchStartedAt is null && !status.Drained)
+                return Results.Conflict(new { error = "client-not-drained", status });
+            var updated = store.RecordDeploySwitchStart(id);
+            return updated is null
+                ? Results.Conflict(new { error = "client-not-drained", status })
+                : Results.Ok(status with { SwitchStartedAt = updated.DeploySwitchStartedAt });
         });
 
         clients.MapPost("/{id}/retire", (string id, ClientIdentityStore store) =>
@@ -463,6 +473,7 @@ public static class ClientEndpoints
 /// AGT-3647: <paramref name="Drained"/> is true once a drain is requested and
 /// the runner holds no leased attempt. <paramref name="ReportedActiveSlots"/>
 /// is the runner's own last report, shown for comparison.
+/// <paramref name="SwitchStartedAt"/> is the recorded deploy switch start (AGT-3852).
 /// </summary>
 public sealed record ClientDrainStatus(
     string ClientId,
@@ -470,4 +481,20 @@ public sealed record ClientDrainStatus(
     bool Drained,
     DateTime? DrainRequestedAt,
     int ReportedActiveSlots,
-    IReadOnlyList<AgentStudio.Shared.ExecutorActiveAttempt> Running);
+    IReadOnlyList<AgentStudio.Shared.ExecutorActiveAttempt> Running,
+    DateTime? SwitchStartedAt = null)
+{
+    public static ClientDrainStatus From(
+        ClientIdentity record, IReadOnlyList<AgentStudio.Shared.ExecutorActiveAttempt> running)
+    {
+        var draining = record.DrainRequestedAt is not null;
+        return new ClientDrainStatus(
+            record.Id,
+            draining,
+            draining && running.Count == 0,
+            record.DrainRequestedAt,
+            record.RunnerActiveSlots ?? 0,
+            running,
+            draining ? record.DeploySwitchStartedAt : null);
+    }
+}

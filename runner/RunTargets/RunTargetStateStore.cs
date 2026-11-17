@@ -9,9 +9,47 @@ namespace AgentRunner.RunTargets;
 /// restore it without a spec from Studio.
 /// </summary>
 public sealed record RunTargetSlot(string Revision, string Artifact, string ComposeProject, string ComposeFile,
-    int ContainerPort, string HealthPath, IReadOnlyList<string>? SecretRefs = null)
+    int ContainerPort, string HealthPath, IReadOnlyList<string>? SecretRefs = null,
+    IReadOnlyList<RunTargetSlotDatabase>? Databases = null)
 {
     public string Upstream => $"{ComposeProject}:{ContainerPort}";
+}
+
+/// <summary>How a revision reaches one managed database; the password stays a <c>secret://</c> reference.</summary>
+public sealed record RunTargetSlotDatabase(string Name, string DatabaseKey, string PasswordRef);
+
+/// <summary>
+/// Host-local state of one managed database (AGT-3877). It outlives its app:
+/// a database Studio no longer declares, or whose environment left the host,
+/// is <c>retained</c> with its volume until Studio sends an owner's deletion.
+/// </summary>
+public sealed class RunTargetDatabaseState
+{
+    public string Project { get; set; } = "";
+    public string EnvironmentId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string ComposeFile { get; set; } = "";
+    public string PasswordRef { get; set; } = "";
+    public string Status { get; set; } = "provisioning";
+    public long? VolumeBytes { get; set; }
+    public DateTime? MeasuredAt { get; set; }
+
+    /// <summary>Result of the last readiness check (AGT-3878); null before the first one.</summary>
+    public bool? Ready { get; set; }
+    public int? Connections { get; set; }
+    public int? MaxConnections { get; set; }
+    public DateTime? ConnectionsMeasuredAt { get; set; }
+
+    /// <summary>The schedule of the last spec; it keeps applying while Studio is unreachable.</summary>
+    public RunTargetBackupPolicy Backup { get; set; } = RunTargetBackupPolicy.Default;
+
+    /// <summary>Dumps in the backup directory, newest last. Only the host writes or prunes them.</summary>
+    public List<RunTargetBackupRecord> Backups { get; set; } = [];
+    public DateTime? LastBackupAttemptAt { get; set; }
+
+    /// <summary>Why the last attempt failed; cleared by the next successful dump.</summary>
+    public string? LastBackupError { get; set; }
 }
 
 /// <summary>Host-local state of one project environment. Holds no secret values.</summary>
@@ -55,6 +93,16 @@ public sealed class RunTargetHostState
 
     /// <summary>Domain to app key. The first app that routed a domain keeps it (<see cref="RunTargetCaddyfile.ClaimDomains"/>).</summary>
     public Dictionary<string, string> DomainOwners { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Managed databases by <see cref="RunTargetNames.DatabaseKey"/>.</summary>
+    public Dictionary<string, RunTargetDatabaseState> Databases { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Finished database operations (AGT-3878). An operation id Studio sends
+    /// again is answered from here and never runs twice; the newest
+    /// <see cref="RunTargetDatabaseBackups.KeptResults"/> are kept.
+    /// </summary>
+    public List<RunTargetDatabaseOperationResult> OperationResults { get; set; } = [];
 }
 
 /// <summary>
@@ -70,6 +118,7 @@ public sealed class RunTargetStateStore(string stateDirectory, Action<string>? l
 
     public string Directory { get; } = stateDirectory;
     public string AppsDirectory => Path.Combine(Directory, "apps");
+    public string DatabasesDirectory => Path.Combine(Directory, "databases");
     public string EdgeDirectory => Path.Combine(Directory, "edge");
     public string CaddyDirectory => Path.Combine(EdgeDirectory, "caddy");
     public string CaddyfilePath => Path.Combine(CaddyDirectory, "Caddyfile");

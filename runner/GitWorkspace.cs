@@ -315,6 +315,7 @@ public sealed partial class GitWorkspace
             if (existingClone)
             {
                 _log("git fetch origin --prune");
+                await new ProjectCacheGitLockGuard().EnsureWritableAsync(SharedRepoPath, _log, ct);
                 await Git(["fetch", "origin", "--prune"], SharedRepoPath, ct);
             }
             // Reclaim debris from a process crash before creating the new
@@ -543,13 +544,17 @@ public sealed partial class GitWorkspace
         {
             var (selected, environment) = RunnerFirstRunGitCredentials.ForProjectGit(
                 options.StateDir, expected, args);
-            return ProcessRunner.RunAsync("git", selected, directory,
+            var command = args.Count > 0 && args[0] == "fetch"
+                ? (IReadOnlyList<string>)["-c", "fetch.writeCommitGraph=false", "-c", "maintenance.auto=false", .. selected]
+                : selected;
+            return ProcessRunner.RunAsync("git", command, directory,
                 environment: environment, ct: token);
         }
 
         await GitMetadataGate.WaitAsync(ct);
         try
         {
+            await new ProjectCacheGitLockGuard().EnsureWritableAsync(sharedRepoPath, log, ct);
             if (!Directory.Exists(Path.Combine(sharedRepoPath, ".git")))
             {
                 log($"project-delivery-preflight clone project={projectId} repository={expected}");
@@ -579,6 +584,7 @@ public sealed partial class GitWorkspace
                 return new(false, fetchUrl, pushUrl,
                     $"fetch/push URL mismatch: registered={expected}, fetch={fetchUrl}, push={pushUrl}");
 
+            await new ProjectCacheGitLockGuard().EnsureWritableAsync(sharedRepoPath, log, ct);
             var fetchResult = await NetworkGit(["fetch", "origin", "--prune"], sharedRepoPath, ct);
             if (!fetchResult.Success) return Failed("fetch", fetchResult, fetchUrl, pushUrl);
 
@@ -1587,13 +1593,17 @@ public sealed partial class GitWorkspace
         IReadOnlyDictionary<string, string?>? environment = null;
         if (_isProjectClone && _gitRemote is not null)
             (selected, environment) = RunnerFirstRunGitCredentials.ForProjectGit(
-                _options.StateDir, _gitRemote, args);
+                _options.StateDir, _gitRemote, selected);
+        if (args.Count > 0 && args[0] == "fetch")
+            selected = ["-c", "fetch.writeCommitGraph=false", "-c", "maintenance.auto=false", .. selected];
         return ProcessRunner.RunAsync("git", selected, workingDirectory: workingDirectory,
             environment: environment, ct: ct);
     }
 
     private async Task<ProcessResult> Git(IReadOnlyList<string> args, string workingDirectory, CancellationToken ct)
     {
+        if (args.Count > 0 && args[0] == "fetch" && _isProjectClone)
+            await new ProjectCacheGitLockGuard().EnsureWritableAsync(SharedRepoPath, _log, ct);
         var result = await ProjectGitAsync(args, workingDirectory, ct);
         if (!result.Success)
             throw new InvalidOperationException($"git {string.Join(' ', args)} failed ({result.ExitCode}): {result.StdErr.Trim()}");

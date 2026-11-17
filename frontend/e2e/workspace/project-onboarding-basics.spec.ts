@@ -540,9 +540,12 @@ test.describe('project onboarding and editable project basics', () => {
 
   test('Project Settings edits the same basics and sends a PUT payload', async ({ page }) => {
     let submitted: Record<string, unknown> | null = null;
+    let finishSave!: () => void;
+    const pendingSave = new Promise<void>(resolve => { finishSave = resolve; });
     await page.route('**/api/projects/PROJ-023', async (route) => {
       if (route.request().method() !== 'PUT') return route.continue();
       submitted = route.request().postDataJSON() as Record<string, unknown>;
+      await pendingSave;
       project = {
         ...project,
         workspaceId: String(submitted.workspaceId),
@@ -582,6 +585,9 @@ test.describe('project onboarding and editable project basics', () => {
     await save.click();
 
     await expect.poll(() => submitted).not.toBeNull();
+    await expect(save).toHaveAttribute('data-pending-label', 'Saving project basics...');
+    await expect(card).not.toContainText('Resolve the highlighted fields before saving.');
+    finishSave();
     await expect(card.getByTestId('project-basics-save-success')).toContainText('Saved');
     expect(submitted).toMatchObject({
       workspaceId: 'ws-default',
@@ -673,5 +679,45 @@ test.describe('project onboarding and editable project basics', () => {
     await card.getByTestId('project-checkout-sync').click();
     await expect.poll(() => syncRequests).toBe(1);
     await expect(card.getByTestId('project-checkout-lag')).toHaveCount(0);
+  });
+
+  test('Project Settings switches a clean default-branch checkout to develop', async ({ page }) => {
+    test.setTimeout(90_000);
+    let switchRequests = 0;
+    await page.route('**/hubs/v1/studio/negotiate**', (route) => fulfillJson(route, {
+      negotiateVersion: 1,
+      connectionId: 'project-checkout-switch',
+      connectionToken: 'project-checkout-switch',
+      availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+    }));
+    await page.routeWebSocket('**/hubs/v1/studio**', (socket) => {
+      socket.onMessage((message) => {
+        if (typeof message === 'string' && message.includes('"protocol"')) socket.send('{}\u001e');
+      });
+    });
+    await page.route('**/api/projects/*/checkout/status', route => fulfillJson(route, {
+      status: 'not-checked-out', branch: 'develop', behind: 0,
+      dirtyFiles: [], lockFile: null, reason: 'No checkout holds this branch.',
+    }));
+    await page.route('**/api/projects/*/checkout/switch', route => {
+      switchRequests++;
+      return fulfillJson(route, {
+        status: 'switched', branch: 'develop', behind: 0,
+        dirtyFiles: [], lockFile: null, reason: null,
+      });
+    });
+    await page.goto('/#/projects/existing-project/settings');
+    await dismissDevErrorDialog(page);
+    const card = page.getByTestId('project-basics-card');
+    await expect(card.getByTestId('project-checkout-switch')).toHaveText('Switch checkout to develop');
+    for (const theme of ['dark', 'light'] satisfies Theme[]) {
+      await setTheme(page, theme);
+      await card.getByTestId('project-checkout-status').screenshot({
+        path: join(results, `project-checkout-switch-${theme}--mocked.png`),
+      });
+    }
+    await card.getByTestId('project-checkout-switch').click();
+    await expect.poll(() => switchRequests).toBe(1);
+    await expect(card.getByTestId('project-checkout-status')).toHaveCount(0);
   });
 });

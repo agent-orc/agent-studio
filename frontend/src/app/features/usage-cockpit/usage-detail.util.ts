@@ -384,6 +384,8 @@ export interface UsageCostDetailView {
   coverageReason: string | null;
   today: string;
   week: string;
+  unpricedTodayRuns: number;
+  unpricedWeekRuns: number;
   budgetDaily: string | null;
   budgetDailyRemaining: string | null;
   budgetWeekly: string | null;
@@ -396,6 +398,7 @@ export interface UsageCostDetailView {
   latestReceipt: UsageInstantView | null;
   pricingVersion: string;
   projects: UsageProjectRowView[];
+  oneShotSources: { source: string; today: string; week: string }[];
   reconcile: UsageReconcileView;
   liveRuns: UsageLiveRunView[];
   slots: UsageSlotDetailView[];
@@ -463,7 +466,7 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     const status = p.coverage?.status;
     return {
       key: p.projectId ?? UNATTRIBUTED_KEY,
-      name: unattributed ? 'Unattributed' : p.name,
+      name: unattributed ? 'Unattributed one-shot jobs' : p.name,
       unattributed,
       today: formatUsdExact(p.todayUsd) ?? NOT_AVAILABLE,
       week: formatUsdExact(p.weekUsd) ?? NOT_AVAILABLE,
@@ -501,6 +504,8 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     coverageReason: costStateReason(cost, chip.state),
     today: usd(cost.todayUsd) ?? NOT_AVAILABLE,
     week: usd(cost.weekUsd) ?? NOT_AVAILABLE,
+    unpricedTodayRuns: cost.unpricedTodayRuns ?? 0,
+    unpricedWeekRuns: cost.unpricedWeekRuns ?? 0,
     budgetDaily: usd(cost.dailyBudgetUsd),
     budgetDailyRemaining: remaining(cost.dailyBudgetUsd, cost.todayUsd),
     budgetWeekly: usd(cost.weeklyBudgetUsd),
@@ -510,9 +515,13 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     weekStart: instantView(calendar.weekStartUtc, zone),
     weekEnd: instantView(calendar.weekEndUtc, zone),
     timeZone: zone,
-    latestReceipt: instantView(cost.latestReceiptAt ?? cost.coverage?.observedAt, zone),
+    latestReceipt: instantView(cost.latestReceiptAt, zone),
     pricingVersion: cost.pricingVersion,
     projects,
+    oneShotSources: (cost.oneShotSources ?? []).map(row => ({
+      source: row.source, today: usd(row.todayUsd) ?? NOT_AVAILABLE,
+      week: usd(row.weekUsd) ?? NOT_AVAILABLE,
+    })),
     reconcile: {
       todayRemainder: todayRemainder == null ? null : centsText(cents(todayRemainder)),
       weekRemainder: weekRemainder == null ? null : centsText(cents(weekRemainder)),

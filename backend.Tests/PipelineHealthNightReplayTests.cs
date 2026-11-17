@@ -245,6 +245,67 @@ public sealed class PipelineHealthNightReplayTests
         }
     }
 
+    [Fact]
+    public void Lane_drain_health_skips_a_timeline_last_written_before_the_drain_window()
+    {
+        // AGT-3864: the drain count read every card timeline, archived ones too.
+        var watchPath = Path.Combine(
+            Path.GetTempPath(),
+            "pipeline-health-drain-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(watchPath);
+        try
+        {
+            var now = new DateTime(2026, 7, 23, 5, 7, 37, DateTimeKind.Utc);
+            var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+            foreach (var id in new[] { "recent-exit", "stale-file" })
+            {
+                CreateQueuedTask(watchPath, id, now - TimeSpan.FromMinutes(30));
+                timeline.Append(Path.Combine(watchPath, TaskStates.AutoReview, id), new TimelineEvent
+                {
+                    Ts = now - TimeSpan.FromMinutes(10),
+                    Kind = TimelineEventKinds.LaneChanged,
+                    Actor = "test",
+                    Summary = "left auto review",
+                    Details = new Dictionary<string, string> { ["from"] = TaskStates.AutoReview },
+                });
+            }
+            // A file written before the window cannot hold an event inside it.
+            File.SetLastWriteTimeUtc(TaskPaths.TimelineLog(
+                Path.Combine(watchPath, TaskStates.AutoReview, "recent-exit")), now - TimeSpan.FromMinutes(10));
+            File.SetLastWriteTimeUtc(TaskPaths.TimelineLog(
+                Path.Combine(watchPath, TaskStates.AutoReview, "stale-file")), now - TimeSpan.FromHours(2));
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["WatchPaths:0:Name"] = "Project",
+                    ["WatchPaths:0:Path"] = watchPath,
+                    ["WatchPaths:0:RootPath"] = watchPath,
+                })
+                .Build();
+            var scanner = new TaskScannerService(
+                configuration,
+                NullLogger<TaskScannerService>.Instance,
+                new SummaryGenerationService(
+                    NullLogger<SummaryGenerationService>.Instance,
+                    configuration));
+            var service = new PipelineHealthService(
+                new PipelineHealthDetector(),
+                scanner,
+                timeline,
+                new OrchestratorLog(NullLogger<OrchestratorLog>.Instance),
+                NullLogger<PipelineHealthService>.Instance);
+
+            var lane = Assert.Single(service.BuildLaneDrainHealth("Project", watchPath, now),
+                item => item.Lane == TaskStates.AutoReview);
+
+            Assert.Equal(1, lane.CompletedPerHour);
+        }
+        finally
+        {
+            Directory.Delete(watchPath, recursive: true);
+        }
+    }
+
     private static PipelineGateCompletion Completion(string id, string? fingerprint) =>
         new(
             $"{id}-{Guid.NewGuid():N}",

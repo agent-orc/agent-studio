@@ -24,6 +24,13 @@ Imports via `from './features/token-analysis'`. See [`index.ts`](./index.ts).
   `GET /api/projects/{p}/token-usage/analysis/cards/{jobId}`. The backend folds
   the merged ledger and the pipeline execution logs so every token is counted
   once (`backend/Features/Tokens/Analysis/`).
+- CLI account pages use `GET /api/workspace/tokens/subscription-week?cli=&subscriptionKey=`.
+  The provider's observed cycle start, or seven days before its reported reset
+  when no start was observed, sets the receipt range;
+  this range is independent of the workspace week and Card analysis day range.
+  Provider percent measures account quota units, while receipt totals are
+  locally captured tokens. Receipts have no subscription key, so multiple
+  sign-ins for one CLI provider suppress account-specific attribution.
 - Each card is a usage cube of slices. Filters keep or drop slices and every
   total is re-summed from the visible slices (R3). See `token-analysis.util.ts`.
 - Filter state is the `ta=` hash segment; the route segment is untouched.

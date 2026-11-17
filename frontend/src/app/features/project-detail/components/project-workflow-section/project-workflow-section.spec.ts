@@ -13,7 +13,7 @@ import { TaskService } from '../../../../services/task.service';
  * per-lane sort controls reflect the resolved strategy map.
  */
 describe('ProjectWorkflowSectionComponent', () => {
-  function mount() {
+  function mount(integrationBranch = 'develop') {
     const taskServiceStub: Partial<TaskService> = {
       getLaneSortStrategies: () =>
         of({
@@ -55,7 +55,7 @@ describe('ProjectWorkflowSectionComponent', () => {
             },
           ],
         }) as unknown as ReturnType<TaskService['getPipelineCatalogue']>,
-      getAllProjectSettings: () => of({}) as unknown as ReturnType<TaskService['getAllProjectSettings']>,
+      getAllProjectSettings: () => of({ demo: { integrationBranch } }) as unknown as ReturnType<TaskService['getAllProjectSettings']>,
     };
 
     TestBed.configureTestingModule({
@@ -103,6 +103,13 @@ describe('ProjectWorkflowSectionComponent', () => {
       (key) => (el.querySelector(`[data-testid="workflow-transition-state-${key}"]`) as HTMLElement | null)?.dataset['tone'],
     );
     expect(tones).toEqual(['success', 'success', 'success', 'success']);
+  });
+
+  it.each(['develop', 'main'])('names the configured %s integration branch separately from the completed push target', (branch) => {
+    const el = mount(branch).nativeElement as HTMLElement;
+    const detail = el.querySelector('[data-testid="workflow-transition-auto-push"] .wf__transition-detail')?.textContent ?? '';
+    expect(detail).toContain(`integrates into ${branch}`);
+    expect(detail).toContain('Completed auto-push targets main');
   });
 
   it('maps an effective transition state to a tone', () => {
