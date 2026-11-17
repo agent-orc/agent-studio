@@ -106,6 +106,12 @@ retain their existing prompt layout and scheduling. The frozen prompt bytes
 version this layout for review-plan digests. Each grade report shows cache
 creation and read tokens by aspect and as a review total.
 
+Coding aspects also carry the agent's `results/status.md` report as status text.
+The plan redacts credentials in that text and the generated summary before
+freezing the prompt. If `results/` or its `status.md` is a symbolic link, the
+plan withholds the agent report and says so in the status text. The review
+inventory excludes the report excerpt when the status text carries it.
+
 If the first aspect reports neither cache creation nor cache read tokens, the
 runner logs `review-aspect-cache-unconfirmed` and runs the remaining aspects
 serially (parallelism 1) instead of in parallel, so they do not issue
