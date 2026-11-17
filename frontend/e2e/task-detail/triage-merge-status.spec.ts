@@ -392,7 +392,7 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     await expect(page.getByTestId('acceptance-secondary-gaps')).toContainText('No brief version was recorded for this delivery or its content verdict.');
     await expect(page.getByTestId('stale-brief-acceptance')).toHaveCount(0);
     await expect(page.getByTestId('delivery-claim-panel')).not.toContainText('changed brief');
-    await expect(page.getByTestId('acceptance-refusal-reason')).toContainText(reason);
+    await expect(page.getByTestId('studio-triage-panel').getByTestId('acceptance-refusal-reason')).toContainText(reason);
     for (const theme of ['dark', 'light'] as const) {
       await setTheme(page, theme);
       await dismissDevErrorDialog(page);

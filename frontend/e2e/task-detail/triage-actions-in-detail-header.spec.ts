@@ -245,7 +245,7 @@ test('failed Accept error dialog closes with Escape and focuses the action', asy
  * studio slim tab-bar header); the spec resolves the user-visible one.
  */
 test.describe('Triage actions in detail header', () => {
-  test('code-free review card accepts a named deliverable', async ({ page }) => {
+  test('code-free review card explains its owner decision hold', async ({ page }) => {
     const wp = await getFirstWatchPath();
     const jobs = await plantHumanReviewJobs(wp, 1);
     try {
@@ -253,14 +253,12 @@ test.describe('Triage actions in detail header', () => {
 
       const cluster = page.getByTestId('studio-triage-panel');
       await expect(cluster).toBeVisible();
-      const primary = page.getByTestId('studio-triage-action-mark-done');
-      await expect(primary).toBeVisible({ timeout: 10_000 });
-
-      await expect(primary).toBeEnabled();
-      await expect(primary).toContainText('Accept');
-      await primary.click();
-      await expect.poll(async () => (await getJob(jobs[0].id, wp.path)).state,
-        { timeout: 10_000 }).toBe('6-completed');
+      const refusal = cluster.getByTestId('acceptance-refusal');
+      await expect(refusal).toBeVisible({ timeout: 10_000 });
+      await expect(refusal).toHaveAttribute('data-refusal-source', 'hold');
+      await expect(refusal.getByTestId('acceptance-refusal-reason')).toContainText('Parked for an owner decision');
+      await expect(refusal.getByTestId('acceptance-refusal-action')).toContainText('Accept with override');
+      await expect.poll(async () => (await getJob(jobs[0].id, wp.path)).state).toBe('5-human-review');
     } finally {
       for (const j of jobs) await deleteJob(j.id, wp.path).catch(() => {});
     }
