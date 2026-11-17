@@ -118,6 +118,8 @@ for (const view of VIEWS) {
         if (!(await control.isVisible())) continue;
         expect(overlaps(box, (await control.boundingBox())!), 'notice covers a header control').toBe(false);
       }
+      expect(overlaps(box, (await page.getByTestId('studio-statusbar').boundingBox())!),
+        'notice is obscured by the wrapped status bar').toBe(false);
       await page.screenshot({ path: path.join(shots, `demo19-${view.name}-notice.png`) });
     }
     await page.keyboard.press('Escape');
