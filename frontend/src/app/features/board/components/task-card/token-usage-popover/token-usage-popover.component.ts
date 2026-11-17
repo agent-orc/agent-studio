@@ -6,6 +6,7 @@ import { TaskService } from '../../../../../services/task.service';
 import { tokenAnalysisCardHash } from '../../../../token-analysis/token-analysis-navigation.util';
 import type { TaskTokenBubble } from '../task-card-view-model';
 import { formatTokens } from '../task-card-view-model';
+import { formatTokenCostDisplay } from '../../../../tokens';
 import { buildTypeBreakdown, type TypeBreakdownRow } from './token-usage-popover.util';
 
 /**
@@ -40,6 +41,7 @@ export class TaskTokenUsagePopoverComponent {
 
   readonly typeBreakdownState = signal<'idle' | 'loading' | 'loaded' | 'error'>('idle');
   readonly typeBreakdown = signal<TypeBreakdownRow[]>([]);
+  readonly currentAttemptTotal = signal<{ tokens: number; costLabel: string } | null>(null);
 
   formatTokens(n: number): string {
     return formatTokens(n);
@@ -57,7 +59,17 @@ export class TaskTokenUsagePopoverComponent {
     const job = this.job();
     this.taskService.getJobPipeline(job.id, job.watchPath ?? undefined).subscribe({
       next: (response) => {
-        if (response?.cost) this.typeBreakdown.set(buildTypeBreakdown(response.cost));
+        if (response?.cost) {
+          this.typeBreakdown.set(buildTypeBreakdown(response.cost));
+          this.currentAttemptTotal.set({
+            tokens: response.cost.totalTokens,
+            costLabel: formatTokenCostDisplay({
+              costUsd: response.cost.totalCostUsd,
+              totalTokens: response.cost.totalTokens,
+              unpricedRuns: response.cost.unpricedRuns ?? (response.cost.anyModelUnknown ? 1 : 0),
+            }),
+          });
+        }
         this.typeBreakdownState.set('loaded');
       },
       error: () => this.typeBreakdownState.set('error'),

@@ -532,6 +532,182 @@ public sealed class TaskCoreEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task ReviewResource_ServesTheSignedProjection_ThatTheFullDetailServes()
+    {
+        // AGT-3845: the review resource read the projection with a key-only
+        // task, so a signed snapshot never matched and it served
+        // reviewProjection null as ready. The card never showed which build
+        // graded it, while GET /api/tasks/{id} carried workerReleaseStable.
+        Seed("AGT-graded", TaskStates.HumanReview);
+        const string notice = "graded by release 20261105T1059Z-review-b9a3a90d6895 (commit b9a3a90), "
+            + "which differs from Stable 0.9.5 (38b28d1)";
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>()));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        await WarmIndexAsync(factory, "AGT-graded");
+        var card = factory.Services.GetRequiredService<TaskIndexCache>().GetDetailFacts("AGT-graded", Jobs).Info!;
+        var report = Path.Combine(card.FolderPath, "remote-review-grade-review_bh3.md");
+        File.WriteAllText(report, GradeReport("review_bh3"));
+        var cache = factory.Services.GetRequiredService<TaskListGitProjectionCache>();
+        var clock = factory.Services.GetRequiredService<TimeProvider>();
+        void Publish(ReviewProjectionView? view) => cache.SetSnapshot(Jobs, TaskListGitProjection.Empty with
+        {
+            ReviewProjection = view is null
+                ? new Dictionary<string, ReviewProjectionView>(StringComparer.Ordinal)
+                : new Dictionary<string, ReviewProjectionView>(StringComparer.Ordinal) { [card.TaskKey] = view },
+            Signatures = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [card.TaskKey] = TaskGitSignature.For(card),
+            },
+        }, clock.GetUtcNow(), "test");
+
+        async Task<JsonElement> Review()
+        {
+            using var coreResponse = await client.GetAsync($"/api/tasks/AGT-graded/core?project={project.Id}");
+            coreResponse.EnsureSuccessStatusCode();
+            using var core = JsonDocument.Parse(await coreResponse.Content.ReadAsStringAsync());
+            var generation = core.RootElement.GetProperty("coreVersion").GetString();
+            using var response = await client.GetAsync(
+                $"/api/tasks/AGT-graded/details/review?project={project.Id}&generation={generation}");
+            response.EnsureSuccessStatusCode();
+            return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.Clone();
+        }
+
+        // A report the published projection does not carry is pending, not ready.
+        Publish(null);
+        var pending = await Review();
+        Assert.Equal("stale", pending.GetProperty("state").GetString());
+        Assert.Equal("review-projection-pending", pending.GetProperty("reason").GetString());
+
+        Publish(ReviewProjectionView.Empty with
+        {
+            Attempts =
+            [
+                new ReviewAttempt
+                {
+                    Plane = ReviewPlane.Remote, AttemptId = "review_bh3", Outcome = "Pass",
+                    BuildTestsResult = "passed", ReportRef = Path.GetFileName(report),
+                    WorkerReleaseId = "20261105T1059Z-review-b9a3a90d6895", WorkerReleaseStable = notice,
+                },
+            ],
+        });
+        var ready = await Review();
+        Assert.Equal("ready", ready.GetProperty("state").GetString());
+        Assert.Equal(notice, ready.GetProperty("data").GetProperty("reviewProjection")
+            .GetProperty("attempts")[0].GetProperty("workerReleaseStable").GetString());
+        using var full = await client.GetAsync($"/api/tasks/AGT-graded?project={project.Id}");
+        full.EnsureSuccessStatusCode();
+        using var fullBody = JsonDocument.Parse(await full.Content.ReadAsStringAsync());
+        Assert.Equal(notice, fullBody.RootElement.GetProperty("info").GetProperty("reviewProjection")
+            .GetProperty("attempts")[0].GetProperty("workerReleaseStable").GetString());
+
+        // A second report the projection does not carry is pending again,
+        // whatever its file time, and the card already reads it from files.
+        File.WriteAllText(Path.Combine(card.FolderPath, "remote-review-grade-review_bh3_fresh.md"),
+            GradeReport("review_bh3_fresh"));
+        var fresh = await Review();
+        Assert.Equal("stale", fresh.GetProperty("state").GetString());
+        Assert.Contains(fresh.GetProperty("data").GetProperty("reviewProjection").GetProperty("attempts").EnumerateArray(),
+            attempt => attempt.GetProperty("reportRef").GetString() == "remote-review-grade-review_bh3_fresh.md");
+    }
+
+    [Fact]
+    public async Task ReviewFacts_StayOnTheCard_WhileALaneMoveWithholdsItsGitSnapshot()
+    {
+        // AGT-3845 first-run run: the proof card moved into Human Review, its
+        // task signature changed, and both detail reads withheld every Git
+        // fact until the next index run, the review projection with them. The
+        // browser read the full detail at that moment and never showed the
+        // grading notice. Review facts come from files and stay on the card.
+        Seed("AGT-moved", TaskStates.HumanReview);
+        const string notice = "graded by release 20261105T1059Z-review-b9a3a90d6895 (commit b9a3a90), "
+            + "which differs from Stable 0.9.5 (38b28d1)";
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>()));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        await WarmIndexAsync(factory, "AGT-moved");
+        var card = factory.Services.GetRequiredService<TaskIndexCache>().GetDetailFacts("AGT-moved", Jobs).Info!;
+        var clock = factory.Services.GetRequiredService<TimeProvider>();
+        File.WriteAllText(Path.Combine(card.FolderPath, "remote-review-grade-review_moved.md"), $"""
+            ---
+            type: remote-review-grade
+            attemptId: "review_moved"
+            receivedAt: {clock.GetUtcNow().UtcDateTime:yyyy-MM-ddTHH:mm:ssZ}
+            outcome: "Pass"
+            expectedResultSha: "abcdef0"
+            actualHead: "abcdef0"
+            workerReleaseId: "20261105T1059Z-review-b9a3a90d6895"
+            workerReleaseStable: "{notice}"
+            ---
+
+            ## Aspect verdicts
+
+            | Aspect | Status | Classification | Summary |
+            | --- | --- | --- | --- |
+            | requirement-fit | pass | RemoteAspectVerdict | Requirements match the implementation. |
+            """);
+        // The published snapshot was signed for the card before its lane move.
+        factory.Services.GetRequiredService<TaskListGitProjectionCache>().SetSnapshot(Jobs,
+            TaskListGitProjection.Empty with
+            {
+                Signatures = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [card.TaskKey] = TaskGitSignature.For(card with { State = TaskStates.AutoReview }),
+                },
+            }, clock.GetUtcNow(), "test");
+
+        using var full = await client.GetAsync($"/api/tasks/AGT-moved?project={project.Id}");
+        full.EnsureSuccessStatusCode();
+        using var fullBody = JsonDocument.Parse(await full.Content.ReadAsStringAsync());
+        Assert.Equal(notice, fullBody.RootElement.GetProperty("info").GetProperty("reviewProjection")
+            .GetProperty("attempts")[0].GetProperty("workerReleaseStable").GetString());
+
+        using var coreResponse = await client.GetAsync($"/api/tasks/AGT-moved/core?project={project.Id}");
+        coreResponse.EnsureSuccessStatusCode();
+        using var core = JsonDocument.Parse(await coreResponse.Content.ReadAsStringAsync());
+        var generation = core.RootElement.GetProperty("coreVersion").GetString();
+        using var review = await client.GetAsync(
+            $"/api/tasks/AGT-moved/details/review?project={project.Id}&generation={generation}");
+        review.EnsureSuccessStatusCode();
+        using var reviewBody = JsonDocument.Parse(await review.Content.ReadAsStringAsync());
+        // Still pending until the index publishes, but the card already has its facts.
+        Assert.Equal("stale", reviewBody.RootElement.GetProperty("state").GetString());
+        Assert.Equal(notice, reviewBody.RootElement.GetProperty("data").GetProperty("reviewProjection")
+            .GetProperty("attempts")[0].GetProperty("workerReleaseStable").GetString());
+    }
+
+    [Fact]
+    public void ReviewProjectionPending_CountsOnlyReportsTheReaderCanParse()
+    {
+        var folder = Path.Combine(_root, "pending-folder");
+        Directory.CreateDirectory(folder);
+        Assert.False(TaskDetailResources.ReviewProjectionPending(folder, null));
+        File.WriteAllText(Path.Combine(folder, "remote-review-grade-broken.md"), "not a grade report");
+        Assert.False(TaskDetailResources.ReviewProjectionPending(folder, null));
+        File.WriteAllText(Path.Combine(folder, "remote-review-grade-review_1.md"), GradeReport("review_1"));
+        Assert.True(TaskDetailResources.ReviewProjectionPending(folder, null));
+        Assert.True(TaskDetailResources.ReviewProjectionPending(folder, ReviewProjectionView.Empty));
+        Assert.False(TaskDetailResources.ReviewProjectionPending(folder, ReviewProjectionView.Empty with
+        {
+            Attempts =
+            [
+                new ReviewAttempt
+                {
+                    Plane = ReviewPlane.Remote, AttemptId = "review_1", BuildTestsResult = "passed",
+                    ReportRef = "remote-review-grade-review_1.md",
+                },
+            ],
+        }));
+    }
+
+    private static string GradeReport(string attemptId) =>
+        $"---\ntype: remote-review-grade\nattemptId: \"{attemptId}\"\noutcome: \"Pass\"\nactualHead: \"abcdef0\"\n---\n";
+
+    [Fact]
     public async Task DetailResources_VersionHashesTheWireData_AndDirtyMissingIsNotWarming()
     {
         Seed("AGT-core", TaskStates.Ready);

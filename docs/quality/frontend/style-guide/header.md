@@ -18,6 +18,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | App 5 | Theme, Needs you, Settings, account | User actions and the operator attention count | Needs you always; its count takes the warning tint only when nonzero | Icon or text buttons plus account control; theme `d6b11df5d`, settings/account `7fb0177069`, AGT-3356 moved usage to footer, AGT-3576 replaced the stall bell with `app-attention-control`. |
 | Task 1 | Tab strip | Open tabs and active task identity | Editor open | One row; `d6b11df5d`, AGT-2963 responsive fix. |
 | Task 2 | Task toolbar | Run activity, execution host, pane toggles, lane pager, paging lane, acceptance refusal, primary action, menu | Task tab active; individual controls follow their capability | One action row; `ccc0039eb` (AGT-2819 extraction). Host belongs here and nowhere in the Overview title. |
+| Task 2a | `app-task-move-refusal` | Why this card's last move was refused; for a content refusal the review's concern, Accept with a written reason and Review again | The open card's last move was refused | Acute notice below the toolbar; its refusal toast docks below it and the toolbar (`below-toolbar`), never over them. AGT-3873. |
 | Task 3 | Global alert banner | Cross-task integration alert | Alert threshold reached | Single alert banner in `app-workspace-banner`; `5d496e73e`. |
 | Task 3a | Phone primary lane action | Current lane decision | Primary action available below 600 px | Full-width shared primary button above task notices. |
 | Task 4 | `app-task-resource-status` | Resource limitation affecting this task | Resource finding exists | Notice; `2b1436acc`. |
@@ -90,6 +91,8 @@ show “does not apply”, “not in a batch”, or a loading placeholder for a 
 that may stay empty. A genuine in-progress operation can show its own progress.
 The global alert describes cross-task health; it is not repeated as a task
 notice. A parked blocker precedes the derived escalation summary.
+For an Escalated card, the Current/Next strip names the operator decision even
+when an earlier Auto Review integration queue or phase remains in its live status.
 
 Use one treatment per class: status narratives use `m.deck-panel-muted`,
 notices use `m.deck-panel`, acute alerts use `m.deck-panel-attention`, and

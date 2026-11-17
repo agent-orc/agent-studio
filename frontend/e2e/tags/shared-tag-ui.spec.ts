@@ -124,7 +124,6 @@ test('area and facet selection follows board, Dossier list and wiki at desktop a
   await page.screenshot({ timeout: 30_000, path: path.join(resultsDir, 'tag-ui-wiki-desktop--mocked.png') });
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByTestId('studio-ab-explorer').click();
   await page.getByTestId('project-wiki-toggle-nav').click();
   await page.screenshot({ timeout: 30_000, path: path.join(resultsDir, 'tag-ui-wiki-phone--mocked.png') });
   await page.evaluate(() => document.documentElement.setAttribute('data-studio-theme', 'dark'));
@@ -220,7 +219,6 @@ test('glossary keeps the latest area after a slower response arrives', async ({ 
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     if (width === 390) {
-      await page.getByTestId('studio-ab-explorer').click();
       await page.getByTestId('project-wiki-toggle-nav').click();
     }
     for (const theme of ['light', 'dark']) {

@@ -4,10 +4,10 @@ import {
   inject, input, output, signal,
 } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-
 import { TaskState } from '../../../../models/task.model';
 import { ServerCheckoutRemedyComponent } from '../server-checkout-remedy/server-checkout-remedy.component';
-import { CdkTrapFocus } from '@angular/cdk/a11y';
+import { ModalFocusDirective } from '../../../../directives/modal-focus.directive';
+import { bindOpenToModalStack } from '../../../../services/modal-stack.service';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
 import { BatchGateService } from '../../../../services/batch-gate.service';
@@ -40,7 +40,6 @@ import {
   ESCALATION_HEAD_TONES,
   type EscalationSummaryView,
 } from './escalation-summary.util';
-
 /** Escalation decision panel. Aggregates the task detail, timeline, review files,
  * and attached batch diagnostic; see {@link buildEscalationSummaryView} for
  * evidence priority. It also handles bounded answers to agent questions. */
@@ -56,7 +55,7 @@ import {
     DisclosureMarkerComponent,
     GateQueueReleaseComponent,
     ServerCheckoutRemedyComponent,
-    CdkTrapFocus,
+    ModalFocusDirective,
   ],
   templateUrl: './escalation-summary.component.html',
   styleUrl: './escalation-summary.component.scss',
@@ -86,6 +85,7 @@ export class EscalationSummaryComponent {
     .map(item => (item.detail ? `${item.text}: ${item.detail}` : item.text)
       .replace(/\s+/g, ' ').trim().slice(0, 500))
     .slice(0, 12));
+  readonly reissueNoteLabel = computed(() => this.selectedFindings().length ? 'Owner note (optional)' : 'Owner note (required without selected findings)');
   readonly instructionsPreview = computed(() => [
     '# Operator reissue instructions',
     '',
@@ -98,9 +98,7 @@ export class EscalationSummaryComponent {
     ...(this.ownerNote().trim() ? ['', 'Owner note:',
       this.selectedFindings().length ? this.ownerNote().trim() : `- [ ] ${this.ownerNote().trim()}`] : []),
   ].join('\n'));
-
   readonly serverCheckoutMissing = computed(() => taskNeedsServerCheckout(this.detail().info));
-
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
     this.detail().info.state === TaskState.Escalated && !this.gateInfrastructure()
@@ -159,6 +157,8 @@ export class EscalationSummaryComponent {
   private collapseJobId: string | null = null;
 
   constructor() {
+    bindOpenToModalStack('escalation-confirm', this.decisionDialog, () => this.decisionDialog.set(null));
+
     // The summary needs the ledger for reissue history and the parked reason
     // even when the operator has not opened the Timeline tab.
     effect(() => this.timelinePoll.syncTo(this.detail().info));

@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, computed, effect, inject, input, output, signal } from '@angular/core';
 import { ReviewerSession } from '../../../../services/reviewer-session.service';
+import { DecisionFocusDirective } from '../../../../components/decision-focus/decision-focus.directive';
 import { TaskInfo, TaskState } from '../../../../models/task.model';
 import { laneName, laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import {
@@ -27,6 +28,7 @@ import {
   triageDecisionRowState,
 } from '../../state/triage-actions.model';
 import type { LandedState } from '../../../git';
+import { TASK_DETAIL_PRIMARY_SHORTCUT, taskDetailPrimaryShortcutTooltip } from '../../task-detail-keyboard.util';
 import { buildThinkingLevelIndicator } from '../../../../services/thinking-level.util';
 import { ModelLevelIndicatorComponent } from '../../../../components/model-level-indicator/model-level-indicator.component';
 import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
@@ -38,12 +40,13 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 import { BatchGateService } from '../../../../services/batch-gate.service';
 import { batchIsolationHold } from '../../../../models/batch-isolation-hold';
 import { isHeldRequeue } from './isolation-requeue';
+import { injectAcceptanceRefusalTooltip } from '../../state/acceptance-refusal.model';
 /** Task detail title, lane pager and primary and overflow actions. */
 @Component({
   selector: 'app-detail-header',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent, StatusIndicatorComponent],
+  imports: [ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent, StatusIndicatorComponent, DecisionFocusDirective],
   templateUrl: './detail-header.component.html',
   styleUrl: './detail-header.component.scss'
 })
@@ -53,6 +56,7 @@ export class DetailHeaderComponent {
   readonly isolationHold = computed(() => batchIsolationHold(this.batchGate.state(this.info().projectName)(), this.info().taskKey, this.info().key, this.info().displayKey, this.info().id));
   isHeldRequeue(button: TriageButton): boolean { return isHeldRequeue(button, this.info().state, this.isolationHold()); }
   readonly gateInfrastructurePark = input(false);
+  readonly primaryShortcut = TASK_DETAIL_PRIMARY_SHORTCUT;
   readonly defaultThinkingLevel = input<string | null>(null);
   readonly headerModel = computed(() => {
     const info = this.info();
@@ -234,11 +238,7 @@ export class DetailHeaderComponent {
   });
 
   /** Effective primary label (state-aware for the Human Review acceptance). */
-  readonly primaryLabel = computed(() => {
-    const p = this.triagePrimary();
-    if (!p) return '';
-    return this.mergeAcceptView()?.acceptLabel ?? p.label;
-  });
+  readonly primaryLabel = computed(() => this.mergeAcceptView()?.acceptLabel ?? this.triagePrimary()?.label ?? '');
 
   /** Primary-action ids held while their integration verdict is unknown. */
   private readonly GIT_DEPENDENT_PRIMARY_IDS: ReadonlySet<string> = new Set(['mark-done']);
@@ -314,6 +314,7 @@ export class DetailHeaderComponent {
     return items;
   });
 
+  readonly acceptanceRefusalTip = injectAcceptanceRefusalTooltip(() => this.info());
   primaryTooltip(): string {
     const p = this.triagePrimary();
     if (!p) return '';
@@ -322,11 +323,12 @@ export class DetailHeaderComponent {
     const refusal = this.primaryDecisionRefusal();
     if (refusal) return refusal;
     if (this.primaryBlockedByIntegration()) return acceptanceHoldReason(this.info());
+    if (p.id === 'mark-done' && this.acceptanceRefusalTip()) return this.acceptanceRefusalTip()!;
     const label = this.primaryLabel();
     if (this.triageActingId() === p.id) return `${label}…`;
     const merge = this.mergeAcceptView();
-    if (merge?.landed && merge.statusTooltip) return `${merge.statusTooltip} (Enter)`;
-    return `${label} (Enter)`;
+    if (merge?.landed && merge.statusTooltip) return taskDetailPrimaryShortcutTooltip(merge.statusTooltip);
+    return taskDetailPrimaryShortcutTooltip(label);
   }
 
   primaryDisabled(button: TriageButton): boolean {
@@ -382,7 +384,7 @@ export class DetailHeaderComponent {
     this.emitTriage(button);
   }
 
-  /** Called by the parent on Enter when no input is focused. */
+  /** Called by the parent on Enter while the card surface has focus. */
   triggerPrimary(): void {
     this.onPrimaryClick();
   }

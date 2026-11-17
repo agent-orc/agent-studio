@@ -1,12 +1,16 @@
 import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/testing';
 import { BehaviorSubject, Subject, map, of, type Observable } from 'rxjs';
 import { vi } from 'vitest';
 import { ProjectDeployAreaComponent } from './project-deploy-area';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
+import { ServerCheckoutStore } from '../../../server-checkout';
+import { urlProject } from '../../../server-checkout/testing/server-checkout.fixtures';
+import type { RegistryProjectSummary } from '../../../../models/task.model';
 import { DEPLOY_CLOCK, type DeployPanel } from '../../state/deploy-area.model';
+import { AuthSessionState } from '../../../../services/auth.service';
 import {
   ARTIFACT_B,
   DEPLOY_FIXTURE_NOW,
@@ -27,6 +31,7 @@ class FakeDeployData {
   readonly deploymentsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
   readonly pipelinePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
   readonly healthPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
+  readonly releaseGatePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
   readonly requests: string[] = [];
   readonly actions: string[] = [];
   actionResult = new Subject<unknown>();
@@ -110,6 +115,7 @@ class FakeDeployData {
   }
   pipeline(): Observable<DeployPanel<unknown>> { return this.pipelinePanel; }
   health(): Observable<DeployPanel<unknown>> { return this.healthPanel; }
+  releaseGate(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`gate:${project}`); return this.releaseGatePanel; }
   deploymentLog(_project: string, id: string): Observable<DeployPanel<unknown>> {
     this.requests.push(`log:${id}`);
     return new BehaviorSubject<DeployPanel<unknown>>({ status: 'ready', value: deploymentLogFixture(id) });
@@ -137,6 +143,7 @@ class FakeDeployData {
 describe('ProjectDeployAreaComponent', () => {
   let fixture: ComponentFixture<ProjectDeployAreaComponent>;
   let data: FakeDeployData;
+  const checkoutProject = signal<RegistryProjectSummary | null>(null);
   const host = () => fixture.nativeElement as HTMLElement;
   const byTestId = (id: string) => host().querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
   const text = (id: string) => byTestId(id)?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
@@ -156,6 +163,7 @@ describe('ProjectDeployAreaComponent', () => {
 
   beforeEach(async () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
+    checkoutProject.set(null);
     data = new FakeDeployData();
     await TestBed.configureTestingModule({
       imports: [ProjectDeployAreaComponent],
@@ -164,6 +172,9 @@ describe('ProjectDeployAreaComponent', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         { provide: ProjectDeployDataService, useValue: data },
+        { provide: ServerCheckoutStore, useValue: {
+          projectFor: () => checkoutProject(), statusFor: () => null,
+        } },
         { provide: DEPLOY_CLOCK, useValue: () => DEPLOY_FIXTURE_NOW },
       ],
     }).compileComponents();
@@ -174,6 +185,45 @@ describe('ProjectDeployAreaComponent', () => {
   });
 
   afterEach(() => { host().remove(); vi.unstubAllGlobals(); });
+
+  it('shows a refused release with its reason and next step until a release clears it (F2)', async () => {
+    data.serveEverything();
+    await settle();
+    expect(data.requests).toContain('gate:Website');
+    expect(byTestId('deploy-release-refusal')).toBeNull();
+
+    data.releaseGatePanel.next({ status: 'ready', value: { refusal: {
+      commitSha: '86afada0123456789abcdef0123456789abcdef0', mode: 'required',
+      reason: 'The candidate has no green pre-main or batch gate on this exact commit.',
+      nextStep: 'Release a commit that passed the pre-main or batch gate.', atUtc: '2026-11-16T10:00:00Z',
+    } } });
+    await settle();
+    expect(text('deploy-release-refusal')).toContain('Release refused');
+    expect(text('deploy-release-refusal')).toContain('86afada01234 (delivery.fullSuite: required): The candidate has no green pre-main');
+    expect(text('deploy-release-refusal-next')).toBe('Next step: Release a commit that passed the pre-main or batch gate.');
+
+    data.releaseGatePanel.next({ status: 'ready', value: { refusal: null } });
+    await settle();
+    expect(byTestId('deploy-release-refusal')).toBeNull();
+  });
+
+  it('shows one checkout state for a URL project and skips deploy reads until its checkout exists', async () => {
+    checkoutProject.set(urlProject({ id: 'PROJ-2', displayName: 'Tally Library' }));
+    fixture.componentRef.setInput('projectName', 'Tally Library');
+    await settle();
+    const requests = data.requests.length;
+    expect(byTestId('deploy-checkout-missing')?.textContent).toContain('server checkout');
+    expect(byTestId('deploy-source-notices')).toBeNull();
+    await click('deploy-tab-pipeline');
+    await click('deploy-tab-steps');
+    await click('deploy-refresh');
+    expect(data.requests).toHaveLength(requests);
+
+    checkoutProject.set(urlProject({ id: 'PROJ-2', displayName: 'Tally Library', repositoryPath: '/srv/tally' }));
+    await settle();
+    expect(byTestId('deploy-checkout-missing')).toBeNull();
+    expect(data.requests.length).toBeGreaterThan(requests);
+  });
 
   it('shows no preview or fixture data while sources load', () => {
     expect(host().textContent).not.toContain('Preview data');
@@ -551,6 +601,33 @@ describe('ProjectDeployAreaComponent', () => {
     expect(data.actions).toEqual(['approve:run-c-production']);
   });
 
+  it('asks a local session without sign-in to create the owner, then approves the Production run', async () => {
+    const auth = TestBed.inject(AuthSessionState);
+    auth.status.set({ profile: 'local', bootstrapRequired: true, authenticated: false });
+    data.serveEverything();
+    await settle();
+    await click('deploy-environment-review-approval');
+    await click('deploy-run-approve');
+    expect(data.actions).toEqual([]);
+    expect(window.confirm).not.toHaveBeenCalled();
+    const dialog = document.querySelector('[data-testid="local-owner-dialog"]') as HTMLElement;
+    expect(dialog.querySelector('[data-testid="local-owner-purpose"]')?.textContent).toContain('Production approval needs the owner account.');
+    for (const [id, value] of [['local-owner-username', 'local.owner'], ['local-owner-password', 'correct-horse-battery']]) {
+      const input = dialog.querySelector<HTMLInputElement>(`[data-testid="${id}"]`)!;
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+    }
+    (dialog.querySelector('[data-testid="local-owner-submit"]') as HTMLButtonElement).click();
+    TestBed.inject(HttpTestingController).expectOne('/api/v1/studio/auth/bootstrap').flush({
+      profile: 'local', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_1', username: 'local.owner', displayName: 'local.owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
+    });
+    await settle();
+    expect(window.confirm).toHaveBeenCalledWith('Approve Production run run-c-production?');
+    expect(data.actions).toEqual(['approve:run-c-production']);
+    expect(document.querySelector('[data-testid="local-owner-dialog"]')).toBeNull();
+  });
+
   it('reads a selected run by id when no page or status contains it, and refreshes it after an action', async () => {
     data.serveEverything();
     const old = { ...deployDeploymentsFixture()[1], id: 'run-old-production', createdAtUtc: '2026-09-01T10:00:00Z' };
@@ -650,7 +727,7 @@ describe('ProjectDeployAreaComponent', () => {
   it('reloads every source on Refresh and keeps the deployment tools reachable', async () => {
     data.requests.length = 0;
     await click('deploy-refresh');
-    expect(data.requests).toEqual(['environments:Website', 'releases:0', 'status', 'deployments:0:all', 'deployments:0:all']);
+    expect(data.requests).toEqual(['environments:Website', 'releases:0', 'gate:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
 
     await click('deploy-open-tools');
     expect(host().querySelector('app-project-deployment-panel')).not.toBeNull();

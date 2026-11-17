@@ -58,9 +58,14 @@ public static class MonolithOrchestrationEndpoints
                 ? Wire(store.Release(runId, request)) : Results.Unauthorized()));
         api.MapPost("/runs/{runId}/stages/complete", async (HttpContext context, string runId,
             CompleteOrchestrationStageRequest request, AccessSecurityStore security,
-            MonolithOrchestrationStore store, CancellationToken ct) =>
+            MonolithOrchestrationStore store, IHostApplicationLifetime lifetime) =>
+            // AGT-3883: applying a decision can run a whole per-task gate, far
+            // past the engine's 60-second request timeout. The engine going
+            // away cancelled the lane move after AGT-3876's delivery was
+            // already published; only a host stop may cancel the application.
             await ExecuteAsync(async () => Matches(context, security, request.EngineId)
-                ? Wire(await store.CompleteAsync(runId, request, ct)) : Results.Unauthorized()));
+                ? Wire(await store.CompleteAsync(runId, request, lifetime.ApplicationStopping))
+                : Results.Unauthorized()));
     }
 
     private static IResult Wire(object value, int statusCode = StatusCodes.Status200OK)

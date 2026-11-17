@@ -38,6 +38,17 @@ public class AdHocUsageTests
     }
 
     [Fact]
+    public void OneShotRecorder_PersistsExecutingCliRatherThanModelName()
+    {
+        using var temp = new TempDir();
+        var (recorder, _) = BuildRecorder(temp.Path);
+        AdHocClaudeInvoker.Record(recorder, AdHocUsageSources.TitleGeneration,
+            "Claude-looking model", new OrchestratorTokenUsage { InputTokens = 7 },
+            durationMs: 1, ok: true, cliType: "codex");
+        Assert.Equal("codex", Assert.Single(recorder.ReadAll()).CliType);
+    }
+
+    [Fact]
     public void Recorder_TolerantToTornLines()
     {
         using var temp = new TempDir();
@@ -106,6 +117,17 @@ public class AdHocUsageTests
     }
 
     [Fact]
+    public void Aggregate_DisclaimerIsProviderNeutral()
+    {
+        // AGT-3794-F14: ad-hoc calls include Codex, so the caveat must not cite one provider.
+        var agg = AdHocUsageFold.Aggregate([], "/log");
+
+        Assert.Equal(TokenCostDisclaimer.Text, agg.Disclaimer);
+        Assert.DoesNotContain("Anthropic", agg.Disclaimer, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Claude", agg.Disclaimer, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ParseOrFallback_PlainText_ReturnsAsIs()
     {
         var (text, usage) = AdHocClaudeInvoker.ParseOrFallback("Add login form\n", "claude-haiku-4-5");
@@ -125,6 +147,16 @@ public class AdHocUsageTests
         Assert.Equal(150, usage!.InputTokens);
         Assert.Equal(12, usage.OutputTokens);
         Assert.Equal("claude-haiku-4-5", usage.Model);
+    }
+
+    [Fact]
+    public void ParseOrFallback_KeepsEffectiveCliFromOneShotEnvelope()
+    {
+        const string raw = """
+            {"type":"result","result":"A title","model":"Claude-looking model","cliType":"codex","usage":{"input_tokens":7,"output_tokens":1}}
+            """;
+        var (_, usage) = AdHocClaudeInvoker.ParseOrFallback(raw, "Claude-looking model");
+        Assert.Equal("codex", usage?.CliType);
     }
 
     [Fact]

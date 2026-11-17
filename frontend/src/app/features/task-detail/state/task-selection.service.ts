@@ -117,6 +117,9 @@ export class TaskSelectionService {
   private static readonly PREFETCH_LOOKAHEAD = 2;
   private static readonly DETAIL_TIMEOUT_MS = 15_000;
   private static readonly WARMING_RETRY_MS = 600;
+  /** A pending review projection is re-read with a growing delay, a bounded number of times. */
+  private static readonly REVIEW_PENDING_RETRY_MS = 1_500;
+  private static readonly REVIEW_PENDING_RETRIES = 8;
   /** Longest wait for the project registry before a public URL is resolved server-side. */
   private static readonly REGISTRY_WAIT_MS = 3_000;
 
@@ -276,6 +279,7 @@ export class TaskSelectionService {
   private coreRead: { project: string; id: string; taskKey: string } | null = null;
   /** Same-generation resource reloads after a conflict; bounded so a persistent mismatch cannot loop. */
   private conflictReloads = 0;
+  private reviewPendingRetries = 0;
   /** The in-flight review read, so an evidence request can supersede a plain one. */
   private reviewRequest: { subscription: Subscription; evidence: boolean } | null = null;
   private reviewWithEvidence = false;
@@ -660,6 +664,7 @@ export class TaskSelectionService {
     if (core.lane === TaskState.HumanReview) this.loadAcceptanceDetail(core, project, token);
     if (!generationChanged) return;
     this.conflictReloads = 0;
+    this.reviewPendingRetries = 0;
     this.resourceStates.set(idleResources());
     this.reviewWithEvidence = false;
     // Give the bounded core a paint opportunity before requesting documents.
@@ -673,16 +678,20 @@ export class TaskSelectionService {
         if (!detail?.info || readVersion !== this.acceptanceReadVersion || !this.isCurrent(token, core)
           || detail.info.taskKey !== core.taskKey) return;
         this.acceptanceDetail = { taskKey: core.taskKey, integration: detail.info.integration };
+        // AGT-3845: the acceptance read carries the review projection too, so
+        // the grading-release notice next to Accept never waits on the
+        // review resource.
+        const review = detail.info.reviewProjection ? { reviewProjection: detail.info.reviewProjection } : {};
         const selected = this.selected();
         if (selected) {
           this.selected.set({ ...selected, info: { ...selected.info,
             integration: detail.info.integration,
-            commit: detail.info.commit, commits: detail.info.commits } });
+            commit: detail.info.commit, commits: detail.info.commits, ...review } });
         } else {
           const preview = this.detailPreview();
           if (preview) this.detailPreview.set({ ...preview,
             integration: detail.info.integration,
-            commit: detail.info.commit, commits: detail.info.commits });
+            commit: detail.info.commit, commits: detail.info.commits, ...review });
         }
       },
       error: () => {
@@ -903,10 +912,14 @@ export class TaskSelectionService {
         }
         if (name === 'review') {
           const data = reply.data as TaskReviewData;
+          // AGT-3845: a pending read still carries the published projection
+          // GET /api/tasks/{id} serves; keep it and re-read until ready.
           this.selected.set({ ...detail,
-            info: reply.state === 'ready' && data.reviewProjection
+            info: data.reviewProjection
               ? { ...detail.info, reviewProjection: data.reviewProjection } : detail.info,
             reviewEvidence: data.evidence ?? detail.reviewEvidence });
+          if (reply.state === 'ready') this.reviewPendingRetries = 0;
+          else this.retryReviewWhilePending(token, core, evidence, reply.reason);
           return;
         }
         if (name === 'git') {
@@ -942,6 +955,23 @@ export class TaskSelectionService {
     });
     this.activeRequests.push(request);
     if (name === 'review') this.reviewRequest = { subscription: request, evidence };
+  }
+
+  /**
+   * A review projection that does not carry the card's newest grade report
+   * yet answers `review-projection-pending` (AGT-3845). The indexer publishes
+   * it shortly after the report lands, so re-read with a growing, bounded
+   * delay instead of leaving the card without its grading notice.
+   */
+  private retryReviewWhilePending(token: number, core: TaskCore, evidence: boolean, reason: string | null): void {
+    if (reason !== 'review-projection-pending'
+      || this.reviewPendingRetries >= TaskSelectionService.REVIEW_PENDING_RETRIES) return;
+    const attempt = ++this.reviewPendingRetries;
+    setTimeout(() => {
+      const phase = this.resourceStates().review.phase;
+      if (this.isCurrent(token, core) && phase !== 'ready' && phase !== 'loading')
+        this.loadResource('review', evidence);
+    }, TaskSelectionService.REVIEW_PENDING_RETRY_MS * attempt);
   }
 
   /**
@@ -989,7 +1019,7 @@ export class TaskSelectionService {
    * reference resolution, triage fallbacks). No core is active afterwards,
    * so no enrichment request can attach itself to this selection.
    */
-  private showFullDetail(detail: TaskDetail): void {
+  private showFullDetail(detail: TaskDetail, reviewRetry = 0): void {
     this.selectedCore.set(null);
     this.resourceStates.set(idleResources());
     this.detailPreview.set(null);
@@ -997,6 +1027,31 @@ export class TaskSelectionService {
     this.clearDetailLoadFailure();
     this.selected.set(detail);
     this.markNextTaskRendered();
+    this.rereadWhileReviewEvidencePending(detail, reviewRetry);
+  }
+
+  /**
+   * AGT-3845: a lane move paints the card's full detail at once, but the
+   * settled review's grade report is written right after the move. While the
+   * server says so, read the card again with a growing, bounded delay, so the
+   * grading notice appears without a manual refresh.
+   */
+  private rereadWhileReviewEvidencePending(detail: TaskDetail, retry: number): void {
+    if (!detail.info.reviewEvidencePending || retry >= TaskSelectionService.REVIEW_PENDING_RETRIES) return;
+    const token = this.openDetailToken;
+    const taskKey = detail.info.taskKey;
+    setTimeout(() => {
+      if (token !== this.openDetailToken || this.selectedCore() || this.selected()?.info.taskKey !== taskKey) return;
+      const request = this.jobService.getDetail(detail.info.id, detail.info.watchPath).subscribe({
+        next: fresh => {
+          if (token !== this.openDetailToken || this.selectedCore()
+            || this.selected()?.info.taskKey !== taskKey || fresh.info.taskKey !== taskKey) return;
+          this.showFullDetail(fresh, retry + 1);
+        },
+        error: () => undefined,
+      });
+      this.activeRequests.push(request);
+    }, TaskSelectionService.REVIEW_PENDING_RETRY_MS * (retry + 1));
   }
 
   /**
@@ -1459,13 +1514,14 @@ export class TaskSelectionService {
    * no preceding board click); in the latter case the caller's default
    * post-mutation behaviour - usually `closeDetail()` - still applies.
    */
-  advanceAfterMutation(departingJobKey: string): boolean {
+  advanceAfterMutation(departingJobKey: string, keepMovedCardWhenEmpty = false): boolean {
     const snapBefore = this.pager.snapshot();
     const wasInSnapshot = !!snapBefore && snapBefore.jobs.some(j => j.taskKey === departingJobKey);
     if (wasInSnapshot) this.persistCurrentPagerInHistory();
     const entry = this.pager.removeAndAdvance(departingJobKey);
     if (!entry) {
       if (wasInSnapshot) {
+        if (keepMovedCardWhenEmpty) return false;
         // Snapshot existed and the departing job was in it: removeAndAdvance
         // cleared the iteration. Close the panel and toast so the user knows
         // they finished the lane.

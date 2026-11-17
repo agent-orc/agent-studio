@@ -1,14 +1,18 @@
 import { DatePipe } from '@angular/common';
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   computed,
   effect,
+  ElementRef,
   inject,
+  Injector,
   input,
   LOCALE_ID,
   output,
   signal,
+  untracked,
 } from '@angular/core';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
@@ -26,10 +30,12 @@ import {
 } from '../../../../models/project-docs.model';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
 import { TaskService } from '../../../../services/task.service';
+import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
 import { WorkbenchDecisionActionsComponent } from '../workbench-decision-actions/workbench-decision-actions.component';
 import {
+  agentRouteText,
   createOperationId,
   decisionOutcomeTone,
   decisionStageTone,
@@ -37,6 +43,7 @@ import {
   revisionRoundText,
   selectedDecisionText,
 } from './workbench-decision-panel.util';
+import { focusLost } from './workbench-decision-focus.util';
 
 @Component({
   selector: 'app-workbench-decision-panel',
@@ -64,8 +71,11 @@ export class WorkbenchDecisionPanelComponent {
   private readonly store = inject(WorkbenchDecisionStore);
   private readonly drafts = inject(WorkbenchDecisionDraftStore);
   private readonly tasks = inject(TaskService);
+  private readonly taskNavigation = inject(TaskReferenceNavigationService);
   private readonly publicDemo = inject(PublicDemoModeService);
   private readonly datePipe = new DatePipe(inject(LOCALE_ID));
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
   private readonly operationId = signal('');
 
   readonly actor = signal('Operator');
@@ -85,16 +95,27 @@ export class WorkbenchDecisionPanelComponent {
       && decision.sourceEntryFingerprint !== this.document().entryFingerprint;
   });
   readonly persistedDecision = computed(() =>
-    this.reworkRevisionLanded() ? null : this.storedDecision());
+    this.reworkRevisionLanded() || this.reworkRoundSettled() ? null : this.storedDecision());
+  readonly reworkRoundSettled = computed(() =>
+    this.document().revisionRound?.status === 'updated'
+    || this.document().revisionRound?.status === 'unchanged'
+    || this.document().revisionRound?.status === 'failed'
+    || this.result()?.revisionRound?.status === 'failed');
+  readonly receiptDecision = computed(() =>
+    this.reworkRevisionLanded() || this.reworkRoundSettled()
+      ? this.storedDecision() : this.persistedDecision());
   readonly result = computed(() => this.requestState().result);
   /** The follow-up round of a rework confirmed in this session (AGT-3703). */
   readonly revisionRound = computed(() => {
     const result = this.result();
-    return result?.outcome === 'rework'
-      && result.operationId === this.persistedDecision()?.operationId
-      ? result.revisionRound ?? null : null;
+    const decision = this.storedDecision();
+    if (decision?.outcome !== 'rework') return null;
+    return this.document().revisionRound
+      ?? (result?.outcome === 'rework' && result.operationId === decision.operationId
+        ? result.revisionRound ?? null : null);
   });
   readonly revisionRoundText = revisionRoundText;
+  readonly agentRouteText = agentRouteText;
   readonly pending = computed(() => this.requestState().pending !== null);
   readonly settled = computed(() => {
     const decision = this.persistedDecision();
@@ -107,6 +128,8 @@ export class WorkbenchDecisionPanelComponent {
     this.document().workbench.phase === 'decision-ready'
     || this.document().workbench.status === 'decision-pending'
     || this.document().workbench.lifecycleState === 'review-requested'
+    || this.reworkRevisionLanded()
+    || this.reworkRoundSettled()
     || this.persistedDecision() !== null
     || this.settled());
   readonly mutationBlocked = computed(() =>
@@ -114,7 +137,7 @@ export class WorkbenchDecisionPanelComponent {
     || this.document().workingTreeModified
     || (!this.document().revision && !this.document().fingerprint));
   readonly readOnly = this.publicDemo.readOnly;
-  readonly stage = computed(() => this.reworkRevisionLanded()
+  readonly stage = computed(() => this.reworkRevisionLanded() || this.reworkRoundSettled()
     ? null
     : this.document().workbench.decisionStage ?? this.result()?.decisionStage ?? null);
   readonly selectedSummary = computed(() => selectedDecisionText(
@@ -122,6 +145,15 @@ export class WorkbenchDecisionPanelComponent {
   readonly browserDraft = computed(() =>
     this.drafts.draft(this.projectName(), this.document().workbench.id));
   readonly hasBrowserDraft = computed(() => this.browserDraft() !== null && !this.settled());
+  /** Mirrors the template branch that renders `workbench-decision-receipt`. */
+  private readonly receiptShown = computed(() =>
+    !(this.mutationBlocked() && !this.settled()) && this.gateReady()
+    && (this.receiptDecision() !== null || this.settled()));
+
+  openRevisionCard(key: string): void {
+    if (!this.taskNavigation.openTaskKey(`${this.projectName()}::${key}`))
+      this.taskNavigation.openReference(key);
+  }
 
   constructor() {
     effect(() => {
@@ -141,6 +173,21 @@ export class WorkbenchDecisionPanelComponent {
       });
       onCleanup(() => subscription.unsubscribe());
     });
+    // The receipt replaces the control that confirmed the decision. Focus it when
+    // it appears so keyboard focus does not drop to the body (AGT-3829).
+    let receiptShown: boolean | null = null;
+    effect(() => {
+      const shown = this.receiptShown();
+      if (receiptShown === false && shown) untracked(() => this.focusReceipt());
+      receiptShown = shown;
+    });
+  }
+
+  private focusReceipt(): void {
+    afterNextRender(() => {
+      const root = this.host.nativeElement;
+      if (focusLost(root)) root.querySelector<HTMLElement>('[data-testid="workbench-decision-receipt"]')?.focus();
+    }, { injector: this.injector });
   }
 
   updateActor(event: Event): void {
@@ -219,7 +266,7 @@ export class WorkbenchDecisionPanelComponent {
   }
 
   outcomeTone(decision: WorkbenchDecisionProjection): StatusTone {
-    return decisionOutcomeTone(decision.outcome);
+    return decisionOutcomeTone(decision.outcome, decision.state);
   }
 
   stageTone(): StatusTone {

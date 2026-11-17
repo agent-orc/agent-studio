@@ -211,6 +211,8 @@ export interface IntegrationRetryResponse {
   deliverySha: string | null;
   integrationBranch: string | null;
   reviewReused: boolean;
+  /** Lane the card moved to after an integrated replay of an Escalated card (AGT-3810). */
+  movedTo?: string | null;
 }
 
 type LaneKey = keyof GroupedJobs;
@@ -532,11 +534,14 @@ export class TaskService {
     pickupAllowed: boolean;
     buildProfileStatus: string | null;
   }>>({});
+  readonly projectPickupModes = signal<Record<string, 'auto' | 'manual' | 'paused'>>({});
+  private projectPickupModeRevision = 0;
   private laneSortStrategyTick = 0;
 
   /** Re-read slow-moving project settings used by the board and Explorer. */
   refreshLaneSortStrategies(): void {
     if (!this.shellAccess.operator()) return;
+    const pickupModeRevision = this.projectPickupModeRevision;
     this.getAllProjectSettings().subscribe({
       next: (all) => {
         const map: Record<string, Record<string, string>> = {};
@@ -544,8 +549,10 @@ export class TaskService {
           pickupAllowed: boolean;
           buildProfileStatus: string | null;
         }> = {};
+        const pickupModes: Record<string, 'auto' | 'manual' | 'paused'> = {};
         for (const [project, s] of Object.entries(all)) {
           if (s.laneSortStrategies) map[project] = s.laneSortStrategies;
+          if (s.pickupMode) pickupModes[project] = s.pickupMode;
           pickupGates[project] = {
             pickupAllowed: s.buildProfilePickupAllowed !== false,
             buildProfileStatus: s.buildProfile?.status ?? null,
@@ -553,6 +560,7 @@ export class TaskService {
         }
         this.laneSortStrategies.set(map);
         this.projectPickupGates.set(pickupGates);
+        if (pickupModeRevision === this.projectPickupModeRevision) this.projectPickupModes.set(pickupModes);
       },
       // A settings-fetch failure must not surface a dialog — the board still
       // renders fine without strategy indicators; they just fall back.
@@ -969,6 +977,17 @@ export class TaskService {
   reviewContentAgainstCurrentBrief(jobId: string, watchPath?: string) {
     return this.http.post<{ reviewAttemptId: string; briefVersion: string }>(
       `${this.taskV1Url(jobId)}/content-review`, {}, this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-3845: review every aspect of the same delivery again, on the build
+   * the review hosts run now. For a card a non-Stable review host graded.
+   */
+  reviewAgainOnCurrentBuild(jobId: string, watchPath?: string) {
+    const params = (this.withWatchPath(watchPath).params ?? new HttpParams()).set('scope', 'full');
+    return this.http.post<{ reviewAttemptId: string; briefVersion: string }>(
+      `${this.taskV1Url(jobId)}/content-review`, {}, { params },
     );
   }
 
@@ -2485,6 +2504,7 @@ export class TaskService {
           autoCommit: boolean;
           crashRecoveryEnabled: boolean;
           autoPushStrategy: 'never' | 'on-completed' | 'always-immediate';
+          integrationBranch?: string | null;
           runnerMode: string | null;
           pickupMode: 'auto' | 'manual' | 'paused';
           executionLocation: string;
@@ -3169,6 +3189,18 @@ export class TaskService {
     return this.http.put(`${this.baseUrl}/runner/${encodeURIComponent(projectName)}/mode`, {
       mode,
     });
+  }
+
+  setProjectPickupMode(projectName: string, pickupMode: 'auto' | 'manual' | 'paused') {
+    return this.http.put<{ pickupMode: 'auto' | 'manual' | 'paused' }>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/execution-runner`,
+      { pickupMode },
+    );
+  }
+
+  recordProjectPickupMode(projectName: string, pickupMode: 'auto' | 'manual' | 'paused'): void {
+    this.projectPickupModeRevision++;
+    this.projectPickupModes.update(current => ({ ...current, [projectName]: pickupMode }));
   }
 
   startRunner(projectName: string) {

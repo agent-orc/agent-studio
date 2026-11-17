@@ -20,6 +20,7 @@ import {
 import { WorkspaceOverlaysService, type WorkspaceSettingsSection } from '../../../shell';
 import { StudioPanelStateService } from '../../services/studio-panel-state.service';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
+import { nameWithVisibleText } from '../../../../utils/accessible-name';
 
 /**
  * The header entry that answers "what needs me" (AGT-3576). It opens one list
@@ -60,6 +61,8 @@ export class AttentionControlComponent {
     const label = `${count} ${count === 1 ? 'item needs' : 'items need'} you`;
     return this.reviewHostDrift() ? `${label}; review host differs from Stable` : label;
   });
+  /** Starts with the visible "Needs you <count>" (WCAG 2.5.3). */
+  readonly accessibleName = computed(() => nameWithVisibleText(`Needs you ${this.count()}`, this.triggerLabel()));
   readonly closeBatch = () => this.batchProject.set(null);
 
   constructor() {
@@ -117,7 +120,7 @@ export class AttentionControlComponent {
     this.close(false);
     switch (target) {
       case 'card':
-        this.references.openReferenceOrNotify(attentionCard(item)!);
+        this.references.openReferenceOrNotify(attentionCard(item)!, { focusDecision: true });
         return;
       case 'dossiers':
         if (item.project && item.dossierId) {

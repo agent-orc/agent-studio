@@ -14,6 +14,8 @@ import { ConfirmDialogService } from '../../../../services/confirm-dialog.servic
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
+import { NotificationService } from '../../../../services/notification.service';
+import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
 import { WorkbenchViewerComponent } from './workbench-viewer.component';
 import { preserveOwnProperty } from '../../../../../testing/preserve-own-property';
 
@@ -44,6 +46,7 @@ describe('WorkbenchViewerComponent', () => {
   preserveOwnProperty(navigator, 'clipboard');
   beforeEach(() => {
     sessionStorage.clear();
+    localStorage.removeItem('atp.workbench-decision-drafts.v1');
     TestBed.overrideProvider(TaskReferenceNavigationService,
       { useValue: { openReferenceOrNotify: vi.fn() } });
   });
@@ -233,9 +236,10 @@ describe('WorkbenchViewerComponent', () => {
     expect(inlineAction.style.top).toBe('');
     expect(inlineAction.querySelector('[data-testid="workbench-decision-start"]')).not.toBeNull();
 
-    const inlineStart = inlineAction.querySelector(
-      '[data-testid="workbench-decision-start"]') as HTMLButtonElement;
-    const focus = vi.spyOn(inlineStart, 'focus');
+    // Save answers is the first enabled bar control once a point is answered (AGT-3875).
+    const inlineSave = inlineAction.querySelector(
+      '[data-testid="workbench-decision-record"]') as HTMLButtonElement;
+    const focus = vi.spyOn(inlineSave, 'focus');
     fixture.componentInstance.onFrameMessage({
       source: frame.contentWindow,
       data: { type: WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE },
@@ -329,6 +333,136 @@ describe('WorkbenchViewerComponent', () => {
     http.verify();
   });
 
+  it('keeps Mark documented closed and names the open slice while a promoted slice is open', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchViewerComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), getCliModelCatalog: () => of({ models: [], source: 'test' }), refresh: vi.fn() } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchViewerComponent);
+    fixture.componentRef.setInput('projectName', 'Demo');
+    fixture.componentRef.setInput('workbenchId', 'boundary');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const blocked: WorkbenchDocument = {
+      ...DOCUMENT,
+      workbench: {
+        ...DOCUMENT.workbench,
+        status: 'decided',
+        documentation: {
+          eligible: false,
+          totalCount: 3,
+          terminalCount: 2,
+          openCount: 1,
+          missingCount: 0,
+          references: [
+            { key: 'AGT-1', exists: true, terminal: true, lane: '6-completed' },
+            { key: 'AGT-2', exists: true, terminal: true, lane: '6-completed' },
+            { key: 'AGT-3', exists: true, terminal: false, lane: '2-ready' },
+          ],
+          blockedReason: 'Mark documented waits until every assigned card is completed or archived. '
+            + 'Still open: AGT-3 (2-ready).',
+        },
+      },
+    };
+    http.expectOne('/api/projects/Demo/workbenches/boundary').flush(blocked);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Demo/workbenches/DEM-W4/references').flush({
+      projectName: 'Demo',
+      workbenchKey: 'DEM-W4',
+      workbenchId: 'boundary',
+      legacyTaskKeys: [],
+      items: [],
+    });
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-documentation-ready"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-documentation-confirm"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-documentation-blocked"]')?.textContent)
+      .toContain('Still open: AGT-3');
+    http.verify();
+  });
+
+  it('starts at the heading and moves Tab past the frame to an enabled control (AGT-3829)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchViewerComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        {
+          provide: TaskService,
+          useValue: { getReferenceStatuses: () => of([]), getCliModelCatalog: () => of({ models: [], source: 'test' }), refresh: vi.fn(), taskEvents: EMPTY },
+        },
+      ],
+    }).compileComponents();
+    (document.activeElement as HTMLElement | null)?.blur();
+    const fixture = TestBed.createComponent(WorkbenchViewerComponent);
+    document.body.appendChild(fixture.nativeElement);
+    try {
+      fixture.componentRef.setInput('projectName', 'Demo');
+      fixture.componentRef.setInput('workbenchId', 'boundary');
+      fixture.detectChanges();
+      const http = TestBed.inject(HttpTestingController);
+      http.expectOne('/api/projects/Demo/workbenches/boundary').flush({
+        ...DOCUMENT,
+        workbench: { ...DOCUMENT.workbench, phase: 'decision-ready' },
+        revision: 'a'.repeat(40),
+        workingTreeModified: false,
+        fingerprint: 'b'.repeat(64),
+      });
+      await fixture.whenStable();
+      fixture.detectChanges();
+      http.match('/api/projects/Demo/workbenches/DEM-W4/references').forEach(request => request.flush({
+        projectName: 'Demo', workbenchKey: 'DEM-W4', workbenchId: 'boundary', legacyTaskKeys: [], items: [],
+      }));
+      await fixture.whenStable();
+
+      // Opening the Dossier while focus sits on the body lands on its heading.
+      expect(document.activeElement?.getAttribute('data-testid')).toBe('workbench-viewer-title');
+
+      const frame = fixture.nativeElement.querySelector(
+        '[data-testid="workbench-viewer-frame"]') as HTMLIFrameElement;
+      const inlineAction = fixture.nativeElement.querySelector(
+        '[data-testid="workbench-inline-decision-action"]') as HTMLElement;
+      const start = inlineAction.querySelector(
+        '[data-testid="workbench-decision-start"]') as HTMLButtonElement;
+      const rework = inlineAction.querySelector(
+        '[data-testid="workbench-decision-rework"]') as HTMLButtonElement;
+      const tabFromLastControl = () => fixture.componentInstance.onFrameMessage({
+        source: frame.contentWindow,
+        data: { type: WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE },
+      } as MessageEvent);
+
+      // Nothing in the bar is enabled: focus still leaves the frame, to the next tab stop.
+      expect(start.disabled).toBe(true);
+      expect(rework.disabled).toBe(true);
+      tabFromLastControl();
+      expect(document.activeElement).toBe(inlineAction);
+
+      fixture.componentInstance.onFrameMessage({
+        source: frame.contentWindow,
+        data: {
+          type: WORKBENCH_DECISION_CHANGE_MESSAGE,
+          responses: [{ decisionId: 'route', kind: 'single', selectedOptionIds: ['direct'], comment: null }],
+        },
+      } as MessageEvent);
+      fixture.detectChanges();
+      expect(start.disabled).toBe(false);
+      const save = inlineAction.querySelector('[data-testid="workbench-decision-record"]') as HTMLButtonElement;
+      expect(save.disabled).toBe(false);
+      tabFromLastControl();
+      expect(document.activeElement).toBe(save);
+    } finally {
+      fixture.nativeElement.remove();
+    }
+  });
+
   it('offers the documented transition after every referenced card is terminal', async () => {
     await TestBed.configureTestingModule({
       imports: [WorkbenchViewerComponent],
@@ -417,5 +551,107 @@ describe('WorkbenchViewerComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-documentation-ready"]')).toBeNull();
     expect(fixture.nativeElement.querySelector('.decision-panel__stage')?.textContent).toContain('Documented');
     http.verify();
+  });
+
+  async function openViewer(document: WorkbenchDocument) {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchViewerComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: TaskService, useValue: {
+          getReferenceStatuses: () => of([]), getCliModelCatalog: () => of({ models: [], source: 'test' }),
+          getPromoteConcept: () => EMPTY, refresh: vi.fn(),
+        } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchViewerComponent);
+    fixture.componentRef.setInput('projectName', 'Demo');
+    fixture.componentRef.setInput('workbenchId', 'boundary');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/workbenches/boundary').flush(document);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    return { fixture, http };
+  }
+
+  const committed: WorkbenchDocument = {
+    ...DOCUMENT,
+    workbench: { ...DOCUMENT.workbench, status: 'decision-pending', phase: 'decision-ready', sourceTaskKeys: [] },
+    revision: 'a'.repeat(40), workingTreeModified: false, fingerprint: 'b'.repeat(64),
+    cards: {
+      projectName: 'Demo', dossierKey: 'DEM-W4', dossierPath: 'docs/workbenches/boundary/index.html',
+      implementationSlices: 3, completedSlices: 0, cards: [],
+    },
+  };
+
+  it('offers Create implementation cards only when the server says the Dossier can promote (AGT-3875)', async () => {
+    const { fixture } = await openViewer({
+      ...committed,
+      promotion: {
+        available: false, reason: 'no-concept-card', message: 'This Dossier has no source concept card.',
+        sourceTaskKey: null, sourceJobId: null, sourceTitle: null, sourceLane: null, proposalCount: 0,
+      },
+    });
+    const root = fixture.nativeElement as HTMLElement;
+
+    expect(root.querySelector('[data-testid="concept-promotion"]')).toBeNull();
+    expect(root.querySelector('[data-testid="dossier-promotion-reason"]')?.textContent)
+      .toContain('no source concept card');
+    expect(root.querySelector('[data-testid="dossier-promotion-create-concept"]')).not.toBeNull();
+    expect(fixture.componentInstance.promotionSource()).toBeNull();
+
+    fixture.componentInstance.document.set({
+      ...committed,
+      promotion: {
+        available: true, reason: null, message: null, sourceTaskKey: 'AGT-2123', sourceJobId: 'concept',
+        sourceTitle: 'Concept', sourceLane: '5-human-review', proposalCount: 3,
+      },
+    });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.promotionSource()).toBe('AGT-2123');
+    expect(root.querySelector('[data-testid="concept-promotion-open"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="dossier-promotion-notice"]')).toBeNull();
+  });
+
+  it('restores an unsaved browser draft over the saved answers and warns once when leaving (AGT-3875)', async () => {
+    const saved = [{ decisionId: 'route', kind: 'single' as const, selectedOptionIds: ['direct'], comment: null }];
+    const draft = [{ decisionId: 'route', kind: 'single' as const, selectedOptionIds: ['queue'],
+      comment: 'Hier bin ich unsicher.' }];
+    new WorkbenchDecisionDraftStore().saveResponses('Demo', 'boundary', draft);
+    const { fixture } = await openViewer({
+      ...committed, workbench: { ...committed.workbench, recordedResponses: saved },
+    });
+    const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
+
+    expect(fixture.componentInstance.decisionResponses()).toEqual(draft);
+    expect(fixture.componentInstance.unsavedAnswers()).toBe(true);
+    const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+    fixture.componentInstance.onBeforeUnload(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    fixture.destroy();
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(warning.mock.calls[0][0]).toContain('not saved in the Dossier');
+    expect(TestBed.inject(WorkbenchDecisionDraftStore).draft('Demo', 'boundary')?.leaveWarned).toBe(true);
+  });
+
+  it('does not warn when the saved answers match the draft', async () => {
+    const saved = [{ decisionId: 'route', kind: 'single' as const, selectedOptionIds: ['direct'], comment: 'Kept.' }];
+    new WorkbenchDecisionDraftStore().saveResponses('Demo', 'boundary', saved);
+    const { fixture } = await openViewer({
+      ...committed, workbench: { ...committed.workbench, recordedResponses: saved },
+    });
+    const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
+
+    expect(fixture.componentInstance.unsavedAnswers()).toBe(false);
+    const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+    fixture.componentInstance.onBeforeUnload(unload);
+    expect(unload.defaultPrevented).toBe(false);
+    fixture.destroy();
+    expect(warning).not.toHaveBeenCalled();
   });
 });

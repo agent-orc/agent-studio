@@ -34,6 +34,15 @@ attributable commits are only task-side integration merges. The sweep
 reattributes the stored review subject through the corrected range, verifies
 that the current run gained attribution, and restores the card to Auto Review
 with a timeline entry. It starts no coding round.
+The foreign subject guard (AGT-3854) reads a subject as another card's work
+only when it names no key of this card and at least one key that this card
+does not reference in its relations, title, or brief (`prompt.md` and its
+extensions). A key directly followed by `-` and letters or digits, such as the
+finding id `AGT-3794-F13`, is not a task key.
+Startup's `commit-subject-key-attribution-v1` repair restores recent escalated
+cards with a passing review whose completion warning named a foreign task and
+whose range the current guard now attributes. A range that still names an
+unreferenced foreign key stays escalated.
 An available fenced base that is not in the result remains a recoverable
 salvage refusal and requests a merge round.
 
@@ -295,7 +304,11 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   only when no slice was promoted. Promotion leaves the Dossier lifecycle alone.
   The Studio offers this as **Create implementation cards** on the Dossier view
   (through the Dossier's source concept card) and on the concept card's
-  Overview. The Dossier's **Start one combined task** stays the single-card path.
+  Overview. Each new card inherits the concept card's CLI, model, and thinking
+  level; missing route fields use the project CLI and model defaults, then the
+  source owner's task defaults.
+  The panel previews that route beside every slice. The Dossier's **Start one
+  combined task** stays the single-card path.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
   code-change request. The `message` names the card's mode and the two ways
@@ -811,6 +824,15 @@ registry. The Project Settings UI continues to edit runner assignment through
 the dedicated `PUT /api/projects/{projectName}/execution-runner` contract.
 Project id, source type, storage location, creation time, and the task and
 document key counters are immutable and are never accepted as update fields.
+
+Workspace Settings exposes labeled Archive, Restore, and Delete actions for
+projects, including archived projects when the archived filter is shown.
+Archive removes the project and its open cards from ordinary Explorer and
+pickup listings; restore makes them available again. Both keep task storage,
+the server checkout, and branches on origin. Delete requires an in-app
+confirmation and a typed second step. It removes project task storage and a
+Studio-owned server checkout, if present; an external checkout and origin
+branches remain. Explorer's context-menu delete uses the same confirmation.
 
 Deleting a project URL checks repository and start-rule authority before
 stopping its owned preview process. If stopping fails, the URL and its audit

@@ -70,7 +70,11 @@ public static class AdHocClaudeInvoker
             if (!hasWrapperShape) return (raw, null);
 
             var result = OrchestratorRunner.ParseResult(raw, fallbackModel);
-            return (result.ReplyText ?? "", result.TokenUsage);
+            var cliType = root.TryGetProperty("cliType", out var cliElement)
+                && cliElement.ValueKind == System.Text.Json.JsonValueKind.String
+                ? cliElement.GetString() : null;
+            return (result.ReplyText ?? "", result.TokenUsage is { } usage && cliType is not null
+                ? usage with { CliType = cliType } : result.TokenUsage);
         }
         catch
         {
@@ -94,7 +98,8 @@ public static class AdHocClaudeInvoker
         string? project = null,
         string? jobId = null,
         string? thinkingLevel = null,
-        string? participantId = null)
+        string? participantId = null,
+        string cliType = "claude")
     {
         if (recorder == null) return;
         recorder.Record(new AdHocUsageRecord
@@ -102,6 +107,7 @@ public static class AdHocClaudeInvoker
             Ts = DateTime.UtcNow,
             Source = source,
             Model = string.IsNullOrWhiteSpace(usage?.Model) ? model : usage!.Model!,
+            CliType = usage?.CliType ?? cliType,
             ThinkingLevel = usage?.ThinkingLevel ?? thinkingLevel,
             ParticipantId = participantId,
             InputTokens = usage?.InputTokens ?? 0,

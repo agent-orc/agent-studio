@@ -153,4 +153,44 @@ describe('TaskTokenUsagePopoverComponent', () => {
     fixture.componentInstance.ensureTypeBreakdownLoaded();
     httpMock.expectNone((r) => r.url === '/api/tasks/task-1/pipeline');
   });
+
+  it('reconciles the current attempt by-type rows separately from a multi-attempt lifetime total', async () => {
+    const job = makeJob({
+      tokenSummary: {
+        calls: 2, inputTokens: 300, outputTokens: 150, cacheReadTokens: 0,
+        cacheCreationTokens: 0, totalTokens: 450, estimatedApiCostUsd: 23.18,
+        allModelsPriced: true, lastModel: 'claude-opus-4-7', lastUpdate: '2026-05-11T09:30:00Z',
+        entries: [
+          { ts: '2026-05-11T09:00:00Z', model: 'claude-opus-4-7', inputTokens: 200, outputTokens: 100, cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 19.73, modelPriced: true },
+          { ts: '2026-05-11T09:30:00Z', model: 'claude-opus-4-7', inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 3.45, modelPriced: true },
+        ],
+      },
+    });
+    const fixture = await render(job);
+    fixture.componentInstance.ensureTypeBreakdownLoaded();
+    TestBed.inject(HttpTestingController).expectOne((r) => r.url === '/api/tasks/task-1/pipeline').flush({
+      pipeline: { id: 'p', displayName: 'p', version: 1, pre: [], core: [], post: [] },
+      execution: null,
+      cost: {
+        steps: [
+          { stepId: 'core', kind: 'core', modelKnown: true, inputTokens: 80, outputTokens: 40, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 120, inputCostUsd: 2, outputCostUsd: 0.83, cacheReadCostUsd: 0, cacheCreationCostUsd: 0, costUsd: 2.83 },
+          { stepId: 'aspect', kind: 'aspect', modelKnown: true, inputTokens: 20, outputTokens: 10, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 30, inputCostUsd: 0.4, outputCostUsd: 0.22, cacheReadCostUsd: 0, cacheCreationCostUsd: 0, costUsd: 0.62 },
+        ],
+        totalInputTokens: 100, totalOutputTokens: 50, totalCacheReadTokens: 0, totalCacheCreationTokens: 0, totalTokens: 150,
+        totalInputCostUsd: 2.4, totalOutputCostUsd: 1.05, totalCacheReadCostUsd: 0, totalCacheCreationCostUsd: 0, totalCostUsd: 3.45,
+        anyModelUnknown: false,
+      },
+      config: {},
+    });
+    fixture.detectChanges();
+
+    const table = fixture.nativeElement.querySelector('[data-testid="token-usage-by-type"]') as HTMLTableElement;
+    const rowCosts = Array.from(table.querySelectorAll('tbody tr td:last-child'), (cell) => Number(cell.textContent?.trim().replace('$', '')));
+    const subtotal = table.querySelector('[data-testid="token-usage-by-type-total"]');
+    expect(fixture.nativeElement.textContent).toContain('By type (current attempt)');
+    expect(subtotal?.textContent).toContain('$3.45');
+    expect(rowCosts.reduce((sum, cost) => sum + cost, 0)).toBeCloseTo(3.45);
+    expect(fixture.nativeElement.querySelector('[data-testid="token-cost-tooltip"]').textContent).toContain('$23.18');
+    TestBed.inject(HttpTestingController).verify();
+  });
 });

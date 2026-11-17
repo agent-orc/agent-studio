@@ -1,6 +1,6 @@
 <button #trigger type="button" class="attention-control__trigger" data-testid="studio-attention-trigger"
         aria-haspopup="dialog" [class.attention-control__trigger--active]="count() > 0"
-        [attr.aria-label]="triggerLabel()" [appTooltip]="triggerLabel()" (click)="toggle()">
+        [attr.aria-label]="accessibleName()" [appTooltip]="triggerLabel()" (click)="toggle()">
   <app-studio-icon name="bell" [size]="14" />
   <span class="attention-control__label">Needs you</span>
   @if (reviewHostDrift()) { <span class="attention-control__drift" data-testid="review-host-drift-cue">Review host</span> }

@@ -16,7 +16,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
   for arg in "$@"; do
     case "${arg}" in
       *crash-recovery-prompt.spec.ts*|*first-run-checklist.spec.ts*) PW_E2E_PROFILE=recovery ;;
-      *first-run-journey.spec.ts*|*first-run-review-host-restart.spec.ts*) PW_E2E_PROFILE=first-run ;;
+      *first-run-journey.spec.ts*|*first-run-review-host-restart.spec.ts*|*second-project-server-checkout.spec.ts*|*first-run-off-stable-grade.spec.ts*) PW_E2E_PROFILE=first-run ;;
       *concept-remote-journey.spec.ts*) PW_E2E_PROFILE=concept-remote ;;
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
       *product-session-networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
@@ -30,6 +30,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *dossier-decision-live.spec.ts*) PW_E2E_PROFILE=demo ;;
       *owner-day-token-usage.spec.ts*) PW_E2E_PROFILE=owner-day ;;
       *owner-day-acceptance.spec.ts*) PW_E2E_PROFILE=owner-day ;;
+      *owner-day-demo-19-acceptance-refusal.spec.ts*) PW_E2E_PROFILE=owner-day ;;
       *public-demo-shell.spec.ts*) PW_E2E_PROFILE=public-demo ;;
       *owner-day-real-backend.spec.ts*) PW_E2E_PROFILE=owner-day ;;
     esac

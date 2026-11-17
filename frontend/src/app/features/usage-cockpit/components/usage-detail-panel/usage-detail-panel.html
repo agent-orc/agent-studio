@@ -54,7 +54,7 @@
           @if (cli.stateReason) { <span>{{ cli.stateReason }}</span> }
         }
         @if (cli.updated; as u) {
-          <span>Updated <time [attr.datetime]="u.iso">{{ u.local }}</time> <span class="usage-detail__utc">({{ u.utc }})</span></span>
+          <span>Updated <time [attr.datetime]="u.iso">{{ u.text }}</time></span>
         } @else {
           <span>Never updated</span>
         }
@@ -131,8 +131,8 @@
       <p class="usage-detail__muted">Quota is reported per CLI account. It is not divided between models.</p>
 
       <p class="usage-detail__links">
-        @if (cli.ledgerHref) {
-          <a [href]="cli.ledgerHref" [attr.data-testid]="'usage-detail-cli-ledger-' + cli.cliId">Open {{ cli.name }} token ledger, this week</a>
+        @if (cli.accountHref) {
+          <a [href]="cli.accountHref" [attr.data-testid]="'usage-detail-cli-account-' + cli.cliId">Open {{ cli.name }} quota windows</a>
         }
         <a [href]="cliManagementHref" data-testid="usage-detail-manage-clis">Manage CLIs</a>
       </p>
@@ -163,11 +163,5 @@
 
   <app-usage-capacity-detail [sectionId]="sectionId(capacityFocus)" [timeZone]="v.timeZone" [now]="now()" />
 
-  @defer (on viewport) {
-    <app-usage-cost-detail [cost]="v.cost" [sectionId]="sectionId(costFocus)" />
-  } @placeholder {
-    <section class="usage-detail__section" [id]="sectionId(costFocus)">
-      <h3 class="usage-detail__title" tabindex="-1" [id]="sectionId(costFocus) + '-title'">Cost</h3>
-    </section>
-  }
+  <app-usage-cost-detail [cost]="v.cost" [sectionId]="sectionId(costFocus)" />
 </div>

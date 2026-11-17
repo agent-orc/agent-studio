@@ -136,6 +136,10 @@ public class TaskFolderAccessIsolationTest
                 "Deletes only its GUID-named agent-studio-git-proof clone under OS temp, never task storage.",
             ["backend/Features/Registry/LocalFirstRunGitSetup.cs"] =
                 "Deletes only a failed fresh clone under the AgentStudio first-run-git checkouts root, never task storage.",
+            // AGT-3809: the server checkout of a URL project removes only the
+            // clone it just failed to finish under repository-checkouts.
+            ["backend/Features/Registry/ProjectServerCheckout.cs"] =
+                "Deletes only its own failed fresh clone under repository-checkouts, never task storage.",
             ["backend/Features/Pipeline/BatchGate/GateRunLedger.cs"] =
                 "Prunes expired instance-local gate ledger day folders outside the task repository.",
 
@@ -165,6 +169,8 @@ public class TaskFolderAccessIsolationTest
                 "Deletes only disposable diagnostic clones and cache entries under the gate's temp roots, never task folders.",
             ["backend/Features/Pipeline/RemoteGateTransport.cs"] =
                 "Deletes only its generated GUID directory and sweeps abandoned GUID-named run folders under the fixed OS-temp transport root, never task storage.",
+            ["backend/Features/Pipeline/GateHostCachePruner.cs"] =
+                "AGT-3866: prunes only the gate host's Node compile cache and gate workspaces under OS temp, never task storage.",
             ["backend/Features/Pipeline/RemoteGateWorker.cs"] =
                 "Deletes only source.git, the private clone inside the transport-created GUID invocation directory, never task storage.",
             // AGT-3209 pull gate: the store, the Studio-side transport, and the

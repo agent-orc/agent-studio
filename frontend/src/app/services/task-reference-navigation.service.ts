@@ -3,6 +3,7 @@ import type { MarkdownTaskReference } from 'coding-agent-chat/markdown';
 import type { TaskInfo } from '../models/task.model';
 import { NotificationService } from './notification.service';
 import { TaskService } from './task.service';
+import { DecisionFocusRequestService, decisionTaskKey } from './decision-focus-request.service';
 // These two services are imported from their concrete module paths rather than
 // the feature barrels, which is why the cross-feature barrel lint rule is
 // disabled on each line below. The studio-shell / task-detail barrels also
@@ -18,12 +19,18 @@ import { TaskSelectionService } from '../features/task-detail/state/task-selecti
 // eslint-disable-next-line no-restricted-imports
 import { StudioTabStateService } from '../features/studio-shell/services/studio-tab-state.service';
 
+export interface TaskOpenOptions {
+  /** Put focus on the card's decision area once it renders. */
+  readonly focusDecision?: boolean;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TaskReferenceNavigationService {
   private readonly tasks = inject(TaskService);
   private readonly selection = inject(TaskSelectionService);
   private readonly tabs = inject(StudioTabStateService);
   private readonly notifications = inject(NotificationService);
+  private readonly decisionFocus = inject(DecisionFocusRequestService);
 
   private readonly jobsByTaskKey = computed(() => {
     const map = new Map<string, TaskInfo>();
@@ -53,26 +60,38 @@ export class TaskReferenceNavigationService {
     return references;
   }, { equal: sameMarkdownTaskReferences });
 
-  openTaskKey(taskKey: string | null | undefined): boolean {
+  /** `focusDecision` opens the card on its decision area instead of the detail panes (AGT-3833). */
+  openTaskKey(taskKey: string | null | undefined, options: TaskOpenOptions = {}): boolean {
     if (!taskKey) return false;
     const job = this.jobsByTaskKey().get(taskKey);
     if (!job) return false;
+    if (options.focusDecision) this.decisionFocus.ask(taskKey);
     this.tabs.open({ kind: 'task', taskKey });
     this.selection.openDetail(job);
     return true;
   }
 
+  /**
+   * AGT-3872: open a task the board may not have loaded yet, such as a card
+   * that was just created, by its storage reference and id.
+   */
+  openCreatedTask(watchPath: string, jobId: string): void {
+    const taskKey = `${watchPath}::${jobId}`;
+    this.tabs.open({ kind: 'task', taskKey });
+    this.selection.openDetailByTaskKey(taskKey);
+  }
+
   /** Open a task by a display reference such as `AGT-1234` (key, id, or folder slug). */
-  openReference(label: string | null | undefined): boolean {
+  openReference(label: string | null | undefined, options: TaskOpenOptions = {}): boolean {
     const wanted = (label ?? '').trim().toUpperCase();
     if (!wanted) return false;
     const match = this.markdownReferences().find((item) => item.label.toUpperCase() === wanted);
-    return this.openTaskKey(match?.taskKey);
+    return this.openTaskKey(match?.taskKey, options);
   }
 
   /** {@link openReference}, telling the user when the referenced task is not loaded. */
-  openReferenceOrNotify(label: string): boolean {
-    if (this.openReference(label)) return true;
+  openReferenceOrNotify(label: string, options: TaskOpenOptions = {}): boolean {
+    if (this.openReference(label, options)) return true;
     this.notifications.info(`${label} is not loaded in the current workspace view.`);
     return false;
   }
@@ -89,7 +108,7 @@ export class TaskReferenceNavigationService {
  * restores it, but one card without it must not break every markdown view.
  */
 function taskKeyOf(job: TaskInfo): string {
-  return job.taskKey || `${job.watchPath}::${job.id}`;
+  return decisionTaskKey(job);
 }
 
 function folderName(path: string | null | undefined): string | null {

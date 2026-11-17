@@ -1,0 +1,19 @@
+@if (gates()?.length) {
+  <section class="per-task-gates" aria-labelledby="batch-per-task-title" data-testid="batch-per-task-gates">
+    <h3 id="batch-per-task-title">Per-task gates ({{ gates()?.length }})</h3>
+    <p>Each member runs a full suite as a gate slot opens.</p>
+    <ol class="per-task-gates__list">@for (gate of gates() ?? []; track gate.reviewAttemptId) {
+      <li data-testid="batch-per-task-gate">
+        <strong>{{ gate.taskKey }}</strong> · {{ gate.position }} of {{ gate.total }} ·
+        @if (gate.running) { Running on {{ gate.host || 'gate host' }} since {{ date(gate.startedAtUtc) }} }
+        @else { Queued }
+        <div>{{ gate.slotCapacity ?? 'Unknown' }} per-task slots
+          @if (!gate.running) { · Start estimate unavailable: {{ gate.startEstimateUnavailableReason || 'Gate capacity is unavailable.' }} }
+          · Red escalates the card; green integrates it.
+        </div>
+        <div class="per-task-gates__time">Last progress {{ date(gate.lastProgressAtUtc) }}</div>
+        <p>{{ gate.reason }}</p>
+      </li>
+    }</ol>
+  </section>
+}

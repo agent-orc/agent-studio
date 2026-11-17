@@ -83,8 +83,26 @@ public sealed partial class BatchGatePilotService
     // Test override of the durable lease-deadline deferral, by project.
     private readonly Dictionary<string, string> _deferredForTesting = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _startPass = new();
+    // AGT-3857: the process start time tells a restarted process that reuses
+    // the old process id (PID 1 in a container) from the process itself.
     private readonly string _claimOwner =
-        $"{Environment.MachineName}/{Environment.ProcessId}/{Guid.NewGuid():N}";
+        $"{Environment.MachineName}/{Environment.ProcessId}/{ProcessStartTicks.Value}/{Guid.NewGuid():N}";
+    private static readonly Lazy<long> ProcessStartTicks = new(() =>
+    {
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        return StartTicks(process) ?? 0;
+    });
+
+    private static long? StartTicks(System.Diagnostics.Process process)
+    {
+        try { return process.StartTime.ToUniversalTime().Ticks; }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException
+            or System.ComponentModel.Win32Exception)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Note(ex, "Process start time unreadable");
+            return null;
+        }
+    }
 
     private IReadOnlyList<BatchGateManifest> OrderForStart(IReadOnlyList<BatchGateManifest> formed)
         => BatchGateFlightQueue.Order(_store, formed, LeaseDeadlineDeferred(), _time.GetUtcNow(),
@@ -293,15 +311,21 @@ public sealed partial class BatchGatePilotService
                 if (claim.End is not null) continue;
                 var now = _time.GetUtcNow();
                 var facts = claim.Facts(now) with { OwnerGone = OwnerGone(claim.Owner) };
-                if (MonolithTransitionAdapter.BatchFlightClaimExpiryOf(facts) is not { } expiry) continue;
+                if (MonolithTransitionAdapter.BatchFlightClaimExpiryOf(facts) is not { } observed) continue;
+                // AGT-3882: a reservation step that waited on a running per-task
+                // integration keeps its queue position and names that job.
+                var (heldByJob, heldBy) = ReservationHolder(claim);
+                var expiry = MonolithTransitionAdapter.BatchFlightClaimExpiryClassified(claim.Stage, observed,
+                    heldByJob);
                 var manifest = TryReadManifest(claim.BatchId);
                 var outcome = manifest is null ? BatchFlightExpiryOutcome.Recover
                     : MonolithTransitionAdapter.BatchFlightOutcomeOnExpiry(claim.Stage, expiry,
                         PriorFlightExpiries(manifest));
                 var reason = MonolithTransitionAdapter.BatchFlightExpiryReason(claim.Stage, expiry, outcome,
-                    claim.StageDeadlineMinutes);
+                    claim.StageDeadlineMinutes, heldBy);
                 var expired = _store.ExpireFlightClaim(claim, outcome, reason,
-                    settled: outcome == BatchFlightExpiryOutcome.Recover, now, ownerGone: facts.OwnerGone);
+                    settled: outcome == BatchFlightExpiryOutcome.Recover, now, ownerGone: facts.OwnerGone,
+                    reservationHeldByJob: heldByJob);
                 if (expired is null) continue;
                 _logger.LogWarning(
                     "batch-flight-claim-expired batch={BatchId} project={Project} stage={Stage} expiry={Expiry} outcome={Outcome} owner={Owner}",
@@ -319,20 +343,43 @@ public sealed partial class BatchGatePilotService
     }
 
     /// <summary>
+    /// The job a reserving claim waits on (AGT-3882): a running per-task
+    /// integration that holds the project reservation, else the oldest
+    /// approved push that must reach origin first. Null for other steps.
+    /// </summary>
+    private (bool PerTaskJob, string? Description) ReservationHolder(BatchFlightClaim claim)
+    {
+        if (claim.Stage != BatchFlightStage.Reserving || _reservations is null) return (false, null);
+        if (_reservations.PerTaskHolder(claim.Project) is { } holder)
+            return (true, $"{holder.Kind} {holder.TaskKey ?? "(unnamed)"} (since {holder.SinceUtc:O})");
+        return _reservations.GetWait(claim.Project) is { } push
+            ? (false, $"integration-push {push.JobId} (pending since {push.SinceUtc:O})")
+            : (false, null);
+    }
+
+    /// <summary>
     /// The owner of a claim is gone when it ran on this machine under a process
-    /// id that no longer runs; a restart then frees the slot without waiting
-    /// for the heartbeat to lapse.
+    /// that no longer runs; a restart then frees the slot without waiting for
+    /// the heartbeat to lapse. An owner that names a start time is also gone
+    /// when its process id now runs a later process, this one included: a
+    /// restarted server in a container reuses its process id. Without a start
+    /// time (an owner a pre-AGT-3857 build wrote) this process's own id counts
+    /// as alive, because several pilots of one test process share it.
     /// </summary>
     private bool OwnerGone(string owner)
     {
         var parts = owner.Split('/');
-        if (parts.Length != 3 || owner == _claimOwner
+        if (parts.Length is not (3 or 4) || owner == _claimOwner
             || !string.Equals(parts[0], Environment.MachineName, StringComparison.OrdinalIgnoreCase)
-            || !int.TryParse(parts[1], out var pid) || pid == Environment.ProcessId) return false;
+            || !int.TryParse(parts[1], out var pid)) return false;
+        long? started = parts.Length == 4 && long.TryParse(parts[2], out var ticks) && ticks > 0 ? ticks : null;
+        if (pid == Environment.ProcessId)
+            return started is { } own && ProcessStartTicks.Value > 0 && own != ProcessStartTicks.Value;
         try
         {
             using var process = System.Diagnostics.Process.GetProcessById(pid);
-            return process.HasExited;
+            return process.HasExited
+                || started is { } recorded && StartTicks(process) is { } current && current != recorded;
         }
         catch (ArgumentException) { return true; }
         catch (InvalidOperationException) { return true; }
@@ -359,7 +406,8 @@ public sealed partial class BatchGatePilotService
         return _store.ListManifests()
             .Where(other => other.Members.Any(member => members.Contains((member.TaskKey, member.RunAttempt))))
             .Sum(other => _store.StateHistory(other.BatchId)
-                .Count(state => state.FlightClaimExpiry == BatchFlightClaimExpiry.StageDeadlinePassed));
+                .Count(state => state.FlightClaimExpiry is BatchFlightClaimExpiry.StageDeadlinePassed
+                    or BatchFlightClaimExpiry.ReservationHeldByJob));
     }
 
     /// <summary>
@@ -475,7 +523,7 @@ public sealed partial class BatchGatePilotService
     {
         var end = expired.End!;
         var reservation = expired.Stage == BatchFlightStage.Reserving
-            && end.Expiry == BatchFlightClaimExpiry.StageDeadlinePassed;
+            && end.Expiry is BatchFlightClaimExpiry.StageDeadlinePassed or BatchFlightClaimExpiry.ReservationHeldByJob;
         try
         {
             var pending = _store.ListPending();

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Projects;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Secrets;
 
@@ -68,21 +69,53 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
         if (declared.Kind == "production" && approvedBy is null)
             throw new SecretAccessDeniedException("approval-required", "Production binding requires an approver.");
         var binding = new ProjectSecretBinding(name, parsed.ToString(), actor, clock.GetUtcNow().UtcDateTime, approvedBy);
+        lock (_gate) Write(project, environment, Read(project, environment).Where(item => item.Name != name).Append(binding));
+        return binding;
+    }
+
+    /// <summary>Studio binds the credential it generated for a managed database (AGT-3877); no person chose the value.</summary>
+    public const string ManagedDatabaseActor = "studio:managed-database";
+
+    /// <summary>
+    /// Binds a managed database credential in the environment's own scope. The
+    /// repository approved the database through project.yml and a deploy, and
+    /// the value never left Studio, so production needs no separate approver.
+    /// </summary>
+    public ProjectSecretBinding BindManagedDatabase(string project, string environment, string name)
+    {
+        if (!name.StartsWith(ProjectDatabaseVocabulary.CredentialPrefix, StringComparison.Ordinal))
+            throw new SecretValidationException("binding-scope-denied", "Only managed database credentials bind without a declaration.");
+        var reference = new SecretReference(SecretScope.ForEnvironment(project, environment), name).ToString();
+        var binding = new ProjectSecretBinding(name, reference, ManagedDatabaseActor, clock.GetUtcNow().UtcDateTime,
+            ManagedDatabaseActor);
+        lock (_gate) Write(project, environment, Read(project, environment).Where(item => item.Name != name).Append(binding));
+        return binding;
+    }
+
+    /// <summary>Removes the binding of a managed database credential after its data was deleted.</summary>
+    public void UnbindManagedDatabase(string project, string environment, string name)
+    {
         lock (_gate)
         {
-            var entries = Read(project, environment).Where(item => item.Name != name).Append(binding).ToArray();
-            var path = PathFor(project, environment);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                File.WriteAllText(temporary, JsonSerializer.Serialize(entries, _json));
-                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-                File.Move(temporary, path, true);
-            }
-            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            var entries = Read(project, environment);
+            if (entries.Any(item => item.Name == name && item.BoundBy == ManagedDatabaseActor))
+                Write(project, environment, entries.Where(item => item.Name != name));
         }
-        return binding;
+    }
+
+    private void Write(string project, string environment, IEnumerable<ProjectSecretBinding> bindings)
+    {
+        var entries = bindings.ToArray();
+        var path = PathFor(project, environment);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(entries, _json));
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.Move(temporary, path, true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
     public async Task<ProjectSecretPreflight> CheckAsync(string project, string environment, CancellationToken ct = default)

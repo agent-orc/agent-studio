@@ -45,6 +45,8 @@ test('fresh local installation shows no invented runner and explains unavailable
   await expect(select.locator('option')).toHaveCount(1, { timeout: 30_000 });
   await expect(select.locator('option')).toContainText(['Local (Local coding is disabled)']);
   await expect(select.locator('option')).toHaveJSProperty('disabled', true);
+  await expect(card.getByTestId('project-execution-probe')).toBeDisabled();
+  await expect(card).toContainText('Select a remote runner to check delivery readiness.');
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await card.screenshot({ path: path.join(shotDir, `fresh-execution--${theme}.png`) });
@@ -255,4 +257,63 @@ test('shows the assigned host project delivery failure beside provider refusals'
   await expect(failure).toContainText('permission denied');
   await expect(refusal).toContainText('gpt-6-astra');
   await card.screenshot({ path: path.join(SCREENSHOT_DIR, 'project-delivery-preflight-failed-dark--mocked.png') });
+});
+
+test('shows server readiness for a main integration branch beside passed delivery preflight', async ({ page, devBackend }) => {
+  const projectName = 'Agent Studio Worktree';
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
+  }));
+  await page.route('**/api/watch-paths', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify([{ name: projectName, path: devBackend.workspace, rootPath: devBackend.workspace }]),
+  }));
+  await page.route('**/api/projects/settings', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ [projectName]: {
+      pickupMode: 'auto', executionLocation: 'agent-runner-01', integrationBranch: 'main',
+    } }),
+  }));
+  await page.route('**/api/clients', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify([{
+      id: 'agent-runner-01', displayName: 'agent-runner-01', kind: 'service',
+      registeredAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(),
+      runnerProjectPreflights: [{
+        projectId: 'PROJ-001', projectName, targetBranch: 'main', status: 'ready',
+        detail: 'write probe created and removed', checkedAt: new Date().toISOString(),
+      }],
+    }]),
+  }));
+  await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify([{
+      runnerId: 'agent-runner-01', name: 'agent-runner-01', lastSeenAt: new Date().toISOString(),
+      capabilities: [{ key: 'executor:coding', isFresh: true, healthState: 'healthy', advertisedStatus: 'ready' }],
+      hostAdmission: { admissionState: 'open' },
+    }]),
+  }));
+  await page.route('**/api/projects/*/execution-readiness-probe', async route => {
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().postDataJSON()).toEqual({ hostId: 'agent-runner-01' });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+      { key: 'code', label: 'Code channel', passed: true, detail: 'Delivery preflight proved repository access.' },
+      { key: 'branch', label: 'Integration branch', passed: true, detail: 'Integration branch main was verified.' },
+      { key: 'toolchain', label: 'Toolchain', passed: true, detail: 'Detected stack is ready.' },
+      { key: 'noop', label: 'Host readiness', passed: true, detail: 'Coding host is online.' },
+    ]) });
+  });
+
+  await page.goto(`/#/projects/${slugFor(projectName)}/settings`, { waitUntil: 'domcontentloaded' });
+  const card = page.getByTestId('project-execution-card');
+  await expect(card.getByTestId('project-delivery-preflight')).toContainText('Delivery preflight passed');
+  await card.getByTestId('project-execution-probe').click();
+  await expect(card.getByTestId('project-execution-ready')).toBeVisible();
+  await expect(card.getByTestId('project-execution-check-branch')).toContainText('Integration branch main');
+  const shotDir = process.env.JOB_RESULTS_DIR ?? SCREENSHOT_DIR;
+  fs.mkdirSync(shotDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await card.screenshot({ path: path.join(shotDir, `main-integration-probe--${theme}.png`) });
+  }
 });

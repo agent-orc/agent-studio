@@ -1,7 +1,7 @@
 <div class="deploy-area" data-testid="project-deploy-area">
   <header class="deploy-area__head">
     <div><p class="deploy-eyebrow">{{ projectName() }} / Project delivery</p><h1>Deploy</h1><p>Environments, releases, and the path to Production.</p></div>
-    <button type="button" class="deploy-area__refresh" data-testid="deploy-refresh" (click)="refresh()">Refresh</button>
+    <button type="button" class="deploy-area__refresh" data-testid="deploy-refresh" (click)="refresh()" [disabled]="checkoutMissing()">Refresh</button>
   </header>
   <nav class="deploy-tabs" aria-label="Deploy views">
     <button type="button" data-testid="deploy-tab-overview" [attr.aria-current]="view() === 'overview' ? 'page' : null" (click)="show('overview')">Overview</button>
@@ -14,10 +14,23 @@
     <button type="button" data-testid="deploy-tab-runbooks" [attr.aria-current]="view() === 'runbooks' ? 'page' : null" (click)="show('runbooks')">Runbooks</button>
     <button type="button" data-testid="deploy-tab-operations" [attr.aria-current]="view() === 'operations' ? 'page' : null" (click)="show('operations')">Operations</button>
   </nav>
+  @if (checkoutMissing()) {
+    <section class="deploy-section" role="status" data-testid="deploy-checkout-missing">
+      <h2>Server checkout needed</h2>
+      <p>This project needs a server checkout before Deploy is available. Create the checkout in Project Settings.</p>
+    </section>
+  } @else {
   @if (notices().length) {
     <div class="deploy-area__notices" role="status" data-testid="deploy-source-notices">
       @for (notice of notices(); track notice) { <p>{{ notice }}</p> }
     </div>
+  }
+  @if (releaseRefusal(); as refusal) {
+    <section class="deploy-area__refusal" role="status" data-testid="deploy-release-refusal">
+      <h2>Release refused</h2>
+      <p>Commit <code>{{ refusal.commitSha.slice(0, 12) }}</code> (delivery.fullSuite: {{ refusal.mode }}): {{ refusal.reason }}</p>
+      @if (refusal.nextStep) { <p data-testid="deploy-release-refusal-next">Next step: {{ refusal.nextStep }}</p> }
+    </section>
   }
   <div class="deploy-area__body" [class.deploy-area__body--drawer]="selectedRun()">
     <div class="deploy-area__main">
@@ -42,6 +55,8 @@
           <app-environment-health-panel [projectName]="projectName()" />
           @defer { <app-project-operations [projectName]="projectName()" (openRelease)="openRelease($event)" (openCard)="openCard($event)" /> }
           @placeholder { <p>Loading operations…</p> }
+          @defer (on idle) { <app-managed-databases-panel [projectName]="projectName()" /> }
+          @placeholder { <p>Loading managed databases…</p> }
           @defer (on idle) { <app-hosted-data-panel [projectName]="projectName()" /> }
           @placeholder { <p>Loading hosted data…</p> }
         }
@@ -64,4 +79,6 @@
       @placeholder { <p>Loading run details…</p> }
     } @else if (fetchedRun()?.status === 'loading') { <p class="deploy-muted" role="status" data-testid="deploy-run-fetching">Loading run details…</p> }
   </div>
+  }
 </div>
+<app-local-owner-dialog />

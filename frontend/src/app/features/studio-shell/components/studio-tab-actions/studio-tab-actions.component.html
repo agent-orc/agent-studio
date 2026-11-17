@@ -124,7 +124,7 @@
   @if (triage(); as triageView) {
     @if (triageView.hasActions) {
       <span class="studio-tab-actions-sep" aria-hidden="true"></span>
-      <div class="studio-tab-action__triage" data-testid="studio-triage-panel" data-triage-root>
+      <div class="studio-tab-action__triage" data-testid="studio-triage-panel" data-triage-root [appDecisionFocus]="detail.info">
         @if (triageView.refusal; as refusal) {
           <app-acceptance-refusal [refusal]="refusal" [job]="detail.info" [disabled]="mutationsBlocked()" />
         }
@@ -139,6 +139,8 @@
                   [appPendingButton]="triageView.actingId === primaryId"
                   [pendingLabel]="triageView.primaryLabel + '…'"
                   [cacTooltip]="triageView.primaryTooltip"
+                  [attr.aria-keyshortcuts]="primaryShortcut.keys"
+                  [attr.aria-description]="primaryShortcut.description"
                   (click)="triagePrimary.emit()">
             @if (triageView.awaitingGit) {
               <span class="studio-tab-action__skeleton" aria-hidden="true"></span>

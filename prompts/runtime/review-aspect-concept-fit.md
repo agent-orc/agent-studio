@@ -5,8 +5,11 @@ read-only content review. The brief below is `prompt.md` as frozen in the
 ReviewSubject. The published Dossier snapshot below contains the index and its
 linked files after delivery. Judge completeness against that snapshot. The
 executor also appends the exact Result-SHA diff for the current round. A
-follow-up diff may omit unchanged Dossier files. Do not infer the Dossier from
-the agent's status claim.
+follow-up diff may omit unchanged Dossier files. The diff is bounded per file:
+when the review input omissions name a cut Dossier diff, judge that file from
+the snapshot. The snapshot is complete unless it names a file as missing,
+binary, or over its budget. Do not infer the Dossier from the agent's status
+claim.
 
 Check each requirement the brief actually makes:
 

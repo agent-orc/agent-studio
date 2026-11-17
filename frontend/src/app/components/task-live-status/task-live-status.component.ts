@@ -10,6 +10,7 @@ import { TaskReferenceNavigationService } from '../../services/task-reference-na
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
 import { openReviewLossHost, reviewLossHeadline, type ReviewLossHeadline } from './review-loss-headline';
+import { reviewUnclaimableHeadline } from './review-unclaimable-headline';
 import { BatchGateService } from '../../services/batch-gate.service';
 import { batchMemberFor } from '../../models/batch-gate.model';
 import { batchAction, humanReviewAction, nextForHold, nextForTask, postProcessingWait,
@@ -35,6 +36,8 @@ interface LiveStatusView {
   /** AGT-3579: runner reason code when the runner is not picking this card. */
   waitReason?: string;
   loss?: ReviewLossHeadline;
+  /** AGT-3840: the key the review executor lacks, with its host as a link. */
+  unclaimable?: ReviewLossHeadline;
   /** AGT-3617: the cause card this card is held behind, linked from the headline. */
   hold?: CauseHold;
 }
@@ -101,6 +104,10 @@ export class TaskLiveStatusComponent {
   readonly view = computed<LiveStatusView | null>(() => {
     const task = this.task();
     const status = task.liveStatus;
+    if (task.state === TaskState.Escalated) return {
+      tone: 'stalled', headline: 'Operator decision needed', detail: null,
+      next: ['Operator decision'], attempt: status?.attempt ?? null,
+    };
     const causeHeld = causeHold(task);
     const perTask = perTaskGateFor(this.batchGate.state(task.projectName)(), task);
     if (perTask && task.state === TaskState.AutoReview) return { ...perTaskGateView(perTask), attempt: status?.attempt ?? null };
@@ -201,9 +208,22 @@ export class TaskLiveStatusComponent {
         attempt: status.attempt,
       };
     }
+    // AGT-3840: a refused claim names the missing key and its host ahead of
+    // host load; the probe detail is the detail line.
+    const unclaimable = reviewUnclaimableHeadline(status.queue);
+    if (unclaimable) {
+      return {
+        tone: 'stalled',
+        headline: unclaimable.text,
+        unclaimable,
+        detail: status.queue?.unclaimable?.detail || activityDetail(task, status.latestEventAt, this.now()),
+        next,
+        attempt: status.attempt,
+      };
+    }
     // AGT-3690: a lost review names the cause, the host (a link) and the retry.
-    const loss = reviewLossHeadline(status.queue, clock);
-    const lossTone = status.queue?.state === 'retry-scheduled' ? 'waiting' : 'stalled';
+    const loss = reviewLossHeadline(status.queue, clock, this.now());
+    const lossTone = status.queue?.state === 'retry-scheduled' && !loss?.overdue ? 'waiting' : 'stalled';
     if (loss) return { tone: lossTone, headline: loss.text, loss, detail: activityDetail(task, status.latestEventAt, this.now()), next, attempt: status.attempt };
     if (status.queue?.state === 'stalled') {
       // The headline carries the call to action; the reason names the outcome.

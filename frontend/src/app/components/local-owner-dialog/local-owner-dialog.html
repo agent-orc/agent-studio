@@ -1,0 +1,10 @@
+@if (session.request(); as pending) {
+  <app-dialog eyebrow="Owner account" title="Sign in to continue" testid="local-owner-dialog"
+    (closeRequest)="session.cancel()" (backdropClick)="session.cancel()">
+    <p class="local-owner-dialog__purpose" data-testid="local-owner-purpose">{{ pending.purpose }}</p>
+    <app-local-owner-sign-in [startOpen]="true" (signedIn)="session.complete()" />
+    <div footer>
+      <button type="button" class="btn btn--ghost" data-testid="local-owner-dialog-cancel" (click)="session.cancel()">Cancel</button>
+    </div>
+  </app-dialog>
+}

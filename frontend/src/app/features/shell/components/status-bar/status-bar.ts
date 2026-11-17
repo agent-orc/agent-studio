@@ -34,6 +34,7 @@ import { CrashRecoveryPromptComponent } from '../crash-recovery-prompt/crash-rec
 import { summarizeStatusBarHostLoad, summarizeStatusBarSlotsByRole } from './status-bar-host-load';
 import { describeStatusBarReviewLane, summarizeStatusBarReviewLane } from './status-bar-review-lane';
 import { withRouteSegment } from '../../../../services/url-hash.util';
+import { nameWithVisibleText } from '../../../../utils/accessible-name';
 
 const HOST_LOAD_REFRESH_MS = 30_000;
 
@@ -75,6 +76,16 @@ export class StatusBarComponent implements OnInit, OnDestroy {
     || (this.usage.snapshot()?.runs ?? []).some(run => run.effectiveCli === cli.cliId)));
   usageView(cli: UsageCli) {
     return buildCliChipView(cli.cliId, cli, this.usage.snapshot()?.timeZone ?? null, Date.now(), [], [], this.usage.readFailed());
+  }
+  /** The chip's visible text first, then the spoken windows (WCAG 2.5.3). */
+  usageName(cli: UsageCli): string {
+    const v = this.usageView(cli);
+    return nameWithVisibleText([
+      v.name,
+      v.weekly.reported ? `WK ${v.weekly.value}` : '',
+      v.session.reported ? `Session ${v.session.value}` : '',
+      v.state === 'stale' ? this.age(cli.fetchedAt) : '',
+    ].join(' '), v.ariaLabel);
   }
   costView() { return buildCostChipView(this.usage.snapshot()?.cost ?? null, Date.now(), [], this.usage.readFailed()); }
   age(iso: string | null | undefined): string {

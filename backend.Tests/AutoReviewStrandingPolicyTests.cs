@@ -106,6 +106,16 @@ public sealed class AutoReviewStrandingPolicyTests
     }
 
     [Fact]
+    public void Undo_does_not_reset_ownerless_age_when_the_delivery_has_not_changed()
+    {
+        var now = new DateTime(2026, 11, 15, 22, 45, 0, DateTimeKind.Utc);
+        var ownerLostAt = now.AddMinutes(-18);
+        var undoLaneEntry = now.AddSeconds(-30);
+        Assert.Equal(TimeSpan.FromMinutes(18), AutoReviewStrandingWatchdog.TimeWithoutOwner(
+            now, undoLaneEntry, null, null, null, null, ownerLostAt));
+    }
+
+    [Fact]
     public void Report_only_summary_failure_restarts_post_processing()
         => Assert.Equal(AutoReviewStrandingAction.StartStep,
             AutoReviewStrandingPolicy.Decide(Stranded() with { ReportOnly = true, HasCompletedRun = false }));
@@ -249,6 +259,30 @@ public sealed class AutoReviewStrandingPolicyTests
             AutoReviewStrandingPolicy.Decide(Stranded() with
             {
                 HasReview = true, ScheduledRetryOverdue = TimeSpan.FromMinutes(31),
+            }));
+
+    // AGT-3848 (S6-F2): the scheduler ticks every 15 seconds, so a retry that
+    // stays overdue past the overdue limit has no owner, long before the threshold.
+    [Theory]
+    [InlineData(5 * 60, AutoReviewStrandingAction.Leave)]
+    [InlineData(5 * 60 + 1, AutoReviewStrandingAction.Escalate)]
+    public void Overdue_retry_owns_the_card_only_for_the_overdue_limit(int overdueSeconds,
+        AutoReviewStrandingAction expected)
+        => Assert.Equal(expected,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                WithoutOwner = TimeSpan.FromMinutes(6), HasReview = true,
+                ScheduledRetryOverdue = TimeSpan.FromSeconds(overdueSeconds),
+                ScheduledRetryOverdueLimit = TimeSpan.FromMinutes(5),
+            }));
+
+    [Fact]
+    public void Overdue_limit_above_the_threshold_is_capped_at_the_threshold()
+        => Assert.Equal(AutoReviewStrandingAction.Escalate,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                HasReview = true, ScheduledRetryOverdue = TimeSpan.FromMinutes(31),
+                ScheduledRetryOverdueLimit = TimeSpan.FromHours(2),
             }));
 
     [Fact]

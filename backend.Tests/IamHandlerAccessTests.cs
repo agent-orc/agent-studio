@@ -23,19 +23,122 @@ namespace AgentStudio.Tests;
 /// and 2): body-addressed task writes are decided per affected project against
 /// the role bindings, and handler role checks see the role that covers the
 /// addressed project, not the strongest role the user holds anywhere.
+///
+/// <para>The tests share one host (AGT-3861). <see cref="Host.Reset"/> gives
+/// each test the two fixture projects and an empty secret store, as a fresh
+/// host showed them. The first owner is bootstrapped once; every other user a
+/// test signs in is one it invites under a name of its own. Passwords are
+/// hashed with <see cref="LowCostPasswordHashes"/>, since each invitation and
+/// sign-in otherwise costs a 600,000-iteration key derivation.</para>
 /// </summary>
 [Collection("IamAuthorizationBurst")]
-public sealed class IamHandlerAccessTests : IDisposable
+[TestCaseOrderer(SharedHostTestOrder.TypeName, SharedHostTestOrder.AssemblyName)]
+public sealed class IamHandlerAccessTests : IClassFixture<IamHandlerAccessTests.Host>
 {
     private const string Password = "correct horse battery staple!";
     private const string AlphaCommit = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
     private const string BetaCommit = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
-    private readonly string _workspace = TestTempRoot.Create("iam-handlers");
+    private readonly Host _host;
+    private readonly string _workspace;
+
+    public IamHandlerAccessTests(Host host)
+    {
+        _host = host;
+        _workspace = host.Workspace;
+        host.Reset();
+    }
+
+    /// <summary>The networked host over the projects alpha and beta, with no hosted service running.</summary>
+    public sealed class Host() : SharedTestHost("iam-handlers-")
+    {
+        public string Workspace => Path.Combine(Root, "workspace");
+
+        public string ProjectPath(string project) => Path.Combine(Workspace, "projects", project);
+
+        protected override void ConfigureHost(IWebHostBuilder builder)
+        {
+            builder.UseEnvironment("Test");
+            // Handler authorization is exercised by requests. Startup workers
+            // would otherwise run Git catch-up against these non-repository
+            // fixtures while the requests are being measured.
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.AddSingleton(provider => LowCostPasswordHashes.Store(provider));
+            });
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = Workspace,
+                ["Security:Profile"] = "networked",
+                ["AllowedHosts"] = "studio.test",
+                ["DeliveryChain:Guarded"] = "false",
+                ["Secrets:KeyFile"] = Path.Combine(Root, "keys", "secrets.kek"),
+                ["Secrets:KeyEnvironmentVariable"] = "AGENT_STUDIO_TEST_UNSET_KEK_" + Guid.NewGuid().ToString("N"),
+                ["WatchPaths:0:Name"] = "alpha",
+                ["WatchPaths:0:Path"] = ProjectPath("alpha"),
+                ["WatchPaths:0:RootPath"] = ProjectPath("alpha"),
+                ["WatchPaths:1:Name"] = "beta",
+                ["WatchPaths:1:Path"] = ProjectPath("beta"),
+                ["WatchPaths:1:RootPath"] = ProjectPath("beta"),
+            }));
+        }
+
+        public override async Task InitializeAsync()
+        {
+            SeedProjects();
+            await base.InitializeAsync();
+            Services.GetRequiredService<AccessSecurityStore>().Bootstrap(new BootstrapRequest("first.owner", Password, null));
+        }
+
+        /// <summary>
+        /// Puts back the two projects with one backlog card each, removes every
+        /// secret and every supervisor log, and rescans. The project folders
+        /// stay, so the registry keeps their identities.
+        /// </summary>
+        public void Reset()
+        {
+            foreach (var project in new[] { "alpha", "beta" })
+            {
+                foreach (var entry in new DirectoryInfo(ProjectPath(project)).EnumerateFileSystemInfos())
+                {
+                    if (entry is DirectoryInfo directory) directory.Delete(recursive: true);
+                    else entry.Delete();
+                }
+            }
+            TestTempRoot.TryDelete(SecretStorePaths.DataRoot(Services.GetRequiredService<IConfiguration>()));
+            TestTempRoot.TryDelete(Path.Combine(Workspace, "logs", "meta"));
+            SeedProjects();
+            Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        }
+
+        private void SeedProjects()
+        {
+            foreach (var project in new[] { "alpha", "beta" })
+            {
+                foreach (var state in TaskStates.All)
+                    Directory.CreateDirectory(Path.Combine(ProjectPath(project), state));
+                var card = Path.Combine(ProjectPath(project), TaskStates.Backlog, project + "-card");
+                Directory.CreateDirectory(card);
+                File.WriteAllText(Path.Combine(card, "task.json"), JsonSerializer.Serialize(new
+                {
+                    id = project + "-card", title = project + " card", state = TaskStates.Backlog, order = 1, agent = "codex", kind = "task",
+                    commits = new[] { new
+                    {
+                        sha = project == "alpha" ? AlphaCommit : BetaCommit,
+                        message = project + " change",
+                        filesChanged = 0,
+                        files = Array.Empty<string>(),
+                    } },
+                }));
+                File.WriteAllText(Path.Combine(card, "prompt.md"), "Fixture card.");
+            }
+        }
+    }
 
     [Fact]
     public async Task Concurrent_scoped_and_owner_task_reads_complete_without_blocking_index_refresh()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var owner = Client(factory, Login(factory, "first.owner"));
         using var developer = Client(factory, Invite(factory, "burst.developer",
             new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
@@ -97,7 +200,7 @@ public sealed class IamHandlerAccessTests : IDisposable
         {
             id = "beta-card", title = "shadow", state = TaskStates.Backlog, kind = "task", order = 2,
         }));
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var owner = Client(factory, Login(factory, "first.owner"));
         using var alpha = Client(factory, Invite(factory, "collision.alpha",
             new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
@@ -130,7 +233,7 @@ public sealed class IamHandlerAccessTests : IDisposable
         {
             id = prefix, title = "Local prefix card", state = TaskStates.Backlog, kind = "task", order = 2,
         }));
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var alpha = Client(factory, Invite(factory, "prefix.alpha",
             new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
         var url = "/api/tasks/" + prefix + "?watchPath=" + Uri.EscapeDataString(ProjectPath("beta"));
@@ -144,7 +247,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Foreign_short_code_id_is_rejected_and_minted_key_skips_legacy_collision()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var projects = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
         var alphaProject = projects.List().Single(project => project.DisplayName == "alpha");
         var betaProject = projects.List().Single(project => project.DisplayName == "beta");
@@ -173,7 +276,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Title_derived_ids_take_a_suffix_across_projects_and_foreign_key_patterns()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var owner = Client(factory, Login(factory, "first.owner"));
         foreach (var project in new[] { "alpha", "beta" })
         {
@@ -206,7 +309,7 @@ public sealed class IamHandlerAccessTests : IDisposable
         {
             id = prefix, title = "Foreign UTF-8 prefix", state = TaskStates.Backlog, kind = "task", order = 2,
         }));
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var owner = Client(factory, Login(factory, "first.owner"));
         using var created = await owner.PostAsJsonAsync("/api/tasks",
             new { id = prefix + "-alpha", title = "Prefix collision", watchPath = ProjectPath("alpha") });
@@ -230,7 +333,7 @@ public sealed class IamHandlerAccessTests : IDisposable
                 id, title = id, state, kind = "task", order = 2,
             }));
         }
-        using var factory = BuildFactory();
+        var factory = Ready();
         factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
         var outcome = factory.Services.GetRequiredService<TaskStateMachine>()
             .MoveJob("duplicate", TaskStates.Archive, ProjectPath("alpha"));
@@ -250,7 +353,7 @@ public sealed class IamHandlerAccessTests : IDisposable
                 id = "duplicate", title = "duplicate", state, kind = "task", order = 2,
             }));
         }
-        using var factory = BuildFactory();
+        var factory = Ready();
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
         var mutations = factory.Services.GetRequiredService<TaskMutationService>();
@@ -273,7 +376,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Scoped_cli_reads_use_static_models_and_do_not_start_refresh()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var viewer = Client(factory, Invite(factory, "cli.viewer",
             new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
 
@@ -290,7 +393,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Project_viewer_sees_only_its_projects_workspace_screenshots()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         foreach (var project in new[] { "alpha", "beta" })
         {
             var results = Path.Combine(ProjectPath(project), TaskStates.Backlog, project + "-card", "results");
@@ -311,7 +414,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Project_viewer_cannot_read_workspace_quota_auto_review_or_host_state()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var viewer = Client(factory, Invite(factory, "collections.viewer",
             new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
         foreach (var path in new[]
@@ -331,7 +434,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task A_viewer_of_beta_who_develops_alpha_cannot_write_beta_through_body_addressed_routes()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var user = Invite(factory, "split.user",
             new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("beta")),
             new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")));
@@ -363,7 +466,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Change_project_requires_write_permission_and_a_non_product_role_in_the_destination()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var callers = new[]
         {
             Client(factory, Invite(factory, "move.viewer", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")),
@@ -385,7 +488,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task New_operator_and_review_routes_have_permissions_in_the_networked_host()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var owner = Client(factory, Login(factory, "first.owner"));
         using var developer = Client(factory, Invite(factory, "route.dev",
             new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
@@ -416,7 +519,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Owner_reaches_not_found_for_an_unknown_task_id()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var owner = Client(factory, Login(factory, "first.owner"));
         using var response = await owner.GetAsync("/api/tasks/no-such-task-id");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -425,7 +528,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Review_attempt_read_is_limited_to_the_attempts_project()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         var sha = new string('a', 40);
         var run = Assert.IsType<RunAttemptDto>(authority.AcquireRun(
@@ -472,7 +575,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Canonical_review_attempt_key_resolves_its_project_without_a_task_folder()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var projects = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
         var betaId = projects.List().Single(project => project.DisplayName == "beta").Id;
         var taskKey = betaId + "::removed-card";
@@ -500,8 +603,8 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Project_member_cannot_read_host_cli_state_or_run_the_local_probe()
     {
-        using var factory = BuildFactory();
-        using var viewer = Client(factory, Invite(factory, "cli.viewer",
+        var factory = Ready();
+        using var viewer = Client(factory, Invite(factory, "cli.host.viewer",
             new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
         foreach (var route in new[]
                  {
@@ -520,7 +623,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Pipeline_catalogue_checks_its_projectName_query_address()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var developer = Client(factory, Invite(factory, "catalogue.developer",
             new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
         using var own = await developer.GetAsync("/api/projects/pipeline-catalogue?projectName=alpha");
@@ -532,7 +635,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Project_bindings_cannot_read_unaddressed_attempts_or_arbitrary_host_folders()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         var run = Assert.IsType<RunAttemptDto>(authority.AcquireRun(
             "beta-card", "beta", null, "runner", "host", 60, "iam-attempt-run").RunAttempt);
@@ -568,7 +671,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task A_contributor_of_beta_who_develops_alpha_keeps_the_product_transitions_in_beta()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var user = Invite(factory, "product.dev",
             new IamGrantRequest(IamRoles.Contributor, IamScope.ForProject("beta")),
             new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")));
@@ -600,7 +703,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Literal_task_routes_serve_the_owner_workspace_bindings_api_tokens_and_scoped_developers()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
         var now = factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
@@ -637,7 +740,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Orphan_folder_cleanup_needs_workspace_operate()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var alphaDeveloper = Client(factory, Invite(factory, "orphan.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
         using var alphaAdmin = Client(factory, Invite(factory, "orphan.project.admin", new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
         using var workspaceDeveloper = Client(factory, Invite(factory, "orphan.workspace.dev", new IamGrantRequest(IamRoles.Developer, IamScope.Workspace)));
@@ -661,7 +764,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task An_environment_binding_does_not_lift_a_contributor_above_the_product_role_in_its_project()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var client = Client(factory, Invite(factory, "stage.contributor",
             new IamGrantRequest(IamRoles.Contributor, IamScope.ForProject("beta")),
             new IamGrantRequest(IamRoles.Developer, IamScope.ForEnvironment("beta", IamEnvironments.Stage))));
@@ -683,7 +786,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Operator_override_completion_needs_admin_or_owner()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var developer = Client(factory, Invite(factory, "override.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
         using var admin = Client(factory, Invite(factory, "override.admin", new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
         var request = new MoveJobRequest
@@ -706,7 +809,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [InlineData("force-fail")]
     public async Task Supervisor_interventions_stop_only_runs_of_the_route_project(string action)
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
         var now = factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
@@ -714,7 +817,7 @@ public sealed class IamHandlerAccessTests : IDisposable
             ["alpha"], now.AddDays(1)), ownerId).Secret;
         var callers = new (string Name, HttpClient Client)[]
         {
-            ("alpha developer", Client(factory, Invite(factory, "supervisor.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))))),
+            ("alpha developer", Client(factory, Invite(factory, "supervisor." + action, new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))))),
             ("alpha-scoped operator api token", BearerClient(factory, alphaToken)),
         };
         var interventions = AgentStudio.Supervisor.SupervisorLogPaths.InterventionsFile(_workspace, "alpha");
@@ -746,7 +849,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Bus_and_runtime_reads_address_their_project()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var client = Client(factory, Invite(factory, "bus.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
 
         foreach (var path in new[] { "/api/bus/beta/messages", "/api/bus/beta/summary", "/api/runtime/beta/events" })
@@ -765,7 +868,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     public async Task Secret_routes_are_decided_by_the_secret_permissions_of_the_bindings()
     {
         WriteEnvironmentDeclaration("alpha", "stage", "stage");
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var developer = Client(factory, Invite(factory, "secret.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
         using var admin = Client(factory, Invite(factory, "secret.admin", new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
         var put = new { name = "DEPLOY_KEY", value = "fixture-value" };
@@ -796,7 +899,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Secret_lists_filter_each_scope_and_workspace_metadata_needs_a_workspace_binding()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var provider = factory.Services.GetRequiredService<ISecretProvider>();
         var actor = SecretActor.Human("first.owner");
         await provider.PutAsync(SecretScope.Workspace, "WORKSPACE_KEY", "fixture-value", actor);
@@ -824,7 +927,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Service_account_secret_write_keeps_a_non_human_actor_in_metadata_and_audit()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
         var account = store.CreateServiceAccount(new CreateServiceAccountRequest("secret-bot", null,
@@ -847,7 +950,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Production_approval_routes_accept_scoped_human_approvers_and_deny_service_accounts()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
         foreach (var (name, scope) in new[]
@@ -887,7 +990,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Deployment_reads_and_operations_use_distinct_permissions()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var viewer = Client(factory, Invite(factory, "deploy.viewer",
             new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
         using var developer = Client(factory, Invite(factory, "deploy.developer",
@@ -923,7 +1026,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Environment_developer_can_request_only_its_declared_deployment_environment()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         WriteEnvironmentDeclaration("alpha", "staging-id", "stage");
         WriteEnvironmentDeclaration("alpha", "preview-id", "other");
         var declarations = factory.Services.GetRequiredService<ProjectEnvironmentService>().Declarations("alpha")!;
@@ -960,7 +1063,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Telemetry_queries_and_ingest_token_management_follow_project_permissions()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         WriteEnvironmentDeclaration("alpha", "stage", "stage");
         WriteEnvironmentDeclaration("beta", "stage", "stage");
         using var developer = Client(factory, Invite(factory, "telemetry.dev",
@@ -988,55 +1091,17 @@ public sealed class IamHandlerAccessTests : IDisposable
         Content = JsonContent.Create(new { watchPath = ProjectPath("alpha"), lane = TaskStates.Archive, folder = "no-such-folder" }),
     };
 
-    private WebApplicationFactory<Program> BuildFactory()
+    /// <summary>
+    /// The shared host, after a rescan of what the test wrote so far: a host
+    /// of its own found those folders in its boot scan.
+    /// </summary>
+    private WebApplicationFactory<Program> Ready()
     {
-        foreach (var project in new[] { "alpha", "beta" })
-        {
-            foreach (var state in TaskStates.All)
-                Directory.CreateDirectory(Path.Combine(ProjectPath(project), state));
-            var card = Path.Combine(ProjectPath(project), TaskStates.Backlog, project + "-card");
-            Directory.CreateDirectory(card);
-            File.WriteAllText(Path.Combine(card, "task.json"), JsonSerializer.Serialize(new
-            {
-                id = project + "-card", title = project + " card", state = TaskStates.Backlog, order = 1, agent = "codex", kind = "task",
-                commits = new[] { new
-                {
-                    sha = project == "alpha" ? AlphaCommit : BetaCommit,
-                    message = project + " change",
-                    filesChanged = 0,
-                    files = Array.Empty<string>(),
-                } },
-            }));
-            File.WriteAllText(Path.Combine(card, "prompt.md"), "Fixture card.");
-        }
-        var factory = new TestHostFactory().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            // Handler authorization is exercised by requests. Startup workers
-            // would otherwise run Git catch-up against these non-repository
-            // fixtures while the requests are being measured.
-            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["TaskRepository"] = _workspace,
-                ["Security:Profile"] = "networked",
-                ["AllowedHosts"] = "studio.test",
-                ["DeliveryChain:Guarded"] = "false",
-                ["Secrets:KeyFile"] = Path.Combine(_workspace + "-keys", "secrets.kek"),
-                ["Secrets:KeyEnvironmentVariable"] = "AGENT_STUDIO_TEST_UNSET_KEK_" + Guid.NewGuid().ToString("N"),
-                ["WatchPaths:0:Name"] = "alpha",
-                ["WatchPaths:0:Path"] = ProjectPath("alpha"),
-                ["WatchPaths:0:RootPath"] = ProjectPath("alpha"),
-                ["WatchPaths:1:Name"] = "beta",
-                ["WatchPaths:1:Path"] = ProjectPath("beta"),
-                ["WatchPaths:1:RootPath"] = ProjectPath("beta"),
-            }));
-        });
-        factory.Services.GetRequiredService<AccessSecurityStore>().Bootstrap(new BootstrapRequest("first.owner", Password, null));
-        return factory;
+        _host.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        return _host.Factory;
     }
 
-    private string ProjectPath(string project) => Path.Combine(_workspace, "projects", project);
+    private string ProjectPath(string project) => _host.ProjectPath(project);
 
     private void WriteEnvironmentDeclaration(string project, string id, string kind)
     {
@@ -1086,11 +1151,5 @@ public sealed class IamHandlerAccessTests : IDisposable
         client.DefaultRequestHeaders.Add("X-CSRF-Token", user.Csrf);
         client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
         return client;
-    }
-
-    public void Dispose()
-    {
-        TestTempRoot.TryDelete(_workspace);
-        TestTempRoot.TryDelete(_workspace + "-keys");
     }
 }

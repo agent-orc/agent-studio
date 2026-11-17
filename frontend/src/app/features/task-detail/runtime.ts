@@ -7,9 +7,11 @@
 export { TaskSelectionService } from './state/task-selection.service';
 export { TriageController } from './state/triage-controller.service';
 export { LanePagerService } from './state/lane-pager.service';
+export { AcceptanceRefusalActions } from './state/acceptance-refusal-actions.service';
 export {
   AcceptanceRefusalStore,
   acceptanceRefusalFor,
+  acceptanceRefusalTooltip,
   type AcceptanceRefusal,
 } from './state/acceptance-refusal.model';
 export {
@@ -27,3 +29,7 @@ export {
   type TriageActionPayload,
   type TriageButton,
 } from './state/triage-actions.model';
+export {
+  TASK_DETAIL_PRIMARY_SHORTCUT,
+  taskDetailPrimaryShortcutTooltip,
+} from './task-detail-keyboard.util';

@@ -1,12 +1,17 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, vi } from 'vitest';
 import type { WorkbenchCatalogue, WorkbenchListItem } from '../../../../models/project-docs.model';
 import { DossierSectionStateService } from '../../../../services/dossier-section-state.service';
 import { ExplorerWorkbenchStateService } from '../../services/explorer-workbench-state.service';
 import { ExplorerWorkbenchListComponent } from './explorer-workbench-list.component';
+import { ServerCheckoutStore } from '../../../server-checkout';
+import { urlProject } from '../../../server-checkout/testing/server-checkout.fixtures';
+import type { RegistryProjectSummary } from '../../../../models/task.model';
+
+const checkoutProject = signal<RegistryProjectSummary | null>(null);
 
 const STORAGE_KEY = 'atp.studio.explorer.workbenches.state.v2';
 
@@ -40,7 +45,8 @@ function catalogue(items: WorkbenchListItem[]): WorkbenchCatalogue {
 async function mount(activeWorkbenchId: string | null = null) {
   await TestBed.configureTestingModule({
     imports: [ExplorerWorkbenchListComponent],
-    providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+      { provide: ServerCheckoutStore, useValue: { projectFor: () => checkoutProject(), statusFor: () => null } }],
   }).compileComponents();
   const fixture = TestBed.createComponent(ExplorerWorkbenchListComponent);
   fixture.componentRef.setInput('projectName', 'Demo');
@@ -61,6 +67,7 @@ describe('ExplorerWorkbenchListComponent', () => {
   let originalScrollIntoView: PropertyDescriptor | undefined;
 
   beforeEach(() => {
+    checkoutProject.set(null);
     sessionStorage.removeItem(STORAGE_KEY);
     for (const key of Object.keys(localStorage)) {
       if (key.startsWith('dossier-overview:')) localStorage.removeItem(key);
@@ -80,6 +87,17 @@ describe('ExplorerWorkbenchListComponent', () => {
     } else {
       Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoView);
     }
+  });
+
+  it('does not refresh workbenches for a URL project until its server checkout exists', async () => {
+    checkoutProject.set(urlProject({ id: 'PROJ-2', displayName: 'Demo' }));
+    const { fixture, component, http } = await mount();
+    http.expectNone('/api/projects/Demo/workbenches');
+    component.toggle();
+    http.expectNone('/api/projects/Demo/workbenches');
+    checkoutProject.set(urlProject({ id: 'PROJ-2', displayName: 'Demo', repositoryPath: '/srv/demo' }));
+    fixture.detectChanges();
+    http.expectOne(request => request.url === '/api/projects/Demo/workbenches').flush(catalogue([]));
   });
 
   it('groups the full catalogue into one-line tree rows with quiet trailing status', async () => {

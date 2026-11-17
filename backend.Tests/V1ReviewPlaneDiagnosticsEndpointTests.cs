@@ -17,6 +17,218 @@ using Contract = AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.Tests;
 
 /// <summary>
+/// What the diagnostics tests of the v1 review-plane mount have in common: the
+/// project, the instance and the requests a review executor sends. Each test
+/// has a runner id of its own, so tests on one host never meet in the
+/// executor registry.
+/// </summary>
+public abstract class V1ReviewPlaneDiagnosticsTestBase
+{
+    protected const string ProjectName = "agent-runner-01";
+    protected const string Instance = "review-host:7373";
+
+    protected string RunnerId { get; } = "review-runner-diagnostics-" + Guid.NewGuid().ToString("N")[..8];
+
+    /// <summary>The watch path of <see cref="ProjectName"/>.</summary>
+    protected abstract string WatchPath { get; }
+
+    protected string FailurePath(string runnerId)
+        => $"/api/v1/runners/{runnerId}/capability-failures";
+
+    protected string OutboxPath(string runnerId)
+        => $"/api/v1/runners/{runnerId}/outbox-status";
+
+    protected Contract.CapabilityFailureRequest Failure(
+        string capabilityKey,
+        string classification,
+        string idempotencyKey,
+        DateTime occurredAt)
+        => new(
+            RunnerId,
+            Instance,
+            capabilityKey,
+            classification,
+            "The review workspace could not be materialized.",
+            occurredAt,
+            idempotencyKey,
+            "review",
+            "rat_diagnostics",
+            7);
+
+    protected Contract.RunnerOutboxStatusRequest Outbox(
+        long lastSequence,
+        long acknowledged,
+        int backlog,
+        long? oldestUnacknowledged)
+        => new(
+            Instance,
+            lastSequence,
+            acknowledged,
+            backlog,
+            oldestUnacknowledged,
+            "pending",
+            "run-diagnostics",
+            null,
+            DateTime.UtcNow);
+
+    protected async Task RegisterReviewExecutorAsync(HttpClient http)
+    {
+        var registration = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}",
+            new Contract.RegisterRunnerRequest(
+                RunnerId,
+                "review-host",
+                Instance,
+                "1.0.0",
+                Contract.TaskServerProtocol.Current,
+                [
+                    Contract.ReviewCapabilities.ReviewExecutor,
+                    Contract.ReviewCapabilities.BaselineComparison,
+                    Contract.ReviewCapabilities.DependencyPreparation,
+                    Contract.ReviewCapabilities.GitMaterialization,
+                    Contract.ReviewCapabilities.SemanticReview,
+                ]));
+        registration.EnsureSuccessStatusCode();
+    }
+
+    protected async Task RegisterReviewExecutor(HttpClient http)
+    {
+        var registration = await http.PutAsJsonAsync($"/api/v1/runners/{RunnerId}", Registration(Instance));
+        registration.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Advertises a review host snapshot with headroom: an unthrottled 12-core
+    /// plane, load 4 on 12 cores and 42 of 62 GB available, observed on the
+    /// advisor's clock so it counts as fresh.
+    /// </summary>
+    protected async Task AdvertiseReviewHostHeadroom(HttpClient http, TimeProvider clock)
+    {
+        var observedAt = clock.GetUtcNow().UtcDateTime;
+        var advertisement = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(
+                RunnerId,
+                Instance,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                observedAt,
+                180,
+                1,
+                [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.DotNet, "toolchain")],
+                Telemetry: new Contract.HostTelemetrySnapshotDto(
+                    observedAt,
+                    CpuPercent: null,
+                    Load1: 4,
+                    Load5: null,
+                    Load15: null,
+                    MemoryUsedBytes: 20L << 30,
+                    MemoryTotalBytes: 62L << 30,
+                    SwapInBytesPerSecond: null,
+                    SwapOutBytesPerSecond: null,
+                    CpuStealPercent: null,
+                    IoWaitPercent: null,
+                    CpuCores: 12,
+                    ActiveSlots: 1,
+                    ReviewPlane: new Contract.ReviewPlaneBudgetDto(
+                        observedAt, "1200000 100000", 12, 1200, 12, 2.4, 480, 3, 900, 0, false))));
+        advertisement.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// A settled run and a pending review for <paramref name="taskKey"/>. The
+    /// card carries the test's runner id, so the attempts and their idempotency
+    /// keys never meet those of another test on a shared host.
+    /// </summary>
+    protected void CreatePendingReviewAttempt(AttemptAuthorityService authority, string taskKey, string sha)
+    {
+        taskKey = $"{taskKey}-{RunnerId}";
+        var run = authority.AcquireRun(
+            taskKey, ProjectName, null, "coding-runner", "coding-host", 60, "acquire-" + taskKey).RunAttempt!;
+        authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "settle-" + taskKey),
+            Outcome = "done",
+            ResultSha = sha,
+        });
+        authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            taskKey, ProjectName, sha, run.AttemptId, "requirements-hash", "policy-hash", [], "review-create-" + taskKey));
+    }
+
+    protected Contract.RegisterRunnerRequest Registration(
+        string instanceId,
+        IReadOnlyList<Contract.RunnerActiveAttempt>? activeAttempts = null)
+        => new(
+            RunnerId,
+            "review-host",
+            instanceId,
+            "1.0.0",
+            Contract.TaskServerProtocol.Current,
+            [
+                Contract.ReviewCapabilities.ReviewExecutor,
+                Contract.ReviewCapabilities.BaselineComparison,
+                Contract.ReviewCapabilities.DependencyPreparation,
+                Contract.ReviewCapabilities.GitMaterialization,
+                Contract.ReviewCapabilities.SemanticReview,
+            ],
+            ActiveAttempts: activeAttempts);
+
+    protected string SeedTask(string taskKey)
+    {
+        var taskFolder = Path.Combine(WatchPath, TaskStates.AutoReview, taskKey);
+        Directory.CreateDirectory(taskFolder);
+        File.WriteAllText(
+            Path.Combine(taskFolder, "task.json"),
+            JsonSerializer.Serialize(new
+            {
+                id = taskKey,
+                key = taskKey,
+                title = "Restart visibility",
+                state = TaskStates.AutoReview,
+                order = 1,
+                agent = "codex",
+                kind = TaskKinds.Task,
+            }));
+        File.WriteAllText(Path.Combine(taskFolder, "prompt.md"), "Preserve review work.");
+        File.WriteAllText(Path.Combine(taskFolder, "status.md"), "Result: pending.");
+        return taskFolder;
+    }
+
+    protected async Task<Contract.ReviewClaimResponse> ClaimAsync(HttpClient http)
+    {
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(RunnerId, Instance, 120, 1));
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+    }
+
+    /// <summary>
+    /// Stamps an authenticated Runner principal, when there is one, on every request. The local
+    /// profile never authenticates one, so this is the only way to exercise the
+    /// v1 mount's per-route identity guard from an in-process client.
+    /// </summary>
+    protected sealed class RunnerPrincipalStartupFilter(Func<string?> runnerId) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, nextMiddleware) =>
+            {
+                if (runnerId() is { } id)
+                {
+                    context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] = new RunnerPrincipal(
+                        id,
+                        id,
+                        "test-credential",
+                        new HashSet<string>(StringComparer.Ordinal));
+                }
+                await nextMiddleware(context);
+            });
+            next(app);
+        };
+    }
+}
+
+/// <summary>
 /// The monolith's v1 review-plane mount must answer the runner's diagnostic
 /// routes instead of 404-ing them: an unmounted
 /// <c>POST /api/v1/runners/{id}/capability-failures</c> is what turned a single
@@ -24,33 +236,129 @@ namespace AgentStudio.Tests;
 /// (AGT-2374). These tests pin the two diagnostic routes, the executor pause a
 /// drained capability causes, and the registration/advertisement that lifts it
 /// again.
+///
+/// <para>The tests share one host (AGT-3861): each registers its own runner id,
+/// reads only that runner's snapshot and gets a parallelism advisor of its
+/// own, and <see cref="Host.Reset"/> empties the project and the review queue
+/// and drops the runner principal and baseline a test chose. The tests that
+/// restart the monolith are in <see cref="V1ReviewPlaneDiagnosticsOwnHostTests"/>.</para>
 /// </summary>
-public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
+[TestCaseOrderer(SharedHostTestOrder.TypeName, SharedHostTestOrder.AssemblyName)]
+public sealed class V1ReviewPlaneDiagnosticsEndpointTests
+    : V1ReviewPlaneDiagnosticsTestBase, IClassFixture<V1ReviewPlaneDiagnosticsEndpointTests.Host>
 {
-    private const string ProjectName = "agent-runner-01";
-    private const string RunnerId = "review-runner-diagnostics";
-    private const string Instance = "review-host:7373";
+    private readonly Host _host;
 
-    private readonly string _workspace;
-    private readonly string _watchPath;
-
-    public V1ReviewPlaneDiagnosticsEndpointTests()
+    public V1ReviewPlaneDiagnosticsEndpointTests(Host host)
     {
-        _workspace = Path.Combine(Path.GetTempPath(), "atp-v1-diagnostics-" + Guid.NewGuid().ToString("N"));
-        _watchPath = Path.Combine(_workspace, "projects", ProjectName);
-        foreach (var state in TaskStates.All)
-            Directory.CreateDirectory(Path.Combine(_watchPath, state));
+        _host = host;
+        host.Reset();
     }
 
-    public void Dispose()
+    protected override string WatchPath => _host.WatchPath;
+
+    /// <summary>The local-profile host over <see cref="V1ReviewPlaneDiagnosticsTestBase.ProjectName"/>.</summary>
+    public sealed class Host() : SharedTestHost("atp-v1-diagnostics-")
     {
-        try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
+        private const string BaselineParallelism = "AutoReviewQueueAdaptiveParallelism:BaselineParallelism";
+        private string? _runnerPrincipalId;
+        private AdaptiveReviewParallelismAdvisor? _advisor;
+
+        public string WatchPath => Path.Combine(Root, "projects", ProjectName);
+
+        protected override void ConfigureHost(IWebHostBuilder builder)
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = Root,
+                ["WatchPaths:0:Name"] = ProjectName,
+                ["WatchPaths:0:Path"] = WatchPath,
+                ["WatchPaths:0:RootPath"] = WatchPath,
+                ["WatchPaths:0:RepositoryPath"] = WatchPath,
+                ["ReviewDecisionOrchestrator:Enabled"] = "false",
+            }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton<IStartupFilter>(new RunnerPrincipalStartupFilter(() => _runnerPrincipalId));
+                // Resolved per request, so each test reads the advisor Ready made.
+                // The one the host starts as a hosted service at boot keeps
+                // refreshing itself and is never read by a test.
+                services.RemoveAll<AdaptiveReviewParallelismAdvisor>();
+                services.AddTransient(provider => _advisor ??= NewAdvisor(provider, null));
+            });
+        }
+
+        public override Task InitializeAsync()
+        {
+            CreateLanes();
+            return base.InitializeAsync();
+        }
+
+        /// <summary>
+        /// Empties every lane, supersedes every open review attempt so the
+        /// review queue is empty again, puts back the configured baseline,
+        /// drops the test's advisor and stamps no runner principal.
+        /// </summary>
+        public void Reset()
+        {
+            _runnerPrincipalId = null;
+            Services.GetRequiredService<IConfiguration>()[BaselineParallelism] = null;
+            foreach (var entry in new DirectoryInfo(WatchPath).EnumerateFileSystemInfos())
+            {
+                if (entry is DirectoryInfo directory) directory.Delete(recursive: true);
+                else entry.Delete();
+            }
+            CreateLanes();
+            Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+            Services.GetRequiredService<AttemptAuthorityService>()
+                .SupersedeOpenReviewAttempts(_ => "an earlier test on the shared host");
+            Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
+            _advisor = null;
+        }
+
+        /// <summary>
+        /// The host as a test sees it, after a rescan of what the test wrote
+        /// so far, with a parallelism advisor of the test's own, started as the
+        /// host would start it on <paramref name="baselineParallelism"/> and
+        /// <paramref name="advisorClock"/>.
+        /// </summary>
+        public WebApplicationFactory<Program> Ready(string? runnerPrincipalId, string? baselineParallelism,
+            TimeProvider? advisorClock)
+        {
+            _runnerPrincipalId = runnerPrincipalId;
+            Services.GetRequiredService<IConfiguration>()[BaselineParallelism] = baselineParallelism;
+            _advisor = NewAdvisor(Services, advisorClock);
+            Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+            return Factory;
+        }
+
+        private static AdaptiveReviewParallelismAdvisor NewAdvisor(IServiceProvider services, TimeProvider? clock)
+            => new(services.GetRequiredService<AutoReviewQueueStagnationWatchdog>(),
+                services.GetRequiredService<IConfiguration>(),
+                services.GetRequiredService<ILogger<AdaptiveReviewParallelismAdvisor>>(),
+                services.GetRequiredService<V1ReviewExecutorRegistry>(),
+                clock);
+
+        private void CreateLanes()
+        {
+            foreach (var state in TaskStates.All)
+                Directory.CreateDirectory(Path.Combine(WatchPath, state));
+        }
     }
+
+    private WebApplicationFactory<Program> Ready(string? runnerPrincipalId = null, string? baselineParallelism = null,
+        TimeProvider? advisorClock = null)
+        => _host.Ready(runnerPrincipalId, baselineParallelism, advisorClock);
+
+    private Contract.RunnerCapabilitySnapshotDto OwnSnapshot(WebApplicationFactory<Program> factory)
+        => Assert.Single(factory.Services.GetRequiredService<V1ReviewExecutorRegistry>().ListCapabilitySnapshots(),
+            snapshot => snapshot.RunnerId == RunnerId);
 
     [Fact]
     public async Task Capability_failure_is_recorded_idempotently_and_drains_the_executor_on_the_second_report()
     {
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var http = factory.CreateClient();
         await RegisterReviewExecutorAsync(http);
 
@@ -118,13 +426,14 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.DoesNotContain("paused", resumed.Message ?? string.Empty, StringComparison.Ordinal);
     }
 
+
     [Fact]
     public async Task A_re_registered_review_executor_starts_unpaused_even_inside_an_active_cooldown()
     {
         // The other way out of a drain: a full re-registration. That is a daemon
         // restart re-declaring this identity's health, so a replacement instance
         // is never born paused by its predecessor's failures.
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var http = factory.CreateClient();
         await RegisterReviewExecutorAsync(http);
 
@@ -146,6 +455,7 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Equal("empty", resumed.Status);
         Assert.DoesNotContain("paused", resumed.Message ?? string.Empty, StringComparison.Ordinal);
     }
+
 
     [Fact]
     public void Review_restart_snapshot_is_bound_to_the_changed_instance_registration()
@@ -197,13 +507,14 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Equal(1, unchanged.ReviewsLost);
     }
 
+
     [Fact]
     public async Task Changed_review_instance_keeps_rejected_adoption_recovery_pending()
     {
         const string taskKey = "AGT-RESTART-VISIBILITY";
         const string replacementInstance = "review-host:replacement";
         var taskFolder = SeedTask(taskKey);
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var http = factory.CreateClient();
 
         await RegisterReviewExecutorAsync(http);
@@ -237,9 +548,7 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Contains("rat_missing_after_restart:not-found", firstLog);
         Assert.Contains("recoveryPending=1", firstLog);
 
-        var snapshot = Assert.Single(factory.Services
-            .GetRequiredService<V1ReviewExecutorRegistry>()
-            .ListCapabilitySnapshots());
+        var snapshot = OwnSnapshot(factory);
         Assert.NotNull(snapshot.RestartedAt);
         Assert.Equal(0, snapshot.ReviewsLost);
 
@@ -256,11 +565,178 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Equal(
             0,
             repeatedLog.Split("[review-lost-on-restart]", StringSplitOptions.None).Length - 1);
-        var unchanged = Assert.Single(factory.Services
-            .GetRequiredService<V1ReviewExecutorRegistry>()
-            .ListCapabilitySnapshots());
+        var unchanged = OwnSnapshot(factory);
         Assert.Equal(snapshot.RestartedAt, unchanged.RestartedAt);
         Assert.Equal(0, unchanged.ReviewsLost);
+    }
+
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Concurrent_registration_and_advertisement_never_hold_the_registry_gate()
+    {
+        var registry = new V1ReviewExecutorRegistry();
+        var registration = new Contract.RegisterRunnerRequest(
+            RunnerId,
+            "review-host",
+            Instance,
+            "1.0.0",
+            Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.ReviewExecutor]);
+        registry.Register(RunnerId, registration);
+
+        var operations = Enumerable.Range(0, 100).Select(_ => Task.Run(() =>
+        {
+            registry.Register(RunnerId, registration);
+            return registry.AdvertiseCapabilities(
+                RunnerId,
+                new Contract.CapabilityAdvertisementRequest(
+                    RunnerId,
+                    Instance,
+                    Contract.CapabilityProtocol.CurrentSchemaVersion,
+                    DateTime.UtcNow,
+                    180,
+                    1,
+                    [new Contract.AdvertisedCapabilityDto(
+                        Contract.CapabilityProtocol.DotNet,
+                        "toolchain")]));
+        }));
+
+        var snapshots = await Task.WhenAll(operations).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(100, snapshots.Length);
+        Assert.All(snapshots, snapshot => Assert.Equal(RunnerId, snapshot.RunnerId));
+    }
+
+
+    [Fact]
+    public async Task Capability_failure_of_a_whole_host_capability_drains_on_the_first_report()
+    {
+        var factory = Ready();
+        using var http = factory.CreateClient();
+        await RegisterReviewExecutorAsync(http);
+
+        var response = await http.PostAsJsonAsync(
+            FailurePath(RunnerId),
+            Failure(Contract.CapabilityProtocol.Disk, "DiskFull", "host-disk-1", DateTime.UtcNow));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var drained = await response.Content.ReadFromJsonAsync<Contract.CapabilityFailureResponse>();
+        Assert.Equal(Contract.CapabilityHealthStates.Draining, drained!.HealthState);
+        Assert.True(drained.WholeHostDraining);
+        Assert.NotNull(drained.CooldownUntil);
+    }
+
+
+    [Fact]
+    public async Task Capability_failure_rejects_a_route_and_body_runner_mismatch()
+    {
+        var factory = Ready();
+        using var http = factory.CreateClient();
+        await RegisterReviewExecutorAsync(http);
+
+        var response = await http.PostAsJsonAsync(
+            FailurePath("a-different-runner"),
+            Failure("toolchain:dotnet", "ToolchainUnavailable", "cap-mismatch", DateTime.UtcNow));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<Contract.ApiError>();
+        Assert.Equal("runner-id-mismatch", error!.Code);
+    }
+
+
+    [Fact]
+    public async Task Capability_failure_of_a_stale_instance_is_a_conflict()
+    {
+        var factory = Ready();
+        using var http = factory.CreateClient();
+        await RegisterReviewExecutorAsync(http);
+
+        var response = await http.PostAsJsonAsync(
+            FailurePath(RunnerId),
+            Failure("toolchain:dotnet", "ToolchainUnavailable", "cap-stale", DateTime.UtcNow)
+                with { InstanceId = "review-host:1111" });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<Contract.ApiError>();
+        Assert.Equal("capability-failure-conflict", error!.Code);
+    }
+
+
+    [Fact]
+    public async Task Outbox_status_is_accepted_recorded_and_guards_its_sequence()
+    {
+        var factory = Ready();
+        using var http = factory.CreateClient();
+
+        var accepted = await http.PutAsJsonAsync(
+            OutboxPath(RunnerId),
+            Outbox(lastSequence: 12, acknowledged: 10, backlog: 2, oldestUnacknowledged: 11));
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var status = await accepted.Content.ReadFromJsonAsync<Contract.RunnerOutboxStatusDto>();
+        Assert.Equal(RunnerId, status!.RunnerId);
+        Assert.Equal(Instance, status.InstanceId);
+        Assert.Equal(12L, status.LastSequence);
+        Assert.Equal(10L, status.LastAcknowledgedSequence);
+        Assert.Equal(2, status.BacklogCount);
+        Assert.Equal("run-diagnostics", status.RunId);
+
+        var recorded = factory.Services
+            .GetRequiredService<V1ReviewExecutorRegistry>()
+            .GetOutboxStatus(RunnerId, "run-diagnostics");
+        Assert.Equal(status, recorded);
+
+        var stale = await http.PutAsJsonAsync(
+            OutboxPath(RunnerId),
+            Outbox(lastSequence: 5, acknowledged: 5, backlog: 0, oldestUnacknowledged: null));
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Equal(
+            "stale-outbox-status",
+            (await stale.Content.ReadFromJsonAsync<Contract.ApiError>())!.Code);
+
+        var invalid = await http.PutAsJsonAsync(
+            OutboxPath(RunnerId),
+            Outbox(lastSequence: 14, acknowledged: 20, backlog: 0, oldestUnacknowledged: null));
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        Assert.Equal(
+            "invalid-request",
+            (await invalid.Content.ReadFromJsonAsync<Contract.ApiError>())!.Code);
+    }
+
+
+    [Fact]
+    public async Task Diagnostic_routes_reject_a_foreign_runner_principal()
+    {
+        var factory = Ready(runnerPrincipalId: "another-runner");
+        using var http = factory.CreateClient();
+
+        var failure = await http.PostAsJsonAsync(
+            FailurePath(RunnerId),
+            Failure("toolchain:dotnet", "ToolchainUnavailable", "cap-foreign", DateTime.UtcNow));
+        Assert.Equal(HttpStatusCode.Unauthorized, failure.StatusCode);
+
+        var outbox = await http.PutAsJsonAsync(
+            OutboxPath(RunnerId),
+            Outbox(lastSequence: 1, acknowledged: 1, backlog: 0, oldestUnacknowledged: null));
+        Assert.Equal(HttpStatusCode.Unauthorized, outbox.StatusCode);
+    }
+
+
+    [Fact]
+    public async Task Diagnostic_routes_accept_the_runner_s_own_principal()
+    {
+        var factory = Ready(runnerPrincipalId: RunnerId);
+        using var http = factory.CreateClient();
+
+        var failure = await http.PostAsJsonAsync(
+            FailurePath(RunnerId),
+            Failure("toolchain:dotnet", "ToolchainUnavailable", "cap-own", DateTime.UtcNow));
+        Assert.Equal(HttpStatusCode.OK, failure.StatusCode);
+
+        var outbox = await http.PutAsJsonAsync(
+            OutboxPath(RunnerId),
+            Outbox(lastSequence: 1, acknowledged: 1, backlog: 0, oldestUnacknowledged: null));
+        Assert.Equal(HttpStatusCode.OK, outbox.StatusCode);
     }
 
     [Fact]
@@ -270,7 +746,7 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         const string replacementInstance = "review-host:replacement-persisted";
         const string successorInstance = "review-host:successor-persisted";
         var taskFolder = SeedTask(taskKey);
-        using var factory = BuildFactory();
+        var factory = Ready();
         using var http = factory.CreateClient();
 
         await RegisterReviewExecutorAsync(http);
@@ -326,9 +802,7 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Equal("adopted", Assert.Single(firstResponse!.AttemptAdoptions!).Status);
         Assert.Equal(
             0,
-            Assert.Single(factory.Services
-                .GetRequiredService<V1ReviewExecutorRegistry>()
-                .ListCapabilitySnapshots()).ReviewsLost);
+            OwnSnapshot(factory).ReviewsLost);
 
         // Re-adoption deliberately keeps the original lease generation. If the
         // next daemon no longer reports that worker, discovery must search all
@@ -349,11 +823,216 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Contains("status=worker-not-reported", log);
         Assert.Contains("replacement ActiveAttempts", log);
 
-        var snapshot = Assert.Single(factory.Services
-            .GetRequiredService<V1ReviewExecutorRegistry>()
-            .ListCapabilitySnapshots());
+        var snapshot = OwnSnapshot(factory);
         Assert.NotNull(snapshot.RestartedAt);
         Assert.Equal(1, snapshot.ReviewsLost);
+    }
+
+    /// <summary>
+    /// AGT-2820: <c>GET /api/runner/auto-review-parallelism-recommendation</c>
+    /// answered <c>recommendedParallelism: 2</c> while four reviews deadlocked
+    /// agent-runner-01, and nothing consumed the answer - the host kept claiming
+    /// up to its static RUNNER_MAX_PARALLELISM. The recommendation now rides the
+    /// minutely capability advertisement as the review role's ceiling.
+    /// </summary>
+    [Fact]
+    public async Task Capability_advertisement_hands_a_review_executor_the_parallelism_recommendation()
+    {
+        var factory = Ready(baselineParallelism: "3");
+        using var http = factory.CreateClient();
+        var registration = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}",
+            Registration(Instance) with { BootstrapMaxParallelism = 6 });
+        registration.EnsureSuccessStatusCode();
+
+        var advertisement = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(
+                RunnerId,
+                Instance,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                DateTime.UtcNow,
+                180,
+                1,
+                [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.DotNet, "toolchain")]));
+        advertisement.EnsureSuccessStatusCode();
+
+        var snapshot = await advertisement.Content
+            .ReadFromJsonAsync<Contract.RunnerCapabilitySnapshotDto>();
+        var recommendation = factory.Services
+            .GetRequiredService<AdaptiveReviewParallelismAdvisor>()
+            .Current
+            .RecommendedParallelism;
+
+        Assert.Equal(3, recommendation);
+        Assert.Equal(recommendation, snapshot!.RoleMaxParallelism);
+    }
+
+    /// <summary>
+    /// AGT-2848: on a remote-review fleet, cards queue in attempt-authority as
+    /// canonical, unclaimed ReviewAttempts (state Pending) - the legacy local
+    /// post-processing queue the advisor used to read stays at zero the whole
+    /// time. Five pending attempts at or above the default raise threshold must
+    /// move the recommendation the same way five legacy-queued cards already did,
+    /// once a fresh review host snapshot shows headroom (AGT-3073).
+    /// </summary>
+    [Fact]
+    public async Task Pending_canonical_review_attempts_drive_a_raise()
+    {
+        var clock = new FakeTimeProvider();
+        var factory = Ready(advisorClock: clock);
+        using var http = factory.CreateClient();
+        await RegisterReviewExecutor(http);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        for (var i = 0; i < 5; i++)
+            CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
+
+        var watchdog = factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>();
+        var queue = watchdog.Refresh();
+        Assert.Equal(0, queue.LegacyQueueDepth);
+        Assert.Equal(5, queue.PendingReviewAttempts);
+        Assert.Equal(5, queue.QueueDepth);
+
+        // The advertisement refreshes the advisor, so its decision is the raise.
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await AdvertiseReviewHostHeadroom(http, clock);
+        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Current;
+
+        Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
+        Assert.Equal(3, decision.RecommendedParallelism);
+        Assert.Contains("host headroom", decision.Reason);
+    }
+
+    /// <summary>
+    /// AGT-3073: without a fresh review host snapshot the advisor cannot prove
+    /// headroom, so a backlog holds and the recommendation endpoint says why.
+    /// </summary>
+    [Fact]
+    public async Task Pending_canonical_review_attempts_wait_for_a_fresh_host_budget()
+    {
+        var factory = Ready();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        for (var i = 0; i < 5; i++)
+            CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
+        factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
+
+        using var http = factory.CreateClient();
+        using var response = JsonDocument.Parse(await http.GetStringAsync(
+            "/api/runner/auto-review-parallelism-recommendation"));
+
+        Assert.Equal(2, response.RootElement.GetProperty("recommendedParallelism").GetInt32());
+        Assert.Equal(
+            "raise refused: no fresh review plane budget",
+            response.RootElement.GetProperty("reason").GetString());
+    }
+
+    /// <summary>
+    /// AGT-2848: <c>_current</c> used to be seeded from the configured baseline
+    /// once, at construction. Raising
+    /// <c>AutoReviewQueueAdaptiveParallelism:BaselineParallelism</c> in
+    /// configuration afterward only reached the running recommendation once an
+    /// unrelated raise or lower crossed it in passing - in practice, only after
+    /// a backend restart. A non-empty queue is evidence the new floor is needed
+    /// now, so a raised baseline must be adopted on the very next refresh.
+    /// </summary>
+    [Fact]
+    public async Task A_raised_baseline_is_adopted_at_runtime_without_a_restart()
+    {
+        var clock = new FakeTimeProvider();
+        var factory = Ready(baselineParallelism: "2", advisorClock: clock);
+        using var http = factory.CreateClient();
+        await RegisterReviewExecutor(http);
+        await AdvertiseReviewHostHeadroom(http, clock);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        CreatePendingReviewAttempt(authority, "AGT-1", "sha-1");
+
+        var watchdog = factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>();
+        var advisor = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>();
+        watchdog.Refresh();
+        var beforeConfigChange = advisor.Refresh();
+        Assert.Equal(ReviewParallelismAction.Hold, beforeConfigChange.Action);
+        Assert.Equal(2, beforeConfigChange.RecommendedParallelism);
+
+        var configuration = factory.Services.GetRequiredService<IConfiguration>();
+        configuration["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "3";
+
+        watchdog.Refresh();
+        var afterConfigChange = advisor.Refresh();
+
+        Assert.Equal(ReviewParallelismAction.Raise, afterConfigChange.Action);
+        Assert.Equal(3, afterConfigChange.RecommendedParallelism);
+        Assert.Contains("baseline", afterConfigChange.Reason);
+    }
+
+    /// <summary>
+    /// AGT-2848: the advisor is one global recommendation shared by every
+    /// review host, so it cannot know any one host's actual capacity. The
+    /// per-host <c>RUNNER_MAX_PARALLELISM</c> bootstrap declared at
+    /// registration is that host's own ceiling, and the capability
+    /// advertisement must never answer more than it - even once a real
+    /// backlog pushes the shared recommendation above it.
+    /// </summary>
+    [Fact]
+    public async Task Capability_advertisement_never_exceeds_the_executors_own_bootstrap()
+    {
+        var clock = new FakeTimeProvider();
+        var factory = Ready(advisorClock: clock);
+        using var http = factory.CreateClient();
+        var registration = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}",
+            Registration(Instance) with { BootstrapMaxParallelism = 2 });
+        registration.EnsureSuccessStatusCode();
+
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        for (var i = 0; i < 5; i++)
+            CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
+        factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await AdvertiseReviewHostHeadroom(http, clock);
+        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh();
+        Assert.Equal(3, decision.RecommendedParallelism);
+
+        var advertisement = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(
+                RunnerId,
+                Instance,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                DateTime.UtcNow,
+                180,
+                1,
+                [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.DotNet, "toolchain")]));
+        advertisement.EnsureSuccessStatusCode();
+
+        var snapshot = await advertisement.Content
+            .ReadFromJsonAsync<Contract.RunnerCapabilitySnapshotDto>();
+
+        Assert.Equal(2, snapshot!.RoleMaxParallelism);
+    }
+}
+
+/// <summary>
+/// The diagnostics tests that restart the monolith: each starts a second host
+/// on the workspace of its first one, so each needs hosts of its own.
+/// </summary>
+public sealed class V1ReviewPlaneDiagnosticsOwnHostTests : V1ReviewPlaneDiagnosticsTestBase, IDisposable
+{
+    private readonly string _workspace;
+    private readonly string _watchPath;
+
+    public V1ReviewPlaneDiagnosticsOwnHostTests()
+    {
+        _workspace = Path.Combine(Path.GetTempPath(), "atp-v1-diagnostics-" + Guid.NewGuid().ToString("N"));
+        _watchPath = Path.Combine(_workspace, "projects", ProjectName);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(_watchPath, state));
+    }
+
+    protected override string WatchPath => _watchPath;
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
     }
 
     [Fact]
@@ -470,533 +1149,13 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         }
     }
 
-    [Fact]
-    [Trait("Category", "MachineBound")]
-    public async Task Concurrent_registration_and_advertisement_never_hold_the_registry_gate()
-    {
-        var registry = new V1ReviewExecutorRegistry();
-        var registration = new Contract.RegisterRunnerRequest(
-            RunnerId,
-            "review-host",
-            Instance,
-            "1.0.0",
-            Contract.TaskServerProtocol.Current,
-            [Contract.ReviewCapabilities.ReviewExecutor]);
-        registry.Register(RunnerId, registration);
-
-        var operations = Enumerable.Range(0, 100).Select(_ => Task.Run(() =>
-        {
-            registry.Register(RunnerId, registration);
-            return registry.AdvertiseCapabilities(
-                RunnerId,
-                new Contract.CapabilityAdvertisementRequest(
-                    RunnerId,
-                    Instance,
-                    Contract.CapabilityProtocol.CurrentSchemaVersion,
-                    DateTime.UtcNow,
-                    180,
-                    1,
-                    [new Contract.AdvertisedCapabilityDto(
-                        Contract.CapabilityProtocol.DotNet,
-                        "toolchain")]));
-        }));
-
-        var snapshots = await Task.WhenAll(operations).WaitAsync(TimeSpan.FromSeconds(5));
-
-        Assert.Equal(100, snapshots.Length);
-        Assert.All(snapshots, snapshot => Assert.Equal(RunnerId, snapshot.RunnerId));
-    }
-
-    [Fact]
-    public async Task Capability_failure_of_a_whole_host_capability_drains_on_the_first_report()
-    {
-        using var factory = BuildFactory();
-        using var http = factory.CreateClient();
-        await RegisterReviewExecutorAsync(http);
-
-        var response = await http.PostAsJsonAsync(
-            FailurePath(RunnerId),
-            Failure(Contract.CapabilityProtocol.Disk, "DiskFull", "host-disk-1", DateTime.UtcNow));
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var drained = await response.Content.ReadFromJsonAsync<Contract.CapabilityFailureResponse>();
-        Assert.Equal(Contract.CapabilityHealthStates.Draining, drained!.HealthState);
-        Assert.True(drained.WholeHostDraining);
-        Assert.NotNull(drained.CooldownUntil);
-    }
-
-    [Fact]
-    public async Task Capability_failure_rejects_a_route_and_body_runner_mismatch()
-    {
-        using var factory = BuildFactory();
-        using var http = factory.CreateClient();
-        await RegisterReviewExecutorAsync(http);
-
-        var response = await http.PostAsJsonAsync(
-            FailurePath("a-different-runner"),
-            Failure("toolchain:dotnet", "ToolchainUnavailable", "cap-mismatch", DateTime.UtcNow));
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var error = await response.Content.ReadFromJsonAsync<Contract.ApiError>();
-        Assert.Equal("runner-id-mismatch", error!.Code);
-    }
-
-    [Fact]
-    public async Task Capability_failure_of_a_stale_instance_is_a_conflict()
-    {
-        using var factory = BuildFactory();
-        using var http = factory.CreateClient();
-        await RegisterReviewExecutorAsync(http);
-
-        var response = await http.PostAsJsonAsync(
-            FailurePath(RunnerId),
-            Failure("toolchain:dotnet", "ToolchainUnavailable", "cap-stale", DateTime.UtcNow)
-                with { InstanceId = "review-host:1111" });
-
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        var error = await response.Content.ReadFromJsonAsync<Contract.ApiError>();
-        Assert.Equal("capability-failure-conflict", error!.Code);
-    }
-
-    [Fact]
-    public async Task Outbox_status_is_accepted_recorded_and_guards_its_sequence()
-    {
-        using var factory = BuildFactory();
-        using var http = factory.CreateClient();
-
-        var accepted = await http.PutAsJsonAsync(
-            OutboxPath(RunnerId),
-            Outbox(lastSequence: 12, acknowledged: 10, backlog: 2, oldestUnacknowledged: 11));
-        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
-        var status = await accepted.Content.ReadFromJsonAsync<Contract.RunnerOutboxStatusDto>();
-        Assert.Equal(RunnerId, status!.RunnerId);
-        Assert.Equal(Instance, status.InstanceId);
-        Assert.Equal(12L, status.LastSequence);
-        Assert.Equal(10L, status.LastAcknowledgedSequence);
-        Assert.Equal(2, status.BacklogCount);
-        Assert.Equal("run-diagnostics", status.RunId);
-
-        var recorded = factory.Services
-            .GetRequiredService<V1ReviewExecutorRegistry>()
-            .GetOutboxStatus(RunnerId, "run-diagnostics");
-        Assert.Equal(status, recorded);
-
-        var stale = await http.PutAsJsonAsync(
-            OutboxPath(RunnerId),
-            Outbox(lastSequence: 5, acknowledged: 5, backlog: 0, oldestUnacknowledged: null));
-        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
-        Assert.Equal(
-            "stale-outbox-status",
-            (await stale.Content.ReadFromJsonAsync<Contract.ApiError>())!.Code);
-
-        var invalid = await http.PutAsJsonAsync(
-            OutboxPath(RunnerId),
-            Outbox(lastSequence: 14, acknowledged: 20, backlog: 0, oldestUnacknowledged: null));
-        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
-        Assert.Equal(
-            "invalid-request",
-            (await invalid.Content.ReadFromJsonAsync<Contract.ApiError>())!.Code);
-    }
-
-    [Fact]
-    public async Task Diagnostic_routes_reject_a_foreign_runner_principal()
-    {
-        using var factory = BuildFactory(runnerPrincipalId: "another-runner");
-        using var http = factory.CreateClient();
-
-        var failure = await http.PostAsJsonAsync(
-            FailurePath(RunnerId),
-            Failure("toolchain:dotnet", "ToolchainUnavailable", "cap-foreign", DateTime.UtcNow));
-        Assert.Equal(HttpStatusCode.Unauthorized, failure.StatusCode);
-
-        var outbox = await http.PutAsJsonAsync(
-            OutboxPath(RunnerId),
-            Outbox(lastSequence: 1, acknowledged: 1, backlog: 0, oldestUnacknowledged: null));
-        Assert.Equal(HttpStatusCode.Unauthorized, outbox.StatusCode);
-    }
-
-    [Fact]
-    public async Task Diagnostic_routes_accept_the_runner_s_own_principal()
-    {
-        using var factory = BuildFactory(runnerPrincipalId: RunnerId);
-        using var http = factory.CreateClient();
-
-        var failure = await http.PostAsJsonAsync(
-            FailurePath(RunnerId),
-            Failure("toolchain:dotnet", "ToolchainUnavailable", "cap-own", DateTime.UtcNow));
-        Assert.Equal(HttpStatusCode.OK, failure.StatusCode);
-
-        var outbox = await http.PutAsJsonAsync(
-            OutboxPath(RunnerId),
-            Outbox(lastSequence: 1, acknowledged: 1, backlog: 0, oldestUnacknowledged: null));
-        Assert.Equal(HttpStatusCode.OK, outbox.StatusCode);
-    }
-
-    private static string FailurePath(string runnerId)
-        => $"/api/v1/runners/{runnerId}/capability-failures";
-
-    private static string OutboxPath(string runnerId)
-        => $"/api/v1/runners/{runnerId}/outbox-status";
-
-    private static Contract.CapabilityFailureRequest Failure(
-        string capabilityKey,
-        string classification,
-        string idempotencyKey,
-        DateTime occurredAt)
-        => new(
-            RunnerId,
-            Instance,
-            capabilityKey,
-            classification,
-            "The review workspace could not be materialized.",
-            occurredAt,
-            idempotencyKey,
-            "review",
-            "rat_diagnostics",
-            7);
-
-    private static Contract.RunnerOutboxStatusRequest Outbox(
-        long lastSequence,
-        long acknowledged,
-        int backlog,
-        long? oldestUnacknowledged)
-        => new(
-            Instance,
-            lastSequence,
-            acknowledged,
-            backlog,
-            oldestUnacknowledged,
-            "pending",
-            "run-diagnostics",
-            null,
-            DateTime.UtcNow);
-
-    private static async Task RegisterReviewExecutorAsync(HttpClient http)
-    {
-        var registration = await http.PutAsJsonAsync(
-            $"/api/v1/runners/{RunnerId}",
-            new Contract.RegisterRunnerRequest(
-                RunnerId,
-                "review-host",
-                Instance,
-                "1.0.0",
-                Contract.TaskServerProtocol.Current,
-                [
-                    Contract.ReviewCapabilities.ReviewExecutor,
-                    Contract.ReviewCapabilities.BaselineComparison,
-                    Contract.ReviewCapabilities.DependencyPreparation,
-                    Contract.ReviewCapabilities.GitMaterialization,
-                    Contract.ReviewCapabilities.SemanticReview,
-                ]));
-        registration.EnsureSuccessStatusCode();
-    }
-
-    /// <summary>
-    /// AGT-2820: <c>GET /api/runner/auto-review-parallelism-recommendation</c>
-    /// answered <c>recommendedParallelism: 2</c> while four reviews deadlocked
-    /// agent-runner-01, and nothing consumed the answer - the host kept claiming
-    /// up to its static RUNNER_MAX_PARALLELISM. The recommendation now rides the
-    /// minutely capability advertisement as the review role's ceiling.
-    /// </summary>
-    [Fact]
-    public async Task Capability_advertisement_hands_a_review_executor_the_parallelism_recommendation()
-    {
-        using var factory = BuildFactory(extraConfiguration: new Dictionary<string, string?>
-        {
-            ["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "3",
-        });
-        using var http = factory.CreateClient();
-        var registration = await http.PutAsJsonAsync(
-            $"/api/v1/runners/{RunnerId}",
-            Registration(Instance) with { BootstrapMaxParallelism = 6 });
-        registration.EnsureSuccessStatusCode();
-
-        var advertisement = await http.PostAsJsonAsync(
-            $"/api/v1/runners/{RunnerId}/capabilities",
-            new Contract.CapabilityAdvertisementRequest(
-                RunnerId,
-                Instance,
-                Contract.CapabilityProtocol.CurrentSchemaVersion,
-                DateTime.UtcNow,
-                180,
-                1,
-                [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.DotNet, "toolchain")]));
-        advertisement.EnsureSuccessStatusCode();
-
-        var snapshot = await advertisement.Content
-            .ReadFromJsonAsync<Contract.RunnerCapabilitySnapshotDto>();
-        var recommendation = factory.Services
-            .GetRequiredService<AdaptiveReviewParallelismAdvisor>()
-            .Current
-            .RecommendedParallelism;
-
-        Assert.Equal(3, recommendation);
-        Assert.Equal(recommendation, snapshot!.RoleMaxParallelism);
-    }
-
-    /// <summary>
-    /// AGT-2848: on a remote-review fleet, cards queue in attempt-authority as
-    /// canonical, unclaimed ReviewAttempts (state Pending) - the legacy local
-    /// post-processing queue the advisor used to read stays at zero the whole
-    /// time. Five pending attempts at or above the default raise threshold must
-    /// move the recommendation the same way five legacy-queued cards already did,
-    /// once a fresh review host snapshot shows headroom (AGT-3073).
-    /// </summary>
-    [Fact]
-    public async Task Pending_canonical_review_attempts_drive_a_raise()
-    {
-        var clock = new FakeTimeProvider();
-        using var factory = BuildFactory(advisorClock: clock);
-        using var http = factory.CreateClient();
-        await RegisterReviewExecutor(http);
-        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
-        for (var i = 0; i < 5; i++)
-            CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
-
-        var watchdog = factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>();
-        var queue = watchdog.Refresh();
-        Assert.Equal(0, queue.LegacyQueueDepth);
-        Assert.Equal(5, queue.PendingReviewAttempts);
-        Assert.Equal(5, queue.QueueDepth);
-
-        // The advertisement refreshes the advisor, so its decision is the raise.
-        clock.Advance(TimeSpan.FromMinutes(6));
-        await AdvertiseReviewHostHeadroom(http, clock);
-        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Current;
-
-        Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
-        Assert.Equal(3, decision.RecommendedParallelism);
-        Assert.Contains("host headroom", decision.Reason);
-    }
-
-    /// <summary>
-    /// AGT-3073: without a fresh review host snapshot the advisor cannot prove
-    /// headroom, so a backlog holds and the recommendation endpoint says why.
-    /// </summary>
-    [Fact]
-    public async Task Pending_canonical_review_attempts_wait_for_a_fresh_host_budget()
-    {
-        using var factory = BuildFactory();
-        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
-        for (var i = 0; i < 5; i++)
-            CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
-        factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
-
-        using var http = factory.CreateClient();
-        using var response = JsonDocument.Parse(await http.GetStringAsync(
-            "/api/runner/auto-review-parallelism-recommendation"));
-
-        Assert.Equal(2, response.RootElement.GetProperty("recommendedParallelism").GetInt32());
-        Assert.Equal(
-            "raise refused: no fresh review plane budget",
-            response.RootElement.GetProperty("reason").GetString());
-    }
-
-    /// <summary>
-    /// AGT-2848: <c>_current</c> used to be seeded from the configured baseline
-    /// once, at construction. Raising
-    /// <c>AutoReviewQueueAdaptiveParallelism:BaselineParallelism</c> in
-    /// configuration afterward only reached the running recommendation once an
-    /// unrelated raise or lower crossed it in passing - in practice, only after
-    /// a backend restart. A non-empty queue is evidence the new floor is needed
-    /// now, so a raised baseline must be adopted on the very next refresh.
-    /// </summary>
-    [Fact]
-    public async Task A_raised_baseline_is_adopted_at_runtime_without_a_restart()
-    {
-        var clock = new FakeTimeProvider();
-        using var factory = BuildFactory(
-            extraConfiguration: new Dictionary<string, string?>
-            {
-                ["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "2",
-            },
-            advisorClock: clock);
-        using var http = factory.CreateClient();
-        await RegisterReviewExecutor(http);
-        await AdvertiseReviewHostHeadroom(http, clock);
-        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
-        CreatePendingReviewAttempt(authority, "AGT-1", "sha-1");
-
-        var watchdog = factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>();
-        var advisor = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>();
-        watchdog.Refresh();
-        var beforeConfigChange = advisor.Refresh();
-        Assert.Equal(ReviewParallelismAction.Hold, beforeConfigChange.Action);
-        Assert.Equal(2, beforeConfigChange.RecommendedParallelism);
-
-        var configuration = factory.Services.GetRequiredService<IConfiguration>();
-        configuration["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "3";
-
-        watchdog.Refresh();
-        var afterConfigChange = advisor.Refresh();
-
-        Assert.Equal(ReviewParallelismAction.Raise, afterConfigChange.Action);
-        Assert.Equal(3, afterConfigChange.RecommendedParallelism);
-        Assert.Contains("baseline", afterConfigChange.Reason);
-    }
-
-    /// <summary>
-    /// AGT-2848: the advisor is one global recommendation shared by every
-    /// review host, so it cannot know any one host's actual capacity. The
-    /// per-host <c>RUNNER_MAX_PARALLELISM</c> bootstrap declared at
-    /// registration is that host's own ceiling, and the capability
-    /// advertisement must never answer more than it - even once a real
-    /// backlog pushes the shared recommendation above it.
-    /// </summary>
-    [Fact]
-    public async Task Capability_advertisement_never_exceeds_the_executors_own_bootstrap()
-    {
-        var clock = new FakeTimeProvider();
-        using var factory = BuildFactory(advisorClock: clock);
-        using var http = factory.CreateClient();
-        var registration = await http.PutAsJsonAsync(
-            $"/api/v1/runners/{RunnerId}",
-            Registration(Instance) with { BootstrapMaxParallelism = 2 });
-        registration.EnsureSuccessStatusCode();
-
-        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
-        for (var i = 0; i < 5; i++)
-            CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
-        factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
-        clock.Advance(TimeSpan.FromMinutes(6));
-        await AdvertiseReviewHostHeadroom(http, clock);
-        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh();
-        Assert.Equal(3, decision.RecommendedParallelism);
-
-        var advertisement = await http.PostAsJsonAsync(
-            $"/api/v1/runners/{RunnerId}/capabilities",
-            new Contract.CapabilityAdvertisementRequest(
-                RunnerId,
-                Instance,
-                Contract.CapabilityProtocol.CurrentSchemaVersion,
-                DateTime.UtcNow,
-                180,
-                1,
-                [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.DotNet, "toolchain")]));
-        advertisement.EnsureSuccessStatusCode();
-
-        var snapshot = await advertisement.Content
-            .ReadFromJsonAsync<Contract.RunnerCapabilitySnapshotDto>();
-
-        Assert.Equal(2, snapshot!.RoleMaxParallelism);
-    }
-
-    private static async Task RegisterReviewExecutor(HttpClient http)
-    {
-        var registration = await http.PutAsJsonAsync($"/api/v1/runners/{RunnerId}", Registration(Instance));
-        registration.EnsureSuccessStatusCode();
-    }
-
-    /// <summary>
-    /// Advertises a review host snapshot with headroom: an unthrottled 12-core
-    /// plane, load 4 on 12 cores and 42 of 62 GB available, observed on the
-    /// advisor's clock so it counts as fresh.
-    /// </summary>
-    private static async Task AdvertiseReviewHostHeadroom(HttpClient http, TimeProvider clock)
-    {
-        var observedAt = clock.GetUtcNow().UtcDateTime;
-        var advertisement = await http.PostAsJsonAsync(
-            $"/api/v1/runners/{RunnerId}/capabilities",
-            new Contract.CapabilityAdvertisementRequest(
-                RunnerId,
-                Instance,
-                Contract.CapabilityProtocol.CurrentSchemaVersion,
-                observedAt,
-                180,
-                1,
-                [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.DotNet, "toolchain")],
-                Telemetry: new Contract.HostTelemetrySnapshotDto(
-                    observedAt,
-                    CpuPercent: null,
-                    Load1: 4,
-                    Load5: null,
-                    Load15: null,
-                    MemoryUsedBytes: 20L << 30,
-                    MemoryTotalBytes: 62L << 30,
-                    SwapInBytesPerSecond: null,
-                    SwapOutBytesPerSecond: null,
-                    CpuStealPercent: null,
-                    IoWaitPercent: null,
-                    CpuCores: 12,
-                    ActiveSlots: 1,
-                    ReviewPlane: new Contract.ReviewPlaneBudgetDto(
-                        observedAt, "1200000 100000", 12, 1200, 12, 2.4, 480, 3, 900, 0, false))));
-        advertisement.EnsureSuccessStatusCode();
-    }
-
-    private static void CreatePendingReviewAttempt(AttemptAuthorityService authority, string taskKey, string sha)
-    {
-        var run = authority.AcquireRun(
-            taskKey, ProjectName, null, "coding-runner", "coding-host", 60, "acquire-" + taskKey).RunAttempt!;
-        authority.SettleRun(new SettleRunAttemptRequest
-        {
-            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "settle-" + taskKey),
-            Outcome = "done",
-            ResultSha = sha,
-        });
-        authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
-            taskKey, ProjectName, sha, run.AttemptId, "requirements-hash", "policy-hash", [], "review-create-" + taskKey));
-    }
-
-    private static Contract.RegisterRunnerRequest Registration(
-        string instanceId,
-        IReadOnlyList<Contract.RunnerActiveAttempt>? activeAttempts = null)
-        => new(
-            RunnerId,
-            "review-host",
-            instanceId,
-            "1.0.0",
-            Contract.TaskServerProtocol.Current,
-            [
-                Contract.ReviewCapabilities.ReviewExecutor,
-                Contract.ReviewCapabilities.BaselineComparison,
-                Contract.ReviewCapabilities.DependencyPreparation,
-                Contract.ReviewCapabilities.GitMaterialization,
-                Contract.ReviewCapabilities.SemanticReview,
-            ],
-            ActiveAttempts: activeAttempts);
-
-    private string SeedTask(string taskKey)
-    {
-        var taskFolder = Path.Combine(_watchPath, TaskStates.AutoReview, taskKey);
-        Directory.CreateDirectory(taskFolder);
-        File.WriteAllText(
-            Path.Combine(taskFolder, "task.json"),
-            JsonSerializer.Serialize(new
-            {
-                id = taskKey,
-                key = taskKey,
-                title = "Restart visibility",
-                state = TaskStates.AutoReview,
-                order = 1,
-                agent = "codex",
-                kind = TaskKinds.Task,
-            }));
-        File.WriteAllText(Path.Combine(taskFolder, "prompt.md"), "Preserve review work.");
-        File.WriteAllText(Path.Combine(taskFolder, "status.md"), "Result: pending.");
-        return taskFolder;
-    }
-
-    private static async Task<Contract.ReviewClaimResponse> ClaimAsync(HttpClient http)
-    {
-        var response = await http.PostAsJsonAsync(
-            $"/api/v1/runners/{RunnerId}/review-claims",
-            new Contract.ReviewClaimRequest(RunnerId, Instance, 120, 1));
-        response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
-    }
-
-    private WebApplicationFactory<Program> BuildFactory(
-        string? runnerPrincipalId = null,
-        IReadOnlyDictionary<string, string?>? extraConfiguration = null,
-        TimeProvider? advisorClock = null) =>
+    private WebApplicationFactory<Program> BuildFactory() =>
         new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
-                builder.ConfigureAppConfiguration((_, config) =>
-                {
-                    var settings = new Dictionary<string, string?>
+                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                    new Dictionary<string, string?>
                     {
                         ["TaskRepository"] = _workspace,
                         ["WatchPaths:0:Name"] = ProjectName,
@@ -1004,50 +1163,6 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
                         ["WatchPaths:0:RootPath"] = _watchPath,
                         ["WatchPaths:0:RepositoryPath"] = _watchPath,
                         ["ReviewDecisionOrchestrator:Enabled"] = "false",
-                    };
-                    foreach (var (key, value) in extraConfiguration ?? new Dictionary<string, string?>())
-                        settings[key] = value;
-                    config.AddInMemoryCollection(settings);
-                });
-                if (runnerPrincipalId is not null)
-                {
-                    builder.ConfigureTestServices(services => services.AddSingleton<IStartupFilter>(
-                        new RunnerPrincipalStartupFilter(runnerPrincipalId)));
-                }
-                if (advisorClock is not null)
-                {
-                    builder.ConfigureTestServices(services =>
-                    {
-                        services.RemoveAll<AdaptiveReviewParallelismAdvisor>();
-                        services.AddSingleton(sp => new AdaptiveReviewParallelismAdvisor(
-                            sp.GetRequiredService<AutoReviewQueueStagnationWatchdog>(),
-                            sp.GetRequiredService<IConfiguration>(),
-                            sp.GetRequiredService<ILogger<AdaptiveReviewParallelismAdvisor>>(),
-                            sp.GetRequiredService<V1ReviewExecutorRegistry>(),
-                            advisorClock));
-                    });
-                }
+                    }));
             });
-
-    /// <summary>
-    /// Stamps an authenticated Runner principal on every request. The local
-    /// profile never authenticates one, so this is the only way to exercise the
-    /// v1 mount's per-route identity guard from an in-process client.
-    /// </summary>
-    private sealed class RunnerPrincipalStartupFilter(string runnerId) : IStartupFilter
-    {
-        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
-        {
-            app.Use(async (context, nextMiddleware) =>
-            {
-                context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] = new RunnerPrincipal(
-                    runnerId,
-                    runnerId,
-                    "test-credential",
-                    new HashSet<string>(StringComparer.Ordinal));
-                await nextMiddleware(context);
-            });
-            next(app);
-        };
-    }
 }

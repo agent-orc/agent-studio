@@ -357,7 +357,7 @@ public static partial class ProjectDefinitionReader
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
             "project", "quality", "pipeline", "artifacts", "environments", "lifecycles", "deploy",
-            "variables", "tenants", "channels", "runbooks", "delivery", "structure",
+            "variables", "tenants", "channels", "runbooks", "databases", "delivery", "structure",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -895,7 +895,7 @@ public static partial class ProjectDefinitionValidator
             issues.Add(new("quality", "v1-does-not-support-quality", "schemaVersion 1 does not support the quality section. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 1 && definition.Deployment is not null)
-            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, channels, runbooks, deploy, variables, tenants, or structure. Use schemaVersion 2."));
+            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, channels, runbooks, deploy, variables, tenants, databases, or structure. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 1 && definition.Structure is not null)
             issues.Add(new("structure", "v1-does-not-support-structure", "schemaVersion 1 does not support structure declarations. Use schemaVersion 2."));

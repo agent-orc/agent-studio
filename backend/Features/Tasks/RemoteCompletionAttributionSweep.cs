@@ -13,11 +13,12 @@ namespace AgentStudio.Tasks;
 /// review subject, an exact ancestor base, and a non-empty task-owned range can
 /// produce commit attribution.
 /// </summary>
-public sealed class RemoteCompletionAttributionSweep
+public sealed partial class RemoteCompletionAttributionSweep
 {
     public const string ReportFileName = "remote-completion-attribution-v1.json";
     public const string SalvageSubjectReportFileName = "salvage-subject-attribution-v1.json";
-    public const string IntegrationHistoryReportFileName = "integration-history-attribution-v1.json";
+    public const string IntegrationHistoryReportFileName = "integration-history-attribution-v2.json";
+    public const string CommitSubjectKeyReportFileName = "commit-subject-key-attribution-v1.json";
     private static readonly TimeSpan Lookback = TimeSpan.FromDays(8);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -186,7 +187,7 @@ public sealed class RemoteCompletionAttributionSweep
             var key = task.Key ?? task.Id;
             var repair = RepairCommits(task, subject, range => range.Any(commit =>
                 RunnerSalvageCommit.IsTeardownFor(commit.Body, key)
-                && RemoteCommitAttributionGuard.ForeignKeyInSubject(commit.Subject, key) is not null));
+                && RemoteCommitAttributionGuard.OtherKeyInSubject(commit.Subject, key) is not null));
             if (repair.Commits == 0 && repair.Warning is null) continue;
             rows.Add(new RemoteCompletionAttributionSweepTaskReport(
                 task.ProjectName,
@@ -235,19 +236,8 @@ public sealed class RemoteCompletionAttributionSweep
             var subject = ReviewSubjectStore.Read(task.FolderPath);
             if (subject is null || subject.CompletedAtUtc < _now - Lookback) continue;
             var key = task.Key ?? task.Id;
-            var projection = _authority.GetTaskProjection(key);
-            var review = projection.CurrentReviewAttempt;
-            if (review?.Outcome != ReviewTerminalOutcome.Pass
-                || !string.Equals(projection.CurrentRunAttempt?.AttemptId, subject.RunAttemptId,
-                    StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(review.SourceRunAttemptId, subject.RunAttemptId,
-                    StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(review.TestedResultSha, subject.ResultSha,
-                    StringComparison.OrdinalIgnoreCase)) continue;
-            var warning = _timeline.ReadAll(task.FolderPath).LastOrDefault(evt =>
-                evt.Kind == TimelineEventKinds.AgentRunFinished
-                && string.Equals(evt.RunId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase))
-                ?.Details?.GetValueOrDefault("commitAttributionWarning");
+            if (!IsCurrentPassingReview(key, subject)) continue;
+            var warning = RunFinishedAttributionWarning(task, subject);
             var match = Regex.Match(warning ?? "", @"commit (?<sha>[0-9a-fA-F]{7,40}) names foreign task");
             var alreadyAttributed = task.Commits.Count(commit => string.Equals(commit.RunAttemptId,
                 subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)
@@ -276,31 +266,18 @@ public sealed class RemoteCompletionAttributionSweep
                     subject.ResultSha, 0, 0, repair.Warning));
                 continue;
             }
-            var moved = _states.MoveJob(task.Id, TaskStates.AutoReview, task.WatchPath,
-                cause: TimelineActors.System, expectedSourceState: TaskStates.Escalated,
-                transitionCause: LaneChangeCauses.ReviewVerdict,
-                transitionDetail: "integration-history-attribution-repaired");
-            if (moved.Status != MoveJobStatus.Success)
-            {
-                rows.Add(new RemoteCompletionAttributionSweepTaskReport(task.ProjectName, key,
-                    subject.ResultSha, repair.Commits, 0, $"Lane restoration failed: {moved.Status}."));
-                continue;
-            }
             var details = new Dictionary<string, string>
             {
-                ["resultSha"] = subject.ResultSha,
                 ["reason"] = importedForeignCommit
                     ? "imported-integration-history"
                     : "merge-only-recovery-delivery",
-                ["attributedCommits"] = repair.Commits.ToString(),
             };
             if (importedForeignCommit) details["foreignCommit"] = match.Groups["sha"].Value;
-            _timeline.Append(moved.NewFolderPath ?? task.FolderPath,
-                TimelineEventKinds.IntegrationHistoryAttributionRepaired, TimelineActors.System,
+            rows.Add(RestoreToAutoReview(task, subject, repair.Commits,
+                "integration-history-attribution-repaired",
+                TimelineEventKinds.IntegrationHistoryAttributionRepaired,
                 "Restored the passing reviewed delivery after excluding integration history from attribution.",
-                subject.RunAttemptId, details: details);
-            rows.Add(new RemoteCompletionAttributionSweepTaskReport(task.ProjectName, key,
-                subject.ResultSha, repair.Commits, 0, null));
+                details));
         }
 
         var report = new RemoteCompletionAttributionSweepReport(1, _now, false,
@@ -308,6 +285,123 @@ public sealed class RemoteCompletionAttributionSweep
             rows.Count(row => row.Warning is not null), rows);
         WriteReport(report, reportPath);
         return report;
+    }
+
+    /// <summary>
+    /// AGT-3854: repairs a passing reviewed delivery escalated because the
+    /// subject guard read a finding id (<c>AGT-3794-F13</c>), a key the card
+    /// references, or a subject that also names the card's own key as foreign
+    /// work. The range is attributed through the current guard; a delivery
+    /// whose subjects still name an unreferenced foreign key stays escalated.
+    /// </summary>
+    public RemoteCompletionAttributionSweepReport RunCommitSubjectKeyRepairOnce()
+    {
+        var reportPath = Path.Combine(Path.GetDirectoryName(_reportPath)!, CommitSubjectKeyReportFileName);
+        if (File.Exists(reportPath))
+        {
+            var prior = JsonSerializer.Deserialize<RemoteCompletionAttributionSweepReport>(
+                File.ReadAllText(reportPath), Json);
+            if (prior is { UnresolvedTasks: 0 }) return prior with { AlreadyCompleted = true };
+        }
+
+        var rows = new List<RemoteCompletionAttributionSweepTaskReport>();
+        if (_states is not null && _timeline is not null && _authority is not null)
+        foreach (var task in _scanner.ScanAllJobsWithArchive().Where(task => task.State == TaskStates.Escalated))
+        {
+            var subject = ReviewSubjectStore.Read(task.FolderPath);
+            if (subject is null || subject.CompletedAtUtc < _now - Lookback) continue;
+            var key = task.Key ?? task.Id;
+            if (!IsCurrentPassingReview(key, subject)) continue;
+            var warning = RunFinishedAttributionWarning(task, subject);
+            var match = ForeignSubjectWarning().Match(warning ?? "");
+            if (!match.Success) continue;
+            if (task.Commits.Any(commit => string.Equals(commit.RunAttemptId,
+                    subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(commit.ResultSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            var repair = RepairCommits(task, subject);
+            if (repair.Commits == 0)
+            {
+                // A subject that still names an unreferenced foreign key keeps
+                // the escalation; that is the guard working, not a failed repair.
+                if (!ForeignSubjectWarning().IsMatch(repair.Warning ?? ""))
+                    rows.Add(new RemoteCompletionAttributionSweepTaskReport(task.ProjectName, key,
+                        subject.ResultSha, 0, 0, repair.Warning));
+                continue;
+            }
+            rows.Add(RestoreToAutoReview(task, subject, repair.Commits,
+                "commit-subject-key-attribution-repaired",
+                TimelineEventKinds.CommitSubjectKeyAttributionRepaired,
+                $"Restored the passing reviewed delivery: '{match.Groups["key"].Value}' in a commit subject is no longer read as another card's work.",
+                new Dictionary<string, string>
+                {
+                    ["reason"] = "commit-subject-key-allowed",
+                    ["foreignCommit"] = match.Groups["sha"].Value,
+                    ["namedKey"] = match.Groups["key"].Value,
+                }));
+        }
+
+        var report = new RemoteCompletionAttributionSweepReport(1, _now, false,
+            rows.Count(row => row.Commits > 0 && row.Warning is null), 0,
+            rows.Count(row => row.Warning is not null), rows);
+        WriteReport(report, reportPath);
+        _logger.LogInformation(
+            "commit-subject-key-attribution-repair completed commitTasks={CommitTasks} unresolved={Unresolved} report={Report}",
+            report.RepairedCommitTasks,
+            report.UnresolvedTasks,
+            reportPath);
+        return report;
+    }
+
+    [GeneratedRegex(@"commit (?<sha>[0-9a-fA-F]{7,40}) names foreign task '(?<key>[^']+)'",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ForeignSubjectWarning();
+
+    private bool IsCurrentPassingReview(string key, ReviewSubjectRecord subject)
+    {
+        var projection = _authority!.GetTaskProjection(key);
+        var review = projection.CurrentReviewAttempt;
+        return review?.Outcome == ReviewTerminalOutcome.Pass
+            && string.Equals(projection.CurrentRunAttempt?.AttemptId, subject.RunAttemptId,
+                StringComparison.OrdinalIgnoreCase)
+            && string.Equals(review.SourceRunAttemptId, subject.RunAttemptId,
+                StringComparison.OrdinalIgnoreCase)
+            && string.Equals(review.TestedResultSha, subject.ResultSha,
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string? RunFinishedAttributionWarning(TaskInfo task, ReviewSubjectRecord subject)
+        => _timeline!.ReadAll(task.FolderPath).LastOrDefault(evt =>
+                evt.Kind == TimelineEventKinds.AgentRunFinished
+                && string.Equals(evt.RunId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase))
+            ?.Details?.GetValueOrDefault("commitAttributionWarning");
+
+    // Moves a reattributed escalated delivery back to Auto Review and records
+    // why; it starts no coding round.
+    private RemoteCompletionAttributionSweepTaskReport RestoreToAutoReview(
+        TaskInfo task,
+        ReviewSubjectRecord subject,
+        int commits,
+        string transitionDetail,
+        string eventKind,
+        string summary,
+        Dictionary<string, string> details)
+    {
+        var key = task.Key ?? task.Id;
+        var moved = _states!.MoveJob(task.Id, TaskStates.AutoReview, task.WatchPath,
+            cause: TimelineActors.System, expectedSourceState: TaskStates.Escalated,
+            transitionCause: LaneChangeCauses.ReviewVerdict,
+            transitionDetail: transitionDetail);
+        if (moved.Status != MoveJobStatus.Success)
+            return new RemoteCompletionAttributionSweepTaskReport(task.ProjectName, key,
+                subject.ResultSha, commits, 0, $"Lane restoration failed: {moved.Status}.");
+        details["resultSha"] = subject.ResultSha;
+        details["attributedCommits"] = commits.ToString();
+        _timeline!.Append(moved.NewFolderPath ?? task.FolderPath, eventKind, TimelineActors.System,
+            summary, subject.RunAttemptId, details: details);
+        return new RemoteCompletionAttributionSweepTaskReport(task.ProjectName, key,
+            subject.ResultSha, commits, 0, null);
     }
 
     internal static IReadOnlyList<string> BaseCandidates(
@@ -366,7 +460,11 @@ public sealed class RemoteCompletionAttributionSweep
                 task.Key ?? task.Id,
                 deliveryRef,
                 range.Commits,
-                subject.Repository);
+                subject.Repository,
+                RemoteCommitAttributionGuard.CardReferencedKeys(task),
+                task.Commits,
+                parent => _git.IsAncestor(repository, parent,
+                    "refs/remotes/origin/" + TaskIntegrationBranch.Name(range.IntegrationBranch)));
             if (!attribution.Accepted)
             {
                 if (!string.IsNullOrWhiteSpace(attribution.Warning)) warnings.Add(attribution.Warning);

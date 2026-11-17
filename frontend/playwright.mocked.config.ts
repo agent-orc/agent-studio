@@ -15,6 +15,7 @@ export default defineConfig({
     name: 'mocked-api',
     testMatch: [
       '**/board/card-state-pill-matches-lane.spec.ts',
+      '**/board/remote-pickup-mode.spec.ts',
       '**/board/large-board-window.spec.ts',
       '**/board/failed-pickup-lane.spec.ts',
       '**/board/stalled-progress-card.spec.ts',

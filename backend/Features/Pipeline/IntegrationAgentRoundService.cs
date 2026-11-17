@@ -341,7 +341,7 @@ public sealed class IntegrationAgentRoundService
             job.Key ?? job.Id, subject.ImmutableResultRef ?? subject.ResultRef, subject.ResultSha,
             request.IntegrationBranch, "merge-into-develop",
             result.Error ?? "Delivery attribution needs a new agent round.", result.ConflictReport,
-            conflictedFiles: result.ConflictedFiles);
+            conflictedFiles: result.ConflictedFiles, runnerMergesIntegration: true);
     }
 
     private static IntegrationAgentRoundStartResult Failed(

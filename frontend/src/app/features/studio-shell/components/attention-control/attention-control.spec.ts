@@ -129,6 +129,10 @@ describe('AttentionControlComponent', () => {
     const { fixture, http } = await setup();
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim()).toBe('3');
+    // AGT-3835: the name starts with the visible text, "Needs you 3".
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="studio-attention-trigger"]')!;
+    expect(trigger.textContent!.replace(/\s+/g, ' ').trim()).toBe('Needs you 3');
+    expect(trigger.getAttribute('aria-label')).toBe('Needs you 3, 3 items need you');
 
     (host.querySelector('[data-testid="studio-attention-trigger"]') as HTMLButtonElement).click();
     http.expectOne('/api/operator/attention').flush({ items, count: items.length });
@@ -201,7 +205,7 @@ describe('AttentionControlComponent', () => {
     await fixture.whenStable();
     (rows()[1].querySelector('[data-testid="attention-row-action"]') as HTMLButtonElement).click();
     await fixture.whenStable();
-    expect(openReferenceOrNotify).toHaveBeenCalledWith('AGT-2');
+    expect(openReferenceOrNotify).toHaveBeenCalledWith('AGT-2', { focusDecision: true });
     expect(rows()).toHaveLength(0);
 
     trigger.click();

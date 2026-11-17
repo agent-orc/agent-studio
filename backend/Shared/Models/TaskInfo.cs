@@ -476,6 +476,14 @@ public record TaskInfo
     public ReviewProjectionView? ReviewProjection { get; init; }
 
     /// <summary>
+    /// AGT-3845: the current Remote Review attempt is settled but its grade
+    /// report is not written yet (the evidence projection runs after the lane
+    /// move), so <see cref="ReviewProjection"/> does not carry it yet. Clients
+    /// read the card again shortly. Read-time only; never persisted.
+    /// </summary>
+    public bool ReviewEvidencePending { get; init; }
+
+    /// <summary>
     /// Read-time visibility projection (ASS-1751) for <c>3-progress</c> tasks
     /// that disambiguates a live run, a failed run waiting out the rapid-crash
     /// backoff, and an orphaned run killed by a backend restart. Folded on by
@@ -645,6 +653,34 @@ public sealed record TaskLiveQueue
     public TaskLiveReviewLoss? Lost { get; init; }
     /// <summary>AGT-3690: the automatic retry that comes next; set only while <c>retry-scheduled</c>.</summary>
     public TaskLiveReviewRetry? Retry { get; init; }
+    /// <summary>
+    /// AGT-3840: the capability keys the review executor reported this pending
+    /// attempt needs and it cannot provide. Outranks host load in
+    /// <see cref="Reason"/>: load passes, a missing key does not.
+    /// </summary>
+    public TaskLiveReviewUnclaimable? Unclaimable { get; init; }
+}
+
+/// <summary>
+/// AGT-3840: why the review executor refused to claim the current attempt, as
+/// its latest claim answer named it. <see cref="Cause"/> and
+/// <see cref="Detail"/> come from the executor's capability advertisement
+/// when it advertised the key; a key it never registered has the cause
+/// <c>not-registered</c>.
+/// </summary>
+public sealed record TaskLiveReviewUnclaimable
+{
+    public IReadOnlyList<string> Capabilities { get; init; } = [];
+    /// <summary>Runner identity that refused the claim; the Execution Hosts row id.</summary>
+    public string? ExecutorId { get; init; }
+    /// <summary>Host the refusing executor runs on.</summary>
+    public string? HostId { get; init; }
+    /// <summary>One of <c>HeldCapabilityCauses</c> for the first key.</summary>
+    public string? Cause { get; init; }
+    /// <summary>The probe detail behind the first key, when the executor advertised it.</summary>
+    public string? Detail { get; init; }
+    /// <summary>UTC instant of the refused claim.</summary>
+    public DateTime ObservedAt { get; init; }
 }
 
 /// <summary>
@@ -680,6 +716,11 @@ public sealed record TaskLiveReviewRetry
     public int? Number { get; init; }
     public int Budget { get; init; }
     public DateTime DueAt { get; init; }
+    /// <summary>
+    /// AGT-3848: latest instant the stranding watchdog parks the card for an
+    /// operator decision when the retry has not started after <see cref="DueAt"/>.
+    /// </summary>
+    public DateTime? ParkAt { get; init; }
 }
 
 /// <summary>Wire tokens for <see cref="TaskLiveQueue.State"/>.</summary>
@@ -802,6 +843,9 @@ public sealed record RemoteDispatchRejection
     public string Reason { get; init; } = "Remote dispatch was rejected without a diagnostic.";
     [JsonPropertyName("rejectedAtUtc")]
     public DateTime RejectedAtUtc { get; init; }
+    /// <summary>AGT-3840: the capability key the runner lacked, when the refusal names one.</summary>
+    [JsonPropertyName("capability")]
+    public string? Capability { get; init; }
 }
 
 /// <summary>

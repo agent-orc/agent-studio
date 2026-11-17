@@ -20,13 +20,29 @@
     </p>
   }
 
+  @if (activeProjects().length > 1) {
+    <label class="first-run__project" data-testid="first-run-project-select-label">Project to set up
+      <select data-testid="first-run-project-select" [value]="selectedProject()?.id ?? ''"
+        (change)="selectProject($any($event.target).value)">
+        @for (project of activeProjects(); track project.id) {
+          <option [value]="project.id">{{ project.displayName }}</option>
+        }
+      </select>
+    </label>
+  }
+
   <ol class="first-run__steps">
     <li data-testid="first-run-owner" [attr.data-state]="ownerReady() ? 'ready' : 'pending'">
       <span class="first-run__number">1</span>
       <div><h3>Owner account</h3>
-        <p>{{ localProfile() ? 'No owner sign-in is needed in the local profile.' : ownerReady() ? 'Owner account and signed-in session verified.' : identity().error && !monolithWithoutTaskServer() ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p></div>
-      <app-status-indicator class="first-run__state" [tone]="ownerReady() ? 'success' : 'neutral'"
-        [label]="localProfile() ? 'Not applicable' : ownerReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
+        @if (localProfile()) {
+          <p data-testid="first-run-owner-local">The local profile opens without sign-in, but production approval and run-host enrollment need the owner account.</p>
+          <app-local-owner-sign-in />
+        } @else {
+          <p>{{ ownerReady() ? 'Owner account and signed-in session verified.' : identity().error && !monolithWithoutTaskServer() ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p>
+        }</div>
+      <app-status-indicator class="first-run__state" [tone]="ownerReady() && (!localProfile() || auth.status()?.authenticated) ? 'success' : 'neutral'"
+        [label]="localProfile() ? (auth.status()?.authenticated ? 'Signed in' : 'Needed for approval') : ownerReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
     <li data-testid="first-run-providers" [attr.data-state]="providersReady() ? 'ready' : 'pending'">
       <span class="first-run__number">2</span>
@@ -122,10 +138,13 @@
     </li>
     <li data-testid="first-run-project" [attr.data-state]="repositoryReady() ? 'ready' : 'pending'">
       <span class="first-run__number">4</span>
-      <div><h3>First project</h3>
-        <p>{{ repositoryReady() ? firstProject()?.displayName + ' has a registered checkout.' : projects().error ? 'Project registry is unavailable. Refresh after reconnecting.' : 'Create a project, register its credential-free repository origin, then configure GitHub access to clone and verify the checkout.' }}</p>
-        <button type="button" (click)="openProject()">{{ firstProject() ? 'Review project setup' : 'Create project' }}</button>
-        @if (firstProject() && !repository().value) {
+      <div><h3>{{ activeProjects().length > 1 ? 'Project repository' : 'First project' }}</h3>
+        <p>{{ repositoryReady() ? selectedProject()?.displayName + ' has a registered checkout.' : projects().error ? 'Project registry is unavailable. Refresh after reconnecting.' : 'Create a project, register its credential-free repository origin, then configure GitHub access to clone and verify the checkout.' }}</p>
+        <button type="button" (click)="openProject()">{{ selectedProject() ? 'Review project setup' : 'Create project' }}</button>
+        @if (localProfile() && selectedProject(); as project) {
+          <app-server-checkout-notice class="first-run__checkout" [projectId]="project.id" />
+        }
+        @if (selectedProject() && !repository().value) {
           <div class="first-run__form">
             <label>Repository clone URL
               <input data-testid="first-run-repository-url" type="text" inputmode="url" autocomplete="off" [value]="repositoryUrl()"

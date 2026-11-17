@@ -488,13 +488,14 @@ public static class LeaseEndpoints
             var remoteDeliveryFailures = new RemoteDeliveryFailureStore(
                 loggerFactory.CreateLogger<RemoteDeliveryFailureStore>());
             var reprobeCapabilities = new HashSet<string>(StringComparer.Ordinal);
-            void RecordRejection(TaskInfo task, string code, string? reason) =>
+            void RecordRejection(TaskInfo task, string code, string? reason, string? capability = null) =>
                 dispatchRejections.Record(
                     task,
                     req.RunnerId,
                     req.RunnerName,
                     code,
-                    reason);
+                    reason,
+                    capability: capability);
             if (string.IsNullOrWhiteSpace(req.RunnerId) || string.IsNullOrWhiteSpace(req.RunnerName))
                 return Results.BadRequest(new RunnerClaimResponse(RunnerClaimStatus.Invalid, Message: "runnerId and runnerName are required."));
             if (!RunnerMatches(context, req.RunnerId, req.RunnerName))
@@ -1116,7 +1117,7 @@ public static class LeaseEndpoints
                             QuotaWaitMarker.Clear(task.FolderPath);
                             RecordRejection(task,
                                 modelDecision == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Unavailable
-                                    ? "host-model-unavailable" : "host-capability-missing", reason);
+                                    ? "host-model-unavailable" : "host-capability-missing", reason, key);
                             continue;
                         }
                         if (quotaPlan.Outcome == QuotaAdmissionOutcome.Wait)
@@ -1185,7 +1186,8 @@ public static class LeaseEndpoints
                                      capabilityAdmission.Required) ?? [])
                             reprobeCapabilities.Add(capability);
                         capabilityMismatch ??= capabilityAdmission.Message;
-                        RecordRejection(task, "capability-mismatch", capabilityAdmission.Message);
+                        RecordRejection(task, "capability-mismatch", capabilityAdmission.Message,
+                            capabilityAdmission.Capability);
                         logger.LogInformation(
                             "remote-runner-coding-claim-skipped-capability runner={Runner} task={TaskKey} cli={CliType} reason={Reason}",
                             req.RunnerName,
@@ -1319,6 +1321,7 @@ public static class LeaseEndpoints
                     var detail = urlsMatch
                         ? OneLine(req.ProjectPreflight.Detail)
                         : $"fetch and push URL must both match registered repository '{repository.RepositoryUrl}'";
+                    var previousPreflight = clients.FindRunnerProjectPreflight(clientId, repository.ProjectId);
                     clients.SetRunnerProjectPreflight(clientId, new RunnerProjectPreflight
                     {
                         ProjectId = repository.ProjectId,
@@ -1333,6 +1336,10 @@ public static class LeaseEndpoints
                         // Server receipt time is the cache authority. A host
                         // clock cannot make a stale proof live indefinitely.
                         CheckedAt = DateTime.UtcNow,
+                        FirstFailedAt = succeeded ? null : previousPreflight is { Status: "failed" }
+                            && string.Equals(previousPreflight.Detail, detail, StringComparison.Ordinal)
+                            ? previousPreflight.FirstFailedAt ?? previousPreflight.CheckedAt
+                            : DateTime.UtcNow,
                         CredentialGeneration = req.RepositoryCredentialGeneration,
                     });
                     logger.Log(succeeded ? LogLevel.Information : LogLevel.Warning,
@@ -1690,7 +1697,7 @@ public static class LeaseEndpoints
             {
                 ClaimGate.Release();
             }
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim).WithCodingClaimReprobes();
 
         app.MapPost("/api/runner/completion", async (
             RemoteRunCompletionRequest req,
@@ -2155,7 +2162,11 @@ public static class LeaseEndpoints
                             req.TaskKey,
                             deliveryBranch,
                             deliveryRange.Commits,
-                            req.Repository);
+                            req.Repository,
+                            RemoteCommitAttributionGuard.CardReferencedKeys(task),
+                            task.Commits,
+                            parent => git.IsAncestor(repoRoot, parent,
+                                "refs/remotes/origin/" + TaskIntegrationBranch.Name(deliveryRange.IntegrationBranch)));
                         attributionWarning = string.Join(" ", new[]
                             { deliveryRange.Warning, remoteAttribution.Warning }
                             .Where(value => !string.IsNullOrWhiteSpace(value)));

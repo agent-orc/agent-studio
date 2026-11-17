@@ -11,6 +11,7 @@ import { TaskTimelinePollService } from '../../../polling/services/task-timeline
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
 import type { TaskTimelineEvent } from '../../../task-timeline';
+import { ModalStackService } from '../../../../services/modal-stack.service';
 
 /** localStorage key the component persists per-task collapse under. */
 const COLLAPSE_KEY = 'taskboard.escalation.collapsed';
@@ -85,6 +86,7 @@ function mount(opts: {
   continueJob?: ReturnType<typeof vi.fn>;
   batchGate?: { retryInfrastructureGate: ReturnType<typeof vi.fn>; getSettings: ReturnType<typeof vi.fn>; putSettings: ReturnType<typeof vi.fn> };
   retryReview?: ReturnType<typeof vi.fn>;
+  retryIntegration?: ReturnType<typeof vi.fn>;
 }) {
   const taskStub = {
     listCodeReviews: () => opts.reviewsStream ?? of({ entries: opts.reviews ?? [] }),
@@ -94,6 +96,8 @@ function mount(opts: {
     readTaskResult: () => opts.batchDiagnostic == null
       ? throwError(() => ({ status: 404 })) : of(opts.batchDiagnostic),
     continueJob: opts.continueJob ?? vi.fn(() => of({ status: 'queued' })),
+    retryIntegration: opts.retryIntegration ?? vi.fn(() => of({ status: 'integrated' })),
+    refresh: vi.fn(),
   };
   const timelineStub = { events: signal<TaskTimelineEvent[]>(opts.events ?? []), syncTo: vi.fn() };
 
@@ -219,7 +223,33 @@ describe('EscalationSummaryComponent', () => {
     const links = el.querySelectorAll('[data-testid="server-checkout-remedy"] a');
     expect(links[0]?.getAttribute('href')).toBe('/#/projects/agent-studio/settings');
     expect(links[1]?.getAttribute('href')).toContain('networked-task-server.md#project-checkouts');
+    expect(el.querySelector('[data-testid="server-checkout-retry"]')).toBeNull();
     expect(el.querySelector('[data-testid="escalation-action-reissue-escalated"]')).toBeNull();
+  });
+
+  it('offers Retry integration for the same delivery once the server checkout exists', () => {
+    const ready = detail();
+    ready.info.integration = {
+      status: 'conflict-skipped', integrationBranch: 'develop', deliveryRef: null, sha: null,
+      detail: 'Delivery could not integrate.', failure: {
+        code: 'server-checkout-missing', replayAvailable: true,
+        reason: 'This project needs a server checkout before delivery can integrate.',
+      },
+    } as TaskDetail['info']['integration'];
+    const retryIntegration = vi.fn(() => of({
+      status: 'integrated', reason: 'The delivery integrated without a new review round.', outcome: 'Merged',
+      rung: 0, deliverySha: 'abc', integrationBranch: 'develop', reviewReused: true, movedTo: '5-human-review',
+    }));
+    const fixture = mount({ detail: ready, retryIntegration });
+    const el = fixture.nativeElement as HTMLElement;
+    const retry = el.querySelector<HTMLButtonElement>('[data-testid="server-checkout-retry"]');
+    expect(retry?.textContent).toContain('Retry integration');
+    expect(el.querySelector('[data-testid="escalation-action-reissue-escalated"]')).toBeNull();
+    retry!.click();
+    fixture.detectChanges();
+    expect(retryIntegration).toHaveBeenCalledWith(ready.info.id, ready.info.watchPath);
+    expect(el.querySelector('[data-testid="server-checkout-retry-outcome"]')?.textContent)
+      .toContain('for acceptance');
   });
 
   it('keeps reissue when a failure only mentions a checkout in its message', () => {
@@ -452,6 +482,31 @@ describe('EscalationSummaryComponent', () => {
       .toBe(findings.length - 1);
   });
 
+  it('Escape closes the confirmation, not the task detail under it, and returns focus to the opener (AGT-3831)', async () => {
+    const fixture = mount({ reviews: [] });
+    const el: HTMLElement = fixture.nativeElement;
+    const stack = TestBed.inject(ModalStackService);
+    const closeDetail = vi.fn();
+    const releaseDetail = stack.push('task-detail', closeDetail);
+    const opener = el.querySelector<HTMLButtonElement>('[data-testid="escalation-action-reissue-escalated"]')!;
+    opener.focus();
+    opener.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const confirm = el.querySelector<HTMLElement>('[data-testid="escalation-confirm"]')!;
+    expect(confirm.contains(document.activeElement)).toBe(true);
+    expect(confirm.previousElementSibling?.classList.contains('cdk-focus-trap-anchor')).toBe(true);
+    expect(confirm.nextElementSibling?.classList.contains('cdk-focus-trap-anchor')).toBe(true);
+
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="escalation-confirm"]')).toBeNull();
+    expect(closeDetail).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(opener);
+    expect(stack.depth()).toBe(1);
+    releaseDetail();
+  });
+
   it('offers acceptance only with a written override reason', () => {
     const fixture = mount({ reviews: [] });
     const el: HTMLElement = fixture.nativeElement;
@@ -491,6 +546,29 @@ describe('EscalationSummaryComponent', () => {
     fixture.detectChanges();
     expect(submit.disabled).toBe(false);
     expect(el.querySelector<HTMLInputElement>('.escalation-confirm__findings input')?.checked).toBe(true);
+  });
+
+  it('requires and explains an owner note when no findings are available', () => {
+    const fixture = mount({ reviews: [] });
+    const emitted: unknown[] = [];
+    fixture.componentInstance.triageAction.subscribe(action => emitted.push(action));
+    fixture.componentInstance.openDecision('reissue-escalated');
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="reissue-no-findings"]')?.textContent).toContain('original task');
+    expect(el.querySelector('.escalation-confirm__note')?.textContent).toContain('required without selected findings');
+    const submit = el.querySelector<HTMLButtonElement>('[data-testid="escalation-confirm-submit"]')!;
+    expect(submit.disabled).toBe(true);
+    const note = el.querySelector<HTMLTextAreaElement>('[data-testid="escalation-owner-note"]')!;
+    note.value = 'Recheck the library API contract.';
+    note.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(submit.disabled).toBe(false);
+    submit.click();
+    expect(emitted).toEqual([expect.objectContaining({
+      id: 'reissue-escalated',
+      reissueInstructions: { findings: [], note: 'Recheck the library API contract.' },
+    })]);
   });
 
   it('replaces three empty context columns with one compact message', () => {

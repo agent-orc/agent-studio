@@ -157,6 +157,74 @@ public sealed class TaskLiveStatusProjectionTests
             true, current, new ReviewQueueEntry("normal", 1), null, null, Now, noSlots)!.Reason);
     }
 
+    // AGT-3840 (playthrough AGT-3649): a review the executor could not claim
+    // because provider-auth:codex was missing read "Review host saturated:
+    // load/core 2.0 > 1.0" for 20 minutes, while reviews under the same load
+    // passed. The missing key and its host outrank the load.
+    [Fact]
+    public void ReviewQueue_UnclaimableRequirement_NamesKeyAndHost_AheadOfHostLoad()
+    {
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Pending, null, "normal", Now.AddMinutes(-20), "review_codex");
+        var saturated = new AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto(
+            Now, null, 24, null, null, null, null, null, null, null, null, 12, 0);
+        var refusal = new ReviewUnclaimableObservation(
+            "review_codex", "AGT-3649", "kori-review-01-runner", ["provider-auth:codex"],
+            Now.AddMinutes(-1), AgentStudio.TaskServer.Contracts.ReviewClaimEmptyReasons.UnclaimablePlanRequirements);
+        var holds = new[]
+        {
+            new AgentStudio.TaskServer.Contracts.HeldCapabilityDto(
+                "provider-auth:codex",
+                AgentStudio.TaskServer.Contracts.HeldCapabilityStates.Indeterminate,
+                AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.ProbeIndeterminate,
+                "codex login status timed out after 30s", Now.AddMinutes(-2)),
+        };
+        var unclaimable = TaskLiveStatusProjection.ReviewUnclaimable(refusal, "kori-review-01", holds);
+
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", 1), null, null, Now, saturated,
+            unclaimable: unclaimable)!;
+
+        Assert.Equal(TaskLiveQueueStates.Queued, queue.State);
+        Assert.Null(queue.Position);
+        Assert.DoesNotContain("saturated", queue.Reason, StringComparison.Ordinal);
+        Assert.Equal(
+            "Review cannot be claimed: kori-review-01-runner on host kori-review-01 lacks provider-auth:codex "
+            + $"(probe indeterminate: codex login status timed out after 30s); seen {Utc(Now.AddMinutes(-1))}.",
+            queue.Reason);
+        Assert.Equal(["provider-auth:codex"], queue.Unclaimable!.Capabilities);
+        Assert.Equal("kori-review-01-runner", queue.Unclaimable.ExecutorId);
+        Assert.Equal("kori-review-01", queue.Unclaimable.HostId);
+        Assert.Equal(AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.ProbeIndeterminate, queue.Unclaimable.Cause);
+
+        // Without a refusal the load still explains the wait.
+        Assert.StartsWith("Review host saturated", TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", 1), null, null, Now, saturated)!.Reason);
+    }
+
+    [Fact]
+    public void ReviewUnclaimable_UnregisteredKey_ReadsNotRegistered_AndQuotaDeferralIsNoCapability()
+    {
+        var refusal = new ReviewUnclaimableObservation(
+            "review_codex", "AGT-3649", "kori-review-01-runner", ["provider-auth:codex"],
+            Now, AgentStudio.TaskServer.Contracts.ReviewClaimEmptyReasons.UnclaimablePlanRequirements);
+        var unclaimable = TaskLiveStatusProjection.ReviewUnclaimable(refusal, "kori-review-01-runner", [])!;
+        Assert.Equal(AgentStudio.TaskServer.Contracts.HeldCapabilityCauses.NotRegistered, unclaimable.Cause);
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Pending, null, "normal", Now.AddMinutes(-20), "review_codex");
+        Assert.Equal(
+            $"Review cannot be claimed: kori-review-01-runner lacks provider-auth:codex (not registered); seen {Utc(Now)}.",
+            TaskLiveStatusProjection.ReviewQueueFor(true, current, null, null, null, Now, unclaimable: unclaimable)!.Reason);
+
+        // A quota deferral records its sentence where the keys go; it names no capability.
+        var quota = refusal with
+        {
+            MissingCapabilities = ["Codex quota is exhausted until 21:00 UTC."],
+            Reason = AgentStudio.TaskServer.Contracts.ReviewClaimEmptyReasons.QuotaDeferred,
+        };
+        Assert.Null(TaskLiveStatusProjection.ReviewUnclaimable(quota, "kori-review-01", []));
+    }
+
     [Fact]
     public void Queue_ReportsAndClearsExistingReviewSlotPosition()
     {
@@ -267,7 +335,10 @@ public sealed class TaskLiveStatusProjectionTests
         Assert.Equal("infrastructureFailure", queue.Outcome);
         Assert.Equal(TaskLiveReviewLossCauses.Infrastructure, queue.Lost!.Cause);
         Assert.Equal("SnapshotUnavailable", queue.Lost.Classification);
-        Assert.Equal(new TaskLiveReviewRetry { Number = 2, Budget = 2, DueAt = due }, queue.Retry);
+        Assert.Equal(new TaskLiveReviewRetry
+        {
+            Number = 2, Budget = 2, DueAt = due, ParkAt = new DateTime(2026, 7, 24, 20, 9, 0, DateTimeKind.Utc),
+        }, queue.Retry);
         Assert.Equal(
             $"Review lost: review infrastructure failed (SnapshotUnavailable) (agent-runner-01, {Utc(Now.AddMinutes(-1))}). "
             + $"Automatic retry 2 of 2 at {Utc(due)}.",
@@ -304,10 +375,40 @@ public sealed class TaskLiveStatusProjectionTests
                 At = lostAt,
             },
             queue.Lost);
-        Assert.Equal(new TaskLiveReviewRetry { Number = 1, Budget = 2, DueAt = due }, queue.Retry);
+        // Due 01:28:16, plus the 5 minute overdue limit and one 30 second watchdog tick, rounded up.
+        Assert.Equal(new TaskLiveReviewRetry
+        {
+            Number = 1, Budget = 2, DueAt = due, ParkAt = new DateTime(2026, 11, 10, 1, 34, 0, DateTimeKind.Utc),
+        }, queue.Retry);
         Assert.Equal(
             "Review lost: review host restarted (lab-review-host, 2026-11-10 01:27:16Z). "
             + "Automatic retry 1 of 2 at 2026-11-10 01:28:16Z.",
+            queue.Reason);
+    }
+
+    // AGT-3848 (S6-F2): the authority keeps the retry scheduled after its due
+    // time when no scheduler tick starts it; the reason no longer promises it.
+    [Fact]
+    public void ReviewQueue_RetryPastItsDueTime_ReadsOverdueAndNamesThePark()
+    {
+        var lostAt = new DateTime(2026, 11, 15, 23, 36, 0, DateTimeKind.Utc);
+        var due = lostAt.AddMinutes(1);
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Failed, null, CreatedAt: lostAt.AddMinutes(-1), AttemptId: "review_s6",
+            ExecutorId: "first-run-review", Outcome: ReviewTerminalOutcome.InfrastructureFailure,
+            PendingInfrastructureRetryAt: due, FailureClassification: "ExecutorRestarted",
+            HostId: "lab-review-host", TerminalAt: lostAt, PendingInfrastructureRetryNumber: 1);
+
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", null), null, null, due.AddSeconds(67),
+            retryOverdueLimit: TimeSpan.FromMinutes(2))!;
+
+        Assert.Equal(TaskLiveQueueStates.RetryScheduled, queue.State);
+        Assert.Equal(new DateTime(2026, 11, 15, 23, 40, 0, DateTimeKind.Utc), queue.Retry!.ParkAt);
+        Assert.Equal(
+            "Review lost: review host restarted (lab-review-host, 2026-11-15 23:36:00Z). "
+            + "Automatic retry 1 of 2 overdue since 2026-11-15 23:37:00Z; "
+            + "parks for an operator decision by 2026-11-15 23:40:00Z.",
             queue.Reason);
     }
 

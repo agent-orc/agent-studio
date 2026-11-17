@@ -50,6 +50,41 @@ public sealed class AcceptanceReadinessPolicyTests
     }
 
     [Fact]
+    public void Missing_delivery_brief_version_reads_as_unrecorded_not_changed()
+    {
+        var content = Content("pass") with { DeliveryBriefVersion = null };
+        var verdict = Classify(Refused(CompletionAdmissionStages.Content,
+            CompletionContentPolicy.Decide(content).Message, content));
+
+        Assert.Equal(AcceptanceReadinessClasses.VerdictStale, verdict.Readiness);
+        Assert.Equal("No brief version recorded", verdict.Headline);
+        Assert.Equal("No brief version was recorded for the delivery; the current brief is brief-curren.", verdict.Reason);
+        Assert.DoesNotContain("unknown", verdict.Reason);
+    }
+
+    [Fact]
+    public void Missing_review_brief_version_reads_as_unrecorded_not_changed()
+    {
+        var content = Content("pass") with { ReviewBriefVersion = null };
+        var verdict = Classify(Refused(CompletionAdmissionStages.Content,
+            CompletionContentPolicy.Decide(content).Message, content));
+
+        Assert.Equal("No brief version recorded", verdict.Headline);
+        Assert.StartsWith("No brief version was recorded for the requirement-fit verdict;", verdict.Reason);
+    }
+
+    [Fact]
+    public void Changed_delivery_brief_version_reads_as_stale()
+    {
+        var content = Content("pass") with { DeliveryBriefVersion = "brief-older" };
+        var verdict = Classify(Refused(CompletionAdmissionStages.Content,
+            CompletionContentPolicy.Decide(content).Message, content));
+
+        Assert.Equal("Verdict stale", verdict.Headline);
+        Assert.Equal("The delivery was built for brief brief-older; the brief is now brief-curren.", verdict.Reason);
+    }
+
+    [Fact]
     public void Review_of_another_run_is_stale()
     {
         var content = Content(null) with

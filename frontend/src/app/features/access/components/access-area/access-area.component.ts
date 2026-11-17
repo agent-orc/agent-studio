@@ -24,6 +24,8 @@ import { AccessStandingGrantsComponent } from '../access-standing-grants/access-
 import { SessionManagerComponent } from '../session-manager/session-manager.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { LocalOwnerSessionService } from '../../../../services/local-owner-session.service';
+import { LocalOwnerSignInComponent } from '../../../../components/local-owner-sign-in/local-owner-sign-in';
 
 /**
  * The one Access area: users with their role bindings, groups, service
@@ -39,7 +41,7 @@ import { ConfirmDialogService } from '../../../../services/confirm-dialog.servic
   imports: [
     AccessBackupActivityComponent, AccessBindingsComponent, AccessBreakGlassComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
     AccessOperatorAgentsComponent, AccessOperatorApprovalsComponent, AccessOperatorKillSwitchComponent, AccessRunnersComponent,
-    AccessServiceAccountsComponent, AccessStandingGrantsComponent, SessionManagerComponent, StatusIndicatorComponent, DatePipe,
+    AccessServiceAccountsComponent, AccessStandingGrantsComponent, SessionManagerComponent, StatusIndicatorComponent, DatePipe, LocalOwnerSignInComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-area.component.html',
@@ -50,6 +52,7 @@ export class AccessAreaComponent implements OnInit {
   private readonly http = inject(HttpClient);
   readonly factorEvents = signal<readonly { sequence: number; at: string; actor: string; session?: string | null; operation: string; target?: string | null }[]>([]);
   private readonly confirmDialog = inject(ConfirmDialogService);
+  readonly localOwner = inject(LocalOwnerSessionService);
   readonly operators = inject(OperatorAgentsService);
   readonly standingGrants = inject(StandingGrantsService);
   readonly approvals = inject(OperatorApprovalsService);

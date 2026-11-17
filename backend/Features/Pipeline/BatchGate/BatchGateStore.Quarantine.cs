@@ -113,7 +113,7 @@ public sealed partial class BatchGateStore
     {
         try
         {
-            value = Read<T>(path);
+            value = ReadRecordFile<T>(path);
             validate?.Invoke(value);
             if (!_quarantine.IsEmpty) _quarantine.TryRemove(path, out _);
             return true;
@@ -130,7 +130,7 @@ public sealed partial class BatchGateStore
     {
         try
         {
-            var value = Read<T>(path);
+            var value = ReadRecordFile<T>(path);
             if (!_quarantine.IsEmpty) _quarantine.TryRemove(path, out _);
             return value;
         }
@@ -179,7 +179,7 @@ public sealed partial class BatchGateStore
         {
             try
             {
-                var manifest = Read<BatchGateManifest>(manifestPath);
+                var manifest = ReadManifestFile(manifestPath);
                 return (batchId ?? manifest.BatchId, manifest.Scope.Project);
             }
             catch (Exception exception) when (IsUnreadable(exception) || exception is FileNotFoundException)

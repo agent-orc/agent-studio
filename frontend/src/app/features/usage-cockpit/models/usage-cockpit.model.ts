@@ -20,12 +20,14 @@ export interface UsageCliWindow {
   /** Quota used, not remaining. May exceed 100. */
   usedPct: number | null;
   resetAtUtc: string | null;
+  startAtUtc?: string | null;
   resetLabel: string | null;
   suspiciousReason: string | null;
 }
 
 export interface UsageCli {
   cliId: string;
+  subscriptionKey?: string | null;
   primary: boolean;
   plan: string | null;
   source: string | null;
@@ -55,6 +57,8 @@ export interface UsageProjectCost {
   name: string;
   todayUsd: number | null;
   weekUsd: number | null;
+  unpricedTodayRuns?: number;
+  unpricedWeekRuns?: number;
   coverage: UsageSourceState;
   latestReceiptAt?: string | null;
 }
@@ -65,7 +69,10 @@ export interface UsageCostProjection {
   /** null means unknown, never zero. */
   todayUsd: number | null;
   weekUsd: number | null;
+  unpricedTodayRuns?: number;
+  unpricedWeekRuns?: number;
   projects: UsageProjectCost[];
+  oneShotSources?: { source: string; todayUsd: number; weekUsd: number }[];
   coverage: UsageSourceState;
   pricingVersion: string;
   normalizationVersion: string;

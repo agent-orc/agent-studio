@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Tasks;
 using AgentStudio.Watcher;
 
 using Microsoft.AspNetCore.Hosting;
@@ -114,6 +115,71 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
             record => record.Action == AutoReviewStrandingAction.Escalate.ToString());
         Assert.True(factory.Services.GetRequiredService<AttemptAuthorityService>()
             .HasScheduledReviewInfrastructureRetry(failed));
+    }
+
+    /// <summary>
+    /// AGT-3848 (AGT-3648 finding S6-F2): the retry came due and no scheduler
+    /// tick started it. The card said "Automatic retry 1 of 2 at 11:37 PM" past
+    /// 11:37, and with the default 30 minute threshold it would have kept that
+    /// promise for more than 30 minutes. It now reads overdue, names the park
+    /// time, and the watchdog parks it by that time.
+    /// </summary>
+    [Fact]
+    public async Task Overdue_retry_reads_overdue_on_the_card_and_parks_by_the_named_time()
+    {
+        SeedTask(TaskStates.AutoReview, _time.GetUtcNow().UtcDateTime.AddHours(-2));
+        using var factory = BuildFactory();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var failed = await ReportExecutorRestartedAsync(factory);
+        var dueAt = _time.GetUtcNow().UtcDateTime - authority.ScheduledReviewInfrastructureRetryOverdue(failed)!.Value;
+        var watchdog = factory.Services.GetRequiredService<AutoReviewStrandingWatchdog>();
+
+        // The scheduler is disabled: no tick ever fires the retry. 67 seconds
+        // past the due time, as in the playthrough.
+        _time.Advance(dueAt - _time.GetUtcNow().UtcDateTime + TimeSpan.FromSeconds(67));
+        var retry = LiveQueue(factory).Retry!;
+        Assert.Equal(dueAt, retry.DueAt);
+        var parkAt = retry.ParkAt!.Value;
+        Assert.InRange(parkAt - dueAt, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(90));
+        Assert.Contains($"overdue since {dueAt:yyyy-MM-dd HH:mm:ss}Z", LiveQueue(factory).Reason);
+        Assert.Equal(0, await watchdog.RunOnceAsync());
+
+        // Inside the overdue limit the card stays in Auto Review.
+        _time.Advance(dueAt + TimeSpan.FromMinutes(5) - _time.GetUtcNow().UtcDateTime);
+        Assert.Equal(0, await watchdog.RunOnceAsync());
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey)));
+
+        // The next watchdog tick is before the named park time and parks the card.
+        _time.Advance(AutoReviewStrandingWatchdog.Interval);
+        Assert.True(_time.GetUtcNow().UtcDateTime <= parkAt);
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+        var record = Assert.Single(factory.Services.GetRequiredService<StallInterventionStore>().All());
+        Assert.Equal(AutoReviewStrandingAction.Escalate.ToString(), record.Action);
+        Assert.Contains("minutes overdue", record.Done, StringComparison.Ordinal);
+        Assert.DoesNotContain("retry limit reached", record.Done, StringComparison.Ordinal);
+        Assert.Contains("retry 1 of 2", record.Done, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"{dueAt:yyyy-MM-dd HH:mm:ss} UTC", record.Done, StringComparison.Ordinal);
+        Assert.Contains("retry scheduler did not start it", record.Done, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("scheduled retry", record.Why, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("no running step, review, scheduled retry", record.Why, StringComparison.OrdinalIgnoreCase);
+        var parked = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        Assert.Contains("retry scheduler did not start it", parked.ParkedBlocker!.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("retry limit reached", parked.ParkedBlocker.Reason, StringComparison.OrdinalIgnoreCase);
+
+        var undone = await watchdog.UndoParkAsync(record.Id, "operator");
+        Assert.True(undone.Undone, undone.Message);
+        _time.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var reparked = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        Assert.DoesNotContain("no active owner for 0 minutes", reparked.ParkedBlocker!.Reason,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private TaskLiveQueue LiveQueue(WebApplicationFactory<Program> factory)
+    {
+        var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        return factory.Services.GetRequiredService<TaskLiveStatusProjection>().BuildLookup([card])[card.TaskKey].Queue!;
     }
 
     [Fact]

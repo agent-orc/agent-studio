@@ -577,12 +577,7 @@ public sealed class GitStaleLockGuard
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var fixedCandidates = surface == GitLockSurface.SharedRefs
             ? new[] { Path.Combine(scope.CommonDirectory, "packed-refs.lock") }
-            : new[]
-            {
-                Path.Combine(scope.GitDirectory, "index.lock"),
-                Path.Combine(scope.GitDirectory, "HEAD.lock"),
-                Path.Combine(scope.CommonDirectory, "packed-refs.lock"),
-            };
+            : GitStaleLockPolicy.FixedLockPaths(scope.GitDirectory, scope.CommonDirectory);
         foreach (var candidate in fixedCandidates)
         {
             if (File.Exists(candidate) && seen.Add(candidate)) yield return candidate;

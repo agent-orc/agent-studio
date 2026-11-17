@@ -13,7 +13,7 @@
            aria-live="polite">
     <div class="task-live__current" data-testid="task-live-current">
       <span class="task-live__label">Current</span>
-      @if (live.loss || live.hold) {
+      @if (live.loss || live.hold || live.unclaimable) {
         <span class="task-live__signal" aria-hidden="true"></span>
       } @else {
         <span class="task-live__signal task-live__signal--spacer" aria-hidden="true"></span>
@@ -24,6 +24,12 @@
             @if (loss.hostRoute; as route) {{{ loss.before }}<a class="task-live__host-link"
               data-testid="task-live-host-link" [href]="'#' + route"
               (click)="openHost($event, route)">{{ loss.host }}</a>{{ loss.after }}} @else {{{ loss.text }}}
+          </span>
+        } @else if (live.unclaimable; as held) {
+          <span class="task-live__headline task-live__headline--wrap" data-testid="task-live-review-unclaimable">
+            @if (held.hostRoute; as route) {{{ held.before }}<a class="task-live__host-link"
+              data-testid="task-live-unclaimable-host-link" [href]="'#' + route"
+              (click)="openHost($event, route)">{{ held.host }}</a>{{ held.after }}} @else {{{ held.text }}}
           </span>
         } @else if (live.hold; as hold) {
           <span class="task-live__headline task-live__headline--hold" data-testid="task-live-hold" [attr.title]="live.headline">Held behind

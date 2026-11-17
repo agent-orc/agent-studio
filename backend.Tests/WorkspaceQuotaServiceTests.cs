@@ -5,6 +5,8 @@ using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tokens;
+using AgentStudio.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -22,6 +24,67 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "workspace-quota-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
+
+    [Fact]
+    public async Task Workspace_one_shot_rows_count_once_in_project_and_workspace_meters()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "one-shots"), "One shots", workspace.Id, _clock);
+        Directory.CreateDirectory(project.StorageLocation);
+        var bridge = services.GetRequiredService<AgentMessageBusBridge>();
+        var now = _clock.GetUtcNow().UtcDateTime.AddMinutes(-30);
+        await bridge.EmitTokenUsageAsync(null, null, "support:adhoc", "auto-tag",
+            new OrchestratorTokenUsage { Model = "claude-sonnet-5", InputTokens = 20, OutputTokens = 5 },
+            now, attributedProject: project.DisplayName);
+        await bridge.EmitTokenUsageAsync(null, null, "support:adhoc", "title-generation",
+            new OrchestratorTokenUsage { Model = "claude-sonnet-5", InputTokens = 10, OutputTokens = 2 }, now);
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+
+        Assert.Equal(25, quota.Snapshot(workspace.Id, project.Id).Usage.ModelTokens);
+        Assert.Equal(37, quota.Snapshot(workspace.Id).Usage.ModelTokens);
+        Assert.Contains(quota.Snapshot(workspace.Id).BiggestProjects,
+            row => row.Project == "Unattributed one-shot jobs" && row.ModelTokens == 12);
+        var tokens = services.GetRequiredService<ITokenAggregator>();
+        Assert.Equal(25, tokens.ProjectSummary(project.DisplayName, project.StorageLocation,
+            _clock.GetUtcNow().UtcDateTime).LifetimeTotalTokens);
+        var aggregate = tokens.WorkspaceAggregate([(project.DisplayName, project.StorageLocation)]);
+        Assert.Equal(37, aggregate.TotalInputTokens + aggregate.TotalOutputTokens);
+        Assert.Contains(aggregate.ByProject, row => row.Project == "Unattributed one-shot jobs"
+            && row.InputTokens + row.OutputTokens == 12);
+        var workspaceRows = WorkspaceBusUsage.Read(services.GetRequiredService<AgentMessageBusStore>(),
+            _root, [project], services.GetRequiredService<TaskScannerService>(), now.AddHours(-1))
+            .KeyedByName([project], includeUnattributed: true);
+        var timeline = tokens.WorkspaceTimelineRange([(project.DisplayName, project.StorageLocation)],
+            now.AddHours(-1), now.AddHours(1), 60, workspaceRows);
+        Assert.Equal(25, Assert.Single(timeline.OneShotSources, row => row.Source == "auto-tag").Tokens);
+        Assert.Equal(12, Assert.Single(timeline.OneShotSources, row => row.Source == "title-generation").Tokens);
+    }
+
+    [Fact]
+    public void Unknown_model_keeps_tokens_and_marks_the_priced_subtotal()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+             Path.Combine(_root, "unpriced"), "Unpriced", workspace.Id, _clock);
+        SeedTask(project.StorageLocation, "unpriced-card", new
+        {
+            calls = 1, inputTokens = 10, outputTokens = 5, totalTokens = 15,
+            entries = new[] { new { ts = _clock.GetUtcNow().UtcDateTime,
+                model = "demo-unpriced-model", inputTokens = 10, outputTokens = 5 } },
+        });
+        services.GetRequiredService<TaskScannerService>().InvalidateCache();
+        var usage = services.GetRequiredService<WorkspaceQuotaService>().Snapshot(workspace.Id).Usage;
+        Assert.Equal(15, usage.ModelTokens);
+        Assert.Equal(0, usage.ModelCostUsd);
+        Assert.Equal(1, usage.UnpricedRuns);
+    }
 
     [Fact]
     public void Owner_override_is_audited_persisted_and_expires_at_week_rollover()
