@@ -746,6 +746,12 @@ builder.Services.AddSingleton(_ => new HealthCheckConnector());
 builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
 builder.Services.AddSingleton<HealthCheckStore>();
 builder.Services.AddSingleton<HealthAlerts>();
+builder.Services.AddHttpClient(IncidentWebhookService.HttpClientName, client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan;
+}).ConfigurePrimaryHttpMessageHandler(services =>
+    services.GetRequiredService<HealthCheckConnector>().CreateHandler());
+builder.Services.AddSingleton<IncidentWebhookService>();
 builder.Services.AddSingleton<EnvironmentHealthService>();
 // Test hosts never probe the addresses their fixture declarations name.
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))

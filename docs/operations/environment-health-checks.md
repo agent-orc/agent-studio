@@ -5,7 +5,8 @@ IP-14 of the [integrated platform Dossier](integrierte-plattform/index.html)
 from outside the host that runs the app, so a host that is down cannot report
 itself healthy. The results feed uptime, latency and incidents in the project's
 Deploy area (Operations tab) and the workspace Environment view. Incidents
-become Activity entries and cards.
+become Activity entries and cards. A project owner can also configure an HTTPS
+webhook in project Settings to receive production incident events outside Studio.
 
 Implemented decision: IP-D14 option A (built-in store, export later through
 IP-15). Samples and state live in the installation; no extra service is needed.
@@ -158,3 +159,33 @@ and fragment.
 - `GET /api/environment/health`: every declared environment of the workspace,
   down first, then invalid. An environment that cannot be watched carries
   `error`.
+
+## Production incident notifications
+
+Project Settings has an Incident notifications section for owners. Save one
+HTTPS webhook URL per project, then use Send test to verify the receiver. The
+URL may carry a receiver token in its query string; the read API and Settings
+show only the destination host. Removing the webhook stops delivery. Studio
+stores the URL in `incident-webhooks.json` beside the task repository and writes
+the file with owner-only permissions on Unix hosts.
+
+The control-plane health tick sends `opened` and `recovered` events for
+production environment incidents. The default tick is 15 seconds; delivery
+has a 10-second deadline and a failed send is retried on the next tick. A
+successful send is recorded on the incident, so later failures of that same
+incident do not resend `opened`. A process crash between receiver acceptance
+and receipt persistence can cause one repeat; receivers should use the event,
+environment and `startedAt` as an idempotency key.
+
+The JSON body has `event`, `project`, `environment`, `environmentName`,
+`signal`, `startedAt` and `link`. The link goes to the project's Operations
+view using the Studio origin saved with the webhook. Targets, URL user info,
+query strings and receiver tokens are never included in the body. Webhook
+delivery does not block incident cards or Activity entries.
+
+- `GET /api/projects/{projectName}/incident-webhook`: configured state and
+  destination host, for a project settings writer.
+- `PUT /api/projects/{projectName}/incident-webhook`: save `{url,
+  studioBaseUrl}` or remove with `url: null`.
+- `POST /api/projects/{projectName}/incident-webhook/test`: send a `test`
+  payload through the saved channel.
