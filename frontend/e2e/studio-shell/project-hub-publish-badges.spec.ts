@@ -4,7 +4,7 @@ import * as path from 'path';
 
 /**
  * PUB-1: the Project Hub overview shows read-only publish badges derived from
- * repo facts - "NuGet 0.3.1 -> 4 tasks pending", a website delta, and the
+ * repo facts - "NuGet 0.3.1 -> 4 commits pending", a website delta, and the
  * "first publish pending" special state. Zero-pending targets render no badge
  * (Ruhe). This spec mounts the Hub on the overview rail with the project
  * snapshot mocked (publishTargets folded in), so no live backend is required;
@@ -70,6 +70,9 @@ const EMPTY_GROUPED = {
 async function installRoutes(page: Page): Promise<void> {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/api/**', r => r.fulfill(json([])).catch(() => { /* late */ }));
+  await page.route('**/api/v1/studio/auth/status', r => r.fulfill(json({
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  })));
   await page.route(/\/api\/v1\/studio\/board/, r => r.fulfill(json(EMPTY_GROUPED)));
   await page.route(/\/api\/(?:jobs|tasks)(\?|$)/, r => r.fulfill(json([])));
   await page.route('**/api/watch-paths**', r => r.fulfill(json([{ name: PROJECT, path: REPO_PATH, rootPath: REPO_PATH, repositoryPath: REPO_PATH }])));
@@ -104,7 +107,10 @@ async function installRoutes(page: Page): Promise<void> {
     drift: { available: true, reason: null, overallGrade: 'Fresh', areas: [], counts: { fresh: 0, aging: 0, stale: 0, graded: 0 } },
     critical: { available: true, reason: null, count: 0, overallGrade: 'none', items: [] },
   })));
-  await page.route('**/api/v1/workspaces', r => r.fulfill(json([{
+  await page.route('**/api/projects/*/workbenches**', r => r.fulfill(json({
+    projectName: PROJECT, includesHistory: true, count: 0, items: [],
+  })));
+  await page.route(/\/api\/(?:v1\/)?workspaces(?:\?|$)/, r => r.fulfill(json([{
     id: 'ws', displayName: 'Workspace', projects: [{
       id: 'PROJ-1', displayName: PROJECT, workspaceId: 'ws', storageLocation: REPO_PATH,
       sortOrder: 0, archived: false, urls: [],
@@ -130,13 +136,15 @@ async function installRoutes(page: Page): Promise<void> {
 }
 
 /**
- * Seed a persisted Project Hub tab pinned to the overview rail BEFORE the app
- * boots (via addInitScript, like the passing board specs) so the Hub opens
- * straight on the overview rail with all routes already mocked - no reload race
- * that lets an early /api/watch-paths escape to the network.
+ * Seed a persisted Project Hub tab after the app has loaded, then reload into
+ * the overview rail. This follows the Git View Hub spec and avoids startup
+ * navigation replacing the seeded active tab with Workspace settings.
  */
 async function openHubOnOverview(page: Page): Promise<void> {
-  await page.addInitScript(({ tabKey, project }) => {
+  await installRoutes(page);
+  await page.goto('/');
+  await expect(page.getByTestId('app-root')).toBeVisible({ timeout: BOOT_TIMEOUT });
+  await page.evaluate(({ tabKey, project }) => {
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
       v: 1,
       tabs: [
@@ -145,10 +153,11 @@ async function openHubOnOverview(page: Page): Promise<void> {
       ],
       activeKey: tabKey,
     }));
+    history.replaceState(null, '', '/');
   }, { tabKey: HUB_TAB_KEY, project: PROJECT });
-  await installRoutes(page);
-  await page.goto('/');
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: BOOT_TIMEOUT });
   await expect(page.getByTestId('app-root')).toBeVisible({ timeout: BOOT_TIMEOUT });
+  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 15_000 });
 }
 
 function resultsDir(): string {
@@ -176,7 +185,6 @@ test.describe('PUB-1 · Project Hub publish badges (mocked)', () => {
 
   test('renders package/website/first-publish badges and stays quiet on zero-pending', async ({ page }, testInfo) => {
     await openHubOnOverview(page);
-    await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 15_000 });
     await dismissHarnessOverlay(page);
     await openPublishingActions(page);
 
@@ -187,14 +195,14 @@ test.describe('PUB-1 · Project Hub publish badges (mocked)', () => {
     const nuget = page.getByTestId('publish-badge-package:nuget');
     await expect(nuget).toBeVisible();
     await expect(nuget).toContainText('NuGet 0.3.1');
-    await expect(nuget).toContainText('4 tasks pending');
+    await expect(nuget).toContainText('4 commits pending');
 
     // Website delta badge - and the website styling modifier is applied, which
     // depends on the camelCase `kind` value the backend actually emits.
     const website = page.getByTestId('publish-badge-website');
     await expect(website).toBeVisible();
     await expect(website).toContainText('Website');
-    await expect(website).toContainText('2 tasks pending');
+    await expect(website).toContainText('2 commits pending');
     await expect(website).toHaveClass(/publish__badge--website/);
     await expect(nuget).not.toHaveClass(/publish__badge--website/);
 
@@ -239,6 +247,7 @@ test.describe('PUB-1 · Project Hub publish badges (mocked)', () => {
 
     const panel = page.getByTestId('publish-action-panel');
     await expect(panel).toBeVisible();
+    await expect(panel).toContainText('NuGet · 4 pending commits');
     await expect(page.getByTestId('publish-pending-tasks')).toContainText('CAR-41');
     await expect(page.getByTestId('publish-pending-tasks')).toContainText('Add remote lease view');
     await expect(page.getByTestId('publish-version')).toHaveValue('0.4.0');

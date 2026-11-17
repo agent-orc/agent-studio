@@ -162,7 +162,12 @@ export class ParkedBlockerComponent {
     if (this.info().state === '5-human-review'
       && park.reason?.includes('Parked with no recorded cause.')
       && !park.decision?.question?.trim()) return null;
-    return buildParkedBlockerView(this.info(), this.now(), this.timeline?.events() ?? []);
+    const view = buildParkedBlockerView(this.info(), this.now(), this.timeline?.events() ?? []);
+    // Human Review is also the ordinary acceptance lane: an operator-decision
+    // park nobody caused and that asks nothing is not a park (AGT-3649-D13).
+    if (view && this.info().state === '5-human-review' && view.blockerType === 'operator-decision'
+      && !view.question && view.cause.origin === 'unknown') return null;
+    return view;
   });
 
   /**

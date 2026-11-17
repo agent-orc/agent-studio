@@ -227,12 +227,13 @@
 /api/projects/{projectName}/design/references/{fileName}	free	-	-	-
 /api/projects/{projectName}/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/health	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/environments/{environmentId}/databases/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/telemetry/logs	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/telemetry/metrics	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/telemetry/metrics/names	reachable	frozen	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/telemetry/tokens	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/volumes/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
-/api/projects/{projectName}/execution	free	-	-	-
+/api/projects/{projectName}/execution	reachable	gap	Project settings	Integration branch definition from the Git fact store
 /api/projects/{projectName}/execution/proposal-preview	free	-	-	-
 /api/projects/{projectName}/gate-result-cache	free	-	-	-
 /api/projects/{projectName}/graph	free	-	-	-
@@ -443,6 +444,7 @@
 /api/v1/management/environment	free	-	-	-
 /api/v1/management/github-app/	free	-	-	-
 /api/v1/management/host-releases	free	-	-	-
+/api/v1/management/host-releases/off-stable-grades	free	-	-	-
 /api/v1/management/links	free	-	-	-
 /api/v1/management/provider-refusals	free	-	-	-
 /api/v1/management/remote-hosts	free	-	-	-
@@ -476,8 +478,10 @@
 /api/workspace/screenshots	free	-	-	-
 /api/workspace/summary	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/workspace/tokens/analysis	free	-	-	-
+/api/workspace/tokens/cli-window	free	-	-	-
 /api/workspace/tokens/expensive-jobs	free	-	-	-
 /api/workspace/tokens/expensive-jobs/cached	free	-	-	-
+/api/workspace/tokens/subscription-week	free	-	-	-
 /api/workspace/tokens/timeline	free	-	-	-
 /api/workspace/tokens/timeline/cached	free	-	-	-
 /api/workspaces	free	-	-	-

@@ -2,6 +2,8 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { TaskService } from '../../../services/task.service';
 import { NotificationService } from '../../../services/notification.service';
 import { WorkspaceManagerService } from './workspace-manager.service';
+import { ProjectLifecycleDialogService } from '../../../services/project-lifecycle-dialog.service';
+import type { RegistryProjectSummary } from '../../../models/task.model';
 
 /**
  * F66 / ADR-0048 — owns the Settings panel's two workspace-management
@@ -28,6 +30,30 @@ export class WorkspaceSettingsService {
   private readonly jobService = inject(TaskService);
   private readonly notifications = inject(NotificationService);
   private readonly manager = inject(WorkspaceManagerService);
+  private readonly lifecycleDialogs = inject(ProjectLifecycleDialogService);
+  readonly deletingProjectId = signal<string | null>(null);
+  readonly deleteError = signal<string | null>(null);
+
+  async deleteProject(project: RegistryProjectSummary): Promise<void> {
+    if (!await this.lifecycleDialogs.confirmDelete({
+      projectId: project.id, displayName: project.displayName, shortCode: project.shortCode,
+    })) return;
+    this.deletingProjectId.set(project.id);
+    this.deleteError.set(null);
+    this.jobService.deleteRegistryProject(project.id).subscribe({
+      next: () => {
+        this.deletingProjectId.set(null);
+        this.manager.refreshAfterDelete();
+        this.notifications.success(`Project "${project.displayName}" deleted.`);
+      },
+      error: (err: unknown) => {
+        this.deletingProjectId.set(null);
+        const message = this.errMsg(err);
+        this.deleteError.set(message);
+        this.notifications.error(`Failed to delete project "${project.displayName}": ${message}`);
+      },
+    });
+  }
 
   // ---- Inline rename state ----
   private readonly _renamingId = signal<string | null>(null);

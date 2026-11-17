@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { catchError, forkJoin, of } from 'rxjs';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
@@ -21,7 +21,7 @@ import { TaskService } from '../../../../services/task.service';
 import { WorkspaceManagerService } from '../../../shell/state/workspace-manager.service';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 import { ProjectRepositoryCardComponent } from '../project-repository-card/project-repository-card';
-import { ServerCheckoutNoticeComponent, ServerCheckoutStore } from '../../../server-checkout';
+import { ServerCheckoutNoticeComponent, ServerCheckoutStore, serverCheckoutMissing } from '../../../server-checkout';
 
 interface CheckoutStatus {
   status: string;
@@ -67,6 +67,11 @@ export class ProjectBasicsCardComponent {
   private readonly serverCheckout = inject(ServerCheckoutStore);
   private checkoutRequestVersion = 0;
 
+  @HostListener('window:beforeunload', ['$event'])
+  warnBeforeUnload(event: BeforeUnloadEvent): void {
+    if (this.saving()) event.preventDefault();
+  }
+
   readonly workspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
   readonly project = signal<RegistryProjectSummary | null>(null);
   readonly loading = signal(true);
@@ -76,6 +81,7 @@ export class ProjectBasicsCardComponent {
   readonly savedMessage = signal<string | null>(null);
   readonly checkout = signal<CheckoutStatus | null>(null);
   readonly syncingCheckout = signal(false);
+  readonly switchingCheckout = signal(false);
   readonly checkoutTone = checkoutStatusTone;
 
   readonly workspaceId = signal('');
@@ -109,6 +115,7 @@ export class ProjectBasicsCardComponent {
     projects: this.allProjects(),
     currentProjectId: this.project()?.id,
   }));
+  readonly validationValid = computed(() => projectBasicsAreValid(this.validation()));
   readonly dirty = computed(() => {
     const project = this.project();
     if (!project) return false;
@@ -125,7 +132,7 @@ export class ProjectBasicsCardComponent {
       || (value.agentOverrideEnabled && value.modelDefault.trim() !== (project.modelDefault ?? ''));
   });
   readonly canSave = computed(() =>
-    !this.loading() && !this.saving() && this.dirty() && projectBasicsAreValid(this.validation()),
+    !this.loading() && !this.saving() && this.dirty() && this.validationValid(),
   );
   readonly remoteRepositoryWarning = computed(() =>
     !!this.remoteExecutionLocation()
@@ -168,10 +175,30 @@ export class ProjectBasicsCardComponent {
     });
   }
 
-  private loadCheckout(name: string): void {
+  switchCheckout(): void {
+    const name = this.project()?.displayName;
+    if (!name || this.switchingCheckout()) return;
+    this.switchingCheckout.set(true);
+    const version = ++this.checkoutRequestVersion;
+    this.http.post<CheckoutStatus>(`/api/projects/${encodeURIComponent(name)}/checkout/switch`, {}).subscribe({
+      next: status => {
+        if (version === this.checkoutRequestVersion) this.checkout.set(status);
+        this.switchingCheckout.set(false);
+      },
+      error: () => {
+        if (version === this.checkoutRequestVersion)
+          this.checkout.set({ status: 'error', branch: this.checkout()?.branch ?? '', behind: 0,
+            dirtyFiles: [], lockFile: null, reason: 'Could not switch the checkout.' });
+        this.switchingCheckout.set(false);
+      },
+    });
+  }
+
+  private loadCheckout(project: RegistryProjectSummary): void {
     this.checkout.set(null);
     const version = ++this.checkoutRequestVersion;
-    this.http.get<CheckoutStatus>(`/api/projects/${encodeURIComponent(name)}/checkout/status`).subscribe({
+    if (serverCheckoutMissing(project)) return;
+    this.http.get<CheckoutStatus>(`/api/projects/${encodeURIComponent(project.displayName)}/checkout/status`).subscribe({
       next: (status) => {
         if (version === this.checkoutRequestVersion) this.checkout.set(status);
       },
@@ -252,7 +279,7 @@ export class ProjectBasicsCardComponent {
         )?.[1];
         this.remoteExecutionLocation.set(projectSettings?.executionLocation ?? null);
         this.seed(project);
-        this.loadCheckout(project.displayName);
+        this.loadCheckout(project);
         this.loading.set(false);
       },
       error: () => {

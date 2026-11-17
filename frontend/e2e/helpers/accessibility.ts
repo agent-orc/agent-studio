@@ -3,11 +3,13 @@ import { expect, type Page, type TestInfo } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const ASSERTED_RULES = ['button-name', 'aria-prohibited-attr', 'aria-hidden-focus', 'label'] as const;
+/** WCAG 2 A/AA, 2.1 A/AA and 2.2 AA, the audit scope of AGT-3796. */
+export const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] as const;
+const BLOCKING_IMPACTS = new Set(['critical', 'serious']);
 
-/** Run every axe rule, report the full result, and gate the agreed audit rules. */
+/** Run the WCAG rules, report every result, and gate critical and serious issues. */
 export async function checkAccessibility(page: Page, testInfo: TestInfo, name: string): Promise<void> {
-  const result = await new AxeBuilder({ page }).analyze();
+  const result = await new AxeBuilder({ page }).withTags([...WCAG_TAGS]).analyze();
   const report = {
     name,
     url: result.url,
@@ -22,9 +24,8 @@ export async function checkAccessibility(page: Page, testInfo: TestInfo, name: s
   }
   await testInfo.attach(`axe-${name}`, { body: JSON.stringify(report, null, 2), contentType: 'application/json' });
 
-  for (const id of ASSERTED_RULES) {
-    const nodes = result.violations.find((violation) => violation.id === id)?.nodes ?? [];
-    expect(nodes.map((node) => ({ target: node.target, failureSummary: node.failureSummary })),
-      `${name}: ${id}`).toEqual([]);
-  }
+  const blocking = report.violations
+    .filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))
+    .map(({ id, impact, nodes }) => ({ id, impact, nodes }));
+  expect.soft(blocking, `${name}: critical or serious axe issues`).toEqual([]);
 }

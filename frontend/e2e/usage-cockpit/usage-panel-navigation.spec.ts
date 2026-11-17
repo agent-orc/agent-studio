@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 import { SNAPSHOT, FIXTURE_NOW } from '../../src/mockups/usage-chips/app/usage-chips.fixtures';
 
-// AGT-3794-F14: the usage panel opened from a CLI chip names its content,
+// AGT-3794-F14: the usage panel opened from the cost chip names its content,
 // closes after following one of its own links, and the token-usage rail marks
 // the page actually shown. Times carry an explicit zone.
 const shots = process.env.JOB_RESULTS_DIR ?? 'test-results';
@@ -32,11 +32,11 @@ for (const theme of ['light', 'dark'] as const) {
 
     const chip = page.getByTestId('footer-usage-claude');
     await expect(chip).toBeVisible({ timeout: 60_000 });
-    await chip.click();
+    await page.getByTestId('footer-usage-cost').click();
     const surface = page.getByTestId('usage-detail-surface');
     await expect(surface).toBeVisible();
     // The panel lists every CLI, so its title is not "Claude usage".
-    await expect(surface.locator('.usage-surface__title')).toHaveText('Cost and usage');
+    await expect(surface.locator('.usage-surface__title')).toHaveText('Cost and usage across all projects');
     await expect(surface).not.toContainText('Claude usage');
     // Every instant names its zone.
     await expect(surface.getByTestId('usage-detail-cli-claude')).toContainText(/Updated .*\d{2}:\d{2} \S+/);
@@ -52,7 +52,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.goto('/');
     await dismissDevErrorDialog(page);
     await expect(chip).toBeVisible({ timeout: 60_000 });
-    await chip.click();
+    await page.getByTestId('footer-usage-cost').click();
     await expect(surface).toBeVisible();
     await surface.getByTestId('usage-detail-ledger-week').click();
     await expect(surface).toBeHidden();

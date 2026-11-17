@@ -825,6 +825,15 @@ the dedicated `PUT /api/projects/{projectName}/execution-runner` contract.
 Project id, source type, storage location, creation time, and the task and
 document key counters are immutable and are never accepted as update fields.
 
+Workspace Settings exposes labeled Archive, Restore, and Delete actions for
+projects, including archived projects when the archived filter is shown.
+Archive removes the project and its open cards from ordinary Explorer and
+pickup listings; restore makes them available again. Both keep task storage,
+the server checkout, and branches on origin. Delete requires an in-app
+confirmation and a typed second step. It removes project task storage and a
+Studio-owned server checkout, if present; an external checkout and origin
+branches remain. Explorer's context-menu delete uses the same confirmation.
+
 Deleting a project URL checks repository and start-rule authority before
 stopping its owned preview process. If stopping fails, the URL and its audit
 state stay in the registry so the process remains reachable for another stop

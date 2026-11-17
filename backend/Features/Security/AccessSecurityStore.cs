@@ -96,6 +96,31 @@ public sealed partial class AccessSecurityStore
             _recentSuccessfulLogins.Count, _usernameClientDelays.Count); }
     }
 
+    /// <summary>
+    /// Test seam (AGT-3861): deletes the state file and forgets every user,
+    /// session, login attempt and pending enrollment, so the store answers as
+    /// one started on an empty security folder. A test host shared by the
+    /// tests of a class calls it between tests. The audit logs stay.
+    /// </summary>
+    internal void ResetForTests()
+    {
+        lock (_gate)
+        {
+            File.Delete(StatePath);
+            _state = null;
+            _lastSeenDirty = false;
+            _clientLoginAttempts.Clear();
+            _networkLoginAttempts.Clear();
+            _passwordChangeAttempts.Clear();
+            _usernameLoginAttempts.Clear();
+            _recentSuccessfulLogins.Clear();
+            _usernameClientDelays.Clear();
+            _pendingTotpSecrets.Clear();
+            _passkeyChallenges.Clear();
+            _nextLoginPruneAt = DateTime.MinValue;
+        }
+    }
+
     public bool BootstrapRequired
     {
         get { lock (_gate) return StateLocked().Users.Count == 0; }

@@ -75,9 +75,16 @@ public sealed class TokenAnalysisService
             }
             samples.AddRange(Samples(build.Remainder, from));
         }
+        var unattributedItems = TokenAnalysisFold.RemainderItems(_pricing,
+            workspaceRows.Where(row => row.ProjectName is null).Select(row => row.Entry));
+        var unattributedSlices = TokenAnalysisFold.Slices(
+            unattributedItems.Where(item => item.At >= from && item.At < to));
+        if (unattributedSlices.Count > 0)
+            remainders.Add(new TokenAnalysisProjectRemainder("Unattributed one-shot jobs",
+                unattributedSlices.Sum(TokenAnalysisFold.SliceTotal),
+                unattributedSlices.Sum(slice => slice.CostUsd), unattributedSlices));
         // Quota windows are account-wide: unattributed workspace rows count too.
-        samples.AddRange(Samples(TokenAnalysisFold.RemainderItems(_pricing,
-            workspaceRows.Where(row => row.ProjectName is null).Select(row => row.Entry)), from));
+        samples.AddRange(Samples(unattributedItems, from));
 
         if (workspaceWarning is not null)
             freshness.Add(new ProjectTokenDataFreshness { Status = "partial", Warning = workspaceWarning });
@@ -102,6 +109,39 @@ public sealed class TokenAnalysisService
         if (card is null) return null;
         return new TokenAnalysisCardDetail(card, TokenAnalysisFold.Events(job.Items), build.Freshness,
             TokenAnalysisFold.Disclaimer);
+    }
+
+    /// <summary>Reconciled receipts in the provider's current weekly window.</summary>
+    public SubscriptionWeekResponse SubscriptionWeek(string cli, string? subscriptionKey,
+        AgentStudio.Shared.QuotaWindow? weekly, DateTime? observedAt,
+        IReadOnlyList<TokenAnalysisProjectSource> projects, bool sharedProvider,
+        bool includeUnattributed = true)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var from = weekly?.ObservedStartAt?.ToUniversalTime()
+            ?? (weekly?.ResetAt is { } reset ? reset.ToUniversalTime().AddDays(-7) : now);
+        var rows = ReadWorkspaceRows(out _);
+        var receipts = new List<SubscriptionUsageReceipt>();
+        foreach (var project in projects)
+        {
+            var build = Build(project, rows, now);
+            foreach (var job in build.Jobs)
+                receipts.AddRange(job.Items.Where(item => item.Total > 0 && item.At >= from)
+                    .Select(item => new SubscriptionUsageReceipt(project.Name,
+                        job.Input.Task?.Key ?? job.Input.JobId, item.At, item.Kind, item.Model,
+                        item.Cli, item.Total, item.Source)));
+            receipts.AddRange(build.Remainder.Where(item => item.Total > 0 && item.At >= from)
+                .Select(item => new SubscriptionUsageReceipt(project.Name, null, item.At,
+                    item.Kind, item.Model, item.Cli, item.Total, item.Source)));
+        }
+        if (includeUnattributed)
+            receipts.AddRange(TokenAnalysisFold.RemainderItems(_pricing,
+                    rows.Where(row => row.ProjectName is null).Select(row => row.Entry))
+                .Where(item => item.Total > 0 && item.At >= from)
+                .Select(item => new SubscriptionUsageReceipt(null, null, item.At,
+                    item.Kind, item.Model, item.Cli, item.Total, item.Source)));
+        return SubscriptionWeekFold.Fold(cli, subscriptionKey, weekly, observedAt, now,
+            receipts, sharedProvider);
     }
 
     private static bool Matches(TokenAnalysisJobInput job, string id)

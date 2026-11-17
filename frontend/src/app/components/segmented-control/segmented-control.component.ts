@@ -7,6 +7,7 @@ import {
 } from '@angular/core';
 import { StudioIconComponent, StudioIconName } from '../studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { RovingFocusDirective } from '../../directives/roving-focus.directive';
 
 /**
  * One choice in a {@link SegmentedControlComponent}.
@@ -39,11 +40,14 @@ export interface SegmentedOption<T extends string | number = string> {
  * `<button>` per option; the selected option carries `aria-pressed="true"`
  * and a raised thumb, the rest stay dimmed, so the active choice reads
  * at a glance in both light and dark themes.
+ *
+ * The group is one Tab stop: Tab lands on the selected option and the arrow
+ * keys move between options; Space or Enter selects (AGT-3834).
  */
 @Component({
   selector: 'app-segmented-control',
   standalone: true,
-  imports: [StudioIconComponent, TooltipDirective],
+  imports: [StudioIconComponent, TooltipDirective, RovingFocusDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './segmented-control.component.html',
@@ -56,6 +60,8 @@ export class SegmentedControlComponent<T extends string | number = string> {
   readonly ariaLabel = input<string | null>(null);
   /** Disables the full choice group during an operation. */
   readonly disabled = input(false);
+  /** False when an enclosing toolbar owns the arrow-key set (see RovingFocusDirective). */
+  readonly rovingFocus = input(true);
 
   readonly valueChange = output<T>();
 

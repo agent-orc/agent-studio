@@ -125,7 +125,7 @@ describe('reconciliation', () => {
 
   it('lists unattributed last and marks unknown rows as incomplete', () => {
     const view = buildUsageDetailView(snapshot(), NOW).cost;
-    expect(view.projects.map(p => p.name)).toEqual(['Agent Studio', 'Docs', 'Unattributed']);
+    expect(view.projects.map(p => p.name)).toEqual(['Agent Studio', 'Docs', 'Unattributed one-shot jobs']);
     expect(view.reconcile).toEqual({ todayRemainder: '$0.01', weekRemainder: '$0.01', complete: true });
 
     const partial = snapshot();
@@ -203,5 +203,11 @@ describe('live runs and models', () => {
     const view = buildUsageDetailView({ ...base, clis: [codex], cost }, NOW);
     expect(view.clis[0].stateReason).toBe('Provider: delayed');
     expect(view.cost.coverageReason).toBe('Pricing: incomplete');
+  });
+
+  it('does not present ledger read time as a receipt when no receipt exists', () => {
+    const base = snapshot();
+    const cost = { ...base.cost, latestReceiptAt: null };
+    expect(buildUsageDetailView({ ...base, cost }, NOW).cost.latestReceipt).toBeNull();
   });
 });

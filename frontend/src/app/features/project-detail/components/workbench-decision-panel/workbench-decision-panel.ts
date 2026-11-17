@@ -30,10 +30,12 @@ import {
 } from '../../../../models/project-docs.model';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
 import { TaskService } from '../../../../services/task.service';
+import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
 import { WorkbenchDecisionActionsComponent } from '../workbench-decision-actions/workbench-decision-actions.component';
 import {
+  agentRouteText,
   createOperationId,
   decisionOutcomeTone,
   decisionStageTone,
@@ -69,6 +71,7 @@ export class WorkbenchDecisionPanelComponent {
   private readonly store = inject(WorkbenchDecisionStore);
   private readonly drafts = inject(WorkbenchDecisionDraftStore);
   private readonly tasks = inject(TaskService);
+  private readonly taskNavigation = inject(TaskReferenceNavigationService);
   private readonly publicDemo = inject(PublicDemoModeService);
   private readonly datePipe = new DatePipe(inject(LOCALE_ID));
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -92,16 +95,27 @@ export class WorkbenchDecisionPanelComponent {
       && decision.sourceEntryFingerprint !== this.document().entryFingerprint;
   });
   readonly persistedDecision = computed(() =>
-    this.reworkRevisionLanded() ? null : this.storedDecision());
+    this.reworkRevisionLanded() || this.reworkRoundSettled() ? null : this.storedDecision());
+  readonly reworkRoundSettled = computed(() =>
+    this.document().revisionRound?.status === 'updated'
+    || this.document().revisionRound?.status === 'unchanged'
+    || this.document().revisionRound?.status === 'failed'
+    || this.result()?.revisionRound?.status === 'failed');
+  readonly receiptDecision = computed(() =>
+    this.reworkRevisionLanded() || this.reworkRoundSettled()
+      ? this.storedDecision() : this.persistedDecision());
   readonly result = computed(() => this.requestState().result);
   /** The follow-up round of a rework confirmed in this session (AGT-3703). */
   readonly revisionRound = computed(() => {
     const result = this.result();
-    return result?.outcome === 'rework'
-      && result.operationId === this.persistedDecision()?.operationId
-      ? result.revisionRound ?? null : null;
+    const decision = this.storedDecision();
+    if (decision?.outcome !== 'rework') return null;
+    return this.document().revisionRound
+      ?? (result?.outcome === 'rework' && result.operationId === decision.operationId
+        ? result.revisionRound ?? null : null);
   });
   readonly revisionRoundText = revisionRoundText;
+  readonly agentRouteText = agentRouteText;
   readonly pending = computed(() => this.requestState().pending !== null);
   readonly settled = computed(() => {
     const decision = this.persistedDecision();
@@ -114,6 +128,8 @@ export class WorkbenchDecisionPanelComponent {
     this.document().workbench.phase === 'decision-ready'
     || this.document().workbench.status === 'decision-pending'
     || this.document().workbench.lifecycleState === 'review-requested'
+    || this.reworkRevisionLanded()
+    || this.reworkRoundSettled()
     || this.persistedDecision() !== null
     || this.settled());
   readonly mutationBlocked = computed(() =>
@@ -121,7 +137,7 @@ export class WorkbenchDecisionPanelComponent {
     || this.document().workingTreeModified
     || (!this.document().revision && !this.document().fingerprint));
   readonly readOnly = this.publicDemo.readOnly;
-  readonly stage = computed(() => this.reworkRevisionLanded()
+  readonly stage = computed(() => this.reworkRevisionLanded() || this.reworkRoundSettled()
     ? null
     : this.document().workbench.decisionStage ?? this.result()?.decisionStage ?? null);
   readonly selectedSummary = computed(() => selectedDecisionText(
@@ -132,7 +148,12 @@ export class WorkbenchDecisionPanelComponent {
   /** Mirrors the template branch that renders `workbench-decision-receipt`. */
   private readonly receiptShown = computed(() =>
     !(this.mutationBlocked() && !this.settled()) && this.gateReady()
-    && (this.persistedDecision() !== null || this.settled()));
+    && (this.receiptDecision() !== null || this.settled()));
+
+  openRevisionCard(key: string): void {
+    if (!this.taskNavigation.openTaskKey(`${this.projectName()}::${key}`))
+      this.taskNavigation.openReference(key);
+  }
 
   constructor() {
     effect(() => {
@@ -245,7 +266,7 @@ export class WorkbenchDecisionPanelComponent {
   }
 
   outcomeTone(decision: WorkbenchDecisionProjection): StatusTone {
-    return decisionOutcomeTone(decision.outcome);
+    return decisionOutcomeTone(decision.outcome, decision.state);
   }
 
   stageTone(): StatusTone {

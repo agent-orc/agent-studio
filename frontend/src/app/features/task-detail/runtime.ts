@@ -10,6 +10,7 @@ export { LanePagerService } from './state/lane-pager.service';
 export {
   AcceptanceRefusalStore,
   acceptanceRefusalFor,
+  acceptanceRefusalTooltip,
   type AcceptanceRefusal,
 } from './state/acceptance-refusal.model';
 export {

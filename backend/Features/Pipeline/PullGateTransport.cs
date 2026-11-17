@@ -75,6 +75,7 @@ public sealed class PullGateTransport(PullGateStore store, TimeProvider clock,
                     InfrastructureTimeout = infra, OnMachineGateAcquired = null,
                     OnMachineGateWaiting = null, OnMachineGateSlotAcquired = null,
                     OnMachineGateSlotWaiting = null,
+                    OnBatchLaneWaiting = null,
                 }, changedFiles, profile, mode, (int)Math.Ceiling(timeout.TotalSeconds),
                 (int)Math.Ceiling(overall.TotalSeconds))
             {

@@ -10,6 +10,8 @@ import {
   AcceptanceRefusalStore,
   type AcceptanceRefusal,
 } from '../../../task-detail/runtime';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
+import { AcceptanceRoundDialogComponent } from '../../../acceptance-readiness/lazy';
 
 /**
  * AGT-3704: the reason a Human Review Accept is held or was refused, rendered
@@ -21,7 +23,7 @@ import {
   selector: 'app-acceptance-refusal',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [StatusIndicatorComponent, ConnectedOverlayDirective, TooltipDirective],
+  imports: [StatusIndicatorComponent, ConnectedOverlayDirective, TooltipDirective, AcceptanceRoundDialogComponent],
   templateUrl: './acceptance-refusal.component.html',
   styleUrl: './acceptance-refusal.component.scss',
 })
@@ -36,15 +38,35 @@ export class AcceptanceRefusalComponent {
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
   readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length > 0);
+  /** F12: the ranked reason in full, with its next step and the gaps under it. */
+  readonly detail = computed(() => {
+    const refusal = this.refusal();
+    return [
+      refusal.headline ? `${refusal.headline}: ${refusal.reason}` : refusal.reason,
+      refusal.nextStep ? `Next step: ${refusal.nextStep}` : null,
+      ...(refusal.secondary ?? []).map(gap => `Also: ${gap}`),
+    ].filter(Boolean).join(' ');
+  });
 
   private readonly tasks = inject(TaskService);
   private readonly notifications = inject(NotificationService);
   private readonly refusals = inject(AcceptanceRefusalStore);
+  private readonly readiness = inject(AcceptanceReadinessStore);
+
+  /** AGT-3867: the round this toolbar opened, when an override cannot admit the card. */
+  readonly roundDraft = computed(() => {
+    const draft = this.readiness.draftFor('toolbar');
+    return draft && draft.job.id === this.job().id ? draft : null;
+  });
 
   onAction(event: MouseEvent): void {
     if (this.disabled() || this.busy()) return;
     if (this.refusal().action === 'retry-integration') {
       this.retryIntegration();
+      return;
+    }
+    if (this.refusal().action === 'send-round') {
+      this.readiness.openRound(this.job(), 'toolbar');
       return;
     }
     this.error.set(null);

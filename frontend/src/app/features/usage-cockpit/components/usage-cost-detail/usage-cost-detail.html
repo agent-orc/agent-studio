@@ -21,6 +21,7 @@
       <div>
         <dt>Today</dt>
         <dd class="usage-detail__num" data-testid="usage-detail-today">{{ c.today }}</dd>
+        @if (c.unpricedTodayRuns) { <dd>Priced subtotal + <a href="#/workspace/settings/tokens">{{ c.unpricedTodayRuns }} {{ c.unpricedTodayRuns === 1 ? 'run' : 'runs' }} without price</a></dd> }
         @if (c.dayStart; as s) {
           <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time></dd>
           <dd class="usage-detail__utc" data-testid="usage-detail-day-utc">{{ s.utc }} to {{ c.dayEnd?.utc }}</dd>
@@ -30,6 +31,7 @@
       <div>
         <dt>This week</dt>
         <dd class="usage-detail__num" data-testid="usage-detail-week">{{ c.week }}</dd>
+        @if (c.unpricedWeekRuns) { <dd>Priced subtotal + <a href="#/workspace/settings/tokens">{{ c.unpricedWeekRuns }} {{ c.unpricedWeekRuns === 1 ? 'run' : 'runs' }} without price</a></dd> }
         @if (c.weekStart; as s) {
           <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time></dd>
           <dd class="usage-detail__utc" data-testid="usage-detail-week-utc">{{ s.utc }} to {{ c.weekEnd?.utc }}</dd>
@@ -77,6 +79,18 @@
     </table>
     @if (!c.reconcile.complete) {
       <p class="usage-detail__note" data-testid="usage-detail-reconcile-partial">Some amounts are unavailable, so the rows may not add up to the total.</p>
+    }
+
+    @if (c.oneShotSources.length > 0) {
+      <table class="usage-detail__table" data-testid="usage-detail-one-shot-sources">
+        <caption class="usage-detail__caption">One-shot cost by source, included in the totals above</caption>
+        <thead><tr><th scope="col">Source</th><th scope="col" class="usage-detail__num">Today</th><th scope="col" class="usage-detail__num">This week</th></tr></thead>
+        <tbody>
+          @for (row of c.oneShotSources; track row.source) {
+            <tr><th scope="row">{{ row.source }}</th><td class="usage-detail__num">{{ row.today }}</td><td class="usage-detail__num">{{ row.week }}</td></tr>
+          }
+        </tbody>
+      </table>
     }
 
     <h4 class="usage-detail__subtitle">Live runs</h4>

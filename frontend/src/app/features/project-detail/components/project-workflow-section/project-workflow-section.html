@@ -57,7 +57,7 @@
                                 [testId]="'workflow-transition-state-' + row.key" />
         </div>
         <p class="wf__transition-detail">{{ row.detail }}</p>
-        <p class="wf__transition-config">Configured in: <strong>{{ row.configuredIn }}</strong></p>
+        <p class="wf__transition-config">Configured in: <button type="button" (click)="openConfiguration(row.configuredIn)">{{ row.configuredIn }}</button></p>
       </div>
     }
   </div>

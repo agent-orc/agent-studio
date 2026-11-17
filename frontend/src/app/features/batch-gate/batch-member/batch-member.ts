@@ -40,7 +40,7 @@ export class BatchMemberComponent {
   readonly memberLabel = (item: BatchMemberState): string => {
     let label: string;
     switch (item.status) {
-      case 'pending': label = 'Batch pending'; break;
+      case 'pending': label = item.reason === 'per-task-suite-refused' ? 'Batch pending · per-card suite not started' : 'Batch pending'; break;
       case 'in-batch': label = `Batch ${item.batchId} · ${item.position ?? '?'} of ${item.size ?? '?'}`; break;
       case 'published': label = 'Batch published'; break;
       case 'fallback': label = `Per-task fallback${this.ejection() ? ` · ${this.ejection()}` : ''}${this.fallbackWait() ? ` · ${this.fallbackWait()}` : ''}`; break;

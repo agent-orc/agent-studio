@@ -6,6 +6,14 @@
         target="_blank" rel="noopener noreferrer">supported deploy procedure</a>.</p>
     <p class="update__target">Expected commit <code>{{ host.expectedCommit || 'not reported' }}</code>
       · image <code data-testid="review-host-expected-digest">{{ host.expectedImageRef || 'not pinned' }}</code></p>
+    @if (drainedSince() || switchStartedAt()) {
+      <p class="update__times">
+        @if (drainedSince(); as since) { <span data-testid="review-host-drained-since">Drained since
+          <time [attr.datetime]="since" [attr.title]="since">{{ since | date:'short' }}</time></span> }
+        @if (switchStartedAt(); as switched) { <span data-testid="review-host-switch-started">Switch started at
+          <time [attr.datetime]="switched" [attr.title]="switched">{{ switched | date:'short' }}</time></span> }
+      </p>
+    }
     <ol class="update__steps" aria-label="Review host update progress">
       <li [attr.data-state]="stepState(0)">Drain <span>{{ stepLabel(0) }}</span></li>
       <li [attr.data-state]="stepState(1)">Quiet point <span>{{ stepLabel(1) }}</span></li>
@@ -14,8 +22,15 @@
       <li [attr.data-state]="stepState(4)">Resume <span>{{ stepLabel(4) }}</span></li>
     </ol>
     @if (message(); as note) { <p class="update__message" role="status" data-testid="review-host-update-message">{{ note }}</p> }
+    @if (stage() === 'unavailable') {
+      <p>Use the <a data-testid="review-host-update-alternative"
+        href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/deploy-drain-procedure.md#review-roles-without-a-client-identity"
+        target="_blank" rel="noopener noreferrer">review role update instructions</a> for this installation.</p>
+    }
     <div class="update__actions">
       @switch (stage()) {
+        @case ('checking') { <button type="button" [appPendingButton]="true" pendingLabel="Checking review identity…">Check review identity</button> }
+        @case ('unavailable') { <button type="button" (click)="checkEligibility()" [appPendingButton]="busy()">Check identity again</button> }
         @case ('ready') { <button type="button" (click)="start()" [appPendingButton]="busy()" data-testid="review-host-update-start">Drain review host</button> }
         @case ('draining') { <button type="button" [appPendingButton]="true" pendingLabel="Checking active work…">Drain review host</button> }
         @case ('blocked') { <button type="button" (click)="checkQuiet()" [appPendingButton]="busy()" pendingLabel="Checking quiet point…">Check quiet point</button> }
@@ -29,10 +44,10 @@
           @if (proofVerified()) { <button type="button" (click)="resume()" [appPendingButton]="busy()">Retry resume</button> }
           @else if (switchStartedAt()) { <button type="button" (click)="verify()" [appPendingButton]="busy()">Retry verification</button> }
           @else if (drainRequested()) { <button type="button" (click)="checkQuiet()" [appPendingButton]="busy()">Retry quiet point</button> }
-          @else { <button type="button" (click)="start()" [appPendingButton]="busy()">Retry drain</button> }
+          @else { <button type="button" (click)="checkEligibility()" [appPendingButton]="busy()">Check identity again</button> }
         }
       }
-      @if (drainRequested() && !switchStartedAt() && stage() !== 'aborting') {
+      @if (drainRequested() && !switchStartedAt() && stage() !== 'aborting' && stage() !== 'unavailable') {
         <button type="button" class="update__secondary" (click)="cancel()" [appPendingButton]="busy()">Cancel and resume</button>
       }
     </div>

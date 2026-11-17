@@ -12,6 +12,8 @@
   font-size: 0.82rem;
 }
 .batch-detail__head { @include m.deck-panel-head; align-items: center; }
+.batch-detail__title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--studio-spacing-1) var(--studio-spacing-2); min-width: 0; }
+.batch-detail__zone { color: var(--studio-fg-muted); font-size: 0.75rem; }
 .batch-detail p { margin: 0; }
 .batch-detail__summary { font-variant-numeric: tabular-nums; }
 .batch-detail__time { font-variant-numeric: tabular-nums; color: var(--studio-fg-muted); }

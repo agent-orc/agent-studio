@@ -59,6 +59,9 @@ public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider tim
     /// <summary>The request holds a slot or ended; it no longer waits.</summary>
     public void Left(string requestKey) => _waiting.TryRemove(requestKey, out _);
 
+    /// <summary>True while <paramref name="requestKey"/> waits for a gate slot.</summary>
+    public bool IsWaiting(string requestKey) => _waiting.ContainsKey(requestKey);
+
     public int WaitingCount(string project)
         => _waiting.Values.Count(waiter => string.Equals(waiter.Project, project, StringComparison.Ordinal));
 

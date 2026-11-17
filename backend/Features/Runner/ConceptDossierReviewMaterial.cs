@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Pipeline;
 using AgentStudio.Tasks;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -12,13 +13,17 @@ public static partial class ConceptDossierReviewMaterial
     private const int MaximumFileCharacters = 256_000;
     private const int MaximumTotalCharacters = 512_000;
 
+    /// <summary>
+    /// Renders the snapshot inside <see cref="ConceptDossierSnapshotSpan"/> markers, so the
+    /// review runner keeps it whole instead of cutting it with the surrounding prompt.
+    /// </summary>
     public static string Render(string? repositoryPath, string taskFolder)
     {
-        try { return RenderCore(repositoryPath, taskFolder); }
+        try { return ConceptDossierSnapshotSpan.Wrap(RenderCore(repositoryPath, taskFolder)); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
             or ArgumentException)
         {
-            return "Published Dossier could not be read: " + exception.Message;
+            return ConceptDossierSnapshotSpan.Wrap("Published Dossier could not be read: " + exception.Message);
         }
     }
 

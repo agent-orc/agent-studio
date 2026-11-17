@@ -9,6 +9,20 @@ namespace AgentStudio.Tests;
 
 public sealed class OperationalStallDetectorTests
 {
+    [Fact]
+    public void Repeated_project_preflight_failure_opens_one_host_case_and_success_clears_it()
+    {
+        var failed = new OperationalStallSnapshot([], [], [], [], [], [], [],
+            ProjectPreflights: [new("agent-runner-01", "Agent Studio", "PROJ-002",
+                "fetch failed (128): commit-graph-chain.lock exists", Now.AddMinutes(-11))]);
+        var first = Assert.Single(OperationalStallDetector.Detect(failed, new(), Now));
+        var repeated = Assert.Single(OperationalStallDetector.Detect(failed, new(), Now.AddMinutes(1)));
+        Assert.Equal(first.FingerprintKey, repeated.FingerprintKey);
+        Assert.Contains("agent-runner-01", first.Summary);
+        Assert.Contains("commit-graph-chain.lock", first.Details["logExcerpt"]);
+        Assert.Empty(OperationalStallDetector.Detect(failed with { ProjectPreflights = [] }, new(), Now));
+    }
+
     [Theory]
     [InlineData("local", true)]
     [InlineData("networked", false)]
