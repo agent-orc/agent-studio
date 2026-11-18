@@ -124,6 +124,7 @@ export class WorkspaceDeploymentDashboardComponent {
   }
 
   age(status: EnvironmentStatus): string {
+    if (status.releaseUncertain) return 'Deploy time unknown';
     const deployedAt = status.currentDeployment?.finishedAtUtc ?? status.currentDeployment?.startedAtUtc;
     if (!deployedAt) return 'Not deployed';
     const hours = Math.max(0, Math.floor((this.now() - Date.parse(deployedAt)) / 3_600_000));

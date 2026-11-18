@@ -11,6 +11,16 @@ public sealed class AcceptanceReadinessPolicyTests
     private const string Brief = "brief-current";
 
     [Fact]
+    public void Override_permission_uses_admission_facts_instead_of_refusal_words()
+    {
+        Assert.False(Refused(CompletionAdmissionStages.BatchGate, "A neutral refusal").OverrideAllowed);
+        Assert.False(Refused(CompletionAdmissionStages.Content, "A neutral refusal",
+            Content("pass") with { MissingReport = "results/report.md" }).OverrideAllowed);
+        Assert.True(Refused(CompletionAdmissionStages.Content, "the required report is missing",
+            Content("concerns")).OverrideAllowed);
+    }
+
+    [Fact]
     public void Admitted_card_is_ready()
     {
         var verdict = Classify(CompletionAdmissionPreview.Admitted(

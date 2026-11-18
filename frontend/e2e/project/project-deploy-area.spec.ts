@@ -241,6 +241,29 @@ test.describe('Project Deploy area (mocked)', () => {
       await restarted.close();
     }
   });
+  test('failed Production deployment leaves its running release uncertain', async ({ page }) => {
+    const environments = deployEnvironmentsFixture();
+    const production = environments.environments[1];
+    production.deployedArtifact = ARTIFACT_B;
+    production.health = 'failed';
+    production.history.unshift({ at: '2026-10-19T11:59:00Z', status: 'failed', artifact: ARTIFACT_B,
+      previousArtifact: ARTIFACT_A, evidence: 'health-http-failed' });
+    const statuses = deployStatusFixture();
+    statuses[1].releaseUncertain = true;
+    const failed = { ...deployDeploymentsFixture()[0], id: 'failed-production', environmentId: 'production',
+      releaseId: deployReleasesFixture()[1].id, state: 'failed', trigger: 'deploy',
+      createdAtUtc: '2026-10-19T11:58:00Z', finishedAtUtc: '2026-10-19T11:59:00Z' };
+    statuses[1].currentDeployment = failed;
+    await openDeploy(page, fullMocks({ environments, status: statuses,
+      deployments: [failed, ...deployDeploymentsFixture()] }));
+    const card = page.getByRole('article', { name: 'Production' });
+    await expect(card.getByTestId('deploy-environment-release')).toHaveText('Running release uncertain. A failed release may be running.');
+    await expect(card.getByTestId('deploy-environment-age')).toHaveText('Unknown');
+    await setTheme(page, 'light');
+    await capture(page, 'production-running-release-uncertain-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'production-running-release-uncertain-dark');
+  });
   test('URL project without checkout shows one Deploy state and stops checkout-dependent reads', async ({ page }) => {
     let reads = 0;
     page.on('request', request => {
@@ -393,6 +416,42 @@ test.describe('Project Deploy area (mocked)', () => {
     expect(firstPageRequests).toHaveLength(0);
     await expect(page.getByTestId('deploy-release-detail')).toContainText('version-35');
     await capture(page, 'operations-older-release');
+  });
+
+  test('Operations shows a slow trace waterfall and opens it from a log line', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    const traceId = '11111111111111111111111111111111';
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
+        telemetryAvailable: false, metrics: null, markers: [] }],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.route(`**${DEPLOY}/operations/logs**`, route => answer(route, { telemetryAvailable: true,
+      lines: [{ at: '2026-10-20T00:00:00Z', level: 'ERROR', message: 'Dependency timeout',
+        releaseId: null, traceId }] }));
+    await page.route(`**/environments/production/telemetry/traces`, route => answer(route, [
+      { traceId, startedAt: '2026-10-20T00:00:00Z', durationMs: 900, failed: true,
+        name: 'GET /checkout', spanCount: 2 },
+    ]));
+    await page.route(`**/environments/production/telemetry/traces/${traceId}`, route => answer(route, [
+      { spanId: '2222222222222222', parentSpanId: null, name: 'GET /checkout', kind: 'SERVER',
+        startedAt: '2026-10-20T00:00:00Z', durationMs: 900, failed: true, attributes: {} },
+      { spanId: '3333333333333333', parentSpanId: '2222222222222222', name: 'inventory HTTP', kind: 'CLIENT',
+        startedAt: '2026-10-20T00:00:00.100Z', durationMs: 780, failed: true, attributes: {} },
+    ]));
+    await page.getByTestId(`studio-explorer-project-operations-${PROJECT}`).click();
+    await page.getByTestId('operations-search-traces').click();
+    await expect(page.getByTestId('operations-traces')).toContainText('GET /checkout');
+    await page.getByTestId('operations-search-logs').click();
+    await page.getByTestId('operations-log-trace').click();
+    await expect(page.getByTestId('operations-span-waterfall')).toContainText('inventory HTTP');
+    fs.mkdirSync(results, { recursive: true });
+    await setTheme(page, 'light');
+    await page.getByTestId('project-operations').screenshot({ path: path.join(results, 'operations-trace-light--mocked.png') });
+    await setTheme(page, 'dark');
+    await page.getByTestId('project-operations').screenshot({ path: path.join(results, 'operations-trace-dark--mocked.png') });
   });
 
   test('project Operations links to installation backups in Settings with backup and host CA warnings in both themes and at 390 px (AGT-3574, AGT-3736)', async ({ page }) => {

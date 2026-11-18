@@ -98,6 +98,17 @@
       "type": "boolean",
       "default": false
     },
+    "telemetryAlerts": {
+      "description": "Production golden-signal alert thresholds. All four rules exist by default; missing telemetry is not observed.",
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "storageReservationBytes": { "type": "integer", "minimum": 1 },
+        "5xxRate": { "$ref": "#/$defs/shareAlert" },
+        "latencyP95": { "$ref": "#/$defs/valueAlert" },
+        "storageUsage": { "$ref": "#/$defs/shareAlert" },
+        "restarts": { "$ref": "#/$defs/valueAlert" }
+      }
+    },
     "healthChecks": {
       "description": "Control-plane health checks (IP-14). When absent, checks derive from healthUrl and address; an empty array turns these network checks off. Each managed database adds a derived database check either way (AGT-3878).",
       "type": "array",
@@ -120,5 +131,15 @@
         }
       }
     }
+  },
+  "$defs": {
+    "shareAlert": { "type": "object", "additionalProperties": false,
+      "properties": { "threshold": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "windowMinutes": { "type": "integer", "minimum": 1, "maximum": 60 },
+        "recoveryEvaluations": { "type": "integer", "minimum": 1, "maximum": 20 } } },
+    "valueAlert": { "type": "object", "additionalProperties": false,
+      "properties": { "threshold": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000 },
+        "windowMinutes": { "type": "integer", "minimum": 1, "maximum": 60 },
+        "recoveryEvaluations": { "type": "integer", "minimum": 1, "maximum": 20 } } }
   }
 }

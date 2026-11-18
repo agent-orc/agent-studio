@@ -285,4 +285,20 @@ describe('TaskDetailComponent Enter shortcut (AGT-3828)', () => {
       expect(triggerPrimary).toHaveBeenCalledTimes(1);
     } finally { dialog.remove(); fixture.destroy(); }
   });
+
+  it('runs the primary action after a retained usage dialog closes', async () => {
+    const { fixture, surface, triggerPrimary, enter } = await harness();
+    const usage = document.createElement('dialog');
+    usage.setAttribute('role', 'dialog');
+    usage.id = 'studio-usage-detail';
+    document.body.appendChild(usage);
+    try {
+      usage.setAttribute('open', '');
+      expect(enter(surface).defaultPrevented).toBe(false);
+      expect(triggerPrimary).not.toHaveBeenCalled();
+      usage.removeAttribute('open');
+      expect(enter(surface).defaultPrevented).toBe(true);
+      expect(triggerPrimary).toHaveBeenCalledTimes(1);
+    } finally { usage.remove(); fixture.destroy(); }
+  });
 });

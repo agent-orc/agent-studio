@@ -17,8 +17,9 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class PrincipalAuthenticationTests
+public sealed class PrincipalAuthenticationTests(InitializedStoreFixture fixture) : IClassFixture<InitializedStoreFixture>
 {
+    private readonly InitializedStoreFixture _fixture = fixture;
     private const string StudioToken = "studio-principal-token-000000000000000000000001";
     private const string EngineToken = "engine-principal-token-000000000000000000000001";
     /// <summary>An authenticated read every principal may make; a runner reads no Studio data (SM-9).</summary>
@@ -29,7 +30,7 @@ public sealed class PrincipalAuthenticationTests
     [InlineData("wrong-secret-000000000000000000000000000000")]
     public async Task Missing_or_wrong_secret_returns_401(string? token)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var client = Client(factory, token);
         client.DefaultRequestHeaders.Add("X-Client-Id", "identity-hint-only");
@@ -42,7 +43,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Operations_principal_is_limited_to_permit_introspection()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var studio = Client(factory, StudioToken);
         var issued = await CreateAsync(studio, "operations-a", TaskServerPrincipalKinds.Operations, null, null);
@@ -68,7 +69,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Representative_route_for_every_scope_rejects_a_wrong_scope()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var manager = Client(factory, StudioToken);
         var runnerRead = await CreateAsync(
@@ -120,7 +121,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Host_quota_routes_require_matching_runner_write_principal()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 1, 22, 0, 0, TimeSpan.Zero));
         await using var factory = Factory(temp.Path, clock);
         using var manager = Client(factory, StudioToken);
@@ -156,7 +157,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Healthy_runner_claims_and_reports_parsed_quota_for_studio_read()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 1, 22, 0, 0, TimeSpan.Zero));
         await using var factory = Factory(temp.Path, clock);
         using var studio = Client(factory, StudioToken);
@@ -198,7 +199,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Runner_without_subscription_scope_cannot_connect_to_hub()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var anonymous = factory.CreateClient();
         Assert.Equal(
@@ -230,7 +231,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Compromised_runner_is_forbidden_from_every_studio_and_management_mutation()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var manager = Client(factory, StudioToken);
         var runner = await CreateAsync(
@@ -273,7 +274,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Runner_principal_is_bound_to_its_runner_id()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var manager = Client(factory, StudioToken);
         var runner = await CreateAsync(
@@ -295,7 +296,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Rotation_retires_old_credential_only_after_scoped_consumer_proof()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var original = Client(factory, StudioToken);
 
@@ -342,7 +343,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Rotation_retry_after_lost_delivery_never_issues_again_or_persists_plaintext()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var manager = Client(factory, StudioToken);
         var path = "/api/v1/management/principals/bootstrap-engine/rotate";
@@ -377,7 +378,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Coding_and_review_runner_bindings_keep_identity_and_scopes_through_rotation()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var manager = Client(factory, StudioToken);
         foreach (var (id, scopes) in new[]
@@ -412,7 +413,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Shared_principal_waits_for_each_consumer_scoped_proof_before_retirement()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var manager = Client(factory, StudioToken);
         var original = await CreateAsync(manager, "studio-shared", TaskServerPrincipalKinds.Studio,
@@ -503,7 +504,7 @@ public sealed class PrincipalAuthenticationTests
     public async Task Recovery_requires_an_authenticated_separate_management_principal()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path, clock);
         using var manager = Client(factory, StudioToken);
         var recovery = await CreateAsync(manager, "recovery:operator", TaskServerPrincipalKinds.Studio,
@@ -528,7 +529,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Revocation_takes_effect_without_restart_and_store_contains_no_plaintext_secret()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var manager = Client(factory, StudioToken);
         var issued = await CreateAsync(
@@ -566,7 +567,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Every_versioned_route_declares_a_scope()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         _ = factory.CreateClient();
         var unscoped = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints
@@ -609,7 +610,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Fingerprint_write_accepts_reporter_scopes_but_rejects_read_only_scope()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var studio = Client(factory, StudioToken);
         var reviews = await CreateAsync(studio, "fingerprint-reviewer",
@@ -638,7 +639,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Source_facts_reads_and_demands_need_tasks_read_and_publishing_needs_runs_write()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var studio = Client(factory, StudioToken);
         var runs = await CreateAsync(studio, "source-producer",
@@ -681,7 +682,7 @@ public sealed class PrincipalAuthenticationTests
     [Fact]
     public async Task Orchestrator_context_archive_routes_require_tasks_write()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         await using var factory = Factory(temp.Path);
         using var studio = Client(factory, StudioToken);
         var reader = await CreateAsync(studio, "archive-reader",

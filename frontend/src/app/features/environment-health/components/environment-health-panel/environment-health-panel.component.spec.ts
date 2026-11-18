@@ -67,8 +67,32 @@ describe('EnvironmentHealthPanelComponent', () => {
     expect(element.querySelector<HTMLElement>('[data-testid="environment-health-status"]')?.dataset['tone']).toBe('warning');
   });
 
+  it('shows production telemetry rules as not observed when the probe alone is healthy', async () => {
+    await TestBed.configureTestingModule({
+      imports: [EnvironmentHealthPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(EnvironmentHealthPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Demo');
+    fixture.detectChanges();
+    const original = healthResponse.environments[0];
+    const telemetry = { ...original.checks[0], id: 'telemetry-5xx-rate', kind: 'telemetry' as const,
+      target: '5xx-rate', status: 'not-observed' as const, lastSample: { ...original.checks[0].lastSample!,
+        ok: true, status: null, error: 'not-observed' } };
+    TestBed.inject(HttpTestingController).expectOne('/api/projects/Demo/environments/health')
+      .flush({ ...healthResponse, environments: [{ ...original, status: 'not-observed',
+        currentIncident: null, checks: [original.checks[0], telemetry] }] });
+    fixture.detectChanges();
+    const element: HTMLElement = fixture.nativeElement;
+    expect(element.querySelector('[data-testid="environment-health-status"]')?.textContent).toContain('Not observed');
+    const row = element.querySelector('[data-testid="environment-health-check-telemetry-5xx-rate"]');
+    expect(row?.textContent).toContain('Not observed');
+    expect(row?.textContent).toContain('Telemetry');
+    fixture.destroy();
+  });
+
   it('maps every health status onto a tone', () => {
-    const matrix: Record<string, string> = { up: 'success', degraded: 'warning', invalid: 'warning', down: 'danger', unknown: 'neutral', later: 'neutral' };
+    const matrix: Record<string, string> = { up: 'success', degraded: 'warning', invalid: 'warning', down: 'danger', unknown: 'neutral', 'not-observed': 'neutral', later: 'neutral' };
     for (const [status, tone] of Object.entries(matrix)) expect(healthStatusTone(status)).toBe(tone);
   });
 });
