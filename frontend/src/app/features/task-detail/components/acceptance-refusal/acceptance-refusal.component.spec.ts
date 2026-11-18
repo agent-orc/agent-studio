@@ -280,6 +280,9 @@ describe('AcceptanceRefusalComponent · override request (AGT-3873)', () => {
 
     expect(find('acceptance-refusal-form')).not.toBeNull();
     expect(document.activeElement).toBe(find('acceptance-refusal-override-reason'));
+    // AGT-3830: the focused field reads the refusal's reason.
+    const hint = document.getElementById(find('acceptance-refusal-override-reason')!.getAttribute('aria-describedby')!);
+    expect(hint?.textContent).toContain('Acceptance refused: requirement-fit verdict was concerns.');
     expect(find('acceptance-refusal-concern')?.textContent)
       .toContain("The review's concern: The 830-card first-paint target remains unmet");
     expect(store.overrideRequest()).toBeNull();

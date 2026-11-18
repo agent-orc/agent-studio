@@ -178,7 +178,10 @@ async function openReviewJobReadyToAccept(page: Page, id: string, watchPath: str
 
 async function clickAcceptAndWaitForMove(page: Page, moveCount: () => number): Promise<void> {
   for (let attempt = 0; attempt < 3 && moveCount() === 0; attempt++) {
-    const accept = page.locator('[data-testid="studio-triage-action-mark-done"]:visible, [data-testid="studio-mobile-triage-action-mark-done"]:visible');
+    // Below 600 px the phone primary owns Accept; the toolbar copy can still
+    // match `:visible` for a frame before the phone layout hides it.
+    const phone = (page.viewportSize()?.width ?? 1280) < 600;
+    const accept = page.getByTestId(phone ? 'studio-mobile-triage-action-mark-done' : 'studio-triage-action-mark-done');
     await expect(accept).toBeEnabled({ timeout: 10_000 });
     await accept.click();
     const confirm = page.getByRole('button', { name: 'Accept anyway' });
@@ -217,10 +220,11 @@ for (const view of [
       await expect(refusalBanner).toContainText('Acceptance refused: no content verdict for the current brief.');
       await expect(refusalBanner.getByTestId('task-move-refusal-override')).toBeVisible();
       await expect(refusalBanner.getByTestId('task-move-refusal-review')).toBeVisible();
-      // AGT-3830: the content refusal's next step replaces Accept, and its reason takes focus.
-      await expect(page.locator('[data-testid="acceptance-refusal-action"]:visible')).toHaveText('Review again');
-      await expect(page.locator('[data-testid="acceptance-refusal-override"]:visible')).toBeVisible();
-      await expect(page.locator('[data-testid="acceptance-refusal-focus"]:visible')).toBeFocused();
+      // AGT-3830: the content refusal's next step replaces Accept. AGT-3873: the
+      // overridable refusal opens its written-reason form in place, focused.
+      await expect(page.getByTestId('acceptance-refusal-action')).toHaveText('Review again');
+      await expect(page.getByTestId('acceptance-refusal-override')).toBeVisible();
+      await expect(page.getByTestId('acceptance-refusal-override-reason')).toBeFocused();
       await expect(page.getByTestId('studio-triage-action-mark-done')).toHaveCount(0);
       await expect(page.getByTestId('notification-stack-below-toolbar').getByTestId('notification-warning')).toBeVisible();
       await expect(page.getByRole('heading', { name: 'No task selected' })).toBeHidden();
@@ -229,7 +233,7 @@ for (const view of [
       if (view.name === 'light') {
         await page.waitForTimeout(15_000);
         await expect(page.getByTestId('task-move-refusal')).toBeVisible();
-        await expect(page.locator('[data-testid="acceptance-refusal-action"]:visible')).toHaveText('Review again');
+        await expect(page.getByTestId('acceptance-refusal-action')).toHaveText('Review again');
       }
       const dir = process.env.JOB_RESULTS_DIR;
       if (dir) {

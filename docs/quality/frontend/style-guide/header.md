@@ -72,10 +72,13 @@ replaces Accept instead of preceding it: Review again is the primary, Accept
 with a reason… sits beside it (Send a round… where the completion policy lets
 no override admit the card, AGT-3867), and the reason reads the same words as the board
 and Needs you. The open card checks its own readiness through
-`POST /api/tasks/acceptance-readiness`. After a refused click the visible
-refusal takes focus; its actionable status toast docks below the toolbar and
-the phone's full-width refusal actions, stays above the status bar, and closes
-with Escape. The primary action can be Run now
+`POST /api/tasks/acceptance-readiness`. After a refused click the card stays
+open: an overridable refusal opens its written-reason form in place (AGT-3873),
+whose focused field is described by the reason, and otherwise the reason takes
+focus. Its actionable status toast docks below the toolbar and the phone's
+full-width refusal actions, stays above the status bar, and closes with Escape.
+The refusal is rendered once: in the toolbar, or below 600 px in the phone's
+full-width block, never as a hidden twin. The primary action can be Run now
 or the current lane's decision; its label comes from triage policy. The host
 chip is a factual badge, the pager is a compact action group, and the lane
 select is a navigation control. The menu owns secondary task actions.

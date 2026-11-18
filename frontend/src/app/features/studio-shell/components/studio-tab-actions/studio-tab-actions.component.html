@@ -125,7 +125,7 @@
     @if (triageView.hasActions) {
       <span class="studio-tab-actions-sep" aria-hidden="true"></span>
       <div class="studio-tab-action__triage" data-testid="studio-triage-panel" data-triage-root [appDecisionFocus]="detail.info">
-        @if (triageView.refusal; as refusal) {
+        @if (!phone() && triageView.refusal; as refusal) {
           <app-acceptance-refusal [refusal]="refusal" [job]="detail.info" [disabled]="mutationsBlocked()" />
         }
         @if (triageView.refusal?.replacesAccept) {

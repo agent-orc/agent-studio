@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
@@ -334,6 +334,25 @@ describe('StudioTabActionsComponent - triage cluster', () => {
     expect(query(fixture, 'acceptance-refusal-action')?.textContent?.trim()).toBe('Accept with override…');
     expect(primary.disabled).toBe(true);
     expect(refusal!.compareDocumentPosition(primary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('leaves the refusal to the phone primary in the phone layout, so only one exists (AGT-3830)', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    }));
+    try {
+      const fixture = await build({
+        task: detail(),
+        triage: { ...withPrimary, blockedByIntegration: true, refusal: {
+          reason: 'The delivery is not in develop yet.', action: 'override',
+          actionLabel: 'Accept with override…', source: 'hold',
+        } },
+      });
+      expect(query(fixture, 'studio-triage-panel')).not.toBeNull();
+      expect(query(fixture, 'acceptance-refusal')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('shows no refusal for an Accept that may act', async () => {

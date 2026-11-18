@@ -18,7 +18,7 @@ import { laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import { stateLabel as fmtStateLabel } from '../../../../services/format.util';
 import type { RunActivityBadge } from '../../../../services/run-activity.util';
 import type { TaskDetail, TaskRunActivityKind } from '../../../../models/task.model';
-import { TASK_DETAIL_PRIMARY_SHORTCUT, type AcceptanceRefusal } from '../../../task-detail/runtime';
+import { TASK_DETAIL_PRIMARY_SHORTCUT, taskPhoneLayout, type AcceptanceRefusal } from '../../../task-detail/runtime';
 import { AcceptanceRefusalComponent } from '../../../task-detail/components/acceptance-refusal/acceptance-refusal.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
@@ -135,6 +135,8 @@ export class StudioTabActionsComponent {
   readonly laneOptions = input.required<readonly StudioLaneOption[]>();
   readonly triage = input.required<StudioTabTriage>();
   readonly primaryShortcut = TASK_DETAIL_PRIMARY_SHORTCUT;
+  /** AGT-3830: on a phone the full-width block above the detail owns the refusal. */
+  readonly phone = taskPhoneLayout();
 
   readonly navigateDocumentHistory = output<1 | -1>();
   readonly toggleGroupByDossier = output<void>();

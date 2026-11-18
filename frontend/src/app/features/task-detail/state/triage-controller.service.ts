@@ -323,10 +323,14 @@ export class TriageController {
             && err?.error?.code === 'completion-content-gap') {
           // AGT-3867: the server's own reason, never a guessed brief
           // mismatch. The refusal replaces Accept on the reopened card with
-          // its next step. The docked toast and card banner announce it, and
-          // focus lands on the reason rather than an optimistic next card.
+          // its next step. The docked toast and card banner announce it.
+          // Focus stays on the card: an overridable refusal opens its
+          // written-reason form in place (AGT-3873), whose field reads the
+          // reason; otherwise the reason itself takes focus (AGT-3830).
           this.recordAcceptRefusal(info, err);
-          this.acceptanceRefusals.requestFocus(info.taskKey);
+          if (acceptanceRefusalOverridable({ code: 'completion-content-gap', message: refusal }))
+            this.refusalActions.openOverride(info);
+          else this.acceptanceRefusals.requestFocus(info.taskKey);
           void this.acceptanceReadiness.checkCard(info);
           return;
         }

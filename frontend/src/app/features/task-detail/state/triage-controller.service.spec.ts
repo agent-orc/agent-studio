@@ -416,11 +416,12 @@ describe('TriageController · optimistic navigation on Accept', () => {
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
     // AGT-3830: no sticky notice over the header; the reopened card shows the
-    // refusal with its next step and its reason takes focus.
+    // refusal with its next step. AGT-3873: an overridable refusal opens its
+    // written-reason form in place, so focus stays on the card.
     expect(warning).not.toHaveBeenCalled();
     const refusals = TestBed.inject(AcceptanceRefusalStore);
     expect(refusals.forTask(taskA.taskKey)).toMatchObject({ code: 'completion-content-gap' });
-    expect(refusals.focusRequest()?.taskKey).toBe(taskA.taskKey);
+    expect(refusals.overrideRequest()).toBe(taskA.taskKey);
     expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
     expect(TestBed.inject(LanePagerService).snapshot()?.jobs[0].taskKey).toBe(taskA.taskKey);
     expect(ctrl.moveRefusal()?.message).toBe('Acceptance refused: no content verdict for the current brief. '
@@ -464,8 +465,8 @@ describe('TriageController · optimistic navigation on Accept', () => {
       position: 'below-toolbar' });
     expect(toast.actions?.map(action => action.label)).toEqual(['Accept with a written reason', 'Review again']);
     expect(JSON.stringify(notify.mock.calls)).not.toMatch(/does not match the current brief/);
-    expect(TestBed.inject(AcceptanceRefusalStore).focusRequest()?.taskKey).toBe(taskA.taskKey);
-    expect(TestBed.inject(AcceptanceRefusalStore).overrideRequest()).toBeNull();
+    // AGT-3873: the refused Accept opens the toolbar's written-reason form in place.
+    expect(TestBed.inject(AcceptanceRefusalStore).overrideRequest()).toBe(taskA.taskKey);
     expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
     expect(ctrl.moveRefusal()?.message).toContain('Acceptance refused: requirement-fit verdict was concerns.');
     expect(ctrl.moveRefusal()?.message).not.toMatch(/operator override/);
@@ -496,6 +497,8 @@ describe('TriageController · optimistic navigation on Accept', () => {
     // AGT-3873: no override is offered or opened; the toast says what to do instead.
     expect(ctrl.moveRefusal()?.overridable).toBe(false);
     expect(TestBed.inject(AcceptanceRefusalStore).overrideRequest()).toBeNull();
+    // AGT-3830: with no form to open, the refusal's reason takes focus on the card.
+    expect(TestBed.inject(AcceptanceRefusalStore).focusRequest()?.taskKey).toBe(taskA.taskKey);
     const toast = notify.mock.calls.map(call => call[0]).find(call => call.title === 'Accept refused')!;
     expect(toast.actions).toEqual([]);
     expect(toast.details?.join(' ')).toContain('an override cannot replace the missing report');

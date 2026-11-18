@@ -143,7 +143,7 @@ export class AcceptanceRefusalComponent {
 
   private takeFocus(requestedAt: number): void {
     const el = this.reasonEl()?.nativeElement;
-    // The toolbar and the phone each render this refusal; only the visible one takes focus.
+    // Only a rendered, visible reason takes focus (the toolbar and the phone render it in their own layout).
     if (!el || !isVisible(el) || Date.now() - requestedAt > FOCUS_WINDOW_MS) return;
     // Take focus only from the body (the refused Accept left the DOM) or from
     // a surface that focused itself on mount, never from a user's control.

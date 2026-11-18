@@ -145,7 +145,8 @@ for (const view of VIEWS) {
     await page.screenshot({ path: join(shots, `demo19-${view.name}-next-step.png`) });
 
     // 2. A refusal that still arrives (a stale "ready" answer let Accept through) keeps the card
-    //    open, moves focus to the reason, and raises no notice over the header.
+    //    open, opens the written-reason form in place (AGT-3873) with its focused field described
+    //    by the refusal's reason, and raises no notice over the header.
     let pretendReady = true;
     await page.route('**/api/tasks/acceptance-readiness', async route => {
       const response = await route.fetch();
@@ -168,7 +169,9 @@ for (const view of VIEWS) {
     await accept.click();
     expect((await move).status()).toBe(409);
     await expect(shown).toBeVisible({ timeout: 15_000 });
-    await expect(shown.getByTestId('acceptance-refusal-focus')).toBeFocused();
+    const field = page.getByTestId('acceptance-refusal-override-reason');
+    await expect(field).toBeFocused();
+    await expect(page.locator(`#${await field.getAttribute('aria-describedby')}`)).toContainText('result SHA');
     await expect(page.getByTestId('task-move-refusal')).toBeVisible();
     const refusalToast = page.getByTestId('notification-stack-below-toolbar').getByTestId('notification-warning');
     await expect(refusalToast).toBeVisible();

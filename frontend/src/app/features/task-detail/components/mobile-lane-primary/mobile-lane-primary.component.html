@@ -1,5 +1,5 @@
 @if (primary(); as action) {
-  @if (action.refusal && job(); as refusalJob) {
+  @if (phone() && action.refusal && job(); as refusalJob) {
     <app-acceptance-refusal class="mobile-lane-primary__refusal" layout="stacked"
                             [refusal]="action.refusal" [job]="refusalJob" [disabled]="mutationsBlocked()" />
   }
