@@ -168,6 +168,78 @@ public class CodexModelDiscoveryTests : IDisposable
         Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
+    // Shape of `codex debug models` on codex-cli 0.166.0 (runner-01, 2026-11-17).
+    private const string Gpt62DebugModels = """
+        {"models":[
+          {"slug":"gpt-6.2-sol","display_name":"GPT-6.2-Sol","visibility":"list","priority":1,
+           "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],
+           "default_reasoning_level":"low"},
+          {"slug":"gpt-6.2-astra","display_name":"GPT-6.2-Astra","visibility":"list","priority":2,
+           "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],
+           "default_reasoning_level":"low"},
+          {"slug":"gpt-6-sol","display_name":"GPT-6-Sol","visibility":"list","priority":7,
+           "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}],
+           "default_reasoning_level":"medium"}]}
+        """;
+
+    [Theory]
+    [InlineData(ModelIds.Gpt62Sol, 500_000)]
+    [InlineData(ModelIds.Gpt62Astra, 272_000)]
+    public void Gpt62_IsListedWithItsFullCliLadder_AtTheVerifiedCliFloor(string model, long context)
+    {
+        var parsed = CodexModelDiscovery.ParseDebugModelsJson(Gpt62DebugModels);
+
+        var belowFloor = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = parsed }, "0.165.0");
+        var old = Assert.Single(belowFloor.Models, m => m.Id == model);
+        Assert.False(old.Available);
+        Assert.Contains("0.166", old.AvailabilityNote);
+
+        var absent = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = [] }, "0.166.0");
+        Assert.False(Assert.Single(absent.Models, m => m.Id == model).Available);
+
+        var current = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = parsed }, "0.166.0");
+        var listed = Assert.Single(current.Models, m => m.Id == model);
+        Assert.True(listed.Available);
+        Assert.Null(listed.AvailabilityNote);
+        Assert.Equal(["low", "medium", "high", "xhigh", "max", "ultra"], listed.ThinkingLevels);
+        Assert.Equal("low", listed.DefaultThinkingLevel);
+        Assert.Equal(context, ModelMetadataRegistry.ContextWindowFor(model));
+    }
+
+    [Fact]
+    public void Gpt62_IsNeverTheCodexDefault_EvenWhenTheCliRanksItFirst()
+    {
+        var current = CodexModelDiscovery.WithKnownButUnavailableModels(
+            new CliModelCatalog { Models = CodexModelDiscovery.ParseDebugModelsJson(Gpt62DebugModels) }, "0.166.0");
+
+        Assert.Equal(ModelIds.Gpt6Sol, CodexModelDiscovery.PickDetectedDefault(current));
+        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.All(new[] { ModelIds.Gpt62Sol, ModelIds.Gpt62Astra },
+            id => Assert.False(ModelMetadataRegistry.Find(id)!.IsDefault));
+        Assert.DoesNotContain(CodexModelDiscovery.FallbackCatalog().Models,
+            m => m.Id is ModelIds.Gpt62Sol or ModelIds.Gpt62Astra && (m.Available || m.IsDefault));
+    }
+
+    [Theory]
+    [InlineData(ModelIds.Gpt62Sol)]
+    [InlineData(ModelIds.Gpt62Astra)]
+    public void Gpt62_StoredLevelSurvives_BeforeAndAfterLiveDiscovery(string model)
+    {
+        // Codex labels low as "Light" and xhigh as "Extra High"; Studio stores the CLI value.
+        string[] ladder = ["low", "medium", "high", "xhigh", "max", "ultra"];
+        Assert.Equal(ladder, ModelMetadataRegistry.ThinkingLevelsFor(CliTypes.Codex, model));
+        Assert.Equal("low", ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, model));
+        foreach (var level in ladder)
+            Assert.Equal(level, ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, model, level));
+        Assert.Equal("ultra", ModelMetadataRegistry.NormalizeThinkingLevel(CliTypes.Codex, model, "ULTRA"));
+        Assert.Equal("low", ModelMetadataRegistry.NormalizeThinkingLevel(CliTypes.Codex, model, "none"));
+
+        ModelMetadataRegistry.SetDetectedCodexLadders(CodexModelDiscovery.ParseDebugModelsJson(Gpt62DebugModels));
+        Assert.True(ModelMetadataRegistry.UsesLiveDiscoveredThinkingLadder(model));
+        foreach (var level in ladder)
+            Assert.Equal(level, ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, model, level));
+    }
+
     [Fact]
     public void Gpt61Terra_stays_out_of_Studio_catalogue_until_priced()
     {

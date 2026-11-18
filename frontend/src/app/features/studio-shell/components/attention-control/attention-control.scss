@@ -170,6 +170,17 @@
   -webkit-line-clamp: unset;
 }
 
+.attention-list__row[data-attention-type='environment.incident-open'] {
+  background: color-mix(in srgb, var(--studio-status-danger) 8%, var(--studio-bg-surface));
+  flex-wrap: wrap;
+
+  .attention-list__reason {
+    display: block;
+    overflow: visible;
+    -webkit-line-clamp: unset;
+  }
+}
+
 // Commit and image identities remain readable even on a narrow status dialog.
 .attention-list__row[data-attention-type='review-host.drift'] .attention-list__reason {
   display: block;
@@ -193,6 +204,12 @@
 
   &:hover { background: var(--studio-bg-hover); border-color: var(--studio-accent); }
   &:focus-visible { outline: 2px solid var(--studio-accent-strong); outline-offset: 1px; }
+}
+
+.attention-list__action--secondary {
+  border-color: transparent;
+  background: transparent;
+  color: var(--studio-fg-dim);
 }
 
 .attention-list__link {

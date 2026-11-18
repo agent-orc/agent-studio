@@ -4,6 +4,7 @@ using AgentStudio.Shared;
 using AgentStudio.Watcher;
 using AgentStudio.Quota;
 using AgentStudio.Registry;
+using AgentStudio.Projects;
 
 namespace AgentStudio.Operator;
 
@@ -68,6 +69,48 @@ public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, Projec
                 $"{OperatorDecisionTypes.DeployCompleted}|{deploy.ProjectId}|{deploy.JobId}|{deploy.CompletedAt:O}",
                 project?.DisplayName, deploy.JobId, "Deployment completed.", deploy.CompletedAt!.Value, []);
         }).ToArray();
+}
+
+/// <summary>Open environment incidents from the durable health state. Recovery clears the fact.</summary>
+public sealed class OperatorEnvironmentIncidentFactSource(HealthCheckStore store, Func<IEnumerable<string>> projects)
+    : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.EnvironmentIncidentOpen];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    {
+        var facts = new List<OperatorDecisionFact>();
+        foreach (var project in projects().Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var state = store.Load(project);
+            foreach (var environment in state.Environments.Values)
+            {
+                if (environment.OpenIncident is not { EndedAt: null } incident) continue;
+                var failing = state.Checks.Values
+                    .Select(check => check.OpenIncident)
+                    .Where(check => check is { EndedAt: null } && check.EnvironmentId == incident.EnvironmentId)
+                    .Select(check => $"{check!.CheckId}: {check.FirstError}")
+                    .ToArray();
+                var signal = failing.Length > 0 ? string.Join("; ", failing) : "Health check failing";
+                var slug = System.Text.RegularExpressions.Regex.Replace(project.Trim().ToLowerInvariant(),
+                    "[^a-z0-9]+", "-").Trim('-');
+                var environmentUrl = "/#/projects/" + Uri.EscapeDataString(slug) + "/operations";
+                var evidence = new List<OperatorEvidenceLink>
+                {
+                    new("environment operations", environmentUrl),
+                };
+                if (incident.CardId is { } card)
+                    evidence.Add(new("incident card", "/#/tasks/" + Uri.EscapeDataString(card)));
+                facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.EnvironmentIncidentOpen,
+                    $"{OperatorDecisionTypes.EnvironmentIncidentOpen}|{project}|{incident.Id}",
+                    project, incident.CardId,
+                    $"{incident.EnvironmentName} since {incident.StartedAt:yyyy-MM-dd HH:mm} UTC: {signal}",
+                    incident.StartedAt.UtcDateTime, evidence,
+                    Title: $"{project} · {incident.EnvironmentName} incident"));
+            }
+        }
+        return facts;
+    }
 }
 
 /// <summary>

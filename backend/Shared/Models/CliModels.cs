@@ -217,6 +217,10 @@ public static class ModelIds
     /// <see cref="Gpt56Sol"/> and the <see cref="Gpt55"/> baseline (AGT-2903).</summary>
     public const string Gpt6Sol = "gpt-6-sol";
     public const string Gpt61Sol = "gpt-6.1-sol";
+    /// <summary>GPT-6.2 (2026-11-17). Explicit-pin only: no default, tier or
+    /// fallback points at either until the owner's own comparison decides.</summary>
+    public const string Gpt62Sol = CodexCliRelease.Gpt62Sol;
+    public const string Gpt62Astra = CodexCliRelease.Gpt62Astra;
     public const string Gpt6Luna = "gpt-6-luna";
     public const string Gpt5Codex = "gpt-5-codex";
     public const string Gpt41 = "gpt-4.1";
@@ -330,6 +334,8 @@ public sealed record ModelMetadata(
 /// </summary>
 public static class ModelMetadataRegistry
 {
+    private static readonly string[] Gpt62ThinkingLevels = ["low", "medium", "high", "xhigh", "max", "ultra"];
+
     private static readonly ModelMetadata[] Entries =
     [
         // Studio defaults Opus 5.5 to high like Opus 5; the provider default is medium.
@@ -382,6 +388,17 @@ public static class ModelMetadataRegistry
             DefaultThinkingLevel: "xhigh", MinimumCliVersion: CodexCliRelease.Gpt61MinimumVersion),
         new(ModelIds.Gpt6Luna, "GPT-6 Luna", "openai", IsDefault: false, Deprecated: false, Available: false,
             ContextWindow: 1_050_000, MinimumCliVersion: "0.155.0"),
+        // codex-cli 0.166.0 reports both with low, medium, high, xhigh, max,
+        // ultra (Codex shows low as "Light") and default low; the API has no
+        // none effort. Context is the Codex default window (Sol 500K, Astra
+        // 272K; both support 1M via model_context_window). Live discovery
+        // remains the availability gate.
+        new(ModelIds.Gpt62Sol, "GPT-6.2 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
+            ContextWindow: 500_000, ThinkingLevels: Gpt62ThinkingLevels,
+            DefaultThinkingLevel: "low", MinimumCliVersion: CodexCliRelease.Gpt62MinimumVersion),
+        new(ModelIds.Gpt62Astra, "GPT-6.2 Astra", "openai", IsDefault: false, Deprecated: false, Available: false,
+            ContextWindow: 272_000, ThinkingLevels: Gpt62ThinkingLevels,
+            DefaultThinkingLevel: "low", MinimumCliVersion: CodexCliRelease.Gpt62MinimumVersion),
         // gpt-5.6-terra / gpt-5.6-luna are the lower cost tiers of the gpt-5.6
         // family used by model-routing-policy.md. Onboarded as registry entries
         // (AGT-2707 round 2) purely so the picker disables them with a reason on
@@ -468,7 +485,7 @@ public static class ModelMetadataRegistry
     /// only when that decision is made.
     /// </summary>
     private static readonly HashSet<string> LiveDiscoveredLadderModelIds =
-        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra, ModelIds.Gpt6Sol, ModelIds.Gpt61Sol, ModelIds.Gpt6Luna };
+        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra, ModelIds.Gpt6Sol, ModelIds.Gpt61Sol, ModelIds.Gpt62Sol, ModelIds.Gpt62Astra, ModelIds.Gpt6Luna };
 
     /// <summary>Whether <paramref name="model"/> is onboarded to take its reasoning
     /// ladder/default from live CLI discovery rather than the static table.</summary>
