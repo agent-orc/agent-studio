@@ -181,6 +181,18 @@ export class ProjectDeployDataService {
         : action === 'approve' && options.confirmMissingSecrets ? { confirmMissingSecrets: true } : {});
   }
 
+  /**
+   * The lifecycle rollback route (F13). With `approve` the request is the
+   * approval: the server queues it for an Owner or Maintainer and refuses it
+   * for anyone else. `acceptIncidentTarget` confirms a target that had an
+   * incident while running.
+   */
+  rollback(projectName: string, environmentId: string,
+    body: { approve: boolean; acceptIncidentTarget: boolean }): Observable<Deployment> {
+    return this.http.post<Deployment>(
+      `${deployRoot(projectName)}/environments/${encodeURIComponent(environmentId)}/rollback`, body);
+  }
+
   stopEnvironment(projectName: string, environmentId: string): Observable<void> {
     return this.http.post<void>(`/api/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/stop`, {});
   }

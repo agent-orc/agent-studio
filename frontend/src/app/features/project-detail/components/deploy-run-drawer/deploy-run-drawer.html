@@ -30,6 +30,12 @@
         Intervention: {{ decision }} by {{ run().interventionDecidedBy ?? 'system' }}.
       </p>
     }
+    @if (rollbackOffer(); as offer) {
+      <section class="run-drawer__rollback" aria-labelledby="deploy-run-rollback-title" data-testid="deploy-run-rollback">
+        <h3 id="deploy-run-rollback-title">Roll back {{ offer.environmentName }}</h3>
+        <app-rollback-offer [offer]="offer" [now]="now()" [busy]="rollbackBusy()" (rollback)="rollback.emit($event)" />
+      </section>
+    }
     @if (action().error; as error) { <p class="run-drawer__error" role="alert" data-testid="deploy-run-action-error">{{ error }}</p> }
     <dl class="run-drawer__facts">
       <dt>Release</dt><dd>{{ run().releaseVersion ?? 'Not in the release list' }} <code class="run-drawer__muted">{{ run().releaseId }}</code></dd>

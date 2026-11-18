@@ -23,6 +23,8 @@ import { LocalOwnerSessionService } from '../../../../services/local-owner-sessi
 import { ProjectDeployEnvironmentActions } from '../../services/project-deploy-environment-actions.service';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { LocalOwnerDialogComponent } from '../../../../components/local-owner-dialog/local-owner-dialog';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import { DeployRollbackFlow } from '../../state/deploy-rollback-flow';
 import { serverCheckoutMissing } from '../../../server-checkout/server-checkout.model';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import {
@@ -33,11 +35,9 @@ import {
   environmentNames,
   ready,
   ALL_DEPLOY_RUNS,
-  type DeployPanel,
-  type DeployRunAction,
+  type DeployPanel, type DeployRunAction,
   type Deployment,
-  type DeploymentLogLine,
-  type EnvironmentStatus,
+  type DeploymentLogLine, type EnvironmentStatus,
   type Release,
   type DeployRunFilter,
   type ArtifactReleaseLookup,
@@ -55,13 +55,13 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
 @Component({
   selector: 'app-project-deploy-area',
   standalone: true,
-  providers: [ProjectDeployEnvironmentActions],
+  providers: [ProjectDeployEnvironmentActions, DeployRollbackFlow],
   imports: [
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective,
+    FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective, RollbackOfferComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -132,7 +132,6 @@ export class ProjectDeployAreaComponent {
   readonly selectedRunId = signal<string | null>(null);
   readonly highlightedReleaseId = signal<string | null>(null);
   readonly secrets = new DeployAreaSecrets(this.data, this); // F14: secret gaps for the cards and the run drawer
-
   openRelease(id: string): void {
     this.highlightedReleaseId.set(id);
     this.show('releases');
@@ -197,6 +196,7 @@ export class ProjectDeployAreaComponent {
   readonly environmentOptions = computed(() => this.cards().map(card => ({ id: card.id, name: card.name })));
   readonly selectedRun = computed(() => [...this.runs(), ...this.historyRuns(), ...this.statusRuns(), ...this.fetchedRuns()]
     .find(run => run.id === this.selectedRunId()) ?? null);
+  readonly rollback = inject(DeployRollbackFlow).attach(this); // F13: one confirmed lifecycle rollback behind every entry point
   readonly notices = computed(() => deployNotices([
     ['Environments', this.environmentPanel()], ['Environment status', this.statusPanel()], ['Releases', this.releasePanel()],
     ['Deploy runs', this.deploymentPanel()], ['Health', this.healthPanel()],

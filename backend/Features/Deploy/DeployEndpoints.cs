@@ -271,7 +271,8 @@ public static class DeployEndpoints
                 ? deploy.SecretDemandForEnvironment(project, environmentId, rollback, request?.Tenant) : null,
             request?.ConfirmMissingSecrets == true,
             missing => QuotaRefusable(() => Respond(rollback
-                ? deploy.Rollback(project, environmentId, approve, actor, request?.Tenant, request?.GuidedFailure, missing)
+                ? deploy.Rollback(project, environmentId, approve, actor, request?.Tenant, request?.GuidedFailure, missing,
+                    request?.AcceptIncidentTarget == true)
                 : deploy.Redeploy(project, environmentId, approve, actor, request?.Tenant, request?.GuidedFailure, missing),
                 accepted: true)), ct);
     }

@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, effect, inject, input, signal, type TemplateRef } from '@angular/core';
+import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { EnvironmentHealthService } from '../../services/environment-health.service';
 import {
@@ -25,7 +25,7 @@ export function healthStatusTone(status: string): StatusTone {
 @Component({
   selector: 'app-environment-health-panel',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [DatePipe, NgTemplateOutlet, StatusIndicatorComponent],
   templateUrl: './environment-health-panel.component.html',
   styleUrl: './environment-health-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -34,6 +34,12 @@ export class EnvironmentHealthPanelComponent {
   private readonly health = inject(EnvironmentHealthService);
 
   readonly projectName = input.required<string>();
+  /**
+   * What the host offers on an open incident, such as the Deploy rollback
+   * (F13). The context is the environment id; the panel itself stays
+   * independent of Deploy.
+   */
+  readonly incidentAction = input<TemplateRef<{ $implicit: string }> | null>(null);
   readonly snapshot = signal<EnvironmentHealthResponse | null>(null);
   readonly error = signal<string | null>(null);
   readonly statusLabel = HEALTH_STATUS_LABEL;

@@ -27,6 +27,9 @@
             · {{ incident.failedProbes }} {{ incident.checkId.startsWith('telemetry-') ? 'firing evaluations' : 'failed probes' }}
             @if (incident.cardId) { · card <code>{{ incident.cardId }}</code> }
           </p>
+          @if (incidentAction(); as action) {
+            <ng-container *ngTemplateOutlet="action; context: { $implicit: environment.environmentId }" />
+          }
         } @else if (environment.lastIncident; as last) {
           <p class="environment-health__quiet">Last incident {{ last.startedAt | date:'medium':'UTC' }} to {{ last.endedAt | date:'shortTime':'UTC' }} UTC · {{ last.checkId }}</p>
         }
