@@ -46,8 +46,8 @@ done
             source = source.replace('-o root -g root ', '')
             source = source.replace('readonly cli_root="/opt/agent-cli"', f'readonly cli_root="{root}/managed"')
             source = source.replace('readonly npm_binary="/usr/bin/npm"', f'readonly npm_binary="{npm}"')
-            source = source.replace('"/usr/local/bin/$name"', f'"{local_bin}/$name"')
-            source = source.replace('"/usr/bin/$name"', f'"{usr_bin}/$name"')
+            source = source.replace('cli_launcher_dirs=(/usr/local/bin /usr/bin)', f'cli_launcher_dirs=("{local_bin}" "{usr_bin}")')
+            self.assertNotIn('/usr/local/bin /usr/bin', source)
             helper = root / 'helper'
             helper.write_text(source)
             restart = 'return 1' if fail_restart else 'return 0'
@@ -88,10 +88,32 @@ update_clis 0.166.0 2.1.305
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'codex').write_text('custom wrapper')
-            source = (ROOT / 'agent-runner-deploy').read_text().replace('"/usr/local/bin/$name"', f'"{root}/$name"')
+            source = (ROOT / 'agent-runner-deploy').read_text().replace('cli_launcher_dirs=(/usr/local/bin /usr/bin)', f'cli_launcher_dirs=("{root}")')
             helper = root / 'helper'
             helper.write_text(source)
             result = subprocess.run(['bash', '-c', f'source {helper}; cli_launchers codex'], capture_output=True, text=True)
             self.assertEqual(2, result.returncode)
             self.assertIn('must be a symbolic link', result.stderr)
             self.assertEqual('custom wrapper', (root / 'codex').read_text())
+
+    def test_review_guard_uses_compatibility_agent_host_on_pre_release_layout(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            legacy = root / 'agent-runner'
+            legacy.mkdir()
+            (legacy / 'agent-host').write_text('#!/bin/sh\n')
+            (legacy / 'agent-host').chmod(0o755)
+            source = (ROOT / 'agent-runner-deploy').read_text()
+            source = source.replace('readonly product_root="/opt/agent-host"', f'readonly product_root="{root}/agent-host"')
+            source = source.replace('readonly compatibility_link="/opt/agent-runner"', f'readonly compatibility_link="{legacy}"')
+            helper = root / 'helper'
+            helper.write_text(source)
+            probe = f'source {helper}; installed_agent_host_binary'
+            result = subprocess.run(['bash', '-c', probe], capture_output=True, text=True, check=True)
+            self.assertEqual(f'{legacy}/agent-host', result.stdout.strip())
+            current = root / 'agent-host/current'
+            current.mkdir(parents=True)
+            (current / 'agent-host').write_text('#!/bin/sh\n')
+            (current / 'agent-host').chmod(0o755)
+            result = subprocess.run(['bash', '-c', probe], capture_output=True, text=True, check=True)
+            self.assertEqual(f'{current}/agent-host', result.stdout.strip())
