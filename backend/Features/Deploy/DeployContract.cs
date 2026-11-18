@@ -152,16 +152,43 @@ public sealed record DeployMatrixResponse(IReadOnlyList<string> EnvironmentKinds
 public sealed record DeploymentRequest(string EnvironmentId, bool Approve = false, bool? GuidedFailure = null)
 {
     public string? Tenant { get; init; }
+
+    /// <summary>F14: the approver saw the missing secret bindings and approves anyway.</summary>
+    public bool ConfirmMissingSecrets { get; init; }
 }
 
 public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null)
 {
     public string? Tenant { get; init; }
+
+    /// <summary>F14: the approver saw the missing secret bindings and approves anyway.</summary>
+    public bool ConfirmMissingSecrets { get; init; }
 }
 
 public sealed record InterventionDecisionRequest(string Action, string? Reason = null);
 
-public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null);
+public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null, bool ConfirmMissingSecrets = false);
+
+/// <summary>
+/// F14: the secret names one deploy of a release carries into one environment.
+/// <c>Declared</c> lists the names the current declaration declares, the only
+/// names an environment binding accepts.
+/// </summary>
+public sealed record EnvironmentSecretDemand(DeployEnvironment Environment, string DeclarationKind, string? ReleaseId,
+    IReadOnlyList<string> Names, IReadOnlyList<string> Declared);
+
+/// <summary>One secret a deploy would miss; <c>Bindable</c> when an environment binding can resolve it.</summary>
+public sealed record SecretReadinessItem(string Name, string Reference, string Reason, bool Bindable);
+
+/// <summary>F14: whether a deploy into the environment finds every secret it needs bound.</summary>
+public sealed record EnvironmentSecretReadiness(string EnvironmentId, string EnvironmentName, string Kind,
+    string? ReleaseId, bool RequiresApproval, IReadOnlyList<SecretReadinessItem> Missing)
+{
+    public bool Ready => Missing.Count == 0;
+}
+
+public sealed record SecretReadinessResponse(string Project, string? ReleaseId,
+    IReadOnlyList<EnvironmentSecretReadiness> Environments);
 
 /// <summary>Who asks, and whether they hold the Owner or Maintainer approval for the project.</summary>
 public sealed record DeployActor(string Id, bool IsApprover, string? ApprovalRole = null);

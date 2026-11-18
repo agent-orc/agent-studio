@@ -169,6 +169,8 @@ async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false)
       ? deploy.act(action, id, route.request().postDataJSON(), route.request().headers()['x-csrf-token']) : MISSING);
   });
   await page.route(`**/api/projects/${PROJECT}/pipeline-definition`, route => answer(route, deploy.pipelineDefinition));
+  await page.route(`**${DEPLOY}/secret-readiness**`, route => answer(route, {
+    project: PROJECT, releaseId: new URL(route.request().url()).searchParams.get('releaseId'), environments: [] }));
 }
 
 async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs = 30_000, missingCheckout = false): Promise<void> {
@@ -1210,7 +1212,8 @@ test('Project Secrets shows approval for a custom-id Production environment and 
   await expect(secrets).toBeVisible();
   await secrets.getByTestId('project-secrets-environment').selectOption('live-eu');
   await expect(secrets.getByTestId('project-secrets-missing')).toContainText('not-bound');
-  await secrets.getByRole('button', { name: 'Bind DATABASE_URL' }).click();
+  await expect(secrets.getByTestId('project-secrets-bind-DATABASE_URL')).toHaveText('Bind and approve DATABASE_URL');
+  await secrets.getByTestId('project-secrets-edit-DATABASE_URL').click();
   await secrets.getByTestId('project-secrets-approve').check();
   await expect(secrets.getByTestId('project-secrets-reference')).toHaveValue(`secret://${PROJECT}/live-eu/DATABASE_URL`);
   await expect(secrets.getByTestId('project-secrets-bind')).toBeEnabled();

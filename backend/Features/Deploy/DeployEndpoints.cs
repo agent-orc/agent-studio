@@ -51,6 +51,13 @@ public static class DeployEndpoints
             string releaseId, string cardKey, ReleaseNoteEditRequest request, DeployService deploy) =>
             Respond(deploy.EditNote(projectName, releaseId, cardKey, request, Actor(context, projectName))));
 
+        // F14: unbound or missing secrets per environment, before a run is queued.
+        project.MapGet("/secret-readiness", async (string projectName, string? releaseId, DeploySecretReadiness readiness,
+            CancellationToken ct) => await readiness.ReadAsync(projectName, releaseId, ct) is { } value
+                ? Results.Ok(value)
+                : releaseId is null ? UnknownProject(projectName)
+                : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
+
         project.MapGet("/cards", (string projectName, DeployService deploy) =>
             deploy.Cards(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
@@ -126,9 +133,9 @@ public static class DeployEndpoints
             }
         });
 
-        project.MapPost("/releases/{releaseId}/deployments", (HttpContext context, string projectName,
+        project.MapPost("/releases/{releaseId}/deployments", async (HttpContext context, string projectName,
             string releaseId, DeploymentRequest request, DeployService deploy,
-            ProjectEnvironmentService environments) =>
+            ProjectEnvironmentService environments, DeploySecretReadiness readiness, CancellationToken ct) =>
         {
             if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access)
             {
@@ -138,15 +145,27 @@ public static class DeployEndpoints
                     return Results.Json(new { error = "environment-scope-denied" },
                         statusCode: StatusCodes.Status403Forbidden);
             }
-            return QuotaRefusable(() => Respond(deploy.RequestDeployment(projectName, releaseId, request,
-                Actor(context, projectName)), accepted: true));
+            var actor = Actor(context, projectName);
+            return await WithSecretPreflight(readiness, projectName,
+                request.Approve && actor.IsApprover
+                    ? deploy.SecretDemandFor(projectName, releaseId, request.EnvironmentId, request.Tenant) : null,
+                request.ConfirmMissingSecrets,
+                missing => QuotaRefusable(() => Respond(deploy.RequestDeployment(projectName, releaseId, request,
+                    actor, missing), accepted: true)), ct);
         })
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        project.MapPost("/deployments/{deploymentId}/approve", (HttpContext context, string projectName,
-            string deploymentId, DeploymentApprovalRequest? request, DeployService deploy) =>
-            QuotaRefusable(() => RespondApproval(context, deploy.Approve(projectName, deploymentId,
-                Actor(context, projectName), request?.GuidedFailure))))
+        project.MapPost("/deployments/{deploymentId}/approve", async (HttpContext context, string projectName,
+            string deploymentId, DeploymentApprovalRequest? request, DeployService deploy,
+            DeploySecretReadiness readiness, CancellationToken ct) =>
+        {
+            var actor = Actor(context, projectName);
+            return await WithSecretPreflight(readiness, projectName,
+                actor.IsApprover ? deploy.SecretDemandForRun(projectName, deploymentId) : null,
+                request?.ConfirmMissingSecrets == true,
+                missing => QuotaRefusable(() => RespondApproval(context, deploy.Approve(projectName, deploymentId, actor,
+                    request?.GuidedFailure, missing))), ct);
+        })
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/deployments/{deploymentId}/reject", (HttpContext context, string projectName,
@@ -165,15 +184,15 @@ public static class DeployEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/environments/{environmentId}/redeploy", (HttpContext context, string projectName,
-            string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
-            QuotaRefusable(() => Respond(deploy.Redeploy(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName), request?.Tenant, request?.GuidedFailure), accepted: true)))
+            string environmentId, EnvironmentActionRequest? request, DeployService deploy,
+            DeploySecretReadiness readiness, CancellationToken ct) =>
+            EnvironmentAction(context, projectName, environmentId, request, deploy, readiness, rollback: false, ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/environments/{environmentId}/rollback", (HttpContext context, string projectName,
-            string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
-            QuotaRefusable(() => Respond(deploy.Rollback(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName), request?.Tenant, request?.GuidedFailure), accepted: true)))
+            string environmentId, EnvironmentActionRequest? request, DeployService deploy,
+            DeploySecretReadiness readiness, CancellationToken ct) =>
+            EnvironmentAction(context, projectName, environmentId, request, deploy, readiness, rollback: true, ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/deploy/matrix", (HttpContext context, string? tenant, DeployService deploy, ProjectRegistry projects) =>
@@ -213,6 +232,45 @@ public static class DeployEndpoints
                 && access.Allows(IamPermissions.EnvironmentProductionDeployApprove,
                     PermissionTarget.ForProject(project, IamEnvironments.Production)));
         return DeployApprovalAuthority.Resolve(user, project);
+    }
+
+    private static async Task<IResult> EnvironmentAction(HttpContext context, string project, string environmentId,
+        EnvironmentActionRequest? request, DeployService deploy, DeploySecretReadiness readiness, bool rollback,
+        CancellationToken ct)
+    {
+        var actor = Actor(context, project);
+        var approve = request?.Approve == true;
+        return await WithSecretPreflight(readiness, project,
+            approve && actor.IsApprover
+                ? deploy.SecretDemandForEnvironment(project, environmentId, rollback, request?.Tenant) : null,
+            request?.ConfirmMissingSecrets == true,
+            missing => QuotaRefusable(() => Respond(rollback
+                ? deploy.Rollback(project, environmentId, approve, actor, request?.Tenant, request?.GuidedFailure, missing)
+                : deploy.Redeploy(project, environmentId, approve, actor, request?.Tenant, request?.GuidedFailure, missing),
+                accepted: true)), ct);
+    }
+
+    /// <summary>
+    /// F14: a Production approval that would queue a run without its secret
+    /// bindings is refused with the names (409, reason
+    /// <see cref="DeploySecretReadiness.MissingReason"/>) unless the approver
+    /// confirmed them; a confirmed approval passes the names on for the run log.
+    /// </summary>
+    internal static async Task<IResult> WithSecretPreflight(DeploySecretReadiness readiness, string project,
+        EnvironmentSecretDemand? demand, bool confirmed, Func<IReadOnlyList<string>, IResult> proceed,
+        CancellationToken ct)
+    {
+        var missing = await readiness.ApprovalGapAsync(project, demand, ct);
+        var names = missing.Select(item => item.Name).ToArray();
+        if (names.Length > 0 && !confirmed)
+            return Results.Conflict(new
+            {
+                error = $"{demand!.Environment.Name} is missing {names.Length} secret binding(s): {string.Join(", ", names)}. "
+                    + "Bind them first, or confirm the approval to deploy without them.",
+                reason = DeploySecretReadiness.MissingReason,
+                missing,
+            });
+        return proceed(names);
     }
 
     private static IResult UnknownProject(string project)

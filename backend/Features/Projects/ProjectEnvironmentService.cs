@@ -144,7 +144,7 @@ public sealed record DeployLeaseRequest(string LeaseToken);
 public sealed record DeployClaimRequest(string HostId);
 public sealed record ReleaseArtifactRequest(string Artifact, string Commit, string? VersionTag = null,
     string? Branch = null, string? Channel = null);
-public sealed record PromotionDecisionRequest(string Artifact);
+public sealed record PromotionDecisionRequest(string Artifact, bool ConfirmMissingSecrets = false);
 public sealed record GateArtifactRequest(string Project, string Artifact, string Commit, string? VersionTag = null,
     string? Branch = null, string? Channel = null);
 

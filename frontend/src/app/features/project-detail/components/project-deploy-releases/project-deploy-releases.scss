@@ -58,3 +58,9 @@
 @media (max-width: 1100px) {
   .releases__layout { grid-template-columns: minmax(0, 1fr); }
 }
+
+.releases__secret-gaps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+}
