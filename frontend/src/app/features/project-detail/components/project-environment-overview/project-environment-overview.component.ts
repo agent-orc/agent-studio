@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import { TaskService } from '../../../../services/task.service';
+import { catchError, forkJoin, of } from 'rxjs';
+import { runningReleaseLabel, type EnvironmentStatus as ReleaseStatus } from '../../state/deploy-area.model';
 import { ProjectRunbooksComponent } from '../project-runbooks/project-runbooks';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ProjectOperationsRailComponent } from '../project-operations-rail/project-operations-rail';
@@ -24,6 +26,7 @@ export class ProjectEnvironmentOverviewComponent {
   readonly openRelease = output<string>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
   readonly environments = signal<readonly EnvironmentStatus[]>([]);
+  readonly releaseStatuses = signal<readonly ReleaseStatus[]>([]);
   readonly loading = signal(true);
   readonly failed = signal(false);
 
@@ -32,9 +35,13 @@ export class ProjectEnvironmentOverviewComponent {
       const projectName = this.projectName();
       this.loading.set(true);
       this.failed.set(false);
-      const subscription = this.tasks.getProjectEnvironments(projectName).subscribe({
+      const subscription = forkJoin({
+        environments: this.tasks.getProjectEnvironments(projectName),
+        statuses: this.tasks.getProjectEnvironmentReleaseStatuses(projectName).pipe(catchError(() => of([] as ReleaseStatus[]))),
+      }).subscribe({
         next: value => {
-          this.environments.set(value.environments);
+          this.environments.set(value.environments.environments);
+          this.releaseStatuses.set(value.statuses);
           this.loading.set(false);
         },
         error: () => {
@@ -45,6 +52,10 @@ export class ProjectEnvironmentOverviewComponent {
       });
       onCleanup(() => subscription.unsubscribe());
     });
+  }
+
+  releaseLabel(view: EnvironmentStatus): string {
+    return runningReleaseLabel(view, this.releaseStatuses().find(item => item.environment.id === view.declaration.id) ?? null);
   }
 
   healthTone(health: string): StatusTone {

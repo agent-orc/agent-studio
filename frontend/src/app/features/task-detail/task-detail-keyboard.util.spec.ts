@@ -78,6 +78,23 @@ describe('task detail primary shortcut guard (AGT-3828)', () => {
     } finally { cleanup(); }
   });
 
+  it.each(['studio-usage-detail', 'legacy-usage-detail'])(
+    'allows Enter after the %s native dialog closes and blocks it while open', surfaceId => {
+      const { surface, cleanup } = cardDetail();
+      const usage = document.createElement('dialog');
+      usage.id = surfaceId;
+      usage.setAttribute('role', 'dialog');
+      document.body.appendChild(usage);
+      try {
+        expect(taskDetailPrimaryShortcutAllowed(enterOn(surface))).toBe(true);
+        usage.setAttribute('open', '');
+        expect(taskDetailPrimaryShortcutAllowed(enterOn(surface))).toBe(false);
+        usage.removeAttribute('open');
+        expect(taskDetailPrimaryShortcutAllowed(enterOn(surface))).toBe(true);
+      } finally { usage.remove(); cleanup(); }
+    },
+  );
+
   it.each(Object.keys(interactiveTargets))('leaves Enter to a %s inside the card surface', name => {
     const { surface, cleanup } = cardDetail();
     try {

@@ -4626,6 +4626,24 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         }
     }
 
+    /// <summary>The keys this review role registered, including keys currently held by a probe.</summary>
+    public IReadOnlySet<string> RegisteredReviewCapabilities(string runnerId, string instanceId)
+    {
+        lock (_gate)
+        {
+            return _registrations.TryGetValue(runnerId, out var registration)
+                && registration.InstanceId == instanceId
+                ? registration.Capabilities.ToHashSet(StringComparer.Ordinal)
+                : new HashSet<string>(StringComparer.Ordinal);
+        }
+    }
+
+    public string? InstanceIdOf(string runnerId)
+    {
+        lock (_gate)
+            return _registrations.TryGetValue(runnerId, out var registration) ? registration.InstanceId : null;
+    }
+
     /// <summary>
     /// AGT-3840: the keys <see cref="AdmittedReviewCapabilities"/> withholds
     /// from this identity, each with its cause and the probe's own detail.

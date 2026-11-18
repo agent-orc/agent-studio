@@ -47,6 +47,7 @@ export function readinessItem(
     reason: readiness === 'ready' ? 'Every completion check passes.' : 'The requirement-fit review returned concerns: The lane hides the reason.',
     stage: readiness === 'ready' ? 'admitted' : 'content',
     refusal: readiness === 'ready' ? 'Content review passed for the current brief.' : 'Completion refused: requirement-fit verdict was concerns.',
+    overrideAllowed: true,
     aspect: 'requirement-fit',
     contentStatus: readiness === 'ready' ? 'pass' : 'concerns',
     concern: readiness === 'ready' ? null : 'The lane hides the reason.',

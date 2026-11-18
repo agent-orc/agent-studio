@@ -6,6 +6,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskTokenUsagePopoverComponent } from './token-usage-popover.component';
 import { buildTokenBubble } from '../task-card-view-model';
 import type { TaskInfo } from '../../../../../models/task.model';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../../services/usage-time.util';
 
 function makeJob(overrides: Partial<TaskInfo> = {}): TaskInfo {
   return {
@@ -50,6 +51,18 @@ describe('TaskTokenUsagePopoverComponent', () => {
     fixture.detectChanges();
     return fixture;
   }
+
+  it('shows the last update in the shared zoned usage format', async () => {
+    const at = '2026-11-13T04:39:48Z';
+    const job = makeJob({ tokenSummary: {
+      calls: 1, inputTokens: 100, outputTokens: 0, cacheReadTokens: 0,
+      cacheCreationTokens: 0, totalTokens: 100, lastModel: 'codex', lastUpdate: at, entries: [],
+    } });
+    const fixture = await render(job);
+    const lastUpdate = fixture.nativeElement.querySelector('[data-testid="token-row-last-update"]');
+    expect(lastUpdate?.textContent?.trim()).toBe(formatZonedWithUtc(at, browserTimeZone()));
+    expect(lastUpdate?.textContent?.trim()).toMatch(/^Fri 13 Nov, \d{2}:39 .*UTC\)?$/);
+  });
 
   it('renders each run priced at its own timestamp, not one combined estimate', async () => {
     const job = makeJob({

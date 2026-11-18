@@ -3,6 +3,7 @@
               [title]="error().title"
               role="alertdialog"
               testid="error-dialog"
+              [stackManagedExternally]="true"
               (closeRequest)="closeRequest.emit()"
               (backdropClick)="closeRequest.emit()">
     <div class="error-dialog__refusal" data-testid="error-dialog-refusal">
@@ -46,6 +47,7 @@
               role="alertdialog"
               kind="danger"
               testid="error-dialog"
+              [stackManagedExternally]="true"
               (closeRequest)="closeRequest.emit()"
               (backdropClick)="closeRequest.emit()">
     @if (error().source) {
