@@ -1,21 +1,23 @@
 @if (summary().verifyDefinition?.state === 'checkout-missing') {
-  <aside class="verify-notice verify-notice--missing"
-         data-testid="project-settings-no-verify-commands"
-         aria-labelledby="project-settings-no-verify-title">
-    <span class="verify-notice__dot" aria-hidden="true"></span>
-    <span class="verify-notice__copy">
-      <span class="verify-notice__title-row">
-        <strong id="project-settings-no-verify-title">Repository checkout missing</strong>
-        <app-status-indicator class="verify-notice__badge" tone="warning" label="Setup needed" [compact]="true"
-                              testId="project-settings-no-verify-state" />
+  @if (!serverCheckoutOffered()) {
+    <aside class="verify-notice verify-notice--missing"
+           data-testid="project-settings-no-verify-commands"
+           aria-labelledby="project-settings-no-verify-title">
+      <span class="verify-notice__dot" aria-hidden="true"></span>
+      <span class="verify-notice__copy">
+        <span class="verify-notice__title-row">
+          <strong id="project-settings-no-verify-title">Repository checkout missing</strong>
+          <app-status-indicator class="verify-notice__badge" tone="warning" label="Setup needed" [compact]="true"
+                                testId="project-settings-no-verify-state" />
+        </span>
+        <span>
+          The repository checkout is missing, so build and test commands cannot be inspected yet.
+          <a class="verify-notice__link" href="#project-basics-repository-path" (click)="jumpToCheckout($event)">Set the repository checkout path</a>
+          in Project basics, then review the verify plan.
+        </span>
       </span>
-      <span>
-        The repository checkout is missing, so build and test commands cannot be inspected yet.
-        <a class="verify-notice__link" href="#project-basics-repository-path" (click)="jumpToCheckout($event)">Set the repository checkout path</a>
-        in Project basics, then review the verify plan.
-      </span>
-    </span>
-  </aside>
+    </aside>
+  }
 } @else if (summary().verifyDefinition?.state === 'missing') {
   <aside class="verify-notice verify-notice--missing"
          data-testid="project-settings-no-verify-commands"

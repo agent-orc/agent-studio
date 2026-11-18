@@ -122,7 +122,7 @@ public static class VerifyDefinitionPolicy
             return new VerifyDefinitionReport(
                 VerifyDefinitionState.CheckoutMissing,
                 VerifyPlan.SourceNone,
-                "The repository checkout is missing. Set the repository checkout path in Project basics, then check the build and test commands.");
+                "The repository checkout is missing. In Project basics, create the server checkout for a project with a repository URL, or set the repository checkout path of an existing clone, then check the build and test commands.");
         var plan = VerifyCommandPlanner.Plan(root, profile);
         var state = Classify(plan);
         if (state != VerifyDefinitionState.Missing) return new VerifyDefinitionReport(state, plan.Source);
