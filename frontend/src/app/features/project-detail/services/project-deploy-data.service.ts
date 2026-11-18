@@ -14,7 +14,6 @@ import type {
   DeployRunFilter,
   ReleaseGateStatus,
 } from '../state/deploy-area.model';
-import type { InstanceDeployView } from '../state/instance-deploy.model';
 import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
 import { EnvironmentHealthService } from '../../environment-health/services/environment-health.service';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
@@ -68,22 +67,6 @@ export class ProjectDeployDataService {
   statuses(projectName: string): Observable<DeployPanel<EnvironmentStatus[]>> {
     return panel(this.http.get<EnvironmentStatus[]>(`${deployRoot(projectName)}/status`),
       'Environment status could not be loaded.', true);
-  }
-
-  /**
-   * The running Studio instance when this is its source project (AGT-3879).
-   * Any 404 means "not this project" or "route not on this server": both
-   * render nothing.
-   */
-  instance(projectName: string): Observable<DeployPanel<InstanceDeployView>> {
-    return this.http.get<InstanceDeployView>(`${deployRoot(projectName)}/instance`).pipe(
-      map(value => ({ status: 'ready', value }) as DeployPanel<InstanceDeployView>),
-      catchError((error: unknown) => of<DeployPanel<InstanceDeployView>>(
-        error instanceof HttpErrorResponse && error.status === 404
-          ? { status: 'unavailable' }
-          : { status: 'error', message: serverMessage(error) ?? 'This Studio instance could not be loaded.' })),
-      startWith<DeployPanel<InstanceDeployView>>({ status: 'loading' }),
-    );
   }
 
   releases(projectName: string): Observable<DeployPanel<Release[]>> {

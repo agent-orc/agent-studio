@@ -24,6 +24,7 @@
   </section>
   <app-project-execution-definition [projectName]="projectName()" />
   <app-quality-studio-connection-settings />
+  <app-incident-webhook-settings [projectName]="projectName()" />
   <app-batch-settings [project]="projectName()" />
   @if (workspaceId() && projectId()) {
     @defer { <app-workspace-quota [workspaceId]="workspaceId()!" [projectId]="projectId()" /> }

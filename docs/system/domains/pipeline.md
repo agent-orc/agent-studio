@@ -3831,6 +3831,22 @@ Settings page shows the diagram, the validation result with line and path, and
 the migration preview with its confirm button in the Pipeline section below
 Execution.
 
+A schema 2 file that declares environments but no artifacts or deploy steps
+(the migration's result without JSON declarations) gets `deployStepsAvailable`
+on the read. Settings > Pipeline and Deploy > Overview then offer the deploy-step
+form: one static or container artifact, and per environment the target host,
+the static directory or the compose file and service, the health URL and the
+health timeout. `POST .../deploy-steps/preview` returns the proposal in the
+migration's dry-run shape and writes nothing; it appends `artifacts` and
+`deploy` to the unchanged file and accepts only plain values, because the
+project.yml reader has no escapes. `POST .../deploy-steps` repeats the form with
+both preview digests and writes under the same precondition and `PostStep`
+classification as the migration. Until steps exist, Deploy > Overview shows
+each declared environment as "No deploy step yet"; the JSON declaration
+guidance appears only for schema 1 projects. The `static-web` and
+`container-service` templates carry this section commented out below a
+`# --- schema 2 deployment ---` marker.
+
 A static site over SSH and a compose service, each with a health check:
 
 ```yaml

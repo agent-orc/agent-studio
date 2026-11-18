@@ -54,13 +54,13 @@ public sealed class DeployService
     private readonly ReleaseCardAttributionSource _attribution;
     private readonly PostMergeRunStore? _postMerge;
     private readonly ProjectRegistry? _registry;
+    private readonly InstanceDeployService? _instance;
     private readonly AgentStudio.Projects.ProjectSettingsService? _projectSettings;
     private readonly QualityReleaseRangeVerdictClient? _rangeVerdicts;
     private readonly Func<IReadOnlyList<TaskInfo>> _qualityTaskScan;
     private readonly DeliveryVerificationIndex _deliveryVerifications;
     private readonly Action<TimeSpan>? _deliveryLockHoldObserved;
     private readonly Action? _deliveryVerificationCaptured;
-    private readonly InstanceDeployService? _instance;
 
     /// <summary>
     /// Ancestry answers between release commits. Commits are immutable, so a
@@ -81,16 +81,15 @@ public sealed class DeployService
         TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger,
         TaskMutationService? mutations, ReleaseCardAttributionSource? attribution = null,
         PostMergeRunStore? postMerge = null, ProjectRegistry? registry = null,
+        InstanceDeployService? instance = null,
         AgentStudio.Projects.ProjectSettingsService? projectSettings = null,
         QualityReleaseRangeVerdictClient? rangeVerdicts = null,
         Func<IReadOnlyList<TaskInfo>>? qualityTaskScan = null,
         Func<string, IntegrationVerificationRecord?>? deliveryVerificationRead = null,
         Action<TimeSpan>? deliveryLockHoldObserved = null,
         Action? deliveryVerificationCaptured = null,
-        IncidentActions? incidentActions = null,
-        InstanceDeployService? instance = null)
+        IncidentActions? incidentActions = null)
     {
-        _instance = instance;
         _environments = environments;
         _store = store;
         _git = git;
@@ -101,6 +100,7 @@ public sealed class DeployService
         _attribution = attribution ?? new ReleaseCardAttributionSource(scanner);
         _postMerge = postMerge;
         _registry = registry;
+        _instance = instance;
         _projectSettings = projectSettings;
         _rangeVerdicts = rangeVerdicts;
         _qualityTaskScan = qualityTaskScan ?? _scanner.ScanAllJobsWithArchive;
@@ -563,6 +563,14 @@ public sealed class DeployService
         lock (_gate)
         {
             var snapshot = ReadLocked(project);
+            return StatusOf(project, tenant, snapshot)?.Select(item => WithInstance(item, snapshot?.Instance)).ToArray();
+        }
+    }
+
+    private IReadOnlyList<EnvironmentStatus>? StatusOf(string project, string? tenant, Snapshot? snapshot)
+    {
+        lock (_gate)
+        {
             var previews = _scanner.ScanAllJobs().Where(task =>
                     string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)
                     && task.Preview is { Status: not ("removing" or "expired" or "removed") })
@@ -590,13 +598,13 @@ public sealed class DeployService
                             DeploymentStates.Failed => "failed",
                             _ => "unknown",
                         }, StringComparer.Ordinal);
+            if (snapshot.Instance is { } instance) hostHealth[instance.Environment.Id] = instance.Health;
             var selected = tenant is null ? snapshot.Environments : snapshot.Environments
                 .Where(environment => (Tenants(project) ?? []).Any(item =>
                     item.Name == tenant && item.Environments.Contains(environment.Kind, StringComparer.Ordinal))).ToArray();
             var releases = tenant is null ? snapshot.Releases : snapshot.Records.Values
                 .Where(record => record.Tenants.Any(item => item.Name == tenant))
                 .Select(record => record.Release).ToArray();
-            if (snapshot.Instance is { } instance) hostHealth[instance.Environment.Id] = instance.Health;
             var confirmedHostReports = tenant is null
                 ? snapshot.View.Environments.Select(view => (view.Declaration.Id,
                         Report: view.History.FirstOrDefault(row => row.Status is "healthy" or "rolled-back")))
@@ -606,7 +614,6 @@ public sealed class DeployService
             return EnvironmentStatusProjection.Project(selected, releases,
                 snapshot.Deployments(project).Where(item => item.Tenant == tenant).ToArray(), hostHealth,
                 confirmedHostReports)
-                .Select(item => WithInstance(item, snapshot.Instance))
                 .Select(item => item with { Tenant = tenant })
                 .Concat(tenant is null ? previews : []).ToArray();
         }

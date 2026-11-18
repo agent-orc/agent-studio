@@ -13,7 +13,6 @@ import {
   deploymentLogFixture,
   pipelineDefinitionFixture,
 } from '../../src/app/features/project-detail/testing/deploy-fixtures';
-import { instanceDeployFixture } from '../../src/app/features/project-detail/testing/instance-deploy-fixtures';
 
 /**
  * Project Deploy area on a fully mocked backend (AGT-3226).
@@ -32,6 +31,13 @@ const DEPLOY = `/api/projects/${PROJECT}/deploy`;
 const results = process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', 'test-results', 'project-deploy-area');
 
 const MISSING = Symbol('missing route');
+// AGT-3879 running Studio instance fixtures; imports hoist, so this sits apart from the shared import block.
+import { instanceDeployFixture } from '../../src/app/features/project-detail/testing/instance-deploy-fixtures';
+/** Refreshes the area after moving the pinned clock: the AGT-3879 instance section re-reads when the area clock moves. */
+async function refreshLater(page: Page, seconds: number): Promise<void> {
+  await page.clock.setFixedTime(new Date(DEPLOY_FIXTURE_NOW + seconds * 1000));
+  await page.getByTestId('deploy-refresh').click();
+}
 type Answer = unknown | typeof MISSING | { status: number; body: unknown };
 interface DeployMocks {
   environments: unknown;
@@ -40,8 +46,6 @@ interface DeployMocks {
   deployments: Answer;
   pipelineDefinition: Answer;
   health?: Answer;
-  /** AGT-3879 running Studio instance; other projects answer 404 with an error body. */
-  instance?: Answer;
   /** POST approve, reject, or cancel; records each call. */
   act?: (action: string, deploymentId: string, body?: unknown, csrf?: string) => Answer;
 }
@@ -114,8 +118,6 @@ async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false)
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
-  await page.route(`**${DEPLOY}/instance`, route => answer(route, deploy.instance
-    ?? { status: 404, body: { error: `'${PROJECT}' is not the source project of this Studio instance.` } }));
   // A predicate, not a glob: the artifact query value contains "/", which a glob "*" does not match.
   await page.route(url => url.pathname === `${DEPLOY}/releases/page`, route => {
     if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
@@ -202,61 +204,6 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
-  test('shows the running Studio instance, its live release, and what the next deploy brings (AGT-3879)', async ({ page }) => {
-    // The Studio's own project declares no environments; the instance is its Production.
-    const empty = { project: PROJECT, environments: [], promotions: [], jobs: [], hosts: [] };
-    await openDeploy(page, fullMocks({ environments: empty, status: [], releases: [], deployments: [],
-      instance: instanceDeployFixture() }));
-    const panel = page.getByTestId('instance-deploy');
-    await expect(panel).toBeVisible();
-    await expect(page.getByTestId('instance-deploy-version')).toHaveText('0.9.5-5faca674a');
-    await expect(page.getByTestId('instance-deploy-live-since')).toContainText('2026-11-16 03:35 UTC');
-    await expect(page.getByTestId('instance-deploy-brought')).toContainText('AGT-3839');
-    await expect(page.getByTestId('instance-deploy-pending').locator('li')).toHaveText([
-      /AGT-3861/, /AGT-3870/, /AGT-3879/,
-    ]);
-    for (const width of [1280, 390] as const) {
-      await page.setViewportSize({ width, height: 900 });
-      for (const theme of ['light', 'dark'] as const) {
-        await setTheme(page, theme);
-        const overflow = await panel.evaluate(element => {
-          const box = element.getBoundingClientRect();
-          return [...element.querySelectorAll('*')].filter(child => child.getBoundingClientRect().right > box.right + 1)
-            .map(child => `${child.tagName.toLowerCase()}.${child.className}`).slice(0, 3);
-        });
-        expect(overflow).toEqual([]);
-        fs.mkdirSync(results, { recursive: true });
-        await panel.screenshot({ path: path.join(results, `agt-3879-instance-deploy-${width}-${theme}.png`) });
-      }
-    }
-  });
-
-  test('names the step a failed or stalled Studio deploy stopped at (AGT-3879)', async ({ page }) => {
-    let run: 'failed' | 'stalled' = 'failed';
-    await openDeploy(page, fullMocks({ instance: undefined }));
-    await page.unroute(`**${DEPLOY}/instance`);
-    await page.route(`**${DEPLOY}/instance`, route => answer(route, instanceDeployFixture(run)));
-    await page.getByTestId('deploy-refresh').click();
-    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy failed at host:runner-1');
-    for (const width of [1280, 390] as const) {
-      await page.setViewportSize({ width, height: 900 });
-      for (const theme of ['light', 'dark'] as const) {
-        await setTheme(page, theme);
-        await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, `agt-3879-instance-deploy-failed-${width}-${theme}.png`) });
-      }
-    }
-    run = 'stalled';
-    await page.getByTestId('deploy-refresh').click();
-    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy stalled after host:runner-1 · no report for 30 min');
-    await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, 'agt-3879-instance-deploy-stalled-390-dark.png') });
-  });
-
-  test('shows no Studio instance panel for another project (AGT-3879)', async ({ page }) => {
-    await openDeploy(page, fullMocks());
-    await expect(page.getByTestId('deploy-environments')).toBeVisible();
-    await expect(page.getByTestId('instance-deploy')).toHaveCount(0);
-  });
-
   test('persists signed-in cookies across a browser restart and approves Production', async ({ browser, baseURL }) => {
     const first = await browser.newContext({ baseURL });
     const signInPage = await first.newPage();
@@ -844,6 +791,65 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'older-guided-failure-dark');
   });
 
+  test('shows the running Studio instance, its live release, and what the next deploy brings (AGT-3879)', async ({ page }) => {
+    // The Studio's own project declares no environments; the instance is its Production.
+    const empty = { project: PROJECT, environments: [], promotions: [], jobs: [], hosts: [] };
+    await openDeploy(page, fullMocks({ environments: empty, status: [], releases: [], deployments: [] }));
+    await page.route(`**${DEPLOY}/instance`, route => answer(route, instanceDeployFixture()));
+    await refreshLater(page, 1);
+    const panel = page.getByTestId('instance-deploy');
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId('instance-deploy-version')).toHaveText('0.9.5-5faca674a');
+    await expect(page.getByTestId('instance-deploy-live-since')).toContainText('2026-11-16 03:35 UTC');
+    await expect(page.getByTestId('instance-deploy-brought')).toContainText('AGT-3839');
+    await expect(page.getByTestId('instance-deploy-pending').locator('li')).toHaveText([
+      /AGT-3861/, /AGT-3870/, /AGT-3879/,
+    ]);
+    for (const width of [1280, 390] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        const overflow = await panel.evaluate(element => {
+          const box = element.getBoundingClientRect();
+          return [...element.querySelectorAll('*')].filter(child => child.getBoundingClientRect().right > box.right + 1)
+            .map(child => `${child.tagName.toLowerCase()}.${child.className}`).slice(0, 3);
+        });
+        expect(overflow).toEqual([]);
+        fs.mkdirSync(results, { recursive: true });
+        await panel.screenshot({ path: path.join(results, `agt-3879-instance-deploy-${width}-${theme}.png`) });
+      }
+    }
+  });
+
+  test('names the step a failed or stalled Studio deploy stopped at (AGT-3879)', async ({ page }) => {
+    let run: 'failed' | 'stalled' = 'failed';
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/instance`, route => answer(route, instanceDeployFixture(run)));
+    await refreshLater(page, 1);
+    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy failed at host:runner-1');
+    for (const width of [1280, 390] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, `agt-3879-instance-deploy-failed-${width}-${theme}.png`) });
+      }
+    }
+    run = 'stalled';
+    await refreshLater(page, 2);
+    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy stalled after host:runner-1 · no report for 30 min');
+    await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, 'agt-3879-instance-deploy-stalled-390-dark.png') });
+  });
+
+  test('shows no Studio instance panel for another project (AGT-3879)', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/instance`, route => answer(route,
+      { status: 404, body: { error: `'${PROJECT}' is not the source project of this Studio instance.` } }));
+    await refreshLater(page, 1);
+    await expect(page.getByTestId('deploy-environments')).toBeVisible();
+    await expect(page.getByTestId('instance-deploy')).toHaveCount(0);
+    await expect(page.getByTestId('instance-deploy-notice')).toHaveCount(0);
+  });
+
   test('works with partial data: AGT-3176 environments only, AGT-3201 and AGT-3221 routes missing', async ({ page }) => {
     await openDeploy(page, { environments: deployEnvironmentsFixture(), ...HOST_ONLY, pipelineDefinition: MISSING });
     const area = page.getByTestId('project-deploy-area');
@@ -1145,6 +1151,45 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('deploy-history-empty')).toContainText('No deploy runs yet');
     await setTheme(page, 'light');
     await capture(page, 'deploy-history-empty-light');
+  });
+
+  test('shows project.yml environments without deploy steps and offers the deploy-step form (F5)', async ({ page }) => {
+    const environment = (name: string, order: number, isProtected: boolean) => ({
+      path: `environments[${order}]`, name, order, protected: isProtected, automatic: !isProtected,
+      approval: isProtected ? ['Owner', 'Maintainer'] : [], requires: isProtected ? 'staging' : null, steps: [], variables: [],
+    });
+    await openDeploy(page, {
+      environments: { project: PROJECT, environments: [], promotions: [], failureCards: [] },
+      status: [], releases: [], deployments: [],
+      pipelineDefinition: {
+        project: PROJECT, path: '.agent-studio/project.yml', exists: true, schemaVersion: 2, valid: true, issues: [],
+        definitionSha256: 'a'.repeat(64), migrationAvailable: false, deployStepsAvailable: true,
+        diagram: {
+          schemaVersion: 2, gate: { source: 'commands', build: ['npm run build'], test: ['npm test'], testSuites: [] },
+          artifacts: [], environmentsDefaulted: false, lifecycleDefaulted: false,
+          environments: [environment('staging', 0, false), environment('production', 1, true)],
+        },
+      },
+    });
+
+    await expect(page.getByTestId('deploy-environments-empty')).toHaveCount(0);
+    await expect(page.getByTestId('deploy-environment-declared-staging')).toContainText('No deploy step yet');
+    await expect(page.getByTestId('deploy-environment-declared-production')).toContainText('protected');
+    await expect(page.getByTestId('deploy-environments')).not.toContainText('docs/deployments/environments');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `deploy-overview-declared-no-steps-1440-${theme}`);
+    }
+    await page.getByTestId('deploy-add-deploy-step').click();
+    const form = page.getByTestId('deploy-steps-form');
+    await expect(form.getByTestId('deploy-steps-env-staging')).toBeVisible();
+    await expect(form.getByTestId('deploy-steps-env-production')).toBeVisible();
+    await form.getByTestId('deploy-steps-type-container').check();
+    await expect(form.getByTestId('deploy-steps-env-staging').getByTestId('deploy-steps-compose')).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `deploy-overview-deploy-step-form-1440-${theme}`);
+    }
   });
 });
 

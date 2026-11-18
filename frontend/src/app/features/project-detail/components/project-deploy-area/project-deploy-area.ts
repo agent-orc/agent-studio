@@ -2,10 +2,9 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, ou
 import { Subscription } from 'rxjs';
 import { ProjectDeploymentPanelComponent } from '../project-deployment-panel/project-deployment-panel.component';
 import { ProjectDeployOverviewComponent } from '../project-deploy-overview/project-deploy-overview';
-import { ProjectInstanceDeployComponent } from '../project-instance-deploy/project-instance-deploy';
-import type { InstanceDeployView } from '../../state/instance-deploy.model';
 import { ProjectDeployReleasesComponent } from '../project-deploy-releases/project-deploy-releases';
 import { ProjectDeployPipelineComponent } from '../project-deploy-pipeline/project-deploy-pipeline';
+import { ProjectInstanceDeploySectionComponent } from '../project-instance-deploy-section/project-instance-deploy-section';
 import { ProjectDeployHistoryComponent } from '../project-deploy-history/project-deploy-history';
 import { DeployRunDrawerComponent, type DeployRunActionState } from '../deploy-run-drawer/deploy-run-drawer';
 import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project-pipeline-panel.component';
@@ -56,10 +55,11 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
   standalone: true,
   imports: [
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
+    ProjectInstanceDeploySectionComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent, LocalOwnerDialogComponent, ProjectInstanceDeployComponent,
+    FlowHealthPageComponent, LocalOwnerDialogComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -106,7 +106,6 @@ export class ProjectDeployAreaComponent {
   readonly now = signal(this.clock());
   readonly environmentPanel = signal<DeployPanel<ProjectEnvironments>>({ status: 'loading' });
   readonly statusPanel = signal<DeployPanel<EnvironmentStatus[]>>({ status: 'loading' });
-  readonly instancePanel = signal<DeployPanel<InstanceDeployView>>({ status: 'loading' }); // Studio instance, its source project only (AGT-3879)
   readonly releasePanel = signal<DeployPanel<Release[]>>({ status: 'loading' });
   readonly deploymentPanel = signal<DeployPanel<Deployment[]>>({ status: 'loading' });
   readonly historyPanel = signal<DeployPanel<Deployment[]>>({ status: 'loading' });
@@ -181,6 +180,7 @@ export class ProjectDeployAreaComponent {
     return fetched ? buildDeployRuns([fetched], environmentNames(this.sources()), this.knownReleases()) : [];
   });
   readonly cards = computed(() => buildEnvironmentCards(this.sources()));
+  readonly pipelineDefinition = computed(() => ready(this.pipelinePanel()));
   readonly inFlight = computed(() => deployInFlight([...this.runs(), ...this.statusRuns()], ready(this.environmentPanel())));
   /** The overview waits for the AGT-3176 environments, or for AGT-3201 status when those failed. */
   readonly overviewPanel = computed<DeployPanel<unknown>>(() => {
@@ -191,8 +191,8 @@ export class ProjectDeployAreaComponent {
   readonly selectedRun = computed(() => [...this.runs(), ...this.historyRuns(), ...this.statusRuns(), ...this.fetchedRuns()]
     .find(run => run.id === this.selectedRunId()) ?? null);
   readonly notices = computed(() => deployNotices([
-    ['Environments', this.environmentPanel()], ['Environment status', this.statusPanel()], ['This Studio', this.instancePanel()],
-    ['Releases', this.releasePanel()], ['Deploy runs', this.deploymentPanel()], ['Health', this.healthPanel()],
+    ['Environments', this.environmentPanel()], ['Environment status', this.statusPanel()], ['Releases', this.releasePanel()],
+    ['Deploy runs', this.deploymentPanel()], ['Health', this.healthPanel()],
     ...[...this.artifactReleases().values()].map(panel => ['Release lookup', panel] as const),
     ...(this.fetchedRun() ? [['Deploy run', this.fetchedRun()!] as const] : []),
   ]));
@@ -341,8 +341,8 @@ export class ProjectDeployAreaComponent {
       this.releaseOffset.set(0);
       this.releaseTotal.set(0);
       this.artifactReleases.set(new Map());
-      for (const target of [this.environmentPanel, this.statusPanel, this.instancePanel, this.releasePanel, this.deploymentPanel,
-        this.historyPanel, this.releaseGatePanel] as const)
+      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel,
+        this.releaseGatePanel] as const)
         (target as WritableSignal<DeployPanel<unknown>>).set({ status: 'loading' });
     } else {
       // Refresh retries failed lookups; resolved release records do not change.
@@ -367,7 +367,6 @@ export class ProjectDeployAreaComponent {
     this.runReads.add(this.data.statuses(projectName).subscribe(panel => {
       if (generation === this.readGeneration) intoPanel(this.statusPanel, keepShown)(panel);
     }));
-    this.runReads.add(this.data.instance(projectName).subscribe(panel => { if (generation === this.readGeneration) intoPanel(this.instancePanel, keepShown)(panel); }));
     this.runReads.add(this.data.deploymentPage(projectName, 0).subscribe(panel => {
       if (generation !== this.readGeneration) return;
       intoPanel(this.deploymentPanel, keepShown)(pageItems(panel));
