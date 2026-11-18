@@ -14,7 +14,9 @@ import {
   type DeployRun,
   type DeployRunAction,
   type DeploymentLogLine,
+  type EnvironmentSecretReadiness,
 } from '../../state/deploy-area.model';
+import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
@@ -31,7 +33,7 @@ const ACTION_LABEL: Record<DeployRunAction, string> = {
 @Component({
   selector: 'app-deploy-run-drawer',
   standalone: true,
-  imports: [DatePipe, SidesheetComponent, StatusIndicatorComponent],
+  imports: [DatePipe, SidesheetComponent, StatusIndicatorComponent, DeploySecretGapsComponent],
   templateUrl: './deploy-run-drawer.html',
   styleUrl: './deploy-run-drawer.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -42,6 +44,9 @@ export class DeployRunDrawerComponent {
   readonly run = input.required<DeployRun>();
   readonly log = input.required<DeployPanel<DeploymentLogLine[]>>();
   readonly action = input<DeployRunActionState>({ busy: null, error: null });
+  /** F14: secrets this run's release misses in its environment; null while unknown. */
+  readonly secrets = input<EnvironmentSecretReadiness | null>(null);
+  readonly openSecrets = output<string>();
   readonly act = output<DeployRunAction>();
   readonly skip = output<string>();
   readonly skipReason = signal('');

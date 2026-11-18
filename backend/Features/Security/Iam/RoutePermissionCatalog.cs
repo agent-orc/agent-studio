@@ -287,7 +287,7 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",
             "/api/projects/{}/deploy/deployments/{}",
             "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit",
-            "/api/projects/{}/deploy/release-gate",
+            "/api/projects/{}/deploy/release-gate", "/api/projects/{}/deploy/secret-readiness",
             "/api/projects/{}/deploy/runbooks", "/api/projects/{}/deploy/runbooks/runs",
             "/api/projects/{}/deploy/runbooks/runs/{}", "/api/projects/{}/deploy/runbooks/runs/{}/log");
         // Release notes are product copy, written like project documentation.

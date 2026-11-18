@@ -219,6 +219,7 @@
 /api/projects/{projectName}/deploy/runbooks/runs	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/runbooks/runs/{runId}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/runbooks/runs/{runId}/log	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/deploy/secret-readiness	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/status	reachable	frozen	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/tenants	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deployment/summary	reachable	gap	Deploy and environments	Environment declarations from the Git fact store

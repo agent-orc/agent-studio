@@ -27,7 +27,7 @@ describe('ProjectDeployReleasesComponent', () => {
       imports: [ProjectDeployReleasesComponent],
       providers: [provideZonelessChangeDetection(),
         { provide: QualityStudioService, useValue: { openRange: () => undefined } },
-        { provide: ProjectDeployDataService, useValue: { releaseNotes: () => of({ status: 'unavailable' }) } }],
+        { provide: ProjectDeployDataService, useValue: { releaseNotes: () => of({ status: 'unavailable' }), secretReadiness: () => of({ status: 'unavailable' }) } }],
     }).compileComponents();
     fixture = TestBed.createComponent(ProjectDeployReleasesComponent);
   });
