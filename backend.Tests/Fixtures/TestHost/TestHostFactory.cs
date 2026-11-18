@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 
 namespace AgentStudio.Tests;
@@ -38,6 +39,17 @@ namespace AgentStudio.Tests;
 /// </summary>
 public class TestHostFactory : WebApplicationFactory<Program>
 {
+    /// <summary>
+    /// Keeps the request drain when a test needs the HTTP host but no product
+    /// background worker. The drain still protects requests during disposal.
+    /// Call from ConfigureTestServices after the factory's registrations.
+    /// </summary>
+    public static void RemoveBackgroundHostedServices(IServiceCollection services)
+    {
+        services.RemoveAll<IHostedService>();
+        services.AddHostedService<InFlightRequestDrain>();
+    }
+
     /// <summary>Unrouted path the start-up request uses to build the endpoints.</summary>
     public const string EndpointWarmUpPath = "/__test-host/endpoint-warm-up";
 

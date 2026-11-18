@@ -46,7 +46,7 @@
                   <p class="releases__numeric" data-testid="deploy-release-quality-counts">{{ quality.pass }} pass · {{ quality.concerns }} concerns · {{ quality.block }} block · {{ quality.notReviewed }} not reviewed</p>
                   <ul class="releases__quality-cards" aria-label="Card Quality verdicts">
                     @for (card of quality.cards; track card.key) {
-                      <li [attr.data-testid]="'deploy-release-quality-card-' + card.key"><span>{{ card.key }}</span><span>{{ verdictLabel(card.verdict) }}</span></li>
+                      <li [attr.data-testid]="'deploy-release-quality-card-' + card.key"><span>{{ card.key }}</span><span>{{ verdictLabel(card.verdict) }}@if (card.source === 'review') { <span class="releases__muted"> · from the card review</span> }@if (card.reason) { <span class="releases__muted"> · {{ card.reason }}</span> }</span></li>
                     }
                   </ul>
                   <p data-testid="deploy-release-range-verdict">Release range: {{ verdictLabel(quality.rangeVerdict) }}</p>

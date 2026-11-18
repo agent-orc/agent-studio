@@ -15,7 +15,7 @@ describe('ProjectSecretsPageComponent', () => {
       providers: [provideHttpClient(), provideHttpClientTesting(),
         { provide: AuthSessionState, useValue: { status: signal({ user: { role: 'owner' } }) } },
         { provide: SecretsService, useValue: {
-          environments: (project: string) => project === 'demo' ? oldEnvironments : of([{ id: 'stage', kind: 'stage' }]),
+          environments: (project: string) => project === 'demo' ? oldEnvironments : of([{ id: 'stage', kind: 'stage', name: 'staging' }]),
           load: vi.fn(), overview: signal(null), state: signal('ready'), error: signal(null),
         } },
       ],
@@ -31,8 +31,13 @@ describe('ProjectSecretsPageComponent', () => {
     http.expectOne('/api/projects/other/secret-bindings/preview');
     expect(oldEnvironments.observed).toBe(false);
     expect(fixture.componentInstance.environments()).toEqual([
-      { id: 'preview', kind: 'preview' }, { id: 'stage', kind: 'stage' },
+      { id: 'preview', kind: 'preview' }, { id: 'stage', kind: 'stage', name: 'staging' },
     ]);
+    fixture.detectChanges();
+    const options = Array.from((fixture.nativeElement as HTMLElement)
+      .querySelectorAll('[data-testid="project-secrets-environment"] option'));
+    expect(options.map(option => [option.getAttribute('value'), option.textContent?.trim()]))
+      .toEqual([['preview', 'preview'], ['stage', 'staging']]);
   });
 
   it('ignores preflight responses from an earlier environment or request', () => {

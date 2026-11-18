@@ -47,6 +47,19 @@ It allows one in-flight check per provider, a daily
 48-request ceiling, and a 30-minute maximum interval after a successful real
 check. When that ceiling passes and the request budget is exhausted, the
 outcome becomes `indeterminate`; the original real-success time is retained.
+Any outcome other than a proven success gets a recovery request of its own,
+also while the status command is degraded (AGT-3948). After a request that did
+not prove access the next one waits 5, 10, 20, then at most 30 minutes; a
+reported reset within that ceiling schedules it at the reset. Provider limit
+answers are refunded to the budget, and a spent budget still allows one
+recovery request per 30 minutes, so a limit window cannot leave the binding
+without the request that proves the reset. The Task Server extends the
+owner's canary window when the runner reserves it again right before the real
+request. A binding that stays indeterminate behind an active status-command
+session for 30 minutes is named `provider-auth-latched` by the auto-review
+queue and queue-starvation watchdogs, with "restart the runner daemon on host
+X" as the operator action; see
+[the common problem](../common-problems/provider-auth-indeterminate-latch-after-limit/).
 Successful work counts only for the same credential generation and ends any
 pending run of explicit logout answers. Evidence a completed run records while
 a probe is in flight, whether success or failure, is newer than the probe:

@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Subscription } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
-import { SecretsService, type SecretEnvironment } from '../secrets.service';
+import { SecretsService, environmentLabel, type SecretEnvironment } from '../secrets.service';
 import { SecretsPanelComponent } from '../secrets-panel/secrets-panel.component';
 
 interface Binding { name: string; reference: string; approvedBy: string | null }
@@ -31,6 +31,7 @@ export class ProjectSecretsPageComponent {
   /** Set once the operator picks an environment, so a late attention answer never moves the panel. */
   private chosen = false;
   readonly environment = signal('preview');
+  readonly label = environmentLabel;
   readonly environments = signal<readonly SecretEnvironment[]>([{ id: 'preview', kind: 'preview' }]);
   readonly isProduction = computed(() => this.environments().some(item =>
     item.id === this.environment() && item.kind === 'production'));

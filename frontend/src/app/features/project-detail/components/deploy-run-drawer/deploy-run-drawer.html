@@ -34,7 +34,7 @@
     <dl class="run-drawer__facts">
       <dt>Release</dt><dd>{{ run().releaseVersion ?? 'Not in the release list' }} <code class="run-drawer__muted">{{ run().releaseId }}</code></dd>
       <dt>Requested by</dt><dd>{{ run().requestedBy ?? 'Not recorded' }}</dd>
-      <dt>Approval</dt><dd data-testid="deploy-run-approval"><app-status-indicator [tone]="approval().tone" [label]="approval().label" [compact]="true" testId="deploy-run-approval-state" /></dd>
+      <dt>Approval</dt><dd data-testid="deploy-run-approval"><app-status-indicator [tone]="approval().tone" [label]="approval().label" [compact]="true" [wrap]="true" testId="deploy-run-approval-state" /></dd>
       <dt>Queued</dt><dd><time [attr.datetime]="run().createdAt">{{ run().createdAt | date:'medium' }}</time></dd>
       <dt>Started</dt><dd>@if (run().startedAt; as started) { <time [attr.datetime]="started">{{ started | date:'medium' }}</time> } @else { Not started }</dd>
       <dt>Finished</dt><dd>@if (run().finishedAt; as finished) { <time [attr.datetime]="finished">{{ finished | date:'medium' }}</time> } @else { Not finished }</dd>

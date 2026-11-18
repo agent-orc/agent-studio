@@ -47,6 +47,10 @@ public static class DeployEndpoints
             deploy.Notes(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
 
+        project.MapPut("/releases/{releaseId}/notes/{cardKey}", (HttpContext context, string projectName,
+            string releaseId, string cardKey, ReleaseNoteEditRequest request, DeployService deploy) =>
+            Respond(deploy.EditNote(projectName, releaseId, cardKey, request, Actor(context, projectName))));
+
         // F14: unbound or missing secrets per environment, before a run is queued.
         project.MapGet("/secret-readiness", async (string projectName, string? releaseId, DeploySecretReadiness readiness,
             CancellationToken ct) => await readiness.ReadAsync(projectName, releaseId, ct) is { } value

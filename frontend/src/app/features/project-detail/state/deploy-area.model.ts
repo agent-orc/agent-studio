@@ -66,7 +66,7 @@ export interface Release {
   createdAtUtc: string;
   channel: string;
   quality?: {
-    cards: { key: string; verdict: 'pass' | 'concerns' | 'block' | 'not-reviewed' }[];
+    cards: { key: string; verdict: 'pass' | 'concerns' | 'block' | 'not-reviewed'; source?: 'quality-studio' | 'review' | null; reason?: string | null }[];
     pass: number;
     concerns: number;
     block: number;

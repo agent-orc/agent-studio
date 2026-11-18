@@ -4067,7 +4067,9 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     CredentialObservedAt: capability.CredentialObservedAt,
                     HealthOutcome: request.CredentialHealthVersion == 2 ? capability.HealthOutcome : null,
                     ServiceAvailability: request.CredentialHealthVersion == 2 ? capability.ServiceAvailability : null,
-                    CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null);
+                    CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null,
+                    Since: capability.Since,
+                    StatusSessionActive: capability.StatusSessionActive);
             })
             .GroupBy(capability => capability.Key, StringComparer.Ordinal)
             .Select(group => group.Last())

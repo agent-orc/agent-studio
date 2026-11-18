@@ -593,9 +593,11 @@ public sealed class DeployService
         {
             var snapshot = SyncLocked(project);
             if (snapshot is null || snapshot.Runs.All(item => item.Id != deploymentId)) return null;
+            var run = snapshot.Runs.First(item => item.Id == deploymentId);
             return new DeploymentLogResponse(deploymentId, _store.ReadLog(project, deploymentId)
+                .Select(item => item with { Step = DeploymentStepPlan.LogStepFor(run, item.Step) })
                 .Where(item => step is null || item.Step == step).ToArray())
-            { Tenant = snapshot.Runs.First(item => item.Id == deploymentId).Tenant };
+            { Tenant = run.Tenant };
         }
     }
 
@@ -742,11 +744,16 @@ public sealed class DeployService
             var record = snapshot?.Records.GetValueOrDefault(releaseId);
             var release = record?.Release;
             if (release is null) return null;
-            var currentTitles = _scanner.ScanAllJobsWithArchive()
+            var tasks = _scanner.ScanAllJobsWithArchive()
                 .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
                 .Where(item => !string.IsNullOrWhiteSpace(item.Key))
                 .GroupBy(item => item.Key!, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            var currentTitles = tasks.ToDictionary(item => item.Key, item => item.Value.Title,
+                StringComparer.OrdinalIgnoreCase);
+            // Chores are internal or technical work: marked so product notes can leave them out.
+            var maintenance = tasks.Where(item => item.Value.TaskType == TaskTypes.Chore)
+                .Select(item => item.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var cards = record!.CardTitles is { } captured
                 ? captured.Concat(currentTitles.Where(item => !captured.ContainsKey(item.Key)))
                     .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase)
@@ -755,8 +762,32 @@ public sealed class DeployService
                 .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
             var preview = !snapshot.Deployments(project).Any(item => item.ReleaseId == releaseId
                 && production.Contains(item.EnvironmentId) && item.State == DeploymentStates.Succeeded);
-            return ReleaseNotesProjection.Project(release, cards, preview);
+            return ReleaseNotesProjection.Project(release, cards, preview,
+                _store.ReadReleaseNoteEdits(project, releaseId), maintenance);
         }
+    }
+
+    /// <summary>Rewrites one card's note of a release in product language; empty text restores the card title.</summary>
+    public DeployOutcome<ReleaseNotesResponse> EditNote(string project, string releaseId, string cardKey,
+        ReleaseNoteEditRequest request, DeployActor actor)
+    {
+        if (request.Text?.Trim() is { Length: > ReleaseNotesProjection.MaxNoteLength })
+            return DeployOutcome<ReleaseNotesResponse>.Invalid(
+                $"A release note has at most {ReleaseNotesProjection.MaxNoteLength} characters.");
+        lock (_gate)
+        {
+            var release = SyncLocked(project)?.Records.GetValueOrDefault(releaseId)?.Release;
+            if (release is null) return DeployOutcome<ReleaseNotesResponse>.NotFound($"Unknown release '{releaseId}'.");
+            var key = release.CardKeys.FirstOrDefault(item => string.Equals(item, cardKey, StringComparison.OrdinalIgnoreCase));
+            if (key is null)
+                return DeployOutcome<ReleaseNotesResponse>.NotFound($"Release {release.Version} does not contain {cardKey}.");
+            _store.SaveReleaseNoteEdit(project, releaseId, key, request.Text);
+            _store.AppendAudit(project, [new(_clock.GetUtcNow().UtcDateTime, actor.Id, "release-note-edited", releaseId,
+                null, null, string.IsNullOrWhiteSpace(request.Text)
+                    ? $"Release {release.Version}: the note of {key} uses the card title again."
+                    : $"Release {release.Version}: the note of {key} was edited.")]);
+        }
+        return DeployOutcome<ReleaseNotesResponse>.Ok(Notes(project, releaseId)!);
     }
 
     /// <summary>Read-only release placement; the cache changes with releases, deploy runs and integration evidence.</summary>
