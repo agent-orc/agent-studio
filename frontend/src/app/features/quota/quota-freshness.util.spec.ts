@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { QuotaSnapshot } from './models/quota.model';
 import { quotaProbeFailureLabel, quotaSnapshotIsStale } from './quota-freshness.util';
+import { browserTimeZone, formatZonedWithUtc } from '../../services/usage-time.util';
 
 const snapshot: QuotaSnapshot = {
   cliType: 'codex',
@@ -23,5 +24,6 @@ describe('quota freshness', () => {
     const label = quotaProbeFailureLabel(snapshot);
     expect(label).toContain('probe failed');
     expect(label).toContain('codex 0.149.0');
+    expect(label).toBe(`probe failed ${formatZonedWithUtc(snapshot.probeFailedAt, browserTimeZone())}, codex 0.149.0`);
   });
 });

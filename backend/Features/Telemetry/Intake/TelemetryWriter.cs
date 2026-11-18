@@ -89,7 +89,9 @@ public sealed class TelemetryWriter : BackgroundService
                     { Body = _masker.Mask(log.Body), SeverityText = _masker.Mask(log.SeverityText),
                         EventName = log.EventName is null ? null : _masker.Mask(log.EventName),
                         Attributes = mask.Attributes(log.Attributes) }).ToList();
-                var result = _store.Write(batch.Environment, metrics, logs, _clock.GetUtcNow(), batch.StageId);
+                var spans = batch.Spans.Select(span => span with
+                    { Name = _masker.Mask(span.Name), Attributes = mask.Attributes(span.Attributes) }).ToList();
+                var result = _store.Write(batch.Environment, metrics, logs, _clock.GetUtcNow(), batch.StageId, spans);
                 if (result.LogsEvictedForSize > 0)
                     _logger.LogInformation("Telemetry log cap reached for {Environment}; removed {Count} oldest records",
                         batch.Environment, result.LogsEvictedForSize);

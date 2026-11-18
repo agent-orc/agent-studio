@@ -121,6 +121,32 @@ public sealed class ServerCheckoutIntegrationRecoveryTests : IDisposable
         Assert.Equal(reviewsBefore, after.ReviewAttempts.Count);
     }
 
+    [Fact]
+    public async Task MissingIntegrationBase_StaysUnreplayableUntilOriginCarriesTheBranch()
+    {
+        var stack = Build(withCheckout: true);
+        var delivery = SeedEscalatedDelivery(stack);
+        // Keep the checkout and its local develop branch, but remove the
+        // published integration base from both origin and its tracking refs.
+        Git(_root, "--git-dir", Path.Combine(_root, "origin.git"), "update-ref", "-d", "refs/heads/develop");
+        Git(_repo, "update-ref", "-d", "refs/remotes/origin/develop");
+        var job = stack.Scanner.FindJob(Id, _watchPath)!;
+
+        var result = await stack.Runner.RunAsync(Project, job.Id, job.FolderPath, job.WatchPath,
+            "develop", CancellationToken.None, reviewedResultSha: delivery);
+
+        Assert.Equal(AcceptedIntegrationFailureCodes.ServerCheckoutMissing, result.FailureCode);
+        var missing = stack.Integration.BuildLookup([job])[job.TaskKey];
+        Assert.Contains("refs/remotes/origin/develop", missing.Failure!.Reason);
+        Assert.False(missing.Failure.ReplayAvailable);
+
+        Git(_repo, "push", "-q", "origin", "develop");
+        // The card lookup must discover a newly published base without a
+        // separate manual fetch before it offers Retry integration.
+        var ready = stack.Integration.BuildLookup([job])[job.TaskKey];
+        Assert.True(ready.Failure!.ReplayAvailable);
+    }
+
     private string SeedEscalatedDelivery(Stack stack)
     {
         Git(_repo, "checkout", "-q", "-b", "task/" + Id, "develop");

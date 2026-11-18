@@ -23,6 +23,38 @@ describe('ProjectOperationsComponent', () => {
     }).compileComponents();
   });
 
+  it('shows slow traces, their span waterfall, and a log link to the same trace', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    fixture.componentInstance.searchTraces();
+    requests.expectOne(req => req.url.endsWith('/environments/prod/telemetry/traces')).flush([
+      { traceId: '11111111111111111111111111111111', startedAt: '2026-10-20T00:00:00Z',
+        durationMs: 900, failed: true, name: 'GET /checkout', spanCount: 2 },
+    ]);
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('GET /checkout');
+    fixture.componentInstance.search();
+    requests.expectOne(req => req.url.endsWith('/deploy/operations/logs')).flush({ telemetryAvailable: true,
+      lines: [{ at: '2026-10-20T00:00:00Z', level: 'ERROR', message: 'Timeout', releaseId: null,
+        traceId: '11111111111111111111111111111111' }] });
+    await fixture.whenStable();
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="operations-log-trace"]')!.click();
+    requests.expectOne(req => req.url.endsWith('/traces/11111111111111111111111111111111')).flush([
+      { spanId: '2222222222222222', parentSpanId: null, name: 'GET /checkout', kind: 'SERVER',
+        startedAt: '2026-10-20T00:00:00Z', durationMs: 900, failed: true, attributes: {} },
+      { spanId: '3333333333333333', parentSpanId: '2222222222222222', name: 'inventory HTTP', kind: 'CLIENT',
+        startedAt: '2026-10-20T00:00:00.100Z', durationMs: 780, failed: true, attributes: {} },
+    ]);
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelectorAll('[data-testid="operations-span-waterfall"] li')).toHaveLength(2);
+    expect(host.textContent).toContain('inventory HTTP');
+  });
+
   it('shows unavailable telemetry without invented numbers and links a rollback to release and card', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');

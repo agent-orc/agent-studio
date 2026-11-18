@@ -726,7 +726,7 @@ builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
-    AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+    AgentStudio.Projects.StoreOperationsTelemetryReader>();
 builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))

@@ -518,6 +518,28 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await remedy.screenshot({ path: path.join(SHOTS_DIR, 'server-checkout-retry-integrated-light.png'), animations: 'disabled' });
   });
 
+  test('missing integration base names the branch and keeps setup links', async ({ page }) => {
+    const detail = buildDetail('5e-escalated', false, true);
+    detail.info.integration = { ...detail.info.integration!, integrationBranch: 'develop',
+      failure: { ...detail.info.integration!.failure,
+        reason: "Integration worktree base 'refs/remotes/origin/develop' is unavailable after fetch; preparation cannot use the developer checkout's HEAD.",
+        replayAvailable: false } };
+    await openDetail(page, '5e-escalated', false, false, undefined, undefined, true);
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
+    await page.reload();
+    const remedy = page.getByTestId('escalation-summary').getByTestId('server-checkout-remedy');
+    await expect(remedy).toContainText('origin/develop');
+    await expect(remedy.getByRole('link', { name: 'Open Project Settings' })).toBeVisible();
+    await expect(remedy.getByRole('link', { name: 'Read the setup guide' })).toBeVisible();
+    await expect(remedy.getByTestId('server-checkout-retry')).toHaveCount(0);
+    mkdirSync(SHOTS_DIR, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await remedy.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-base-missing-${theme}.png`), animations: 'disabled' });
+    }
+  });
+
   test.beforeEach(() => test.setTimeout(90_000));
 
   test('gate infrastructure park offers retry and project switch without coding actions', async ({ page }, testInfo) => {

@@ -2400,6 +2400,14 @@ public partial class GitService
         => FindWatchPathEntry(watchPath) is { } entry
            && !string.IsNullOrWhiteSpace(ResolveConfiguredRepositoryPath(entry));
 
+    /// <summary>
+    /// Reads only filesystem facts to check whether the configured path can be
+    /// used as a server checkout for integration.
+    /// </summary>
+    public bool HasUsableConfiguredRepository(string? watchPath)
+        => FindWatchPathEntry(watchPath) is { } entry
+           && IntegrationWorktreeProvider.HasUsableCheckout(ResolveConfiguredRepositoryPath(entry));
+
     private WatchPathEntry? FindWatchPathEntry(string? watchPath)
     {
         var entries = _scanner.GetWatchPaths();

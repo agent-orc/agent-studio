@@ -234,6 +234,8 @@
 /api/projects/{projectName}/environments/{environmentId}/telemetry/metrics	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/telemetry/metrics/names	reachable	frozen	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/telemetry/tokens	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/environments/{environmentId}/telemetry/traces	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/environments/{environmentId}/telemetry/traces/{traceId}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/volumes/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/execution	reachable	gap	Project settings	Integration branch definition from the Git fact store
 /api/projects/{projectName}/execution/proposal-preview	free	-	-	-
