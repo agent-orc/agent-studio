@@ -4,3 +4,7 @@
 .release-notes p { color: var(--studio-fg-muted); }
 .release-notes ul { margin: var(--studio-spacing-2) 0 0; padding-inline-start: var(--studio-spacing-5); }
 .release-notes li + li { margin-top: var(--studio-spacing-2); }
+.release-notes__muted { color: var(--studio-fg-muted); }
+.release-notes__label { display: block; margin-bottom: var(--studio-spacing-1); }
+.release-notes__input { display: block; width: 100%; box-sizing: border-box; }
+.release-notes__actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-2); }
