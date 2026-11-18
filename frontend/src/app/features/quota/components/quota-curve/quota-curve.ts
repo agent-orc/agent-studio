@@ -1,5 +1,6 @@
-import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
-import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
+import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockpit.service';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import type { QuotaHistoryWindow } from '../../models/quota-history.model';
 import { nearestCurvePoint, quotaCurveGeometry } from '../../quota-forecast.util';
 
@@ -17,6 +18,7 @@ import { nearestCurvePoint, quotaCurveGeometry } from '../../quota-forecast.util
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class QuotaCurveComponent {
+  private readonly cockpit = inject(UsageCockpitService);
   readonly window = input.required<QuotaHistoryWindow>();
   readonly from = input.required<string>();
   readonly to = input.required<string>();
@@ -54,6 +56,6 @@ export class QuotaCurveComponent {
   }
 
   formatTime(iso: string): string {
-    return formatZonedTime(iso, browserTimeZone()) ?? iso;
+    return formatZonedWithUtc(iso, this.cockpit.snapshot()?.timeZone ?? browserTimeZone()) ?? iso;
   }
 }

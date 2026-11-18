@@ -7,7 +7,7 @@ public static class IntegrationPublicationGatePolicy
 
     public sealed record FirstParentCommit(string Sha, string ParentSha);
     public sealed record Publication(string TreeSha, string BaseSha, string Gate,
-        bool CoversPriorPublications = false);
+        bool CoversPriorPublications = false, DateTimeOffset? PassedAtUtc = null);
 
     public sealed record Decision(bool Verified, string? MissingTree = null, bool MissingAncestry = false,
         Publication? CoveringPublication = null);

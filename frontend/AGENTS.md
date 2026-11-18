@@ -33,6 +33,16 @@ Read them before any visual change; they override local convention. In short:
   rule. `npm run lint:structure` fails on a hard-coded lane string. See the
   Lane presentation section below.
 
+## Visual design skill
+
+When a card's acceptance is visual quality (a new screen or visible redesign,
+a dashboard or chart, a topology canvas, a 3D scene, a small game, or a landing
+page), follow the portable skill
+[.agents/skills/visual-design/SKILL.md](../.agents/skills/visual-design/SKILL.md):
+direction first, desktop and phone screenshots in both themes, a rubric
+critique, and at least one iteration. The hard rules above and the
+Playwright rules below still apply inside this app.
+
 ## UI Verification — Playwright is mandatory after visual changes
 
 After **every** frontend change under `frontend/src/` that touches layout, spacing, styling, component templates, or interaction states, you must verify with Playwright before declaring the task done. Static type-checks and unit tests do not catch UI regressions; the E2E suite does.

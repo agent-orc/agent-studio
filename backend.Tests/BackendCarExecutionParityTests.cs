@@ -211,16 +211,16 @@ public sealed class BackendCarExecutionParityTests : IDisposable
         var fixture = Fixture.Load("p1-happy-done.claude.fixture");
         var run = await StartFixtureAsync(fixture, new RunSettings
         {
-            Model = ModelIds.ClaudeFable51,
+            Model = ModelIds.ClaudeFable52,
             ThinkingLevel = "max",
         });
 
         var final = await run.Finished.WaitAsync(TimeSpan.FromSeconds(20));
         var argv = Assert.IsAssignableFrom<IReadOnlyList<string>>(run.Spawner.PreparedArgv);
 
-        Assert.Equal(ModelIds.ClaudeFable51, final.Model);
+        Assert.Equal(ModelIds.ClaudeFable52, final.Model);
         Assert.Equal("max", final.ThinkingLevel);
-        AssertOption(argv, "--model", ModelIds.ClaudeFable51);
+        AssertOption(argv, "--model", ModelIds.ClaudeFable52);
         AssertOption(argv, "--effort", "max");
     }
 
@@ -437,7 +437,7 @@ public sealed class BackendCarExecutionParityTests : IDisposable
         var fixture = Fixture.Load(fixtureName);
         const string jobKey = "car-steer-resume";
 
-        var first = await StartFixtureAsync(fixture, new RunSettings { JobKey = jobKey });
+        var first = await StartFixtureAsync(fixture, new RunSettings { JobKey = jobKey, Model = fixture.Cli == CliTypes.Claude ? ModelIds.ClaudeFable52 : null });
         await first.Finished.WaitAsync(TimeSpan.FromSeconds(20));
         var sessionId = first.Service.GetCapturedSessionId(jobKey);
         Assert.False(string.IsNullOrWhiteSpace(sessionId));
@@ -451,6 +451,7 @@ public sealed class BackendCarExecutionParityTests : IDisposable
                 Prompt = followup,
                 SessionName = sessionId,
                 ResumeSession = true,
+                Model = fixture.Cli == CliTypes.Claude ? ModelIds.ClaudeFable52 : null,
             },
             first.Service);
         await second.Finished.WaitAsync(TimeSpan.FromSeconds(20));
@@ -459,6 +460,11 @@ public sealed class BackendCarExecutionParityTests : IDisposable
         if (string.Equals(fixture.Cli, CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
         {
             AssertOption(argv, "-r", sessionId!);
+            AssertOption(argv, "--model", ModelIds.ClaudeFable52);
+            // Studio appends only the new user turn. Claude Code owns replay of
+            // the original prefix and thinking blocks; no transcript is edited.
+            AssertOption(argv, "--append-system-prompt-file", first.RulesPath);
+            Assert.Equal(File.ReadAllText(first.RulesPath), File.ReadAllText(second.RulesPath));
             Assert.DoesNotContain(followup, argv);
             using var capture = await ReadCaptureAsync(second.CapturePath);
             Assert.Equal(followup.Length, capture.RootElement.GetProperty("stdinChars").GetInt32());

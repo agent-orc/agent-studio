@@ -8,6 +8,14 @@
       <button class="wizard__close" type="button" aria-label="Close execution host wizard" (click)="cancelled.emit()">×</button>
     </header>
 
+    <div class="wizard__kind" data-testid="add-host-kind">
+      <app-segmented-control [options]="kindOptions" [value]="kind()" ariaLabel="Host kind" (valueChange)="kind.set($event)" />
+    </div>
+
+    @if (kind() === 'deploy') {
+      <div class="wizard__run-host"><app-run-host-enrollment (done)="runHostEnrolled.emit()" /></div>
+    } @else {
+
     <ol class="stepper" aria-label="Host setup progress">
       @for (item of steps; track item.label; let index = $index) {
         <li class="stepper__item" [class.stepper__item--active]="index === step()" [class.stepper__item--done]="index < step()" [attr.aria-current]="index === step() ? 'step' : null">
@@ -100,5 +108,6 @@
         <cac-chat variant="embedded" [messages]="messages()" [pending]="chatPending()" [disabled]="chatPending()" placeholder="Ask about this setup step..." emptyState="Ask the orchestrator for help." (submitMessage)="onSubmit($event)" />
       </aside>
     </div>
+    }
   </section>
 </div>

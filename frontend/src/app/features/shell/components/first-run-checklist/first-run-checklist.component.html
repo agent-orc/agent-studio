@@ -186,6 +186,7 @@
                 <option value="coding">Coding</option><option value="review">Review</option>
               </select>
             </label>
+            <p data-testid="first-run-join-run-host-hint">A run host that deploys environments enrolls from Hosts, Add host, Run host (deploy).</p>
             <button type="button" data-testid="first-run-generate-join" [disabled]="!joinValid() || joining()"
               (click)="generateJoinToken()">{{ joining() ? 'Issuing…' : 'Generate one-time join token' }}</button>
             @if (joinToken(); as issued) {

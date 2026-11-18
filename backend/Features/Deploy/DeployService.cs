@@ -6,6 +6,7 @@ using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Registry;
 using AgentStudio.QualityStudio;
+using AgentStudio.Projects;
 
 namespace AgentStudio.Deploy;
 
@@ -36,6 +37,7 @@ public sealed class DeployService
     private const int ReleaseCommitWindow = 5000;
     private const int AuditLimit = 500;
     private readonly object _gate = new();
+    private readonly IncidentActions? _incidentActions;
     private readonly object _qualityGate = new();
     private readonly Dictionary<string, (string Signature, DateTimeOffset Expires, string ArtifactStamp,
         IReadOnlyList<string> CardFolders, IReadOnlyList<Release> Value)> _qualityCache =
@@ -83,7 +85,8 @@ public sealed class DeployService
         Func<IReadOnlyList<TaskInfo>>? qualityTaskScan = null,
         Func<string, IntegrationVerificationRecord?>? deliveryVerificationRead = null,
         Action<TimeSpan>? deliveryLockHoldObserved = null,
-        Action? deliveryVerificationCaptured = null)
+        Action? deliveryVerificationCaptured = null,
+        IncidentActions? incidentActions = null)
     {
         _environments = environments;
         _store = store;
@@ -102,6 +105,7 @@ public sealed class DeployService
             deliveryVerificationRead ?? IntegrationVerificationStore.Read);
         _deliveryLockHoldObserved = deliveryLockHoldObserved;
         _deliveryVerificationCaptured = deliveryVerificationCaptured;
+        _incidentActions = incidentActions;
     }
 
     /// <summary>
@@ -652,19 +656,15 @@ public sealed class DeployService
     }
 
     public IReadOnlyList<CardDeploymentView>? Cards(string project)
-        => Cards(project, _scanner.ScanAllJobsWithArchive()
-            .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
-            .Select(item => string.IsNullOrWhiteSpace(item.Key) ? item.Id : item.Key!));
-
-    private IReadOnlyList<CardDeploymentView>? Cards(string project, IEnumerable<string> cardKeys)
     {
+        var integratedCardKeys = CaptureDeliveryVerifications(project).Integrated.Keys;
         lock (_gate)
         {
             var snapshot = SyncLocked(project);
             if (snapshot is null) return null;
             var repo = _git.ResolveRepoRootForProject(project);
             return CardDeploymentProjection.Project(project, snapshot.Environments,
-                snapshot.Releases, snapshot.Deployments(project), cardKeys,
+                snapshot.Releases, snapshot.Deployments(project), integratedCardKeys,
                 (origin, target) => repo is not null && Contains(repo, origin.CommitSha, target.CommitSha));
         }
     }
@@ -672,16 +672,13 @@ public sealed class DeployService
     public IReadOnlyList<CardDeploymentView> CardMatrix()
     {
         var cards = new List<CardDeploymentView>();
-        var byProject = _scanner.ScanAllJobsWithArchive()
-            .ToLookup(item => item.ProjectName, StringComparer.OrdinalIgnoreCase);
         foreach (var project in _scanner.GetWatchPaths().Select(item => item.Name)
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             try
             {
                 if (_environments.Declarations(project) is not { Count: > 0 }) continue;
-                if (Cards(project, byProject[project].Select(item => string.IsNullOrWhiteSpace(item.Key)
-                        ? item.Id : item.Key!)) is { } projected) cards.AddRange(projected);
+                if (Cards(project) is { } projected) cards.AddRange(projected);
             }
             catch (JsonException ex)
             {
@@ -1192,6 +1189,8 @@ public sealed class DeployService
         var run = NewRun(release, environment, record.Environments,
             job is null ? DeploymentStates.AwaitingApproval : DeploymentStates.Queued, trigger, actor.Id,
             decision.ApprovedBy, job, now, record.Lifecycle, guidedFailure, tenant);
+        var incident = _incidentActions?.Open(project, environment.Id);
+        run = run with { IncidentId = incident?.IncidentId, IncidentCardId = incident?.CardId };
         var log = new List<DeploymentLogEntry>();
         if (job is null)
             log.Add(new(run.Id, DeployStepNames.Approval, now,
@@ -1649,9 +1648,28 @@ public sealed class DeployService
     private void Persist(string project, IReadOnlyList<DeploymentRecord> runs,
         IReadOnlyList<DeploymentLogEntry> log, IReadOnlyList<DeployAuditEntry> audit)
     {
+        var before = _store.ReadDeployments(project).ToDictionary(item => item.Id, StringComparer.Ordinal);
+        var linkedRuns = runs.Select(run =>
+        {
+            if (run.IncidentId is not null) return run;
+            if (before.TryGetValue(run.Id, out var stored))
+                return run with { IncidentId = stored.IncidentId, IncidentCardId = stored.IncidentCardId };
+            var incident = _incidentActions?.At(project, run.EnvironmentId, run.CreatedAtUtc);
+            return run with { IncidentId = incident?.IncidentId, IncidentCardId = incident?.CardId };
+        }).ToArray();
         _store.AppendLog(project, log);
         _store.AppendAudit(project, audit);
-        _store.SaveDeployments(project, runs);
+        _store.SaveDeployments(project, linkedRuns);
+        var changedLinkedRuns = linkedRuns.Where(item => item.IncidentId is not null
+            && (!before.TryGetValue(item.Id, out var previous) || previous.State != item.State)).ToArray();
+        if (changedLinkedRuns.Length > 0)
+        {
+            var releases = _store.ReadReleases(project).ToDictionary(item => item.Id, StringComparer.Ordinal);
+            foreach (var run in changedLinkedRuns)
+                _incidentActions?.Report(project, run.IncidentCardId, run.IncidentId, run.Id,
+                    run.Trigger, run.RequestedBy ?? "deploy-host",
+                    releases.GetValueOrDefault(run.ReleaseId)?.Version ?? run.ReleaseId, run.State);
+        }
         foreach (var entry in audit)
             _logger.LogInformation("Deploy audit {Project} {Action} by {Actor}: {Detail}",
                 project, entry.Action, entry.Actor, entry.Detail);
