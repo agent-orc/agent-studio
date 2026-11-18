@@ -199,6 +199,9 @@ public sealed class RunnerModelAcceptanceProbeTests
             Role = "review",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
+            // A host Codex at 0.166 or newer would add the gpt-6.1 probes.
+            CodexCliBin = Path.Combine(Path.GetTempPath(), $"missing-codex-{Guid.NewGuid():N}"),
+            ClaudeCliBin = Path.Combine(Path.GetTempPath(), $"missing-claude-{Guid.NewGuid():N}"),
         };
         (string Provider, string Model)[] routes =
             [("codex", "gpt-5.4-mini"), ("codex", "gpt-6-sol")];
