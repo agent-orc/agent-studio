@@ -26,7 +26,12 @@ const NEXT_STEPS: Readonly<Record<AcceptanceReadinessClass, string>> = {
 };
 
 /** The resolving step for a readiness class; unknown classes read as a refusal. */
-export function readinessNextStep(item: Pick<AcceptanceReadinessItem, 'readiness' | 'aspect'>): string {
+export function readinessNextStep(item: Pick<AcceptanceReadinessItem, 'readiness' | 'aspect'>
+  & Partial<Pick<AcceptanceReadinessItem, 'stage' | 'overrideAllowed' | 'round'>>): string {
+  if (item.stage === 'batch-gate')
+    return 'Send a round to close the batch gate evidence gap, or wait for a gate to pass.';
+  if (item.overrideAllowed === false && item.round)
+    return 'Send a round to close the gap.';
   if (item.readiness === 'no-content-verdict' && item.aspect)
     return `Run the ${item.aspect} review for the current run.`;
   return NEXT_STEPS[item.readiness] ?? NEXT_STEPS.blocked;

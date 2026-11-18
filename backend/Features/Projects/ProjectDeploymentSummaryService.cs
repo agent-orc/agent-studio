@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using AgentStudio.Publishing;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
 
@@ -51,6 +52,13 @@ public sealed record ProjectDeploymentSummary
     public IReadOnlyList<ProjectDeploymentCommit> PendingCommits { get; init; } = [];
     public IReadOnlyList<ProjectDeploymentTarget> Targets { get; init; } = [];
     public DeploymentTestRunReference? DefaultEvidenceRun { get; init; }
+    /// <summary>
+    /// The deploy-stable baseline is Studio's own self-deploy history; only a
+    /// repository with the stable restart script (Studio itself) shows it (F19).
+    /// </summary>
+    public bool StableBaseline { get; init; }
+    /// <summary>Deploy steps of a schema 2 project.yml; such a project deploys from Deploy, not from targets.</summary>
+    public int PipelineDeploySteps { get; init; }
 }
 
 /// <summary>
@@ -122,6 +130,35 @@ public sealed class ProjectDeploymentSummaryService
             integrationTip = _git.GetBranchTip(repoRoot, configuredBranch);
         }
         var evidenceRun = _testRuns?.LastGreenForDeployment(projectName, integrationTip);
+        return BuildBaseline(projectName, repoRoot, targets, integrationTip, evidenceRun) with
+        {
+            StableBaseline = targets.Any(target => target.Template == StableTemplate),
+            PipelineDeploySteps = PipelineDeployStepCount(repoRoot),
+        };
+    }
+
+    private const string StableTemplate = "deploy-stable";
+
+    /// <summary>Counts the deploy steps of a schema 2 project.yml; zero for older schemas or an unreadable file.</summary>
+    internal static int PipelineDeployStepCount(string? repoRoot)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot)) return 0;
+        var path = Path.Combine(repoRoot, ProjectPreparationPaths.Definition);
+        if (!File.Exists(path)) return 0;
+        try
+        {
+            var parsed = ProjectDefinitionReader.Parse(File.ReadAllText(path)).Parsed;
+            return parsed?.SchemaVersion == 2 ? parsed.Deployment?.Deploy.Count ?? 0 : 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return 0; }
+    }
+
+    private ProjectDeploymentSummary BuildBaseline(string projectName, string? repoRoot,
+        IReadOnlyList<ProjectDeploymentTarget> targets, string? integrationTip, DeploymentTestRunReference? evidenceRun)
+    {
+        // stable-restarts.jsonl is Studio's own self-deploy log; another project never reads it (F19).
+        if (!targets.Any(target => target.Template == StableTemplate))
+            return Unavailable(projectName, "The deploy-stable baseline is Studio's own deployment history.", targets, evidenceRun);
         var taskRepository = _config["TaskRepository"];
         if (string.IsNullOrWhiteSpace(taskRepository))
             return Unavailable(projectName, "Task repository is not configured.", targets, evidenceRun);
@@ -211,7 +248,7 @@ public sealed class ProjectDeploymentSummaryService
             && File.Exists(Path.Combine(repoRoot, "scripts", "supervisor", "restart-stable-after-batch.sh")))
         {
             targets.Add(new ProjectDeploymentTarget(
-                "deploy-stable", "deploy-stable", "derived", "deploy-stable",
+                "deploy-stable", "deploy-stable", "derived", StableTemplate,
                 "Update the stable seat after confirming it is idle.", true, "repository-fact",
                 "bash scripts/supervisor/restart-stable-after-batch.sh", null,
                 [new("stableIdle", "boolean", true, JsonSerializer.SerializeToElement(false), [])]));

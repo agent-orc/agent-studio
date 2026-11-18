@@ -156,4 +156,11 @@ export class QuotaForecastPanelComponent implements OnInit {
     if (!iso) return 'unknown';
     return formatZonedTime(iso, browserTimeZone()) ?? 'unknown';
   }
+
+  weeklyPeriod(window: QuotaHistoryWindow): string {
+    const reset = window.forecast.resetAt;
+    const end = reset ? Date.parse(reset) : NaN;
+    if (!Number.isFinite(end)) return 'Provider week: start and reset unavailable.';
+    return `Provider week: estimated start ${new Date(end - 7 * 86_400_000).toISOString()} to reset ${new Date(end).toISOString()}.`;
+  }
 }

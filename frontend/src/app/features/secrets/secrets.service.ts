@@ -73,7 +73,13 @@ export interface SecretBackendHealth {
 /** `workspace`, `<project>` or `<project>/<environment>`. */
 export type SecretScopeKey = string;
 
-export interface SecretEnvironment { id: string; kind: string }
+/** `name` is the environment's declared name (schema 2 `staging` has the id `stage`); show it, route by id (F20). */
+export interface SecretEnvironment { id: string; kind: string; name?: string }
+
+/** The one name an environment shows on every surface: its declared name, else its id. */
+export function environmentLabel(environment: SecretEnvironment): string {
+  return environment.name?.trim() || environment.id;
+}
 
 /** Route prefix of one scope, matching the backend scope groups. */
 export function secretScopeRoute(scope: SecretScopeKey): string {

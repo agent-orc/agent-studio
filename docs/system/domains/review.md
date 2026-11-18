@@ -931,6 +931,11 @@ budget.
   the key. The empty claim carries `unclaimable-plan-requirements`, names the
   key, and tells the operator which setting is missing. The attempt stays
   queued and no retry budget is spent.
+  Card live status and Execution Hosts show a refused capability only while the
+  same attempt is current and pending and the executor still cannot admit the
+  key. A recovered key restores the card's queue position. Execution Hosts
+  labels a refused key `not registered` only when the role's current
+  registration omits it; old refusals do not add waiting work to held keys.
 - **Plan-less attempts.** A lease-expiry successor and a settled-run recovery
   attempt carry no plan, and an attempt may carry no repository URL; the
   claim endpoint builds both at hand-out. Before selection it therefore

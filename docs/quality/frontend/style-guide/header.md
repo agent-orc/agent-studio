@@ -62,8 +62,9 @@ The acceptance refusal (`app-acceptance-refusal`, AGT-3704) renders for a
 Human Review Accept held by its integration verdict, refused by the server,
 or refused by the card's acceptance readiness. It shows the reason beside its
 next action: Retry integration for a failed integration, Send a round… when no
-override can admit the card (AGT-3867), otherwise Accept with override, which
-asks for a written reason. The attempt-gap notice owns its own refusal.
+override can admit the card (AGT-3867, AGT-3934), otherwise Accept with override,
+which asks for a written reason. A hold is omitted during the bounded Git wait (the
+primary's skeleton is that progress); the attempt-gap notice owns its own refusal.
 The reason truncates first at narrow widths; its tooltip keeps the full
 sentence. AGT-3830: a content refusal (acceptance readiness
 `review-concerns` or `no-content-verdict`, or a server `completion-content-gap`)

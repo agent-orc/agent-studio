@@ -1154,6 +1154,10 @@ public sealed class V1ReviewPlaneDiagnosticsOwnHostTests : V1ReviewPlaneDiagnost
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
+                // These cases exercise persisted review state across fresh hosts.
+                // Background workers do not participate in registration or
+                // authority recovery, and can hold up host disposal between boots.
+                builder.ConfigureTestServices(TestHostFactory.RemoveBackgroundHostedServices);
                 builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
                     new Dictionary<string, string?>
                     {

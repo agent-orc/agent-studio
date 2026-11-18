@@ -68,9 +68,12 @@ export function acceptanceRefusalSentence(text: string): string {
 }
 
 /** The one action of a refusal: the override when policy allows it, else the round that closes the gap. */
-function nextAction(refusal: string, readiness: AcceptanceReadinessItem | null)
+function nextAction(refusal: string, readiness: AcceptanceReadinessItem | null, code: string | null = null)
   : Pick<AcceptanceRefusal, 'action' | 'actionLabel'> {
-  return !acceptanceOverrideAllowed(refusal) && readiness?.round
+  const canOverride = code === 'batch-gate-evidence-missing' || readiness?.stage === 'batch-gate'
+    ? false
+    : readiness ? acceptanceOverrideAllowed(readiness) : code === CONTENT_GAP ? contentRefusalOverrideAllowed(refusal) : true;
+  return !canOverride
     ? { action: 'send-round', actionLabel: ROUND_LABEL }
     : { action: 'override', actionLabel: OVERRIDE_LABEL };
 }
@@ -82,7 +85,7 @@ const CONTENT_REFUSAL_CODE = 'completion-content-gap';
 function contentRefusal(reason: string, source: AcceptanceRefusal['source'], refusal: string,
   readiness: AcceptanceReadinessItem | null, hold: AcceptanceRefusal | null = null,
   info: TaskInfo | null = null): AcceptanceRefusal {
-  const secondaryAction = nextAction(refusal, readiness);
+  const secondaryAction = nextAction(refusal, readiness, CONTENT_REFUSAL_CODE);
   const primary = readiness ? acceptancePrimaryReason(readiness) : null;
   const concern = info ? acceptanceRefusalConcern(info, readiness) : null;
   return {
@@ -133,7 +136,7 @@ export function acceptanceRefusalFor(
       : contentRefusal(server.message, 'server', server.message, null, hold, info);
   if (server && server.taskKey === info.taskKey && server.code !== 'run-attempt-missing'
     && server.code !== CONTENT_REFUSAL_CODE)
-    return { reason: server.message, ...nextAction(server.message, ownReadiness), source: 'server', concern: null };
+    return { reason: server.message, ...nextAction(server.message, ownReadiness, server.code), source: 'server', concern: null };
   if (ownReadiness && CONTENT_REFUSAL_CLASSES.has(ownReadiness.readiness))
     return contentRefusal(readinessReason(ownReadiness), 'readiness', ownReadiness.refusal, ownReadiness, hold, info);
   if (awaitingGit) return null;
@@ -261,7 +264,12 @@ export function acceptanceRefusalConcern(
  * missing research report.
  */
 export function acceptanceRefusalOverridable(refusal: Pick<ServerAcceptanceRefusal, 'code' | 'message'>): boolean {
-  return refusal.code === CONTENT_GAP && acceptanceOverrideAllowed(refusal.message);
+  return refusal.code === CONTENT_GAP && contentRefusalOverrideAllowed(refusal.message);
+}
+
+/** Legacy move errors do not carry admission facts; preserve the report safeguard until they do. */
+export function contentRefusalOverrideAllowed(refusal: string): boolean {
+  return !/required report is missing/i.test(refusal);
 }
 
 /** The refusal sentence of a failed move to Accepted, in the server's words. */

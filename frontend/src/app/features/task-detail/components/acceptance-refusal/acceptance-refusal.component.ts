@@ -92,7 +92,7 @@ export class AcceptanceRefusalComponent {
   readonly secondaryTooltip = computed(() => this.refusal().secondaryAction?.action === 'send-round'
     ? 'Review and send the prefilled round that closes the gap'
     : 'Accept now and record a written reason on the card');
-  readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length > 0);
+  readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length >= 8);
 
   private readonly tasks = inject(TaskService);
   private readonly notifications = inject(NotificationService);

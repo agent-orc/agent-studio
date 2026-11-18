@@ -198,13 +198,26 @@ describe('acceptance readiness before and after the click (AGT-3867)', () => {
 
   it('offers the round instead of an override the policy cannot admit', () => {
     const report = { ...concerns, readiness: 'blocked' as const,
+      overrideAllowed: false,
       refusal: 'Completion refused: the required report is missing (results/report.md).' };
     expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, report))
       .toMatchObject({ action: 'send-round', actionLabel: 'Send a round…' });
   });
 
+  it('offers the round for batch-gate refusal before and after a failed move', () => {
+    const batch = { ...concerns, readiness: 'integrated-unverified' as const,
+      stage: 'batch-gate', overrideAllowed: false, refusal: 'batch-gate-evidence-missing' };
+    const info = card({ status: 'integrated' });
+    expect(acceptanceRefusalFor(info, null, false, batch))
+      .toMatchObject({ action: 'send-round', actionLabel: 'Send a round…' });
+    expect(acceptanceRefusalFor(info, { taskKey: info.taskKey, code: 'batch-gate-evidence-missing',
+      message: 'Verify the published branch.' }, false, batch))
+      .toMatchObject({ action: 'send-round', source: 'server' });
+  });
+
   it('leads with the round over a pending integration and lists the integration under it (F12)', () => {
     const report = { ...concerns, readiness: 'blocked' as const,
+      overrideAllowed: false,
       refusal: 'Completion refused: the required report is missing (results/report.md).' };
     expect(acceptanceRefusalFor(card({ status: 'conflict-skipped' }), null, false, report)).toMatchObject({
       reason: concerns.reason, action: 'send-round', secondary: ['Integration into develop failed.'],
