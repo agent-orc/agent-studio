@@ -769,6 +769,36 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task ProductionWebhook_SendsOpenedAndRecoveredOnce_AndRetriesFailedDelivery()
+    {
+        var fixture = Build(extraDeclaration: """
+            { "id": "production", "name": "Production", "kind": "production", "targetHostId": "prod-host",
+              "address": "https://prod.example", "template": "container", "destination": "8082",
+              "healthUrl": "https://prod.example/health",
+              "healthChecks": [ { "id": "api", "kind": "http", "url": "https://user:password@prod.example/health?token=secret", "failureThreshold": 1, "recoveryThreshold": 1 } ] }
+            """);
+        fixture.Webhooks.Set(Project, "https://hooks.example/incident", "https://studio.example");
+        fixture.WebhookTarget.Status = HttpStatusCode.BadGateway;
+
+        await Sequence(fixture, false);
+        Assert.Single(fixture.WebhookTarget.Bodies);
+        Assert.False(fixture.Store.Load(Project).Environments["production"].OpenIncident!.OpenedWebhookDelivered);
+
+        fixture.WebhookTarget.Status = HttpStatusCode.OK;
+        await Sequence(fixture, false, false);
+        Assert.Equal(2, fixture.WebhookTarget.Bodies.Count);
+        Assert.True(fixture.Store.Load(Project).Environments["production"].OpenIncident!.OpenedWebhookDelivered);
+        Assert.DoesNotContain("password", fixture.WebhookTarget.Bodies[1]);
+        Assert.DoesNotContain("secret", fixture.WebhookTarget.Bodies[1]);
+        Assert.Contains("\"signal\":\"api\"", fixture.WebhookTarget.Bodies[1]);
+
+        await Sequence(fixture, true, true);
+        Assert.Equal(3, fixture.WebhookTarget.Bodies.Count);
+        Assert.Contains("\"event\":\"recovered\"", fixture.WebhookTarget.Bodies[2]);
+        Assert.True(fixture.Store.Load(Project).Environments["production"].LastIncident!.RecoveryWebhookDelivered);
+    }
+
     private async Task Ticks(Fixture fixture, int count)
     {
         for (var tick = 0; tick < count; tick++)
@@ -835,16 +865,19 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
             timeline: timeline, configuration: configuration);
         var alerts = new HealthAlerts(scanner, mutations, timeline, activity, _clock,
             NullLogger<HealthAlerts>.Instance, stateMachine, new AgentStudio.Deploy.DeployStore(configuration));
+        var webhookTarget = new WebhookTarget();
+        var webhooks = new IncidentWebhookService(configuration, new FakeHttpClients(webhookTarget),
+            NullLogger<IncidentWebhookService>.Instance);
         var store = new HealthCheckStore(configuration);
         var logger = new CapturingLogger<EnvironmentHealthService>();
         var connector = new HealthCheckConnector();
         var telemetryStore = withTelemetry ? new TelemetryStore(new TelemetryOptions { StoreRoot = Path.Combine(_root, "telemetry") },
             NullLogger<TelemetryStore>.Instance) : null;
         var service = new EnvironmentHealthService(scanner, environments, store,
-            probe ?? new NetworkHealthCheckProbe(new FakeHttpClients(_target), connector, _clock), alerts, configuration,
+            probe ?? new NetworkHealthCheckProbe(new FakeHttpClients(_target), connector, _clock), alerts, webhooks, configuration,
             _clock, logger, telemetryStore is null ? null : new TelemetryAlertReader(telemetryStore));
         return new(service, scanner, mutations, timeline, activity, configuration, watch, store, logger, declarations,
-            telemetryStore);
+            webhooks, webhookTarget, telemetryStore);
     }
 
     private static string Stage(string? checks) => $$"""
@@ -856,7 +889,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     private sealed record Fixture(EnvironmentHealthService Service, TaskScannerService Scanner,
         TaskMutationService Mutations, TimelineLog Timeline, OrchestratorLog Log, IConfiguration Configuration,
         string WatchPath, HealthCheckStore Store, CapturingLogger<EnvironmentHealthService> Logger, string Declarations,
-        TelemetryStore? Telemetry)
+        IncidentWebhookService Webhooks, WebhookTarget WebhookTarget, TelemetryStore? Telemetry)
     {
         public IReadOnlyList<TaskInfo> Cards() => Scanner.ScanAllJobs()
             .Where(card => card.Tags.Contains(HealthAlerts.Tag) || card.Id.StartsWith("health-", StringComparison.Ordinal)).ToArray();
@@ -868,6 +901,18 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         public IReadOnlyList<OrchestratorLogEntry> Activity() => Log.Read(WatchPath);
 
         public void Declare(string checks) => File.WriteAllText(Path.Combine(Declarations, "stage.json"), Stage(checks));
+    }
+
+    private sealed class WebhookTarget : HttpMessageHandler
+    {
+        public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
+        public List<string> Bodies { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Bodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+            return new HttpResponseMessage(Status);
+        }
     }
 
     private sealed class FakeHttpTarget(FakeTimeProvider clock) : HttpMessageHandler

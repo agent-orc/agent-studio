@@ -132,3 +132,32 @@ test('usage-caps link opens the global usage-caps section', async ({ page }) => 
   await page.getByTestId('workspace-settings-close').click();
   await expect(page.getByTestId('workspace-settings-overlay')).not.toBeVisible();
 });
+
+test('owner can configure and test a production incident webhook', async ({ page }) => {
+  let destination = '';
+  let tests = 0;
+  await page.route(/\/api\/projects\/[^/]+\/incident-webhook(?:\/test)?$/, async route => {
+    const request = route.request();
+    if (request.url().endsWith('/test')) {
+      tests++;
+      await route.fulfill({ json: { delivered: true } });
+      return;
+    }
+    if (request.method() === 'PUT') {
+      const body = request.postDataJSON() as { url: string | null };
+      destination = body.url ? 'hooks.example' : '';
+    }
+    await route.fulfill({ json: { configured: !!destination, destination } });
+  });
+  await page.goto(`/#/projects/${slugFor(projectName)}/settings`);
+  const settings = page.getByTestId('incident-webhook-settings');
+  await expect(settings).toBeVisible();
+  await settings.getByTestId('incident-webhook-url').fill('https://hooks.example/incident?token=secret');
+  await settings.getByTestId('incident-webhook-save').click();
+  await expect(settings).toContainText('Sending to hooks.example');
+  await expect(settings).not.toContainText('token=secret');
+  await settings.getByTestId('incident-webhook-test').click();
+  await expect(settings).toContainText('Test message delivered.');
+  expect(tests).toBe(1);
+  await settings.screenshot({ path: path.join(SCREENSHOT_DIR, '05-incident-webhook.png') });
+});
