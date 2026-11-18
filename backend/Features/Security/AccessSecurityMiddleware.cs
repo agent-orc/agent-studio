@@ -1256,7 +1256,8 @@ public sealed class AccessSecurityMiddleware
     private static bool IsTelemetryIntake(string method, string path)
         => HttpMethods.IsPost(method)
            && (path.Equals("/api/telemetry/otlp/v1/metrics", StringComparison.OrdinalIgnoreCase)
-               || path.Equals("/api/telemetry/otlp/v1/logs", StringComparison.OrdinalIgnoreCase));
+               || path.Equals("/api/telemetry/otlp/v1/logs", StringComparison.OrdinalIgnoreCase)
+               || path.Equals("/api/telemetry/otlp/v1/traces", StringComparison.OrdinalIgnoreCase));
     private static bool IsOpenAuth(string path)
         => path.Equals("/api/auth/status", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/bootstrap", StringComparison.OrdinalIgnoreCase)

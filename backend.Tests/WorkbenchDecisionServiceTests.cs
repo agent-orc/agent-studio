@@ -1,6 +1,14 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Diagnostics;
+using System.Net.Http.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -481,7 +489,12 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
         var receipt = written.RootElement.GetProperty("decision");
         Assert.Equal("claude", receipt.GetProperty("cliType").GetString());
         Assert.Equal("claude-opus-5", receipt.GetProperty("model").GetString());
-        var from = receipt.GetProperty("routeChangedFrom");
+        Assert.False(receipt.TryGetProperty("routeChangedFrom", out _));
+        Assert.True(decisions.RecordAppliedReworkRoute("Project", "routing-policy",
+            "workbench-ui-rework-route", new WorkbenchAgentRoute("codex", "gpt-5-codex", null),
+            new WorkbenchAgentRoute("claude", "claude-opus-5", "high")));
+        using var applied = JsonDocument.Parse(File.ReadAllText(Descriptor("routing-policy")));
+        var from = applied.RootElement.GetProperty("decision").GetProperty("routeChangedFrom");
         Assert.Equal("codex", from.GetProperty("cliType").GetString());
         Assert.Equal("gpt-5-codex", from.GetProperty("model").GetString());
         Assert.False(from.TryGetProperty("thinkingLevel", out _));
@@ -506,6 +519,57 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
         using var written = JsonDocument.Parse(File.ReadAllText(Descriptor("routing-policy")));
         Assert.False(written.RootElement.GetProperty("decision").TryGetProperty("routeChangedFrom", out _));
         Assert.Null(Assert.Single(catalogue.List("Project", includeHistory: true)!.Items).Decision!.RouteChangedFrom);
+    }
+
+    [Fact]
+    public async Task Confirm_endpoint_refused_continue_keeps_card_route_and_requested_receipt()
+    {
+        WriteSchemaTwo("routing-policy");
+        var descriptor = JsonNode.Parse(File.ReadAllText(Descriptor("routing-policy")))!.AsObject();
+        descriptor["sourceTaskKeys"] = new JsonArray(JsonValue.Create("PRJ-12"));
+        File.WriteAllText(Descriptor("routing-policy"), descriptor.ToJsonString());
+        var watchPath = Path.Combine(_root, ".orchestrator", "jobs");
+        var cardPath = Path.Combine(watchPath, TaskStates.HumanReview, "source");
+        Directory.CreateDirectory(cardPath);
+        File.WriteAllText(Path.Combine(cardPath, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "source", key = "PRJ-12", title = "Source concept", state = TaskStates.HumanReview,
+            mode = TaskModes.Concept, cliType = "codex", model = "gpt-5-codex",
+        }));
+        File.WriteAllText(Path.Combine(cardPath, "prompt.md"), "# Source concept");
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = Path.Combine(_root, ".orchestrator"),
+                    ["WatchPaths:0:Name"] = "Project",
+                    ["WatchPaths:0:RootPath"] = _root,
+                    ["WatchPaths:0:Path"] = watchPath,
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                // The source card exists, but no runner has initialized for a continue.
+                services.RemoveAll<IHostedService>();
+            });
+        });
+        var fingerprint = factory.Services.GetRequiredService<WorkbenchCatalogueService>()
+            .Read("Project", "routing-policy")!.Fingerprint;
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var response = await http.PostAsJsonAsync(
+            "/api/projects/Project/workbenches/routing-policy/decisions/confirm",
+            ReworkConfirm(fingerprint, "claude", "claude-opus-5", "high"));
+        response.EnsureSuccessStatusCode();
+        using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("failed", result.RootElement.GetProperty("revisionRound").GetProperty("status").GetString());
+        using var written = JsonDocument.Parse(File.ReadAllText(Descriptor("routing-policy")));
+        var receipt = written.RootElement.GetProperty("decision");
+        Assert.Equal("claude", receipt.GetProperty("cliType").GetString());
+        Assert.False(receipt.TryGetProperty("routeChangedFrom", out _));
+        using var card = JsonDocument.Parse(File.ReadAllText(Path.Combine(cardPath, "task.json")));
+        Assert.Equal("codex", card.RootElement.GetProperty("cliType").GetString());
     }
 
     private static ConfirmWorkbenchDecisionRequest ReworkConfirm(

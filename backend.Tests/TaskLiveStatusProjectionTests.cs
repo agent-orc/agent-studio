@@ -226,6 +226,27 @@ public sealed class TaskLiveStatusProjectionTests
     }
 
     [Fact]
+    public void ReviewUnclaimable_RefusalRecordedBeforeRecovery_RestoresQueuePosition()
+    {
+        var refusal = new ReviewUnclaimableObservation(
+            "review_codex", "AGT-3649", "kori-review-01-runner", ["provider-auth:codex"],
+            Now.AddMinutes(-1), AgentStudio.TaskServer.Contracts.ReviewClaimEmptyReasons.UnclaimablePlanRequirements);
+        var registered = new HashSet<string>(["provider-auth:codex"], StringComparer.Ordinal);
+        var admitted = new HashSet<string>(["provider-auth:codex"], StringComparer.Ordinal);
+        var unclaimable = TaskLiveStatusProjection.ReviewUnclaimable(
+            refusal, "kori-review-01", [], registered, admitted);
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Pending, null, "normal", Now.AddMinutes(-20), "review_codex");
+
+        Assert.Null(unclaimable);
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", 2), null, null, Now,
+            unclaimable: unclaimable)!;
+        Assert.Equal(2, queue.Position);
+        Assert.Null(queue.Unclaimable);
+    }
+
+    [Fact]
     public void Queue_ReportsAndClearsExistingReviewSlotPosition()
     {
         var queue = new AgentStudio.Runner.AutoReviewPostProcessingQueue();

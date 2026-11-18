@@ -35,6 +35,10 @@ export interface ProjectDeploymentSummary {
   pendingCommits: ProjectDeploymentCommit[];
   targets: ProjectDeploymentTarget[];
   defaultEvidenceRun: DeploymentTestRunReference | null;
+  /** Studio's own deploy-stable history applies to this repository (F19). */
+  stableBaseline?: boolean;
+  /** Deploy steps of a schema 2 project.yml; those run from Deploy. */
+  pipelineDeploySteps?: number;
 }
 
 export interface ProjectEnvironmentDeclaration {

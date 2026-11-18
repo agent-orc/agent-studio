@@ -19,7 +19,8 @@ public sealed record AcceptanceReadinessItem(
     string? Concern,
     string? Missing,
     string? LatestResultRef,
-    AcceptanceReadinessRound? Round);
+    AcceptanceReadinessRound? Round,
+    bool OverrideAllowed);
 
 /// <summary>The prefilled continue round for a refused card; nothing is sent until the owner confirms.</summary>
 public sealed record AcceptanceReadinessRound(string Prompt, string? BaseRef);
@@ -78,7 +79,8 @@ public sealed class AcceptanceReadinessService(
         return new AcceptanceReadinessItem(
             card.Id, card.TaskKey, card.Key, card.ProjectName, card.Title,
             verdict.Readiness, verdict.Headline, verdict.Reason, admission.Stage, admission.Message,
-            verdict.Aspect, verdict.ContentStatus, verdict.Concern, verdict.Missing, latestRef, round);
+            verdict.Aspect, verdict.ContentStatus, verdict.Concern, verdict.Missing, latestRef, round,
+            admission.OverrideAllowed);
     }
 
     /// <summary>The ref a continue round without a named base starts from (AGT-3483).</summary>

@@ -12,7 +12,7 @@
     <button type="button" class="ps-settings__link" data-testid="project-settings-review-aspects" (click)="openReviewAspects()">Review aspects in Deploy / Run steps</button>
   </header>
   <section class="ps-settings__section" aria-label="Project basics">
-    <app-project-basics-card [projectName]="projectName()" />
+    <app-project-basics-card [projectName]="projectName()" (pathsSaved)="reloadBuildProfileGate()" />
     @if (buildProfileGate(); as gate) {
       @if (!gate.gateApplicable || gate.verifyDefinition?.state === 'checkout-missing') {
         <app-project-build-profile-notice [summary]="gate" />

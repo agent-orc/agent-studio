@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
 import { formatCompactTokens, formatCompactUsd } from '../../../tokens/token-number-format.util';
 import type { TokenAnalysisCardDetail } from '../../models/token-analysis.model';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
@@ -16,7 +16,7 @@ import { eventShares, formatDuration, kindColor, kindLabel, kindTotals } from '.
 @Component({
   selector: 'app-card-token-drilldown',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './card-token-drilldown.html',
   styleUrl: './card-token-drilldown.scss',
@@ -29,6 +29,7 @@ export class CardTokenDrilldownComponent {
   readonly retry = output<void>();
 
   readonly fmt = formatCompactTokens;
+  readonly when = (at: string) => formatZonedWithUtc(at, browserTimeZone()) ?? at;
   readonly usd = formatCompactUsd;
   readonly kindLabel = kindLabel;
   readonly kindColor = kindColor;
