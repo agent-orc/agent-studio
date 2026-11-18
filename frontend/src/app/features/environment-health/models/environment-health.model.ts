@@ -65,6 +65,8 @@ export interface EnvironmentHealth {
   checks: EnvironmentHealthCheck[];
   /** Why the environment cannot be watched, for example a broken declaration file. */
   error: string | null;
+  /** Board key of the open incident's card (NS-2); `currentIncident.cardId` is its folder slug. */
+  incidentCardKey?: string | null;
 }
 
 export interface EnvironmentHealthResponse {

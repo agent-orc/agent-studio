@@ -15,6 +15,7 @@ import type { RollbackOffer } from '../../state/rollback-offer.model';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
+import { PrincipalNamePipe } from '../../../../pipes/principal-name.pipe';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
@@ -24,7 +25,7 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent, RollbackOfferComponent, PendingButtonDirective, DeploySecretGapsComponent],
+  imports: [PrincipalNamePipe, DatePipe, StatusIndicatorComponent, RollbackOfferComponent, PendingButtonDirective, DeploySecretGapsComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
