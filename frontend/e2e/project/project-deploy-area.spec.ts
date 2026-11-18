@@ -381,6 +381,69 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'runbooks-tab-dark');
   });
 
+  test('names people in deploy history, the run drawer, and runbooks by display name (the playthrough)', async ({ page }) => {
+    test.setTimeout(240_000);
+    const OWNER = 'usr_ecaff70110';
+    const MAINTAINER = 'usr_0b1d2c3e4f';
+    const deployments = deployDeploymentsFixture().map(item => item.id === 'run-a-production'
+      ? { ...item, requestedBy: MAINTAINER, approvedBy: OWNER } : item);
+    await openDeploy(page, fullMocks({ deployments }), 90_000);
+    const person = (id: string, displayName: string) => ({
+      id, displayName, emoji: null, colour: null, kind: 'human', registeredAt: '2026-10-01T00:00:00Z',
+      lastSeenAt: null, tokenBudgetMonthly: null, notes: null,
+    });
+    await page.route('**/api/clients/', route => route.fulfill(json([person(OWNER, 'Ada Owner'), person(MAINTAINER, 'Sam Maintainer')])));
+    await page.route(`**${DEPLOY}/runbooks`, route => route.fulfill(json([
+      { name: 'restart', steps: ['restart-container'], environments: [] },
+    ])));
+    await page.route(`**${DEPLOY}/runbooks/runs?*`, route => route.fulfill(json([
+      { id: 'runbook-1', name: 'restart', state: 'succeeded', requestedBy: MAINTAINER, approvedBy: OWNER, steps: [] },
+    ])));
+    await page.route(url => url.pathname === `${DEPLOY}/secret-readiness`, route => route.fulfill(json({
+      project: PROJECT, releaseId: null, environments: [],
+    })));
+    await page.route(`**${DEPLOY}/operations`, route => route.fulfill(json({
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: 0, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    })));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 60_000 });
+
+    await page.getByTestId('deploy-tab-history').click();
+    await expect(page.getByTestId('deploy-run-row-run-a-production')).toContainText('Sam Maintainer');
+    await page.getByTestId('deploy-run-open-run-a-production').click();
+    const drawer = page.getByTestId('deploy-run-drawer');
+    await expect(drawer.getByTestId('deploy-run-approval')).toHaveText('Approved by Ada Owner');
+    await expect(drawer).not.toContainText('usr_');
+    await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+    for (const theme of ['light', 'dark'] as const) {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await setTheme(page, theme);
+      await page.screenshot({ path: path.join(results, `deploy-run-display-names-1280-${theme}--mocked.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: path.join(results, 'deploy-run-display-names-390--mocked.png') });
+    await page.keyboard.press('Escape');
+    await expect(drawer).toHaveCount(0);
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.getByTestId('deploy-tab-runbooks').click();
+    const runbooks = page.getByTestId('project-deploy-area').getByTestId('environment-runbooks').first();
+    await expect(runbooks).toContainText('requested by Sam Maintainer');
+    await expect(runbooks).toContainText('approved by Ada Owner');
+    await expect(runbooks).not.toContainText('usr_');
+    await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `runbooks-display-names-1280-${theme}`);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setTheme(page, 'light');
+    await capture(page, 'runbooks-display-names-390');
+  });
+
   test('Operations rail opens an older release on a fresh Deploy mount without fetching the first page', async ({ page }) => {
     const base = deployReleasesFixture()[0];
     const releases = Array.from({ length: 40 }, (_, index) => ({ ...base,

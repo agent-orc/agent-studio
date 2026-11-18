@@ -19,6 +19,8 @@ import {
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { PrincipalNamePipe, principalName } from '../../../../pipes/principal-name.pipe';
+import { ClientService } from '../../../../services/client.service';
 
 export interface DeployRunActionState {
   busy: DeployRunAction | null;
@@ -33,13 +35,14 @@ const ACTION_LABEL: Record<DeployRunAction, string> = {
 @Component({
   selector: 'app-deploy-run-drawer',
   standalone: true,
-  imports: [DatePipe, SidesheetComponent, StatusIndicatorComponent, DeploySecretGapsComponent],
+  imports: [PrincipalNamePipe, DatePipe, SidesheetComponent, StatusIndicatorComponent, DeploySecretGapsComponent],
   templateUrl: './deploy-run-drawer.html',
   styleUrl: './deploy-run-drawer.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DeployRunDrawerComponent {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly clients = inject(ClientService);
   private lastRunId: string | null = null;
   readonly run = input.required<DeployRun>();
   readonly log = input.required<DeployPanel<DeploymentLogLine[]>>();
@@ -57,7 +60,7 @@ export class DeployRunDrawerComponent {
   readonly duration = computed(() => formatDuration(this.run().startedAt, this.run().finishedAt));
   readonly approval = computed<{ tone: StatusTone; label: string }>(() => {
     const run = this.run();
-    if (run.approvedBy) return { tone: 'success', label: `Approved by ${run.approvedBy}` };
+    if (run.approvedBy) return { tone: 'success', label: `Approved by ${principalName(this.clients, run.approvedBy)}` };
     if (run.state === 'awaiting-approval') return { tone: 'warning', label: 'Waiting for an Owner or Maintainer' };
     return { tone: 'neutral', label: run.steps.some(step => step.name === 'approval') ? 'Not approved' : 'Not required' };
   });

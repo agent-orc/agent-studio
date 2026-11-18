@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, signal } fro
 import { DatePipe } from '@angular/common';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { EnvironmentHealthService } from '../../services/environment-health.service';
+import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import {
   HEALTH_STATUS_LABEL, certificateDaysLeft, latencyLabel, uptimeLabel,
   type EnvironmentHealthCheck, type EnvironmentHealthResponse, type HealthStatus,
@@ -32,6 +33,7 @@ export function healthStatusTone(status: string): StatusTone {
 })
 export class EnvironmentHealthPanelComponent {
   private readonly health = inject(EnvironmentHealthService);
+  private readonly references = inject(TaskReferenceNavigationService);
 
   readonly projectName = input.required<string>();
   readonly snapshot = signal<EnvironmentHealthResponse | null>(null);
@@ -47,6 +49,11 @@ export class EnvironmentHealthPanelComponent {
 
   refresh(): void {
     this.load(this.projectName());
+  }
+
+  /** The incident card by the key the board shows (NS-2). */
+  openCard(card: string): void {
+    this.references.openReferenceOrNotify(card);
   }
 
   target(check: EnvironmentHealthCheck): string {
