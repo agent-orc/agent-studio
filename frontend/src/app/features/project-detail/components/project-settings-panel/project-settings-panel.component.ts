@@ -3,6 +3,7 @@ import {
   Component,
   OnInit,
   computed,
+  effect,
   inject,
   input,
   signal,
@@ -17,6 +18,7 @@ import { QuotaApiService, type ProjectCliQuotaWaitPolicy } from '../../../../fea
 // Service-only direct import avoids evaluating the heavy shell component barrel,
 // which closes a runtime cycle when Project Settings mounts in Project Hub.
 import { WorkspaceOverlaysService } from '../../../shell/state/workspace-overlays.service';
+import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import type { CliType } from '../../../../models/task.model';
 import { CLI_TYPES } from '../../../../models/task.model';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
@@ -42,49 +44,28 @@ import { AUTONOMY_STOPS } from '../autonomy-slider/autonomy-slider';
 // By path, not the barrel: the editor renders only inside @defer (initial bundle budget).
 import { WorkspaceQuotaComponent } from '../../../quota/components/workspace-quota/workspace-quota.component';
 import { QualityStudioConnectionSettingsComponent } from '../quality-studio-connection-settings/quality-studio-connection-settings.component';
-
+import { ServerCheckoutStore } from '../../../server-checkout';
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';
 const STORAGE_DEFAULT_THINKING_PREFIX = 'defaultThinkingLevel:';
-
 interface CapSummaryRow {
   cliType: CliType;
   label: string;
   icon: string;
   windows: { windowLabel: string; capPct: number }[];
 }
-
 interface ProjectSummaryLite {
   id: string;
   displayName: string;
   workspaceId: string;
   wikiSourceBranch?: string | null;
 }
-
 interface WorkspaceListItemLite {
   id: string;
   displayName: string;
   projects?: ProjectSummaryLite[];
 }
-
-/**
- * Project-level Settings panel. Mirrors the global Workspace-settings home
- * ("Dach"): a header + a "Workspace defaults" card section that surfaces the
- * global default agent (CLI + model) and the per-CLI usage caps, each labelled
- * as inherited from the global Workspace settings.
- *
- * They render read-only with a deep-link affordance into the matching global
- * Workspace-settings section (`overview` for the default-agent fallback,
- * `caps` for usage caps). Project basics owns the editable per-project coding
- * agent override. Runner mode, orchestrator model, auto-commit, and auto-push
- * keep living in the project-specific controls below.
- *
- * Nav-rebuild step 2 (T5b) relocated three formerly-embedded sections to their
- * own project rails — lane sort → Workflow, pipeline steps → Pipeline, CLI
- * permission modes → workspace Admin / CLI & Modelle — so Settings shrinks to
- * the rest. The controls are unchanged (Funktions-Diff = 0); only the mount
- * location moved.
- */
+/** Project settings, including the live build-profile gate beside Project basics. */
 @Component({
   selector: 'app-project-settings-panel',
   standalone: true,
@@ -114,10 +95,15 @@ export class ProjectSettingsPanelComponent implements OnInit {
   private readonly clientDefaults = inject(ClientDefaultsService);
   private readonly quotaApi = inject(QuotaApiService);
   private readonly overlays = inject(WorkspaceOverlaysService);
+  private readonly tabs = inject(StudioTabStateService);
+  openReviewAspects(): void {
+    this.tabs.open({ kind: 'hub', projectName: this.projectName(), section: 'pipeline' });
+  }
   private readonly http = inject(HttpClient);
+  private readonly serverCheckout = inject(ServerCheckoutStore);
+  private readyCheckoutId: string | null = null;
   private readonly cliCatalog = inject(CliCatalogStore);
   private readonly workspaceOrchestrator = inject(WorkspaceOrchestratorSettingsService);
-
   // Per-project max parallelism lives in ParallelExecutionCardComponent: it is
   // deprecated for remote execution (host capacity is the source) but still
   // governs local runs, so the card renders only for local projects.
@@ -129,7 +115,16 @@ export class ProjectSettingsPanelComponent implements OnInit {
   readonly projectQuotaWait = signal<ProjectCliQuotaWaitPolicy | null>(null);
   readonly quotaWaitSaving = signal(false);
   readonly buildProfileGate = signal<BuildProfileGateSummary | null>(null);
-
+  constructor() {
+    effect(() => {
+      const id = this.projectId();
+      const ready = id && this.serverCheckout.statusFor(id)?.state === 'ready';
+      if (ready && this.readyCheckoutId !== id) {
+        this.readyCheckoutId = id;
+        this.reloadBuildProfileGate();
+      }
+    });
+  }
   // --- AGT-1812: editable workspace-default orchestrator settings ---------
   /** The workspace that owns this project; the tier these defaults write to. */
   readonly workspaceId = signal<string | null>(null);
@@ -205,15 +200,19 @@ export class ProjectSettingsPanelComponent implements OnInit {
       error: () => { /* keep the default-cap fallback */ },
     });
     this.loadWorkspaceOrchestratorSettings();
+    this.reloadBuildProfileGate();
+    this.quotaApi.getProjectQuotaWaitPolicy(this.projectName()).subscribe({
+      next: policy => this.projectQuotaWait.set(policy),
+      error: () => { /* card keeps its safe inherited fallback */ },
+    });
+  }
+
+  reloadBuildProfileGate(): void {
     this.http.get<BuildProfileGateSummary>(
       `/api/projects/${encodeURIComponent(this.projectName())}/build-profile`,
     ).subscribe({
       next: summary => this.buildProfileGate.set(summary),
       error: () => { /* Do not infer an empty gate when project discovery failed. */ },
-    });
-    this.quotaApi.getProjectQuotaWaitPolicy(this.projectName()).subscribe({
-      next: policy => this.projectQuotaWait.set(policy),
-      error: () => { /* card keeps its safe inherited fallback */ },
     });
   }
 

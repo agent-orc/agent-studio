@@ -7,12 +7,12 @@
   </header>
   @if (error(); as problem) { <p role="alert">{{ problem }}</p> }
   @if (snapshot(); as quota) {
-    <p>Current UTC week ends {{ quota.weekEndUtc | slice:0:10 }}. {{ quota.message }}</p>
+    <p data-testid="workspace-quota-week-period">Admission week: {{ quota.weekStartUtc | date:'d MMM y, HH:mm':'UTC' }} UTC to {{ quota.weekEndUtc | date:'d MMM y, HH:mm':'UTC' }} UTC. {{ quota.message }}</p>
     @if (quota.limits && !quota.meterComplete) { <p role="status" data-testid="workspace-quota-meter">Some usage records are unavailable. Admission waits for the meter.</p> }
     <div class="workspace-quota__metrics">
       <div><strong>{{ quota.usage.modelTokens | number }}</strong> tokens used
         @if (quota.limits?.modelTokensPerWeek !== null && quota.limits?.modelTokensPerWeek !== undefined) { / {{ quota.limits?.modelTokensPerWeek | number }} limit, {{ quota.remaining.modelTokens | number }} left }
-        <small>{{ quota.usage.modelCostUsd | currency:'USD' }} at catalogue prices</small></div>
+        <small data-testid="workspace-quota-cost">{{ quota.usage.modelCostUsd | currency:'USD' }} @if (quota.usage.unpricedRuns) { priced subtotal + <a href="#/workspace/settings/tokens">{{ quota.usage.unpricedRuns }} {{ quota.usage.unpricedRuns === 1 ? 'run' : 'runs' }} without price</a> } @else { at catalogue prices }</small></div>
       <div><strong>{{ quota.usage.computeCoreHours | number:'1.0-2' }}</strong> core hours used
         @if (quota.limits?.computeCoreHoursPerWeek !== null && quota.limits?.computeCoreHoursPerWeek !== undefined) { / {{ quota.limits?.computeCoreHoursPerWeek }} limit, {{ quota.remaining.computeCoreHours | number:'1.0-2' }} left }</div>
       <div><strong>{{ quota.usage.hostingSlots }}</strong> running environments

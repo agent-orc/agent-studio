@@ -40,7 +40,7 @@ import {
   type ProjectRailItem,
 } from '../project-detail/components/project-shell/project-shell.config';
 import { BoardFiltersService, flattenGrouped } from '../board';
-import { ConfirmDialogService } from '../../services/confirm-dialog.service';
+import { ProjectLifecycleDialogService } from '../../services/project-lifecycle-dialog.service';
 import { NotificationService } from '../../services/notification.service';
 import { copyTextToClipboard } from '../../services/clipboard.util';
 import { WorkspaceManagerService, ProjectDragDropService, WorkspaceOverlaysService, UiPreferencesService } from '../shell';
@@ -51,7 +51,8 @@ import { resolveActiveActivityKey } from './components/studio-activity-bar/studi
 import { ExplorerWorkspaceTreeComponent, type ExplorerProjectSurface } from './components/explorer-workspace-tree/explorer-workspace-tree.component';
 import {
   deriveProjectAutoPickupByName,
-  type ProjectAutoPickupIndicator,
+  projectRunnerMode,
+  type ProjectAutoPickupIndicator, type ProjectPickupMode,
 } from './studio-shell.auto-pickup';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from '../../components/menu';
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -80,9 +81,9 @@ import { WorkspaceDeploymentDashboardComponent } from '../deployments';
 import { TaskDefaultsControlComponent } from './components/task-defaults-control/task-defaults-control';
 import { DevelopStateIndicatorComponent } from './components/develop-state-indicator/develop-state-indicator.component';
 import { AttentionControlComponent } from './components/attention-control/attention-control';
+import { StudioTabOverflowComponent } from './components/studio-tab-overflow/studio-tab-overflow';
 import type { MagazineChild } from '../magazine/magazine-view/magazine-view';
 import { cliColorFor, normalizeStorage } from './studio-shell.utils';
-
 /**
  * Top-level "Agent Software Studio" shell — the VS-Code-inspired chrome
  * that replaces the legacy single-pane layout. Behind the `vsCodeLayout`
@@ -98,7 +99,7 @@ import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioKeyboardEntryComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
+  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioKeyboardEntryComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent, StudioTabOverflowComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -112,27 +113,23 @@ export class StudioShellComponent {
   private readonly jobService = inject(TaskService);
   readonly clientService = inject(ClientService);
   /**
-   * Backend-known project names (from the WatchPaths config). The
-   * shell uses this so projects with zero working-set jobs still
-   * appear in the picker / explorer. Defaults to [] so legacy hosts
-   * that don't pass it keep their job-derived behaviour.
+   * Backend-known project names (from the WatchPaths config), so projects with zero working-set
+   * jobs still appear in the picker / explorer. Defaults to [] so legacy hosts that don't pass
+   * it keep their job-derived behaviour.
    */
   readonly knownProjectNames = input<readonly string[]>([]);
+  readonly pickupModes = input<Readonly<Record<string, ProjectPickupMode>>>({});
 
   /** Backend WatchPaths feeding the rename-stable `projectStorageByName` join
    *  (a row's storage == registry `storageLocation`, stable across rename). */
   readonly projectWatchPaths = input<readonly WatchPathEntry[]>([]);
-
   /**
-   * Host-computed badge for the Filters activity-bar item. The host owns
-   * the distinction between real filters and view/scope state, while this
-   * shell owns the rail button that renders the count.
+   * Host-computed badge for the Filters activity-bar item. The host owns the distinction between
+   * real filters and view/scope state; this shell owns the rail button that renders the count.
    */
   readonly filterBadgeCount = input<number | null>(null);
-
   /** Emitted after a delete so the host re-pulls WatchPaths + refreshes. */
   readonly projectDeleted = output<void>();
-
   private readonly featureFlags = inject(FeatureFlagsService);
   private readonly tabState = inject(StudioTabStateService);
   private readonly projectHubUrls = inject(ProjectHubUrlService);
@@ -142,7 +139,7 @@ export class StudioShellComponent {
   readonly boardFilters = inject(BoardFiltersService);
   readonly explorerSections = inject(ExplorerSectionsService);
   private readonly explorerWorkbenchState = inject(ExplorerWorkbenchStateService);
-  private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly projectLifecycleDialogs = inject(ProjectLifecycleDialogService);
   private readonly notifications = inject(NotificationService);
   private readonly workspaceManager = inject(WorkspaceManagerService);
   private readonly workspaceOverlays = inject(WorkspaceOverlaysService);
@@ -159,9 +156,9 @@ export class StudioShellComponent {
     if (scope.startsWith('workspace:')) return this.registryProjects().filter(project => project.workspaceId === scope.slice(10)).map(project => ({ scope: `project:${project.id}`, label: project.displayName }));
     return [];
   }
-
   readonly tabs = this.tabState.tabs;
   readonly activeKey = this.tabState.activeKey;
+  readonly tabOverflowEntries = computed(() => this.tabs().map(tab => ({ key: this.tabKey(tab), label: this.tabLabel(tab) })));
   readonly activeTab = this.tabState.activeTab;
   readonly structureComponent = signal<Type<unknown> | null>(null);
   readonly magazineComponent = signal<Type<unknown> | null>(null);
@@ -188,19 +185,15 @@ export class StudioShellComponent {
     event.preventDefault();
     this.projectHubUrls.navigateDocumentHistory(event.key === 'ArrowLeft' ? -1 : 1);
   }
-
   /** Keep every newly activated editor tab inside the horizontally scrolling
    *  strip without moving the page or disturbing an already visible tab. */
   private readonly keepActiveTabVisibleFx = effect(() => this.keepActiveTabVisible('smooth'));
-
   @HostListener('window:resize')
   onViewportResize(): void { this.keepActiveTabVisible('auto'); }
-
   private keepActiveTabVisible(behavior: ScrollBehavior): void {
     const activeKey = this.activeKey();
     const tabs = this.tabs();
     if (tabs.length <= 1 || !activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
-
     const activeElement = this.tabElements()
       .find(ref => ref.nativeElement.dataset['tabKey'] === activeKey)
       ?.nativeElement;
@@ -276,7 +269,6 @@ export class StudioShellComponent {
   readonly openWorkspaceScreenshots = output<void>();
   readonly openOrchFeed = output<void>();
   readonly openOrchSettings = output<void>();
-  /** Emits when the user toggles the auto-pickup mode for a project. */
   readonly toggleAuto = output<string>();
   readonly headerCockpit = new StudioHeaderCockpit(this);
 
@@ -299,6 +291,11 @@ export class StudioShellComponent {
     this.closePickerMenu();
     if (name === null) { this.openBoard('__all__'); return; }
     if (openHub) { this.openHub(name); return; }
+    const active = this.activeTab();
+    if (active?.kind === 'hub') {
+      this.tabState.open({ kind: 'hub', projectName: name, section: active.section });
+      return;
+    }
     this.openBoard(name);
   }
 
@@ -351,17 +348,16 @@ export class StudioShellComponent {
     this.projectRows().reduce((sum, r) => sum + r.totalJobs, 0)
   );
 
-  /** Reactive map of project name → current runner mode. */
   autoModeFor(name: string): string {
-    return this.jobService.runnerStatus().projects[name]?.mode ?? 'manual';
+    return projectRunnerMode(name, this.pickupModes(), this.jobService.runnerStatus().projects);
   }
 
-  /** Project name to effective auto-pickup mode plus admission-gate reason. */
   readonly projectAutoPickupByName = computed<ReadonlyMap<string, ProjectAutoPickupIndicator>>(() =>
     deriveProjectAutoPickupByName(
       this.jobService.runnerStatus().projects,
       this.jobService.projectPickupGates(),
       this.projectRows(),
+      this.pickupModes(),
     ),
   );
 
@@ -706,6 +702,10 @@ export class StudioShellComponent {
 
   /** Open or focus a Project URL preview as a shell tab. */
   openUrlPreview(e: { projectName: string; urlId: string }): void {
+    if (e.urlId === 'repo') {
+      this.tabState.open({ kind: 'hub', projectName: e.projectName, section: 'git' });
+      return;
+    }
     this.tabState.open({ kind: 'url-preview', projectName: e.projectName, urlId: e.urlId });
   }
 
@@ -878,30 +878,7 @@ export class StudioShellComponent {
    */
   async onTreeDeleteProject(e: { projectId: string; displayName: string; shortCode: string | null }): Promise<void> {
     const label = e.displayName || e.projectId;
-    const stageOne = await this.confirmDialog.confirm({
-      title: 'Delete this project?',
-      message: 'This permanently deletes the project and all of its tasks from disk. This cannot be undone.',
-      detail: `${label} (${e.projectId})`,
-      confirmLabel: 'Continue',
-      cancelLabel: 'Cancel',
-      kind: 'danger',
-    });
-    if (!stageOne) return;
-
-    const typedValues = e.shortCode ? [e.displayName, e.shortCode] : [e.displayName];
-    const hint = e.shortCode
-      ? `Type the project name "${e.displayName}" or its code "${e.shortCode}" to confirm.`
-      : `Type the project name "${e.displayName}" to confirm.`;
-    const stageTwo = await this.confirmDialog.confirm({
-      title: 'Confirm permanent deletion',
-      message: 'Last step. Re-type the project to delete it and its entire storage folder.',
-      requireTypedValues: typedValues,
-      requireTypedPrompt: hint,
-      confirmLabel: 'Delete project',
-      cancelLabel: 'Cancel',
-      kind: 'danger',
-    });
-    if (!stageTwo) return;
+    if (!await this.projectLifecycleDialogs.confirmDelete(e)) return;
 
     this.registryProjectBusyId.set(e.projectId);
     this.jobService.deleteRegistryProject(e.projectId).subscribe({

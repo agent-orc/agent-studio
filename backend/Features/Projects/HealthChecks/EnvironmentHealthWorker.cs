@@ -1,8 +1,11 @@
 namespace AgentStudio.Projects;
 
-/// <summary>Ticks <see cref="EnvironmentHealthService.RunDueAsync"/>; each check keeps its own interval.</summary>
-public sealed class EnvironmentHealthWorker(EnvironmentHealthService health, IConfiguration configuration,
-    TimeProvider clock, ILogger<EnvironmentHealthWorker> logger) : BackgroundService
+/// <summary>
+/// Ticks <see cref="EnvironmentHealthService.RunDueAsync"/>, where each check keeps its own interval,
+/// then the managed database backup and volume alerts (AGT-3878).
+/// </summary>
+public sealed class EnvironmentHealthWorker(EnvironmentHealthService health, ManagedDatabaseAlerts databaseAlerts,
+    IConfiguration configuration, TimeProvider clock, ILogger<EnvironmentHealthWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -35,6 +38,14 @@ public sealed class EnvironmentHealthWorker(EnvironmentHealthService health, ICo
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             logger.LogWarning(ex, "environment-health tick failed; the next tick retries");
+        }
+        try
+        {
+            databaseAlerts.Run();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "managed-database alert tick failed; the next tick retries");
         }
     }
 }

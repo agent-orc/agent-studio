@@ -64,7 +64,7 @@
           @if (gateInfrastructure()) {
             <button type="button" class="escalation__action escalation__action--primary"
               data-testid="escalation-action-retry-gate"
-              [disabled]="mutationsBlocked() || gate.action() !== null"
+              [disabled]="mutationsBlocked() || gate.action() !== null || gate.pending()"
               [appPendingButton]="gate.action() === 'retry'" pendingLabel="Retrying gate…"
               (click)="gate.retry()">Retry gate</button>
             <button type="button" class="escalation__action escalation__action--secondary"
@@ -94,6 +94,7 @@
           }
         </div>
         @if (gate.message(); as message) { <p role="status" data-testid="gate-infrastructure-outcome">{{ message }}</p> }
+        <app-gate-infrastructure-retry-status [info]="detail().info" [requested]="gate.requested()" />
         @if (gate.error(); as message) { <p role="alert" data-testid="gate-infrastructure-error">{{ message }}</p> }
         @if (reviewRetryMessage(); as message) { <p role="status" data-testid="review-retry-message">{{ message }}</p> }
       </div>
@@ -210,11 +211,14 @@
               </label>
             }
           </div>
+          @if (codeReviewsLoaded() && v.gateItems.length === 0) {
+            <p data-testid="reissue-no-findings">No findings are available. Add an owner note to tell the next agent what to address. The original task is included.</p>
+          }
         } @else {
           <p>Completion needs a current content verdict. Record why you are accepting this delivery despite the review gap.</p>
         }
         <label class="escalation-confirm__note" for="escalation-owner-note">
-          {{ mode === 'reissue' ? 'Owner note (optional)' : 'Reason (at least 8 characters)' }}
+          {{ mode === 'reissue' ? reissueNoteLabel() : 'Reason (at least 8 characters)' }}
         </label>
         <textarea id="escalation-owner-note" data-testid="escalation-owner-note" rows="3" maxlength="2000"
           [value]="ownerNote()" (input)="updateOwnerNote($event)"></textarea>

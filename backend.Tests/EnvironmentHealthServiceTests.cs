@@ -6,6 +6,8 @@ using AgentStudio.Registry;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.Deploy;
+using AgentStudio.Telemetry;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -43,6 +45,152 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Null(environment.CurrentIncident);
         Assert.Equal(EnvironmentHealthService.ProbeOrigin, fixture.Service.Overview().ProbeOrigin);
         Assert.Empty(fixture.Cards());
+    }
+
+    [Fact]
+    public async Task Production_without_telemetry_is_not_observed_even_when_health_probe_succeeds()
+    {
+        var fixture = Build(extraDeclaration: Production(), withTelemetry: true);
+        _target.Respond(HttpStatusCode.OK);
+        await fixture.Service.RunDueAsync();
+
+        var production = fixture.Service.Read(Project)!.Environments.Single(item => item.EnvironmentId == "production");
+        Assert.Equal("not-observed", production.Status);
+        Assert.Equal(4, production.Checks.Count(item => item.Kind == "telemetry" && item.Status == "not-observed"));
+        Assert.Empty(fixture.Cards());
+    }
+
+    [Theory]
+    [InlineData("5xx-rate")]
+    [InlineData("latency-p95")]
+    [InlineData("storage-usage")]
+    [InlineData("restarts")]
+    public async Task Telemetry_rule_opens_one_environment_incident_and_recovers_after_two_good_evaluations(string rule)
+    {
+        var fixture = Build(extraDeclaration: Production(), withTelemetry: true);
+        _target.Respond(HttpStatusCode.OK);
+        WriteSignal(fixture, rule, firing: true);
+        await fixture.Service.RunDueAsync();
+
+        var production = fixture.Service.Read(Project)!.Environments.Single(item => item.EnvironmentId == "production");
+        Assert.Equal("down", production.Status);
+        Assert.Equal("telemetry-" + rule, production.CurrentIncident!.CheckId);
+        Assert.InRange(_clock.GetUtcNow() - production.CurrentIncident.StartedAt,
+            TimeSpan.Zero, TimeSpan.FromMinutes(5));
+        Assert.Contains(rule, production.CurrentIncident.FirstError);
+        Assert.Contains("over", production.CurrentIncident.FirstError);
+        var card = Assert.Single(fixture.Cards());
+        Assert.Contains(rule, File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md")));
+        Assert.Single(fixture.Activity().Where(item => item.Topic == OrchestratorLogTopics.EnvironmentIncidentOpened));
+
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        WriteSignal(fixture, rule, firing: false);
+        await fixture.Service.RunDueAsync();
+        Assert.NotNull(fixture.Service.Read(Project)!.Environments.Single(item => item.EnvironmentId == "production").CurrentIncident);
+        _clock.Advance(TimeSpan.FromSeconds(15));
+        WriteSignal(fixture, rule, firing: false);
+        await fixture.Service.RunDueAsync();
+        Assert.Null(fixture.Service.Read(Project)!.Environments.Single(item => item.EnvironmentId == "production").CurrentIncident);
+        Assert.Single(fixture.Cards());
+        Assert.Equal(1, fixture.Activity().Count(item => item.Topic == OrchestratorLogTopics.EnvironmentIncidentRecovered));
+    }
+
+    [Theory]
+    [InlineData("5xx-rate")]
+    [InlineData("latency-p95")]
+    [InlineData("storage-usage")]
+    [InlineData("restarts")]
+    public async Task Telemetry_rule_flapping_reuses_the_incident_and_missing_samples_do_not_recover_it(string rule)
+    {
+        var fixture = Build(extraDeclaration: Production(), withTelemetry: true);
+        _target.Respond(HttpStatusCode.OK);
+        WriteSignal(fixture, rule, firing: true);
+        await fixture.Service.RunDueAsync();
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        WriteSignal(fixture, rule, firing: false);
+        await fixture.Service.RunDueAsync();
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        WriteSignal(fixture, rule, firing: true);
+        await fixture.Service.RunDueAsync();
+        Assert.Single(fixture.Cards());
+        Assert.Single(fixture.Activity().Where(item => item.Topic == OrchestratorLogTopics.EnvironmentIncidentOpened));
+        Assert.NotNull(fixture.Service.Read(Project)!.Environments.Single(item => item.EnvironmentId == "production").CurrentIncident);
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        await fixture.Service.RunDueAsync();
+        Assert.NotNull(fixture.Service.Read(Project)!.Environments.Single(item => item.EnvironmentId == "production").CurrentIncident);
+    }
+
+    [Fact]
+    public async Task Filesystem_state_series_supply_the_default_reservation_for_the_disk_drill()
+    {
+        var fixture = Build(extraDeclaration: Production(reservation: false), withTelemetry: true);
+        _target.Respond(HttpStatusCode.OK);
+        MetricSample Gauge(string state, double bytes) => new("system.filesystem.usage", "By", MetricKind.Gauge,
+            MetricTemporality.Unspecified, TelemetryAttributes.From([
+                KeyValuePair.Create("mountpoint", "/data"), KeyValuePair.Create("state", state)]),
+            _clock.GetUtcNow().ToUnixTimeMilliseconds() * 1_000_000,
+            _clock.GetUtcNow().ToUnixTimeMilliseconds() * 1_000_000, bytes, 1, null, null);
+        fixture.Telemetry!.Write(new(Project, "production"),
+            [Gauge("used", 2_100_000_000), Gauge("free", 7_900_000_000), Gauge("reserved", 0)],
+            [], _clock.GetUtcNow());
+        await fixture.Service.RunDueAsync();
+        Assert.Null(fixture.Service.Read(Project)!.Environments
+            .Single(item => item.EnvironmentId == "production").CurrentIncident);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        fixture.Telemetry!.Write(new(Project, "production"),
+            [Gauge("used", 9_800_000_000), Gauge("free", 200_000_000), Gauge("reserved", 0)],
+            [], _clock.GetUtcNow());
+        await fixture.Service.RunDueAsync();
+        Assert.Equal("telemetry-storage-usage", fixture.Service.Read(Project)!.Environments
+            .Single(item => item.EnvironmentId == "production").CurrentIncident?.CheckId);
+    }
+
+    [Fact]
+    public async Task Four_second_504_histogram_opens_one_card_for_both_latency_and_error_rate()
+    {
+        var fixture = Build(extraDeclaration: Production(), withTelemetry: true);
+        _target.Respond(HttpStatusCode.OK);
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds() * 1_000_000;
+        var duration = new MetricSample("http.server.request.duration", "s", MetricKind.Histogram,
+            MetricTemporality.Delta, TelemetryAttributes.From([
+                KeyValuePair.Create("http.response.status_code", "504")]),
+            now, now - 1_000_000_000, 400, 100, 4, 4);
+        fixture.Telemetry!.Write(new(Project, "production"), [duration], [], _clock.GetUtcNow());
+        await fixture.Service.RunDueAsync();
+
+        var environment = fixture.Service.Read(Project)!.Environments.Single(item => item.EnvironmentId == "production");
+        Assert.Equal("down", environment.Status);
+        Assert.Equal("down", environment.Checks.Single(item => item.Id == "telemetry-5xx-rate").Status);
+        Assert.Equal("down", environment.Checks.Single(item => item.Id == "telemetry-latency-p95").Status);
+        Assert.Single(fixture.Cards());
+        Assert.Single(fixture.Activity().Where(item => item.Topic == OrchestratorLogTopics.EnvironmentIncidentOpened));
+    }
+
+    private static string Production(bool reservation = true) => $$"""
+        { "id": "production", "name": "Production", "kind": "production", "targetHostId": "prod-host",
+          "address": "http://production.example", "template": "container", "destination": "8082",
+          "healthUrl": "https://production.example/health",
+          "telemetryAlerts": { {{(reservation ? "\"storageReservationBytes\": 10000000000" : "")}} } }
+        """;
+
+    private void WriteSignal(Fixture fixture, string rule, bool firing)
+    {
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds() * 1_000_000;
+        MetricSample Sample(string name, MetricKind kind, double value, double count = 1,
+            string? status = null)
+            => new(name, kind == MetricKind.Histogram ? "s" : "1", kind, MetricTemporality.Delta,
+                status is null ? TelemetryAttributes.Empty : TelemetryAttributes.From([
+                    KeyValuePair.Create("http.response.status_code", status)]),
+                now, now - 1_000_000_000, value, count, null, null);
+        MetricSample[] points = rule switch
+        {
+            "5xx-rate" => [Sample("http.server.request.duration", MetricKind.Histogram, firing ? 400 : 10, 100,
+                firing ? "500" : "200")],
+            "latency-p95" => [Sample("http.server.request.duration.p95", MetricKind.Gauge, firing ? 4 : 0.1)],
+            "storage-usage" => [Sample("system.filesystem.usage", MetricKind.Gauge, firing ? 9_800_000_000 : 2_000_000_000)],
+            _ => [Sample("process.restart.count", MetricKind.Sum, firing ? 1 : 0)],
+        };
+        fixture.Telemetry!.Write(new(Project, "production"), points, [], _clock.GetUtcNow());
     }
 
     [Fact]
@@ -126,6 +274,16 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Contains("unexpected-status", File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md")));
         Assert.Equal(OrchestratorLogKinds.Alert, Assert.Single(fixture.Activity()).Kind);
         Assert.Equal(card.Id, fixture.Activity()[0].JobId);
+        var incidentId = fixture.Store.Load(Project).Environments["stage"].OpenIncident!.Id;
+        new DeployStore(fixture.Configuration).SaveDeployments(Project, [new DeploymentRecord
+        {
+            Id = "rollback-1", ReleaseId = "release-1", EnvironmentId = "stage",
+            State = DeploymentStates.Succeeded, Trigger = DeploymentTriggers.Rollback,
+            DeployStep = DeployStepNames.StartContainer, RequestedBy = "operator",
+            CreatedAtUtc = _clock.GetUtcNow().UtcDateTime,
+            FinishedAtUtc = _clock.GetUtcNow().UtcDateTime,
+            IncidentId = incidentId, IncidentCardId = card.Id,
+        }]);
 
         await Sequence(fixture, true, true);
 
@@ -133,8 +291,11 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Equal("up", environment.Status);
         Assert.Null(environment.CurrentIncident);
         Assert.Equal((card.Id, _clock.GetUtcNow()), (environment.LastIncident!.CardId, environment.LastIncident.EndedAt!.Value));
+        Assert.Equal(TaskStates.Completed, Assert.Single(fixture.Cards()).State);
         var comment = Assert.Single(fixture.Comments(card));
         Assert.Equal("recovered", comment.Details!["change"]);
+        Assert.Contains("rollback by operator release release-1: succeeded", comment.Summary);
+        Assert.Contains("Running release: release-1", comment.Summary);
         Assert.Equal([OrchestratorLogTopics.EnvironmentIncidentOpened, OrchestratorLogTopics.EnvironmentIncidentRecovered],
             fixture.Activity().Select(entry => entry.Topic));
         Assert.Equal(0.4, environment.Uptime24h!.Value, 6);
@@ -147,9 +308,10 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         await Sequence(fixture, false, false, false, false, false);
         var card = Assert.Single(fixture.Cards());
 
-        // A reopened incident updates the still-open card instead of creating a second one.
+        // A quick recurrence reopens the resolved card instead of creating a second one.
         await Sequence(fixture, true, true, false, false, false);
         Assert.Equal(card.Id, Assert.Single(fixture.Cards()).Id);
+        Assert.Equal(TaskStates.Backlog, Assert.Single(fixture.Cards()).State);
         Assert.Equal(["recovered", "reopened"], fixture.Comments(card).Select(item => item.Details!["change"]));
 
         // A tick that created the card but stopped before saving its id adopts the card by slug.
@@ -171,11 +333,12 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Equal(2, fixture.Cards().Count);
         Assert.Equal(lost, store.Load(Project).Environments["stage"].OpenIncident!.CardId);
 
-        // A finished card is not reused: the next incident gets its own card.
+        // After the cool-down, the next incident gets its own card.
         await Sequence(fixture, true, true);
         new TaskStateMachine(fixture.Scanner, NullLogger<TaskStateMachine>.Instance)
             .MoveJob(lost!, TaskStates.Completed, fixture.WatchPath, reason: "test: incident handled");
         Assert.Equal(TaskStates.Completed, fixture.Scanner.FindJob(lost!, fixture.WatchPath)!.State);
+        _clock.Advance(TimeSpan.FromMinutes(31));
         await Sequence(fixture, false, false, false, false);
         Assert.Equal(3, fixture.Cards().Count);
         Assert.Equal(4, fixture.Activity().Count(entry => entry.Topic == OrchestratorLogTopics.EnvironmentIncidentOpened));
@@ -589,7 +752,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     }
 
     private Fixture Build(string? checks = null, IHealthCheckProbe? probe = null, string? extraDeclaration = null,
-        string? otherDeclaration = null)
+        string? otherDeclaration = null, bool withTelemetry = false)
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", Project);
@@ -631,14 +794,20 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance, timeline: timeline);
         var activity = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
-        var alerts = new HealthAlerts(scanner, mutations, timeline, activity, _clock, NullLogger<HealthAlerts>.Instance);
+        var stateMachine = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance,
+            timeline: timeline, configuration: configuration);
+        var alerts = new HealthAlerts(scanner, mutations, timeline, activity, _clock,
+            NullLogger<HealthAlerts>.Instance, stateMachine, new AgentStudio.Deploy.DeployStore(configuration));
         var store = new HealthCheckStore(configuration);
         var logger = new CapturingLogger<EnvironmentHealthService>();
         var connector = new HealthCheckConnector();
+        var telemetryStore = withTelemetry ? new TelemetryStore(new TelemetryOptions { StoreRoot = Path.Combine(_root, "telemetry") },
+            NullLogger<TelemetryStore>.Instance) : null;
         var service = new EnvironmentHealthService(scanner, environments, store,
             probe ?? new NetworkHealthCheckProbe(new FakeHttpClients(_target), connector, _clock), alerts, configuration,
-            _clock, logger);
-        return new(service, scanner, mutations, timeline, activity, configuration, watch, store, logger, declarations);
+            _clock, logger, telemetryStore is null ? null : new TelemetryAlertReader(telemetryStore));
+        return new(service, scanner, mutations, timeline, activity, configuration, watch, store, logger, declarations,
+            telemetryStore);
     }
 
     private static string Stage(string? checks) => $$"""
@@ -649,12 +818,14 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
 
     private sealed record Fixture(EnvironmentHealthService Service, TaskScannerService Scanner,
         TaskMutationService Mutations, TimelineLog Timeline, OrchestratorLog Log, IConfiguration Configuration,
-        string WatchPath, HealthCheckStore Store, CapturingLogger<EnvironmentHealthService> Logger, string Declarations)
+        string WatchPath, HealthCheckStore Store, CapturingLogger<EnvironmentHealthService> Logger, string Declarations,
+        TelemetryStore? Telemetry)
     {
         public IReadOnlyList<TaskInfo> Cards() => Scanner.ScanAllJobs()
             .Where(card => card.Tags.Contains(HealthAlerts.Tag) || card.Id.StartsWith("health-", StringComparison.Ordinal)).ToArray();
 
-        public IReadOnlyList<TimelineEvent> Comments(TaskInfo card) => Timeline.ReadAll(card.FolderPath)
+        public IReadOnlyList<TimelineEvent> Comments(TaskInfo card) => Timeline.ReadAll(
+                Scanner.FindJob(card.Id, WatchPath)?.FolderPath ?? card.FolderPath)
             .Where(item => item.Kind == TimelineEventKinds.EnvironmentHealthUpdated).ToArray();
 
         public IReadOnlyList<OrchestratorLogEntry> Activity() => Log.Read(WatchPath);

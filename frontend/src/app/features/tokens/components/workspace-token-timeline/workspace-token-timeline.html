@@ -166,6 +166,18 @@
       </div>
     }
 
+    @if (timeline()?.oneShotSources?.length) {
+      <table class="wtt__tab" data-testid="wtt-one-shot-sources">
+        <caption>One-shot cost by source in this period, included in the totals</caption>
+        <thead><tr><th>Source</th><th class="wtt__num">Calls</th><th class="wtt__num">Tokens</th><th class="wtt__num">Cost</th></tr></thead>
+        <tbody>
+          @for (source of timeline()?.oneShotSources ?? []; track source.source) {
+            <tr><th scope="row">{{ source.source }}</th><td class="wtt__num">{{ source.calls }}</td>
+              <td class="wtt__num">{{ formatTokens(source.tokens) }}</td><td class="wtt__num">{{ formatUsd(source.costUsd) }}</td></tr>
+          }
+        </tbody>
+      </table>
+    }
     <table class="wtt__tab" data-testid="wtt-table">
       <thead>
         <tr>

@@ -304,7 +304,11 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   only when no slice was promoted. Promotion leaves the Dossier lifecycle alone.
   The Studio offers this as **Create implementation cards** on the Dossier view
   (through the Dossier's source concept card) and on the concept card's
-  Overview. The Dossier's **Start one combined task** stays the single-card path.
+  Overview. Each new card inherits the concept card's CLI, model, and thinking
+  level; missing route fields use the project CLI and model defaults, then the
+  source owner's task defaults.
+  The panel previews that route beside every slice. The Dossier's **Start one
+  combined task** stays the single-card path.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
   code-change request. The `message` names the card's mode and the two ways
@@ -820,6 +824,15 @@ registry. The Project Settings UI continues to edit runner assignment through
 the dedicated `PUT /api/projects/{projectName}/execution-runner` contract.
 Project id, source type, storage location, creation time, and the task and
 document key counters are immutable and are never accepted as update fields.
+
+Workspace Settings exposes labeled Archive, Restore, and Delete actions for
+projects, including archived projects when the archived filter is shown.
+Archive removes the project and its open cards from ordinary Explorer and
+pickup listings; restore makes them available again. Both keep task storage,
+the server checkout, and branches on origin. Delete requires an in-app
+confirmation and a typed second step. It removes project task storage and a
+Studio-owned server checkout, if present; an external checkout and origin
+branches remain. Explorer's context-menu delete uses the same confirmation.
 
 Deleting a project URL checks repository and start-rule authority before
 stopping its owned preview process. If stopping fails, the URL and its audit
@@ -1781,6 +1794,10 @@ park for a person (`operator-decision`, `agent-needs-input`,
 `needs-human-input`, a decision request, or a pending decision card). A refused
 class also carries a prefilled round: the refusal, the concern, and the card's
 latest result ref (`ContinueRoundBasePolicy`, AGT-3483).
+The answer also carries `overrideAllowed`, derived from admission facts. It is
+false for a batch-gate refusal and for a missing required research report;
+neither can be admitted by a written operator override. Acceptance next steps
+and the task toolbar offer the round for those refusals.
 
 The Human Review lane groups its cards by class and filters by All, Ready, and
 Not ready; the lane count stays the sum of what it shows. Each card names its

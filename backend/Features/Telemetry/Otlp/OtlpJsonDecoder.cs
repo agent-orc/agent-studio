@@ -27,6 +27,9 @@ internal static class OtlpJsonDecoder
     public static OtlpDecodeResult<TelemetryLogRecord> DecodeLogs(ReadOnlyMemory<byte> body, OtlpRecordFactory factory)
         => Guarded(() => DecodeLogsDocument(body, factory));
 
+    public static OtlpDecodeResult<TelemetrySpanRecord> DecodeTraces(ReadOnlyMemory<byte> body, OtlpRecordFactory factory)
+        => Guarded(() => DecodeTracesDocument(body, factory));
+
     /// <summary>
     /// <see cref="JsonElement.GetString"/> throws <see cref="InvalidOperationException"/> on an
     /// escaped lone surrogate such as <c>"\uD800"</c>; both it and a number that does not fit
@@ -72,6 +75,40 @@ internal static class OtlpJsonDecoder
             }
         }
         return factory.Logs();
+    }
+
+    private static OtlpDecodeResult<TelemetrySpanRecord> DecodeTracesDocument(ReadOnlyMemory<byte> body, OtlpRecordFactory factory)
+    {
+        using var document = Parse(body);
+        foreach (var resourceSpans in Array(document.RootElement, "resourceSpans"))
+        {
+            var resource = factory.Resource(ReadResource(resourceSpans, factory));
+            foreach (var scopeSpans in Array(resourceSpans, "scopeSpans"))
+            {
+                var scoped = WithScope(scopeSpans, resource, factory);
+                foreach (var element in Array(scopeSpans, "spans"))
+                {
+                    RequireObject(element, "span");
+                    var status = Object(element, "status");
+                    var code = status is { } value && TryProperty(value, "code", out var statusCode)
+                        ? statusCode.ToString() : "";
+                    var span = new OtlpSpanFields
+                    {
+                        TraceId = HexIdentifier(element, "traceId", 16),
+                        SpanId = HexIdentifier(element, "spanId", 8),
+                        ParentSpanId = HexIdentifier(element, "parentSpanId", 8),
+                        Name = String(element, "name"),
+                        Kind = TryProperty(element, "kind", out var kind) ? kind.ToString() : "",
+                        StartUnixNano = Nanos(element, "startTimeUnixNano"),
+                        EndUnixNano = Nanos(element, "endTimeUnixNano"),
+                        Failed = code is "2" or "STATUS_CODE_ERROR"
+                    };
+                    span.Attributes.AddRange(Attributes(element, factory));
+                    factory.AddSpan(scoped, span);
+                }
+            }
+        }
+        return factory.Spans();
     }
 
     private static JsonDocument Parse(ReadOnlyMemory<byte> body)

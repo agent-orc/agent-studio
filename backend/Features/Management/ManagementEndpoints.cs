@@ -114,13 +114,18 @@ public static class ManagementEndpoints
             // AGT-3840: each role lists the keys claims withhold from it, plus
             // the keys its refused review claims named, so an Online role that
             // cannot take the waiting work says why.
+            var pendingAttemptIds = authority.ListPendingReviewAttempts()
+                .Select(attempt => attempt.AttemptId)
+                .ToHashSet(StringComparer.Ordinal);
             return Results.Ok(registry.ListCapabilitySnapshots()
                 .Select(snapshot => authority.ListReviewDaemonRestarts(snapshot.RunnerId) is { Count: > 0 } restarts
                     ? snapshot with { ReviewRestarts = restarts }
                     : snapshot)
                 .Select(snapshot => AgentStudio.Runner.HeldCapabilityProjection.Merge(
                         registry.HeldCapabilities(snapshot.RunnerId),
-                        unclaimable.ForExecutor(snapshot.RunnerId)) is { Count: > 0 } held
+                        unclaimable.ForExecutor(snapshot.RunnerId),
+                        registry.RegisteredReviewCapabilities(snapshot.RunnerId, snapshot.InstanceId),
+                        pendingAttemptIds) is { Count: > 0 } held
                     ? snapshot with { HeldCapabilities = held }
                     : snapshot)
                 .ToArray());
@@ -140,9 +145,16 @@ public static class ManagementEndpoints
             if (string.IsNullOrEmpty(capability) || capability.Length > 200 || capability.Any(char.IsWhiteSpace))
                 return Results.Json(new { error = "invalid-capability", message = "Name one capability key." },
                     statusCode: 400);
-            return registry.RequestReprobe(id, capability)
-                ? Results.Accepted(value: new { runnerId = id, capability, requested = true })
-                : Results.Json(new { error = "runner-not-registered" }, statusCode: 404);
+            return registry.RequestReprobe(id, capability) switch
+            {
+                AgentStudio.Runner.V1ReviewExecutorRegistry.ReprobeRequestResult.Queued =>
+                    Results.Accepted(value: new { runnerId = id, capability, requested = true }),
+                AgentStudio.Runner.V1ReviewExecutorRegistry.ReprobeRequestResult.RunnerNotRegistered =>
+                    Results.Json(new { error = "runner-not-registered" }, statusCode: 404),
+                AgentStudio.Runner.V1ReviewExecutorRegistry.ReprobeRequestResult.QueueFull =>
+                    Results.Json(new { error = "reprobe-queue-full" }, statusCode: 429),
+                _ => Results.Json(new { error = "unknown-capability" }, statusCode: 400),
+            };
         });
         group.MapGet("/runner-infrastructure-failures", (
             HttpContext context,
@@ -172,6 +184,22 @@ public static class ManagementEndpoints
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(await watchdog.RefreshAsync(ct: ct));
+        });
+        // AGT-3845: the cards a review role graded while it differed from
+        // Stable, from the same published projection the card detail reads.
+        group.MapGet("/host-releases/off-stable-grades", (
+            HttpContext context,
+            TaskIndexCache index,
+            TaskListGitProjectionCache snapshots,
+            AgentStudio.Registry.ProjectRegistry projects,
+            IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            var tasks = AgentStudio.Security.ProjectAccessAuthorization.FilterTasks(
+                context, index.GetResidentTasks(), projects).ToArray();
+            return Results.Ok(AgentStudio.Review.OffStableGradedCards.Collect(tasks,
+                snapshots.ReadCacheOnly(tasks).ReviewProjection));
         });
         group.MapGet("/provider-refusals", (
             HttpContext context,

@@ -31,6 +31,9 @@ public sealed record CompletionAdmissionPreview(
     CompletionContentFacts? Content = null,
     TaskIntegrationVerification? Verification = null)
 {
+    /// <summary>A written operator reason cannot bypass the batch gate or a required research report.</summary>
+    public bool OverrideAllowed => Stage != CompletionAdmissionStages.BatchGate && Content?.MissingReport is null;
+
     public static CompletionAdmissionPreview Admitted(string message, CompletionContentFacts? content,
         TaskIntegrationVerification? verification)
         => new(true, CompletionAdmissionStages.Admitted, message, content, verification);
@@ -162,11 +165,21 @@ public static class AcceptanceReadinessPolicy
         var reviewStale = !Same(content.ReviewBriefVersion, content.CurrentBriefVersion);
         var deliveryStale = !Same(content.DeliveryBriefVersion, content.CurrentBriefVersion);
         if (reviewStale || deliveryStale)
-            return new(AcceptanceReadinessClasses.VerdictStale, "Verdict stale",
-                reviewStale
-                    ? $"The {aspect} verdict was given for brief {Label(content.ReviewBriefVersion)}; the brief is now {Label(content.CurrentBriefVersion)}."
-                    : $"The delivery was built for brief {Label(content.DeliveryBriefVersion)}; the brief is now {Label(content.CurrentBriefVersion)}.",
+        {
+            // A missing version is unrecorded, not changed (F12): the reason says so.
+            var unrecorded = reviewStale
+                ? string.IsNullOrWhiteSpace(content.ReviewBriefVersion)
+                : string.IsNullOrWhiteSpace(content.DeliveryBriefVersion);
+            var subject = reviewStale ? $"the {aspect} verdict" : "the delivery";
+            return new(AcceptanceReadinessClasses.VerdictStale,
+                unrecorded ? "No brief version recorded" : "Verdict stale",
+                unrecorded
+                    ? $"No brief version was recorded for {subject}; the current brief is {Label(content.CurrentBriefVersion)}."
+                    : reviewStale
+                        ? $"The {aspect} verdict was given for brief {Label(content.ReviewBriefVersion)}; the brief is now {Label(content.CurrentBriefVersion)}."
+                        : $"The delivery was built for brief {Label(content.DeliveryBriefVersion)}; the brief is now {Label(content.CurrentBriefVersion)}.",
                 aspect, content.ContentStatus, content.ContentSummary, content.Missing);
+        }
 
         if (!string.Equals(content.ContentStatus, "pass", StringComparison.OrdinalIgnoreCase))
             return new(AcceptanceReadinessClasses.ReviewConcerns, "Review concerns",

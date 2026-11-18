@@ -11,6 +11,16 @@ public sealed class AcceptanceReadinessPolicyTests
     private const string Brief = "brief-current";
 
     [Fact]
+    public void Override_permission_uses_admission_facts_instead_of_refusal_words()
+    {
+        Assert.False(Refused(CompletionAdmissionStages.BatchGate, "A neutral refusal").OverrideAllowed);
+        Assert.False(Refused(CompletionAdmissionStages.Content, "A neutral refusal",
+            Content("pass") with { MissingReport = "results/report.md" }).OverrideAllowed);
+        Assert.True(Refused(CompletionAdmissionStages.Content, "the required report is missing",
+            Content("concerns")).OverrideAllowed);
+    }
+
+    [Fact]
     public void Admitted_card_is_ready()
     {
         var verdict = Classify(CompletionAdmissionPreview.Admitted(
@@ -47,6 +57,41 @@ public sealed class AcceptanceReadinessPolicyTests
 
         Assert.Equal(AcceptanceReadinessClasses.VerdictStale, verdict.Readiness);
         Assert.Contains("brief-older", verdict.Reason);
+    }
+
+    [Fact]
+    public void Missing_delivery_brief_version_reads_as_unrecorded_not_changed()
+    {
+        var content = Content("pass") with { DeliveryBriefVersion = null };
+        var verdict = Classify(Refused(CompletionAdmissionStages.Content,
+            CompletionContentPolicy.Decide(content).Message, content));
+
+        Assert.Equal(AcceptanceReadinessClasses.VerdictStale, verdict.Readiness);
+        Assert.Equal("No brief version recorded", verdict.Headline);
+        Assert.Equal("No brief version was recorded for the delivery; the current brief is brief-curren.", verdict.Reason);
+        Assert.DoesNotContain("unknown", verdict.Reason);
+    }
+
+    [Fact]
+    public void Missing_review_brief_version_reads_as_unrecorded_not_changed()
+    {
+        var content = Content("pass") with { ReviewBriefVersion = null };
+        var verdict = Classify(Refused(CompletionAdmissionStages.Content,
+            CompletionContentPolicy.Decide(content).Message, content));
+
+        Assert.Equal("No brief version recorded", verdict.Headline);
+        Assert.StartsWith("No brief version was recorded for the requirement-fit verdict;", verdict.Reason);
+    }
+
+    [Fact]
+    public void Changed_delivery_brief_version_reads_as_stale()
+    {
+        var content = Content("pass") with { DeliveryBriefVersion = "brief-older" };
+        var verdict = Classify(Refused(CompletionAdmissionStages.Content,
+            CompletionContentPolicy.Decide(content).Message, content));
+
+        Assert.Equal("Verdict stale", verdict.Headline);
+        Assert.Equal("The delivery was built for brief brief-older; the brief is now brief-curren.", verdict.Reason);
     }
 
     [Fact]

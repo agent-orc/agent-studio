@@ -44,6 +44,22 @@ without a flight uses its recovery retry time, and other batches name the next
 pilot tick. These are observation deadlines, not a promise of publication.
 The batch panel shows these facts beside the flight queue and batch history.
 
+The state read also reports `laneIdle` (AGT-3857): how long a formed batch
+waited while the project ran no batch gate, by cause. `per-task-holder` means a
+direct integration held the project reservation, an approved per-task push was
+pending, or per-task gates held the gate slots. `restart-recovery` means the
+server restarted, or a previous process's flight claim or batch was still being
+recovered. `planner` means nothing held the lane and the planner had not
+started the batch yet. Each pilot tick observes the lane. The open interval is
+stored in the batch store, so a restarted process closes it at the last
+observation and records the downtime as `restart-recovery`. The response gives
+the current cause, minutes per cause for the last 24 hours and 7 days, and the
+20 latest intervals, each naming its cause. The batch panel shows the current
+cause and the 24-hour split. A flight claim owner records its process start
+time, so a server that comes back under the same process id (PID 1 in a
+container) expires the previous owner's claim on its first tick. It does not
+wait for the two-minute heartbeat.
+
 An interrupted deterministic red batch ends as `Paused` with reason
 `isolation interrupted` on the next pilot tick when unresolved members remain.
 The pilot derives any child findings, releases the parent members to planning,
@@ -64,7 +80,14 @@ records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
 The batch panel lists pending cards that have not joined a formed or running
-batch. A run without a finish event counts as running only while its batch is
+batch.
+An operator gate infrastructure retry records a durable request for the card's current
+review attempt and returns its request id immediately. The next pilot tick checks the
+park and review again, then moves and enqueues under the tick lock. The state read
+reports pending, applied, and refused retry requests with any refusal reason. Clicks
+during a pending request return its id; a refused request may be submitted again after
+its cause is fixed.
+A run without a finish event counts as running only while its batch is
 in the running phase; after interruption, the panel uses `phaseAtUtc` to show
 the elapsed run time. Detached flights include their batch, detach time, and
 lease deadline in the state response and panel. The project's durable flight
@@ -171,7 +194,9 @@ This path does not use title urgency, risk, or changed-path overlap. Its fallbac
 the project batch reservation. A later direct integration must hold the
 reservation through its merge gate and possible rollback. It acquires the
 reservation after the per-project merge lock, so a queued per-task integration
-does not block a formed batch. Its machine queue
+does not block a formed batch. While a batch flight reserves the project, a
+new per-task integration waits until the flight holds the reservation
+(AGT-3882). Its machine queue
 wait is capped at two minutes and its gate run at 25 minutes. The batch
 gate state reports the combined 27-minute reservation gate cap.
 When the gate host has more than one slot, per-task fallback gates leave the
@@ -629,6 +654,10 @@ is behind their current integration tip. They replay the final delivery tree's
 net change against the merge base as one commit on the tip. The gate and push
 use that exact commit, and the card maps each delivery commit absent from the
 tip to it. A tree conflict names its files and starts an agent round.
+When the per-task integration route creates a merge commit, its subject names
+the delivered card key and title. `MergeIntoDevelopRunner` supplies that identity
+to `GitService` for direct and mechanically recovered merges, so first-parent
+history and downstream changelogs identify the card.
 
 The merge route is the documented strategy for non-linear deliveries. It is
 the same `--no-ff` merge the per-task integration uses, so every delivery SHA,
@@ -932,7 +961,10 @@ card badge reads, for example, "Per-task fallback · batch-ejected · waits
 for engine decision". Across all review
 generations of the process, at most one gate slot fewer than the gate host has
 runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
-slot before they choose their merged candidate, so the batch slot stays free. A
+slot before they choose their merged candidate, so the batch slot stays free.
+While a batch gate runs, at most one other full suite starts on the gate host,
+and a per-card suite is not started for a card a batch gates anyway (AGT-3856,
+see [the batch gate delivery state](../../operations/gates/batch-gate.md)). A
 formed batch whose base moved before replay closes again with compatible members
 on the new base only when at least `minimumSize` remain. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
@@ -1166,7 +1198,8 @@ credential and starts the release-pinned backend binary with
 `--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
 on that host. Pull gate mutations authenticate this service bearer directly;
 they do not require a browser `X-Client-Id` header. The worker registers,
-claims from `/api/pull-gates`, downloads
+claims from `/api/pull-gates` (an empty claim answers `204 No Content`, which
+the worker treats as no work and polls again after 2 s; AGT-3649-D12), downloads
 the exact source bundle, heartbeats its lease, streams progress through those
 heartbeats, and uploads the result and files from its `artifacts/` run folder.
 The server refuses uploads after lease expiry or replacement. Completed
@@ -1522,6 +1555,11 @@ only what ran; the log owns the arithmetic.
     totals survive both review rounds and epochs.
   - The core run carries its accumulated tokens on its live row. Its earlier
     runs are counted but not priced a second time.
+- **Legacy OpenAI usage.** Current rows and `earlierRuns` retain
+  `inputIncludesCached` and `usageNormalization` provenance. Cost reads apply
+  the ledger's OpenAI cached-input rule to older rows with no provenance when
+  input is at least the positive cache-read count. This keeps card and project
+  pipeline costs aligned with ledger receipts without rewriting stored rows.
 - **Decision model.** `StepModelUsage` is built from the same one-shot or CLI
   receipt the token ledger records. `DecisionModelContext` carries it to the
   decision row and to `decidedByModel` on the bus decision message.
@@ -2845,6 +2883,14 @@ operator changes cause the step to fail before its writer runs.
   and timeline event remain the detailed evidence. Every merge `Error` names a
   typed code (AGT-2995); the code table and the Error sites are in
   [rebase-merge-and-integration-invariants.md](../../concepts/platform-architecture/rebase-merge-and-integration-invariants.md#typed-codes-of-an-error-outcome-agt-2995).
+- A merge-only continuation is attributed when its earlier non-merge delivery
+  commits name the card (or carry its runner attribution trailer) and each new
+  merge imports a parent already on the integration branch. The run result SHA
+  receives a `commits[]` entry with that run's attempt id. A passing review
+  escalated solely for missing attribution can be restored to Auto Review by
+  the integration-history repair sweep, then admitted to a batch without a new
+  review. Other missing attribution escalations name the affected commits and
+  the required next-round action.
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.
@@ -3394,7 +3440,8 @@ whose `task.integration` said `integrated`. Two defects met.
   the published branch's first-parent line. One bounded first-parent range from
   that tree to the current tip identifies the later publication commits. Each
   must be covered by its own passed per-task gate, by a passed batch gate
-  spanning those commits, or by a later exact full-suite gate on a containing
+  spanning those commits, by the publishing card's exact verified
+  `gate-not-applicable` merge record, or by a later exact full-suite gate on a containing
   first-parent publication. The latter names its covering publication in the
   acceptance reason. Batch evidence cannot substitute for the original
   tree's first-parent ancestry. A branch rewrite or an uncovered later
@@ -3575,8 +3622,12 @@ every gate path:
 - `GateFailureTriagePolicy` classifies a gate log whose reason carries the
   invalid-definition text as `product` with kind `definition`, before any
   environment marker. The failing items are the `path [code]` pairs. Routing
-  starts the one fix round with the issues and the rule above, never attaches
-  the card to a shared cause, and never spends the environment replay budget.
+  starts at most two automatic fix rounds per card and preparation fingerprint,
+  even when each round produces a new delivery SHA. The prompt carries the
+  reported issue codes, paths, lines, and messages without advice for a
+  different rule. A repeated failure then parks the card with that issue line.
+  Definition failures never attach the card to a shared cause or spend the
+  environment replay budget.
 - Review checks the file first. Right after the completion gate,
   `ProjectDefinitionGate` reads `project.yml` at the exact subject SHA through
   git and validates it, including the existence of every referenced file. An
@@ -3759,6 +3810,12 @@ pins one compose service to the release artifact digest before pulling and
 starting it. It resolves secret names under the claimed job lease, sends step
 log messages to the deployment log, and records each step
 result. A failed deployment queues the previous healthy artifact for rollback.
+The status projection keeps the last successful release as the lifecycle
+baseline, while `releaseUncertain` marks a later failed deploy or rollback
+whose host state a newer successful host report has not confirmed. Consumers
+must not label the baseline or failed rollback target as the running release
+while this flag is set. A refused rollback returns its specific server reason;
+the operator can redeploy a known release or fix forward.
 The deploy host needs OpenSSH and access to the artifact store; its SSH target
 needs Python 3, and container targets also need Docker Compose. The
 [deploy host API contract](../contracts/deploy-host-api.md) defines the claim,

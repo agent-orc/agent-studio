@@ -27,6 +27,10 @@ public sealed record BatchGateEjectRequest(string Project, string TaskKey,
     string Actor, string Reason, DateTimeOffset RequestedAtUtc,
     string Status = "pending", DateTimeOffset? ReleasedAtUtc = null);
 
+public sealed record BatchGateInfrastructureRetry(string RequestId, string Project, string TaskKey,
+    string ReviewAttemptId, string Actor, DateTimeOffset RequestedAtUtc,
+    string Status = "pending", string? Reason = null, DateTimeOffset? CompletedAtUtc = null);
+
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,
     string CandidateSha, string GateProfile, string GateProfileDigest,
@@ -385,6 +389,76 @@ public sealed partial class BatchGateStore
             project, taskKey, actor, reason, DateTimeOffset.UtcNow));
     }
 
+    private string InfrastructureRetryPath(string project, string reviewAttemptId)
+        => Path.Combine(_root, "requests", "infrastructure-retry", SafeName(project),
+            SafeName(reviewAttemptId) + ".json");
+
+    public BatchGateInfrastructureRetry RequestInfrastructureRetry(string project, string taskKey,
+        string reviewAttemptId, string actor, DateTimeOffset at)
+    {
+        var path = InfrastructureRetryPath(project, reviewAttemptId);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var request = new BatchGateInfrastructureRetry(Guid.NewGuid().ToString("N"), project,
+            taskKey, reviewAttemptId, actor, at);
+        // A small cross-process file lock makes two simultaneous clicks see the
+        // same pending request. A refused request may be tried again once its
+        // cause has been fixed, without changing the reviewed delivery.
+        var lockPath = path + ".lock";
+        FileStream? gate = null;
+        for (var attempt = 0; attempt < 100 && gate is null; attempt++)
+        {
+            try { gate = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) when (attempt < 99) { Thread.Sleep(10); }
+        }
+        using (gate)
+        {
+            if (File.Exists(path))
+            {
+                var existing = Read<BatchGateInfrastructureRetry>(path);
+                if (existing.Status is "pending" or "applied") return existing;
+                var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.WriteAllText(temporary, JsonSerializer.Serialize(request, Json));
+                    File.Move(temporary, path, overwrite: true);
+                    BatchGateDurableWrites.Completed(path);
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            }
+            else WriteOnce(path, request);
+            return Read<BatchGateInfrastructureRetry>(path);
+        }
+    }
+
+    public BatchGateInfrastructureRetry? ReadInfrastructureRetry(string project, string reviewAttemptId)
+    {
+        var path = InfrastructureRetryPath(project, reviewAttemptId);
+        return File.Exists(path) ? Read<BatchGateInfrastructureRetry>(path) : null;
+    }
+
+    public IReadOnlyList<BatchGateInfrastructureRetry> ListInfrastructureRetries(string project)
+    {
+        var folder = Path.Combine(_root, "requests", "infrastructure-retry", SafeName(project));
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").Select(Read<BatchGateInfrastructureRetry>)
+                .OrderByDescending(request => request.RequestedAtUtc).ToArray()
+            : [];
+    }
+
+    public void CompleteInfrastructureRetry(BatchGateInfrastructureRetry request, string status, string? reason,
+        DateTimeOffset at)
+    {
+        var path = InfrastructureRetryPath(request.Project, request.ReviewAttemptId);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(request with
+            { Status = status, Reason = reason, CompletedAtUtc = at }, Json));
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
     public BatchGateEjectRequest? ReadEject(string project, string taskKey)
     {
         var pending = Path.Combine(_root, "requests", "eject", SafeName(project), SafeName(taskKey));
@@ -555,9 +629,12 @@ public sealed partial class BatchGateStore
     /// </summary>
     public IReadOnlyList<BatchGateManifest> ListManifests()
     {
+        Interlocked.Increment(ref _manifestListings);
         var manifests = new List<BatchGateManifest>();
-        foreach (var folder in ListManifestFolders())
+        var folders = ListManifestFolders();
+        foreach (var folder in folders)
             if (TryReadManifestIn(folder, out var manifest)) manifests.Add(manifest);
+        ForgetRemovedManifests(folders);
         return InFormationOrder(manifests);
     }
 
@@ -566,8 +643,8 @@ public sealed partial class BatchGateStore
             .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
 
     /// <summary>
-    /// Folders that hold a closed manifest. A manifest is written once, so a
-    /// caller that polls can read each folder's manifest once and cache it.
+    /// Folders that hold a closed manifest. A manifest is written once; the
+    /// store parses each one once and serves later reads from its cache (AGT-3864).
     /// </summary>
     public IReadOnlyList<string> ListManifestFolders()
         => !Directory.Exists(_root) ? []

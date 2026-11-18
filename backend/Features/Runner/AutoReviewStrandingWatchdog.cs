@@ -28,6 +28,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly RemoteDeliveryIntegrationCoordinator? _integration;
     private readonly V1ReviewExecutorRegistry? _reviewExecutors;
+    private readonly IEngineDeliveryIntegration? _engine;
     private readonly EngineReportReviewService? _reportReviews;
     private readonly ILogger<AutoReviewStrandingWatchdog> _logger;
     private readonly TimeProvider _time;
@@ -41,6 +42,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         ILogger<AutoReviewStrandingWatchdog> logger,
         RemoteDeliveryIntegrationCoordinator? integration = null,
         V1ReviewExecutorRegistry? reviewExecutors = null, TimeProvider? time = null,
+        IEngineDeliveryIntegration? engine = null,
         EngineReportReviewService? reportReviews = null)
     {
         _scanner = scanner;
@@ -59,6 +61,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         _configuration = configuration;
         _integration = integration;
         _reviewExecutors = reviewExecutors;
+        _engine = engine;
         _reportReviews = reportReviews;
         _logger = logger;
         _time = time ?? TimeProvider.System;
@@ -100,6 +103,14 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 var previous = interventions.Where(item => item.WriteKey.StartsWith(writePrefix, StringComparison.Ordinal)
                     && item.Status == StallInterventionStatuses.Verified).ToArray();
                 var latest = previous.LastOrDefault();
+                var lastUndo = interventions.Where(item => item.Kind == "auto-review-stranded"
+                        && item.Project == card.ProjectName && item.AffectedCards.Contains(card.Id)
+                        && item.Status == StallInterventionStatuses.Undone
+                        && item.RunAttemptId == run?.AttemptId
+                        && item.DeliveryResultSha == run?.ResultSha
+                        && item.ReviewAttemptId == currentReview?.AttemptId
+                        && item.UndoneAtUtc <= now)
+                    .Max(item => item.UndoneAtUtc);
                 var lastBatchEvent = run is null ? null : manifests
                     .Where(manifest => manifest.Scope.Project == card.ProjectName
                         && manifest.Members.Any(member => IsSubjectForDelivery(member, card.ProjectName, key, run)))
@@ -137,7 +148,11 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
                         || _reportReviews?.IsRunning(card) == true
                         || IntegrationGateJournal.Read(card.FolderPath) is not null
-                        || card.Phase == LifecyclePhases.Integrating,
+                        || card.Phase == LifecyclePhases.Integrating
+                        // AGT-3883: an engine decision that is still deciding or
+                        // integrating owns the card, however long its gate runs.
+                        || withoutOwner > threshold && EngineIntegration(card, currentReview) is
+                            { State: EngineDeliveryIntegrationState.Running },
                     currentReview?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased,
                     pending.Any(item => IsPendingForDelivery(item, card.ProjectName, key,
                         run, currentReview?.AttemptId))
@@ -164,7 +179,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     hostCapacityHeld,
                     waitingCapability is not null,
                     waitingHostAvailable,
-                    RetryOverdueLimit(_configuration));
+                    RetryOverdueLimit(_configuration),
+                    lastUndo is null ? null : now - lastUndo.Value);
                 var action = MonolithTransitionAdapter.AutoReviewStranding(facts);
                 var route = new AutoReviewBatchRouteFacts(
                     currentReview?.Subject.Plan?.BuildTestDeferredToBatch == true,
@@ -181,7 +197,9 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 repeated |= action == AutoReviewStrandingAction.Escalate && route.IntegratedPerTaskBefore
                     && facts.PassedReview && !route.BuildTestDeferredToBatch;
                 var (done, deferred, detail) = repeated
-                    ? (false, false, "The previous automatic recovery did not keep an owner for this card.")
+                    ? (false, false, "The previous automatic recovery did not keep an owner for this card."
+                        + (EngineIntegration(card, currentReview) is { } engineState
+                            ? $" Per-task integration owned by the engine is {engineState.Describe()}." : ""))
                     : await InterveneAsync(card, action, currentReview, run, ct);
                 if (deferred) continue;
                 var escalated = false;
@@ -363,7 +381,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             {
                 return (false, false, "Batch gate re-entry failed: " + ex.Message);
             }
-            return (false, false, "The passed review has no resumable integration or batch entry.");
+            return (false, false, "The passed review has no resumable integration or batch entry."
+                + (resumed.Reason == AutoReviewDeliveryResumeService.Reasons.EngineOwned
+                   && EngineIntegration(card, review) is { } engineState
+                    ? $" Per-task integration owned by the engine is {engineState.Describe()}." : ""));
         }
         // AGT-3848: a retry that came due and never started is not a spent budget.
         var dueRetry = review is null ? null : _authority.DueReviewInfrastructureRetries()
@@ -658,7 +679,9 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             ReviewAttemptId = _authority.GetTaskProjection(CardKey(card)).CurrentReviewAttempt?.AttemptId,
             DeliveryResultSha = run?.ResultSha,
             Undoable = escalated && parked is not null,
-            Undo = escalated ? "Undo restores Auto Review while this card and delivery are unchanged." : "",
+            Undo = escalated ? "Undo restores Auto Review for this unchanged delivery, but does not start a review. "
+                + $"If the card still has no owner, the watchdog can park it again after {Threshold(_configuration).TotalMinutes:0} minutes. "
+                + "Use Retry review to start a new review attempt." : "",
         };
         _records.Save(record);
         _receipts.Publish(record, _records.All());
@@ -686,7 +709,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             return new(false, "card-changed-since-park", record);
         var updated = record with
         {
-            Status = StallInterventionStatuses.Undone, UndoneAtUtc = DateTime.UtcNow,
+            Status = StallInterventionStatuses.Undone, UndoneAtUtc = _time.GetUtcNow().UtcDateTime,
             UndoneBy = actor, Undoable = false, RevertedBy = $"undo: {actor}",
             Outcome = $"{actor} restored Auto Review for the unchanged delivery.",
         };
@@ -775,6 +798,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             return (false, true, "The review no longer covers the current delivery.");
         var rule = review.Subject.Plan?.BuildTestDeferralDisabledReason;
         var resumed = await _resume.ResumeAsync(card, "auto-review-stranding", ct);
+        if (resumed.Reason == AutoReviewDeliveryResumeService.Reasons.EngineOwned && _engine is not null)
+            return RouteThroughEngine(card, review, run, rule);
         if (resumed.Reason == AutoReviewResumePolicy.Reasons.NoSettlementRecord
             && RebuildSettlementFromReport(card, review, run))
             resumed = await _resume.ResumeAsync(card, "auto-review-stranding", ct);
@@ -800,6 +825,47 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 $"No recorded verdict admits per-task integration ({resumed.Reason}).");
         return (false, false, BatchGatePolicy.ReviewRanBuildTests(rule, BatchAdmissionRoutes.ReplannedReview)
             + $" No recorded verdict admits per-task integration ({resumed.Reason}) and the re-planned review could not start.");
+    }
+
+    /// <summary>
+    /// AGT-3883: the per-task route when the engine owns delivery. The engine
+    /// reports where the integration stands; a running one keeps the card, a
+    /// published, unstarted or retryable one gets one fresh engine decision per
+    /// lane visit, and anything else escalates with the engine's reason.
+    /// </summary>
+    private (bool Done, bool Deferred, string Detail) RouteThroughEngine(TaskInfo card,
+        ReviewAttemptDto review, RunAttemptDto run, string? rule)
+    {
+        var route = BatchGatePolicy.ReviewRanBuildTests(rule, BatchAdmissionRoutes.PerTaskIntegration);
+        var status = _engine!.Read(card, review);
+        var action = MonolithTransitionAdapter.EngineDeliveryIntegration(
+            new EngineDeliveryIntegrationFacts(status.State, status.Retryable));
+        _logger.LogInformation(
+            "auto-review-stranding-engine-integration project={Project} job={JobId} attempt={AttemptId} state={State} action={Action} reason={Reason}",
+            card.ProjectName, card.Id, review.AttemptId, status.State, action, status.Reason);
+        if (action == EngineDeliveryIntegrationAction.Wait)
+            return (false, true, $"{route} Per-task integration owned by the engine is {status.Describe()}.");
+        if (action == EngineDeliveryIntegrationAction.Escalate)
+            return (false, false, $"{route} Per-task integration owned by the engine {status.Describe()}.");
+        var asked = _engine.Request(card, review, status);
+        return asked.Started
+            ? Routed(card, review, run, BatchAdmissionRoutes.PerTaskIntegration,
+                $"Per-task integration owned by the engine was {status.Describe()}; {asked.Detail}.")
+            : (false, false, $"{route} Per-task integration owned by the engine is {status.Describe()}; "
+                + $"no fresh engine decision started: {asked.Detail}");
+    }
+
+    /// <summary>The engine's integration state for a passed review, when the engine owns delivery.</summary>
+    private EngineDeliveryIntegrationStatus? EngineIntegration(TaskInfo card, ReviewAttemptDto? review)
+    {
+        if (_engine is null || review is not { Outcome: ReviewTerminalOutcome.Pass }
+            || MonolithTransitionSwitch.OwnsAutoReview(_configuration)) return null;
+        try { return _engine.Read(card, review); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "auto-review-stranding-engine-read-failed task={TaskKey}", card.TaskKey);
+            return null;
+        }
     }
 
     internal static bool NeedsReplannedReview(string resumeReason)

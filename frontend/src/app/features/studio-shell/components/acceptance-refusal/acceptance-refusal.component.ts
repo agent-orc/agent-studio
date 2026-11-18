@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked, viewChild, type ElementRef } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { ConnectedOverlayDirective } from '../../../../directives/connected-overlay.directive';
@@ -18,6 +18,10 @@ import { AcceptanceRoundDialogComponent } from '../../../acceptance-readiness/la
  * in the task toolbar directly before the Accept button, with the one action
  * that resolves it. The owner override asks for a written reason, which the
  * server records on the card (`operatorOverride` on the move to Accepted).
+ *
+ * AGT-3873: a refused Accept, the refusal toast and the card banner ask for
+ * this form through `AcceptanceRefusalStore.requestOverride`; it then opens
+ * below its action, with the reason field focused.
  */
 @Component({
   selector: 'app-acceptance-refusal',
@@ -37,7 +41,20 @@ export class AcceptanceRefusalComponent {
   readonly reason = signal('');
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
-  readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length > 0);
+  readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length >= 8);
+  /** F12: the ranked reason in full, with its next step and the gaps under it. */
+  readonly detail = computed(() => {
+    const refusal = this.refusal();
+    return [
+      refusal.headline ? `${refusal.headline}: ${refusal.reason}` : refusal.reason,
+      refusal.nextStep ? `Next step: ${refusal.nextStep}` : null,
+      ...(refusal.secondary ?? []).map(gap => `Also: ${gap}`),
+    ].filter(Boolean).join(' ');
+  });
+
+  private readonly actionButton = viewChild<ElementRef<HTMLButtonElement>>('actionButton');
+  private readonly reasonInput = viewChild<ElementRef<HTMLTextAreaElement>>('reasonInput');
+  private readonly focusReason = signal(false);
 
   private readonly tasks = inject(TaskService);
   private readonly notifications = inject(NotificationService);
@@ -48,6 +65,28 @@ export class AcceptanceRefusalComponent {
   readonly roundDraft = computed(() => {
     const draft = this.readiness.draftFor('toolbar');
     return draft && draft.job.id === this.job().id ? draft : null;
+  });
+
+  private readonly openOnRequest = effect(() => {
+    const requested = this.refusals.overrideRequest();
+    const button = this.actionButton()?.nativeElement;
+    if (!requested || !button || requested !== this.job().taskKey || this.refusal().action !== 'override') return;
+    untracked(() => {
+      if (!this.refusals.takeOverrideRequest(requested) || this.disabled()) return;
+      this.error.set(null);
+      this.overrideAnchor.set(button);
+      this.overrideOpen.set(true);
+      this.focusReason.set(true);
+    });
+  });
+
+  private readonly focusOnOpen = effect(() => {
+    const input = this.reasonInput()?.nativeElement;
+    if (!input || !this.focusReason()) return;
+    untracked(() => {
+      this.focusReason.set(false);
+      input.focus({ preventScroll: true });
+    });
   });
 
   onAction(event: MouseEvent): void {

@@ -242,6 +242,7 @@ public sealed class CodexOneShot : ICliOneShot
         var usage = richUsage is null ? null : new OrchestratorTokenUsage
         {
             Model = richUsage.Model ?? model,
+            CliType = CliTypes.Codex,
             InputTokens = ToInt(richUsage.Input),
             OutputTokens = ToInt(richUsage.Output),
             CacheReadTokens = ToInt(richUsage.CacheRead),
@@ -271,7 +272,7 @@ public sealed class CodexOneShot : ICliOneShot
         {
             AdHocClaudeInvoker.Record(_usage, request.Source ?? AdHocUsageSources.ReviewDecision,
                 request.Model, result.Usage, (long)result.Duration.TotalMilliseconds, result.Ok,
-                request.Project, request.JobId);
+                CliTypes.Codex, request.Project, request.JobId);
         }
         return result;
     }

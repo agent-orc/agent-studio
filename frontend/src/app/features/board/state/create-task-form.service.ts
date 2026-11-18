@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { Observable, Subject, TimeoutError, defaultIfEmpty, map, throwIfEmpty, timeout } from 'rxjs';
+import { Observable, Subject, TimeoutError, defaultIfEmpty, map, tap, throwIfEmpty, timeout } from 'rxjs';
 import { CliType, CLI_TYPES, ComponentRoutingRequest, ComponentRoutingResolution, PromoteToCodingResponse, TaskMode, TaskState, WatchPathEntry } from '../../../models/task.model';
 import type { CliModelInfo } from '../../../features/cli';
 import type { PendingAttachment } from '../components/create-task-dialog/create-task-dialog.component';
@@ -154,6 +154,33 @@ export class CreateTaskFormService {
     this.newTitle = event.title;
     this.selectProject(this.newWatchPath);
     this.visible.set(true);
+  }
+
+  /**
+   * AGT-3872: create a prefilled card without the legacy full-field editor.
+   * The card lands in the backlog, where Orchestrator Chat's `/bug` also files
+   * its cards, so nothing runs before the operator has refined the prompt in
+   * the card detail and promoted it. The agent is the stored default CLI.
+   * Emits {@link submitted$} like the dialog, so the shell refreshes the board.
+   */
+  createBacklogCard(draft: { watchPath: string; title: string; prompt: string; taskType: string }): Observable<{ jobId: string; watchPath: string }> {
+    const cliType = readDefaultCliPref();
+    return this.jobService.createJob({
+      title: draft.title,
+      watchPath: draft.watchPath,
+      agent: cliType,
+      cliType,
+      model: readDefaultModelPref(cliType).trim() || undefined,
+      thinkingLevel: readDefaultThinkingLevelPref(cliType) || undefined,
+      promptMarkdown: draft.prompt,
+      targetState: TaskState.Backlog,
+      taskType: draft.taskType,
+      kind: 'task',
+      mode: 'coding',
+    }).pipe(
+      map(created => ({ jobId: created.id, watchPath: draft.watchPath })),
+      tap(created => this.submittedSubject.next({ ...created, title: draft.title })),
+    );
   }
 
   /**

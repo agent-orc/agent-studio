@@ -6,6 +6,7 @@ import type {
   AccessOverview,
   AccessProject,
   EnrolledRunner,
+  EnrollmentKind,
   IamGrant,
   IamPrincipalKind,
   IamScope,
@@ -15,6 +16,7 @@ import type {
   RunnerEnrollment,
   ServiceAccount,
 } from '../models/access.model';
+import { RUN_HOST_SCOPE } from '../models/access.model';
 
 const IAM = '/api/auth/iam';
 
@@ -64,7 +66,7 @@ export class AccessService {
       if (status === 401 || status === 403) this.clearProtectedState();
       this.state.set(status === 401 || status === 403 ? 'denied' : 'error');
       this.error.set(status === 401
-        ? 'Sign in to manage access. A local installation without sign-in has one implicit owner and needs no setup.'
+        ? 'Access settings, runner enrollments, and production approval need a signed-in Owner.'
         : status === 403 ? 'Your account cannot view access settings.'
           : status === 404 ? 'This Studio uses a standalone Task Server, which keeps its own accounts.'
             : message(error, 'Access settings could not be loaded.'));
@@ -126,9 +128,12 @@ export class AccessService {
     return this.mutate(this.http.put(`/api/auth/users/${encodeURIComponent(userId)}`, { disabled }));
   }
 
-  /** A runner code names its projects; none named binds none. The engine is not project-bound. */
-  createEnrollment(name: string, kind: 'runner' | 'orchestrator', projects: readonly string[] = []): Promise<{ enrollmentCode: string } | null> {
-    const scopes = kind === 'orchestrator' ? ['orchestration.write'] : undefined;
+  /**
+   * A runner or run host code names its projects; none named binds none. The
+   * engine is not project-bound. A run host code carries only runner.deploy (F4).
+   */
+  createEnrollment(name: string, kind: EnrollmentKind, projects: readonly string[] = []): Promise<{ enrollmentCode: string } | null> {
+    const scopes = kind === 'orchestrator' ? ['orchestration.write'] : kind === 'deploy' ? [RUN_HOST_SCOPE] : undefined;
     return this.mutate(this.http.post<{ enrollmentCode: string }>('/api/auth/runner-enrollments', {
       name, scopes, projects: kind === 'orchestrator' ? undefined : projects,
     }));

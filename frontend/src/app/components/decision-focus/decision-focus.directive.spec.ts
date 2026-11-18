@@ -84,6 +84,22 @@ describe('DecisionFocusDirective', () => {
     expect(document.activeElement).toBe(root.querySelector('[data-testid="elsewhere"]'));
   });
 
+  it('leaves focus in an open dialog, such as the override a refused Accept opened (AGT-3873)', async () => {
+    const { fixture, area, requests } = await setup();
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const field = document.createElement('textarea');
+    dialog.appendChild(field);
+    document.body.appendChild(dialog);
+    field.focus();
+    requests.ask('demo::agt-1');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(field);
+    expect(document.activeElement).not.toBe(area);
+    dialog.remove();
+  });
+
   it('lets an unanswered request lapse', async () => {
     const { requests } = await setup();
     vi.useFakeTimers();

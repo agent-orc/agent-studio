@@ -1,0 +1,19 @@
+@if (notice(); as notice) {
+  <section class="off-stable" data-testid="off-stable-grade-notice" role="status">
+    <p class="off-stable__line">
+      <app-status-indicator tone="warning" label="Graded by a build that is not Stable" [compact]="true"
+        testId="off-stable-grade-state" />
+    </p>
+    <p class="off-stable__hint" data-testid="off-stable-grade-reason">{{ notice }}</p>
+    <p class="off-stable__hint">Accept uses this verdict. A fresh review grades every aspect of the same delivery again on the current build.</p>
+    @if (error(); as message) {
+      <p class="off-stable__error" data-testid="off-stable-grade-error" role="alert">{{ message }}</p>
+    }
+    <div class="off-stable__actions">
+      <button type="button" data-testid="off-stable-grade-review-again"
+        [disabled]="busy() || requested()" (click)="reviewAgain()">
+        {{ requested() ? 'Fresh review requested' : 'Review again on the current build' }}
+      </button>
+    </div>
+  </section>
+}

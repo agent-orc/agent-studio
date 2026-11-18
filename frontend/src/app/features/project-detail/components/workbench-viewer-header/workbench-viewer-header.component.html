@@ -28,7 +28,9 @@
   />
 
   <div class="viewer-head__review-action">
-    <button type="button" data-testid="workbench-record-review" [disabled]="readOnly()" (click)="openReview()">Record review</button>
+    <button type="button" data-testid="workbench-record-review" [disabled]="readOnly()"
+            appTooltip="Record whether this Dossier is still current. Concept-fit reviews of the concept card are separate."
+            (click)="openReview()">Record relevance review</button>
     @if (reviewOpen()) {
       <form class="review-form" data-testid="workbench-review-form" (submit)="$event.preventDefault(); saveReview()">
         <header><strong>Record relevance review</strong><button type="button" aria-label="Close review form" (click)="reviewOpen.set(false)">×</button></header>

@@ -167,8 +167,8 @@
     <section class="proj-detail__group">
       <h3>Auto-push</h3>
       <app-segmented-control data-testid="project-detail-auto-push" [options]="segmentedAutoPushOptions" [value]="autoPushStrategyDraft" ariaLabel="Auto-push" (valueChange)="setAutoPushStrategy($event)" />
-      <p class="proj-detail__hint">
-        Completed pushes use <code>git push origin &lt;sha&gt;:refs/heads/main</code> and never force-push. Immediate mode also pushes after auto-commit, before final review.
+      <p class="proj-detail__hint" data-testid="project-detail-auto-push-hint">
+        Accepted work integrates into {{ integrationBranch() || 'the repository default branch' }}. Completed auto-push targets main and never force-pushes. Immediate mode also pushes after auto-commit, before final review.
       </p>
     </section>
 

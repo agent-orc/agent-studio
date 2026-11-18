@@ -61,7 +61,7 @@ const AGT3201 = {
 };
 const HOST_ONLY = { status: MISSING, releases: MISSING, deployments: MISSING };
 
-async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
+async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false): Promise<void> {
   await page.route('**/api/**', route => route.fulfill(json([])).catch(() => undefined));
   await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill(json({
     negotiateVersion: 1, connectionId: 'deploy-area-mock', connectionToken: 'deploy-area-mock',
@@ -96,7 +96,10 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   const project = {
     sourceType: 'local-folder', id: 'PROJ-WEB', displayName: PROJECT, shortCode: 'WEB', workspaceId: 'ws',
     color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: STORAGE,
-    repositoryPath: '/srv/repo/website', rootPath: '/srv/repo/website', urls: [], ownershipMappings: [],
+    repositoryPath: missingCheckout ? null : '/srv/repo/website',
+    rootPath: missingCheckout ? null : '/srv/repo/website',
+    repositoryUrl: missingCheckout ? 'https://github.com/example/website.git' : null,
+    urls: [], ownershipMappings: [],
     archived: false, createdAt: '2026-10-01T00:00:00Z',
   };
   await page.route('**/api/v1/workspaces**', route => route.fulfill(json([{ id: 'ws', displayName: 'Workspace', projects: [project] }])));
@@ -106,6 +109,7 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route(`**/api/projects/${PROJECT}/environments/*/volumes`, route => route.fulfill(json({
     database: null, volumes: [], schedules: [], audit: [], adapterReady: false,
   })));
+  await page.route(`**/api/projects/${PROJECT}/environments/*/databases`, route => route.fulfill(json({ databases: [] })));
   await page.route(`**/api/projects/${PROJECT}/environments/health`, route => answer(route, deploy.health ?? {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
@@ -172,7 +176,7 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route(`**/api/projects/${PROJECT}/pipeline-definition`, route => answer(route, deploy.pipelineDefinition));
 }
 
-async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs = 30_000): Promise<void> {
+async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs = 30_000, missingCheckout = false): Promise<void> {
   page.on('dialog', dialog => dialog.accept());
   await page.clock.setFixedTime(new Date(DEPLOY_FIXTURE_NOW));
   await page.addInitScript(({ project }) => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -180,7 +184,7 @@ async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs =
     tabs: [{ kind: 'board', projectName: '__all__' }, { kind: 'hub', projectName: project, section: 'deploy' }],
     activeKey: `hub:${project}`,
   })), { project: PROJECT });
-  await mockApp(page, deploy);
+  await mockApp(page, deploy, missingCheckout);
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: navigationTimeoutMs });
   await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay')
     .forEach(element => ((element as HTMLElement).style.display = 'none')));
@@ -251,6 +255,49 @@ test.describe('Project Deploy area (mocked)', () => {
     await openDeploy(page, fullMocks());
     await expect(page.getByTestId('deploy-environments')).toBeVisible();
     await expect(page.getByTestId('instance-deploy')).toHaveCount(0);
+  });
+
+  test('failed Production deployment leaves its running release uncertain', async ({ page }) => {
+    const environments = deployEnvironmentsFixture();
+    const production = environments.environments[1];
+    production.deployedArtifact = ARTIFACT_B;
+    production.health = 'failed';
+    production.history.unshift({ at: '2026-10-19T11:59:00Z', status: 'failed', artifact: ARTIFACT_B,
+      previousArtifact: ARTIFACT_A, evidence: 'health-http-failed' });
+    const statuses = deployStatusFixture();
+    statuses[1].releaseUncertain = true;
+    const failed = { ...deployDeploymentsFixture()[0], id: 'failed-production', environmentId: 'production',
+      releaseId: deployReleasesFixture()[1].id, state: 'failed', trigger: 'deploy',
+      createdAtUtc: '2026-10-19T11:58:00Z', finishedAtUtc: '2026-10-19T11:59:00Z' };
+    statuses[1].currentDeployment = failed;
+    await openDeploy(page, fullMocks({ environments, status: statuses,
+      deployments: [failed, ...deployDeploymentsFixture()] }));
+    const card = page.getByRole('article', { name: 'Production' });
+    await expect(card.getByTestId('deploy-environment-release')).toHaveText('Running release uncertain. A failed release may be running.');
+    await expect(card.getByTestId('deploy-environment-age')).toHaveText('Unknown');
+    await setTheme(page, 'light');
+    await capture(page, 'production-running-release-uncertain-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'production-running-release-uncertain-dark');
+  });
+  test('URL project without checkout shows one Deploy state and stops checkout-dependent reads', async ({ page }) => {
+    let reads = 0;
+    page.on('request', request => {
+      if (request.url().includes('/api/projects/Website/deploy/')
+        || request.url().includes('/api/projects/Website/workbenches')) reads++;
+    });
+    await openDeploy(page, fullMocks(), 30_000, true);
+    await expect(page.getByTestId('deploy-checkout-missing')).toContainText('server checkout');
+    await page.getByTestId('deploy-tab-pipeline').click();
+    await page.getByTestId('deploy-tab-steps').click();
+    await expect(page.getByTestId('deploy-source-notices')).toHaveCount(0);
+    const before = reads;
+    await page.waitForTimeout(1_200);
+    expect(reads).toBe(before);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `agt-3822-checkout-missing-${theme}`);
+    }
   });
 
   test('shows release card verdicts and opens the stored release range in both themes', async ({ page }) => {
@@ -385,6 +432,42 @@ test.describe('Project Deploy area (mocked)', () => {
     expect(firstPageRequests).toHaveLength(0);
     await expect(page.getByTestId('deploy-release-detail')).toContainText('version-35');
     await capture(page, 'operations-older-release');
+  });
+
+  test('Operations shows a slow trace waterfall and opens it from a log line', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    const traceId = '11111111111111111111111111111111';
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
+        telemetryAvailable: false, metrics: null, markers: [] }],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.route(`**${DEPLOY}/operations/logs**`, route => answer(route, { telemetryAvailable: true,
+      lines: [{ at: '2026-10-20T00:00:00Z', level: 'ERROR', message: 'Dependency timeout',
+        releaseId: null, traceId }] }));
+    await page.route(`**/environments/production/telemetry/traces`, route => answer(route, [
+      { traceId, startedAt: '2026-10-20T00:00:00Z', durationMs: 900, failed: true,
+        name: 'GET /checkout', spanCount: 2 },
+    ]));
+    await page.route(`**/environments/production/telemetry/traces/${traceId}`, route => answer(route, [
+      { spanId: '2222222222222222', parentSpanId: null, name: 'GET /checkout', kind: 'SERVER',
+        startedAt: '2026-10-20T00:00:00Z', durationMs: 900, failed: true, attributes: {} },
+      { spanId: '3333333333333333', parentSpanId: '2222222222222222', name: 'inventory HTTP', kind: 'CLIENT',
+        startedAt: '2026-10-20T00:00:00.100Z', durationMs: 780, failed: true, attributes: {} },
+    ]));
+    await page.getByTestId(`studio-explorer-project-operations-${PROJECT}`).click();
+    await page.getByTestId('operations-search-traces').click();
+    await expect(page.getByTestId('operations-traces')).toContainText('GET /checkout');
+    await page.getByTestId('operations-search-logs').click();
+    await page.getByTestId('operations-log-trace').click();
+    await expect(page.getByTestId('operations-span-waterfall')).toContainText('inventory HTTP');
+    fs.mkdirSync(results, { recursive: true });
+    await setTheme(page, 'light');
+    await page.getByTestId('project-operations').screenshot({ path: path.join(results, 'operations-trace-light--mocked.png') });
+    await setTheme(page, 'dark');
+    await page.getByTestId('project-operations').screenshot({ path: path.join(results, 'operations-trace-dark--mocked.png') });
   });
 
   test('project Operations links to installation backups in Settings with backup and host CA warnings in both themes and at 390 px (AGT-3574, AGT-3736)', async ({ page }) => {
@@ -925,6 +1008,48 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('deploy-run-drawer')).toContainText('Production');
     await page.getByTestId('deploy-run-approve').click();
     await expect.poll(() => calls).toEqual(['approve:run-c-production']);
+  });
+
+  test('F17: after approval and the host report, the Production card follows without a reload', async ({ page }) => {
+    let environments = deployEnvironmentsFixture();
+    let status = deployStatusFixture();
+    let deployments = deployDeploymentsFixture();
+    const confirms: string[] = [];
+    page.on('dialog', dialog => confirms.push(dialog.message()));
+    const mocks = fullMocks({
+      act: (_action, id) => {
+        // The server queues the run and closes the AGT-3176 promotion of its artifact.
+        deployments = deployments.map(item => item.id === id ? { ...item, state: 'queued', approvedBy: 'local.owner' } : item);
+        status = status.map(item => item.currentDeployment?.id === id ? { ...item, currentDeployment: deployments.find(run => run.id === id)! } : item);
+        environments = { ...environments, promotions: environments.promotions.map(item => item.status === 'pending' ? { ...item, status: 'approved' } : item) };
+        return deployments.find(item => item.id === id);
+      },
+    });
+    for (const [key, read] of [['environments', () => environments], ['status', () => status], ['deployments', () => deployments]] as const)
+      Object.defineProperty(mocks, key, { get: read });
+    await openDeploy(page, mocks);
+
+    const card = page.getByTestId('deploy-environment-production');
+    await expect(card.getByTestId('deploy-environment-approval')).toBeVisible();
+    await card.getByRole('button', { name: 'Review the pending approval for Production' }).click();
+    await page.getByTestId('deploy-run-approve').click();
+    await expect(page.getByTestId('deploy-run-outcome')).toHaveText('Queued');
+    expect(confirms).toEqual(['Approve deploying release 2026.10.19.2 (1 card) to Production?']);
+    await expect(card.getByTestId('deploy-environment-approval')).toHaveCount(0, { timeout: 5_000 });
+
+    // The host reports healthy; nobody reloads the page.
+    const [stage] = environments.environments;
+    deployments = deployments.map(item => item.id === 'run-c-production'
+      ? { ...item, state: 'succeeded', startedAtUtc: '2026-10-19T11:56:00Z', finishedAtUtc: '2026-10-19T11:58:00Z' } : item);
+    const production = deployments.find(item => item.id === 'run-c-production')!;
+    status = status.map(item => item.environment.id === 'production'
+      ? { ...item, currentRelease: deployReleasesFixture()[0], currentDeployment: production, newerRelease: null, cardsSinceLastDeploy: [] } : item);
+    environments = { ...environments, promotions: environments.promotions.map(item => item.status === 'approved' ? { ...item, status: 'deployed' } : item),
+      environments: environments.environments.map(item => item.declaration.id === 'production' ? { ...item, deployedArtifact: stage.deployedArtifact,
+        history: [{ at: '2026-10-19T11:58:00Z', status: 'healthy', artifact: stage.deployedArtifact!, previousArtifact: ARTIFACT_A, evidence: 'health-ok' }, ...item.history] } : item) };
+    await expect(card.getByTestId('deploy-environment-release')).toContainText('2026.10.19.2', { timeout: 5_000 });
+    await expect(page.getByTestId('deploy-run-outcome')).toHaveText('Succeeded', { timeout: 5_000 });
+    await capture(page, 'deploy-production-live-after-approve-1280-light');
   });
 
   test('captures every view in light and dark at 1280 and 1920 px', async ({ page }) => {

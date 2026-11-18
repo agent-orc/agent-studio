@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using AgentStudio.Pipeline;
+using AgentStudio.Bus;
 using AgentStudio.Registry;
 using AgentStudio.Shared;
 using AgentStudio.Tokens;
@@ -10,7 +11,8 @@ using AgentStudio.Tasks;
 namespace AgentStudio.Quota;
 
 public sealed record QuotaLimits(long? ModelTokensPerWeek, decimal? ComputeCoreHoursPerWeek, int? HostingSlots);
-public sealed record QuotaUsage(long ModelTokens, decimal ModelCostUsd, decimal ComputeCoreHours, int HostingSlots);
+public sealed record QuotaUsage(long ModelTokens, decimal ModelCostUsd, decimal ComputeCoreHours, int HostingSlots,
+    int UnpricedRuns = 0);
 public sealed record QuotaConsumer(string ProjectId, string Project, string? CardId, long ModelTokens, decimal ComputeCoreHours);
 public sealed record QuotaProjectConsumer(string ProjectId, string Project, long ModelTokens, decimal ComputeCoreHours);
 public sealed record QuotaSnapshot(string WorkspaceId, string? ProjectId, DateTime WeekStartUtc, DateTime WeekEndUtc,
@@ -61,7 +63,8 @@ public sealed class WorkspaceQuotaService
 
     /// <summary>RefreshError is set when the latest background recompute failed and the value is older.</summary>
     private sealed record WorkspaceUsage(DateTime WeekStart, IReadOnlyDictionary<string, ProjectUsage> Projects,
-        string? RefreshError = null);
+        QuotaUsage[] Unattributed, IReadOnlyList<QuotaConsumer> UnattributedConsumers,
+        string? MeterWarning = null, string? RefreshError = null);
 
     private sealed record UsageSlot(WorkspaceUsage Value, DateTimeOffset ComputedAt);
 
@@ -71,6 +74,8 @@ public sealed class WorkspaceQuotaService
     private readonly WorkspaceRegistry _workspaces;
     private readonly ProjectRegistry _projects;
     private readonly ProjectTokenLedger _tokens;
+    private readonly AgentMessageBusStore _bus;
+    private readonly string _workspaceRoot;
     private readonly ITokenPricing _pricing;
     private readonly TaskScannerService _scanner;
     private readonly PipelineExecutionLog _pipeline;
@@ -86,17 +91,20 @@ public sealed class WorkspaceQuotaService
 
     public WorkspaceQuotaService(IConfiguration config, TimeProvider clock, WorkspaceRegistry workspaces,
         ProjectRegistry projects, ProjectTokenLedger tokens, ITokenPricing pricing,
-        TaskScannerService scanner, PipelineExecutionLog pipeline, ILogger<WorkspaceQuotaService>? logger = null)
+        TaskScannerService scanner, PipelineExecutionLog pipeline, AgentMessageBusStore bus,
+        ILogger<WorkspaceQuotaService>? logger = null)
     {
         _clock = clock;
         _workspaces = workspaces;
         _projects = projects;
         _tokens = tokens;
+        _bus = bus;
         _pricing = pricing;
         _scanner = scanner;
         _pipeline = pipeline;
         _logger = logger;
         var root = config["TaskRepository"] ?? Path.Combine(Path.GetTempPath(), "agent-studio-quota");
+        _workspaceRoot = root;
         _path = Path.Combine(root, ".metadata", "workspace-quotas.json");
         lock (_gate) Reload();
     }
@@ -546,9 +554,20 @@ public sealed class WorkspaceQuotaService
             {
                 ModelTokens = sum.ModelTokens + p.Daily[day].ModelTokens,
                 ModelCostUsd = sum.ModelCostUsd + p.Daily[day].ModelCostUsd,
+                UnpricedRuns = sum.UnpricedRuns + p.Daily[day].UnpricedRuns,
                 ComputeCoreHours = sum.ComputeCoreHours + p.Daily[day].ComputeCoreHours,
             })).ToArray();
         var consumers = projects.SelectMany(p => p.Consumers).ToList();
+        if (projectId is null)
+            for (var day = 0; day < daily.Length; day++)
+            {
+                daily[day] = daily[day] with
+                {
+                    ModelTokens = daily[day].ModelTokens + usage.Unattributed[day].ModelTokens,
+                    ModelCostUsd = daily[day].ModelCostUsd + usage.Unattributed[day].ModelCostUsd,
+                };
+            }
+        if (projectId is null) consumers.AddRange(usage.UnattributedConsumers);
         foreach (var deploy in view.Deploys.Where(d => ids.Contains(d.ProjectId)))
         {
             var deployEnd = WorkspaceQuotaPolicy.DeployEnd(deploy.StartedAt, deploy.CompletedAt, _clock);
@@ -560,12 +579,13 @@ public sealed class WorkspaceQuotaService
         var hostingCount = view.Environments.Count(key => ids.Any(id =>
             key.StartsWith(id + "/", StringComparison.OrdinalIgnoreCase)));
         var total = new QuotaUsage(daily.Sum(d => d.ModelTokens), daily.Sum(d => d.ModelCostUsd),
-            daily.Sum(d => d.ComputeCoreHours), hostingCount);
+            daily.Sum(d => d.ComputeCoreHours), hostingCount, daily.Sum(d => d.UnpricedRuns));
         var remaining = new QuotaUsage(Math.Max(0, (limits?.ModelTokensPerWeek ?? 0) - total.ModelTokens), 0,
             Math.Max(0, (limits?.ComputeCoreHoursPerWeek ?? 0) - total.ComputeCoreHours),
             Math.Max(0, (limits?.HostingSlots ?? 0) - total.HostingSlots));
         var meterProblems = projects.Where(p => p.MeterWarning is not null)
             .Select(p => $"Project {p.Project.DisplayName}: {p.MeterWarning}").ToList();
+        if (usage.MeterWarning is not null) meterProblems.Add(usage.MeterWarning);
         if (usage.RefreshError is not null) meterProblems.Add(usage.RefreshError);
         var meterComplete = meterProblems.Count == 0;
         var meterBlocks = !meterComplete && limits is not null;
@@ -662,6 +682,16 @@ public sealed class WorkspaceQuotaService
             .DistinctBy(t => t.FolderPath, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var result = new Dictionary<string, ProjectUsage>(StringComparer.OrdinalIgnoreCase);
+        WorkspaceBusUsage? workspaceRows = null;
+        string? workspaceWarning = null;
+        try { workspaceRows = WorkspaceBusUsage.Read(_bus, _workspaceRoot, projects, _scanner, start); }
+        catch (Exception ex)
+        {
+            workspaceWarning = $"The workspace token bus could not be read ({ex.GetType().Name}).";
+        }
+        var unattributedDaily = Enumerable.Range(0, 7).Select(_ => new QuotaUsage(0, 0, 0, 0)).ToArray();
+        var unattributedConsumers = new List<QuotaConsumer>();
+        var unattributedUnpricedRunIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var project in projects)
         {
             var daily = Enumerable.Range(0, 7).Select(_ => new QuotaUsage(0, 0, 0, 0)).ToArray();
@@ -673,9 +703,11 @@ public sealed class WorkspaceQuotaService
                 foreach (var alias in task.Aliases.Where(a => !string.IsNullOrWhiteSpace(a)))
                     cards.TryAdd(alias!, task.Card);
             var ledger = _tokens.LoadSnapshot(project.DisplayName, project.StorageLocation);
+            var unpricedRunIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var meterWarning = ledger.Freshness.Status == "complete" ? null
                 : ledger.Freshness.Warning ?? $"The token ledger is {ledger.Freshness.Status}.";
-            foreach (var entry in ledger.Entries.Where(e => e.TokenUsage is not null))
+            foreach (var entry in (workspaceRows?.MergeInto(project.Id, ledger.Entries) ?? ledger.Entries)
+                .Where(e => e.TokenUsage is not null))
             {
                 var at = AsUtc(entry.Ts);
                 if (at < start || at >= end) continue;
@@ -683,8 +715,12 @@ public sealed class WorkspaceQuotaService
                 var count = WorkspaceQuotaPolicy.ModelTokens(usage.InputTokens, usage.OutputTokens,
                     usage.CacheReadTokens, usage.CacheCreationTokens);
                 var day = Math.Clamp((int)(at.Date - start).TotalDays, 0, 6);
+                var price = Price(usage, at);
+                var unpricedRun = count > 0 && price is null
+                    && unpricedRunIds.Add(entry.JobId ?? $"receipt:{at.Ticks}:{day}");
                 daily[day] = daily[day] with { ModelTokens = daily[day].ModelTokens + count,
-                    ModelCostUsd = daily[day].ModelCostUsd + Price(usage, at) };
+                    ModelCostUsd = daily[day].ModelCostUsd + (price ?? 0),
+                    UnpricedRuns = daily[day].UnpricedRuns + (unpricedRun ? 1 : 0) };
                 var card = entry.JobId is null ? null : cards.GetValueOrDefault(entry.JobId, entry.JobId);
                 consumers.Add(new(project.Id, project.DisplayName, card, count, 0));
             }
@@ -702,7 +738,26 @@ public sealed class WorkspaceQuotaService
             }
             result[project.Id] = new(project, daily, consumers, meterWarning);
         }
-        return new(start, result);
+        foreach (var entry in workspaceRows?.Unattributed ?? [])
+        {
+            if (entry.TokenUsage is not { } usage) continue;
+            var at = AsUtc(entry.Ts);
+            if (at < start || at >= end) continue;
+            var count = WorkspaceQuotaPolicy.ModelTokens(usage.InputTokens, usage.OutputTokens,
+                usage.CacheReadTokens, usage.CacheCreationTokens);
+            var day = Math.Clamp((int)(at.Date - start).TotalDays, 0, 6);
+            var price = Price(usage, at);
+            var unpricedRun = count > 0 && price is null
+                && unattributedUnpricedRunIds.Add(entry.JobId ?? $"receipt:{at.Ticks}:{day}");
+            unattributedDaily[day] = unattributedDaily[day] with
+            {
+                ModelTokens = unattributedDaily[day].ModelTokens + count,
+                ModelCostUsd = unattributedDaily[day].ModelCostUsd + (price ?? 0),
+                UnpricedRuns = unattributedDaily[day].UnpricedRuns + (unpricedRun ? 1 : 0),
+            };
+            unattributedConsumers.Add(new("unattributed", "Unattributed one-shot jobs", null, count, 0));
+        }
+        return new(start, result, unattributedDaily, unattributedConsumers, workspaceWarning);
     }
 
     /// <summary>
@@ -760,20 +815,20 @@ public sealed class WorkspaceQuotaService
         return total;
     }
 
-    private decimal Price(OrchestratorTokenUsage usage, DateTime at)
+    private decimal? Price(OrchestratorTokenUsage usage, DateTime at)
     {
         try
         {
             var estimate = _pricing.Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
                 usage.CacheReadTokens, usage.CacheCreationTokens, at);
-            return estimate.ModelKnown ? estimate.Total : 0;
+            return estimate.ModelKnown ? estimate.Total : null;
         }
         catch (Exception ex)
         {
             // The USD figure is informational; token admission does not depend on it.
             if (_unpricedModels.TryAdd(usage.Model ?? "", 0))
                 _logger?.LogWarning(ex, "workspace-quota-pricing-failed model={Model}", usage.Model);
-            return 0;
+            return null;
         }
     }
 

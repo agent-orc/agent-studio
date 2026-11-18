@@ -165,9 +165,9 @@ public sealed class WorkbenchDecisionService
     /// receipt so the Dossier names the card that owes the revision.
     /// </param>
     /// <param name="revisionRoute">
-    /// That card's route before the round. When the confirmed route differs,
-    /// the receipt records it under <c>routeChangedFrom</c> so the change is
-    /// never silent (AGT-3838).
+    /// That card's route before the round. Confirmation only records the
+    /// requested route; <see cref="RecordAppliedReworkRoute"/> records the old
+    /// route after continue admission applies it.
     /// </param>
     public WorkbenchDecisionResult Confirm(
         string projectName, string id, ConfirmWorkbenchDecisionRequest body,
@@ -336,9 +336,6 @@ public sealed class WorkbenchDecisionService
         {
             if (!string.IsNullOrWhiteSpace(body.Request)) receipt["request"] = body.Request.Trim();
             if (!string.IsNullOrWhiteSpace(revisionTaskKey)) receipt["revisionTaskKey"] = revisionTaskKey.Trim();
-            if (rework && revisionRoute != null
-                && !revisionRoute.SameAs(revisionRoute.After(new(body.CliType, body.Model, body.ThinkingLevel))))
-                receipt["routeChangedFrom"] = RouteNode(revisionRoute);
         }
         descriptor["decision"] = receipt;
         if (spawned.Length > 0)
@@ -446,6 +443,30 @@ public sealed class WorkbenchDecisionService
         };
     }
 
+    /// <summary>Records the old route only after continue admission applied the requested route.</summary>
+    public bool RecordAppliedReworkRoute(string projectName, string id, string operationId,
+        WorkbenchAgentRoute? before, WorkbenchAgentRoute requested)
+    {
+        if (before == null || before.SameAs(before.After(requested))) return true;
+        var gate = ConfirmGates.GetOrAdd(ConfirmGateKey(projectName, id), _ => new SemaphoreSlim(1, 1));
+        gate.Wait();
+        try
+        {
+            var snapshot = _catalogue.ResolveCanonicalForMutation(projectName, id);
+            if (snapshot is null || snapshot.Dirty || snapshot.Descriptor["decision"] is not JsonObject receipt
+                || receipt["operationId"]?.GetValue<string>() != operationId
+                || receipt["outcome"]?.GetValue<string>() != "rework") return false;
+            receipt["routeChangedFrom"] = RouteNode(before);
+            return _repositoryMutations.Execute(projectName, snapshot.Root,
+                $"{ManagedRepositoryMutationService.DecisionReceiptOperationPrefix}{id}-route",
+                $"chore(workbench): record applied revision route for {id}",
+                [snapshot.DescriptorRelPath],
+                () => _fileWriter.Write(snapshot.DescriptorPath,
+                    RepositoryTextLayout.IndentedJsonFor(snapshot.DescriptorPath, snapshot.Descriptor))).Success;
+        }
+        finally { gate.Release(); }
+    }
+
     private sealed record GateResult(
         WorkbenchDecisionResult? Failure,
         WorkbenchMutationSnapshot? Snapshot = null,
@@ -483,9 +504,11 @@ public sealed class WorkbenchDecisionService
             if (task != null || !string.IsNullOrWhiteSpace(archiveReason))
                 return new(Failure(id, operationId, "validation",
                     "A recorded choice cannot carry a task draft or archive reason."));
-            if (!responses.Any(response => response.SelectedOptionIds.Count > 0))
+            // A note alone is an answer worth keeping (AGT-3875).
+            if (!responses.Any(response => response.SelectedOptionIds.Count > 0
+                    || !string.IsNullOrWhiteSpace(response.Comment)))
                 return new(Failure(id, operationId, "validation",
-                    "Select at least one decision option to record."));
+                    "Select at least one decision option or write a note to save."));
             if (spawnedTaskKeys?.Any(key => !string.IsNullOrWhiteSpace(key)) == true)
                 return new(Failure(id, operationId, "validation",
                     "A recorded choice cannot carry spawned task keys."));

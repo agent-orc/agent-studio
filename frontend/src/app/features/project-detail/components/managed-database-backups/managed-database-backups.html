@@ -1,0 +1,97 @@
+<section class="db-backups" [attr.aria-label]="'Backups of ' + database().name" data-testid="managed-database-backups">
+  <div class="db-backups__head">
+    <h4>Backups</h4>
+    <app-status-indicator [tone]="status().tone" [label]="status().label" [compact]="true" testId="managed-database-backup-status" />
+    <span data-testid="managed-database-last-backup">@if (database().lastBackupAt; as at) {
+      Last backup {{ at | date:'d MMM y, HH:mm':'UTC' }} UTC } @else { No backup yet }</span>
+    @if (running()) {
+      <button type="button" [disabled]="busy()" (click)="backUpNow()" data-testid="managed-database-back-up-now">Back up now</button>
+    }
+  </div>
+  <p data-testid="managed-database-backup-policy">{{ policy() }}</p>
+  @if (database().lastBackupError; as message) {
+    <p class="db-backups__note" data-testid="managed-database-backup-error">{{ message }}
+      @if (database().lastBackupAttemptAt; as attempt) { (attempt {{ attempt | date:'d MMM y, HH:mm':'UTC' }} UTC) }</p>
+  }
+
+  @if (backups().length) {
+    <ul class="db-backups__list">
+      @for (backup of visibleBackups(); track backup.id) {
+        <li [attr.data-testid]="'managed-database-backup-' + backup.id">
+          <div class="db-backups__backup">
+            <time [attr.datetime]="backup.takenAt">{{ backup.takenAt | date:'d MMM y, HH:mm':'UTC' }} UTC</time>
+            <span>{{ kind(backup.kind) }}</span>
+            <span class="db-backups__size">{{ bytes(backup.bytes) }}</span>
+            <span>@if (backup.verifiedAt) { Verified {{ backup.verifiedAt | date:'d MMM':'UTC' }}@if (backup.verifiedTables !== null) {, {{ backup.verifiedTables }} tables} }
+              @else { Not verified }</span>
+            <span class="db-backups__actions">
+              <button type="button" [disabled]="busy()" (click)="verify(backup)" data-testid="managed-database-backup-verify">Test restore</button>
+              @if (targetOptions().length && restoring() !== backup.id) {
+                <button type="button" class="db-backups__danger" [disabled]="busy()" (click)="startRestore(backup)"
+                  data-testid="managed-database-backup-restore">Restore…</button>
+              }
+            </span>
+          </div>
+          @if (restoring() === backup.id) {
+            <div class="db-backups__restore" data-testid="managed-database-restore-form">
+              <fieldset>
+                <legend>Restore into</legend>
+                @for (option of targetOptions(); track option.value) {
+                  <label><input type="radio" [name]="'restore-target-' + database().environmentId + '-' + database().name"
+                    [value]="option.value" [checked]="target() === option.value" (change)="chooseTarget(option.value)"
+                    [attr.data-testid]="'managed-database-restore-target-' + option.value" />{{ option.label }}</label>
+                }
+              </fieldset>
+              @if (!targets().length) { <p>To restore into a new database, declare it in project.yml and deploy it first.</p> }
+              <p>The current data of <code>{{ target() }}</code> is backed up first, then replaced by this backup.
+                @if (production()) { This is production, so the restore waits for an Owner approval. }
+                @else { Production restores wait for an Owner approval; this environment does not need one. }</p>
+              <label class="db-backups__confirm"><span>Type <code>{{ target() }}</code> to replace its data</span>
+                <input type="text" autocomplete="off" [value]="typed()" (input)="type($event)" data-testid="managed-database-restore-confirm" /></label>
+              <div class="db-backups__actions">
+                <button type="button" class="db-backups__danger" [disabled]="busy() || !canRestore()" (click)="restore(backup)"
+                  data-testid="managed-database-restore-submit">Restore backup</button>
+                <button type="button" class="db-backups__ghost" (click)="cancelRestore()">Cancel</button>
+              </div>
+            </div>
+          }
+        </li>
+      }
+    </ul>
+    @if (backups().length > visibleLimit) {
+      <button type="button" class="db-backups__disclosure" [attr.aria-expanded]="showAll()" (click)="toggleAll()"
+        data-testid="managed-database-backups-toggle"><app-disclosure-marker [open]="showAll()" />
+        {{ showAll() ? 'Show the newest ' + visibleLimit + ' backups' : 'Show all ' + backups().length + ' backups' }}</button>
+    }
+  }
+
+  @if (operations().length) {
+    <h5>Recent operations</h5>
+    <ul class="db-backups__operations">
+      @for (operation of operations(); track operation.id) {
+        <li [attr.data-testid]="'managed-database-operation-' + operation.id">
+          <div class="db-backups__operation">
+            <strong>{{ operationKind(operation.kind) }}</strong>
+            <app-status-indicator [tone]="operationState(operation.state).tone" [label]="operationState(operation.state).label"
+              [compact]="true" testId="managed-database-operation-state" />
+            <span>{{ describe(operation) }}</span>
+          </div>
+          <small>Requested by {{ operation.requestedBy }} {{ operation.requestedAt | date:'d MMM y, HH:mm':'UTC' }} UTC
+            @if (operation.approvedBy) { · {{ operation.state === 'rejected' ? 'Rejected' : 'Approved' }} by {{ operation.approvedBy }}
+              @if (operation.approvedAt) { {{ operation.approvedAt | date:'d MMM y, HH:mm':'UTC' }} UTC } }
+            @if (operation.finishedAt) { · Finished {{ operation.finishedAt | date:'d MMM y, HH:mm':'UTC' }} UTC }</small>
+          @if (operation.message) { <p>{{ operation.message }}</p> }
+          @if (operation.state === 'awaiting-approval') {
+            <div class="db-backups__actions">
+              <span>Waits for an Owner approval</span>
+              <button type="button" class="db-backups__primary" [disabled]="busy()" (click)="decide(operation, 'approve')"
+                data-testid="managed-database-operation-approve">Approve restore</button>
+              <button type="button" [disabled]="busy()" (click)="decide(operation, 'reject')"
+                data-testid="managed-database-operation-reject">Reject</button>
+            </div>
+          }
+        </li>
+      }
+    </ul>
+  }
+</section>

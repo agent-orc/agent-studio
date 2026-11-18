@@ -24,7 +24,6 @@ import {
   WorkbenchDocument,
   WorkbenchReviewVerdict,
 } from '../../../../models/project-docs.model';
-import { TaskState } from '../../../../models/task.model';
 import { formatRelativeTime, formatTime } from '../../../../services/format.util';
 import { NowTickService } from '../../../../services/now-tick.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
@@ -33,6 +32,15 @@ import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/wor
 import { focusLost } from '../workbench-decision-panel/workbench-decision-focus.util';
 import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+
+import {
+  conceptCardKeys,
+  ghostStatus,
+  implementationStatusFor,
+  normalizeKey,
+  uniqueKeys,
+  withDossierCards,
+} from './workbench-viewer-header.util';
 
 const MAX_INLINE_TASKS = 8;
 
@@ -99,15 +107,16 @@ export class WorkbenchViewerHeaderComponent {
     return workbench.openDecisionCount ?? Math.max(1, this.decisionPoints().length);
   });
   readonly implementationStatus = computed(() => {
+    const document = this.document();
     return implementationStatusFor(
-      this.document().workbench.status,
-      this.taskStatuses(),
+      document.workbench.status,
+      withDossierCards(this.taskStatuses(), document, this.projectName()),
+      conceptCardKeys(document),
     );
   });
   readonly statusLabel = computed(() => {
     const workbench = this.document().workbench;
-    const label = workbench.status === 'decided' ? 'In implementation'
-      : this.implementationStatus() ?? humanize(workbench.status);
+    const label = this.implementationStatus() ?? humanize(workbench.status);
     const phase = workbench.status === 'decided' || workbench.status === 'documented'
       || workbench.status === 'archived' ? null : workbench.phase;
     return phase ? `${label} · ${humanize(phase)}` : label;
@@ -233,64 +242,7 @@ export class WorkbenchViewerHeaderComponent {
   }
 }
 
-function uniqueKeys(keys: readonly string[]): string[] {
-  const result: string[] = [];
-  const seen = new Set<string>();
-  for (const key of keys) {
-    const normalized = normalizeKey(key);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    result.push(key.trim());
-  }
-  return result;
-}
-
-function normalizeKey(value: string | null | undefined): string {
-  return (value ?? '').trim().toUpperCase();
-}
-
 function humanize(value: string): string {
   const words = value.replaceAll('-', ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-export function implementationStatusFor(
-  workbenchStatus: string,
-  references: readonly TaskReferenceStatus[],
-): string | null {
-  if (workbenchStatus !== 'decision-pending' && workbenchStatus !== 'decided') return null;
-  const known = references.filter((task) => task.exists && task.lane);
-  if (known.length === 0) return null;
-  const allTerminal = references.every(
-    (task) => task.exists && task.lane !== null && isTerminalLane(task.lane),
-  );
-  return !allTerminal && known.some((task) => hasImplementationStarted(task.lane))
-    ? 'In implementation'
-    : null;
-}
-
-function isTerminalLane(lane: string | null): boolean {
-  return lane === TaskState.Completed || lane === TaskState.Archive;
-}
-
-function hasImplementationStarted(lane: string | null): boolean {
-  return lane !== null
-    && lane !== TaskState.Backlog
-    && lane !== TaskState.Preparation
-    && lane !== TaskState.Ready;
-}
-
-function ghostStatus(key: string, projectName: string): TaskReferenceStatus {
-  return {
-    key,
-    exists: false,
-    taskKey: null,
-    title: null,
-    lane: null,
-    projectId: '',
-    projectName,
-    projectColor: null,
-    merge: null,
-    reviewGrade: null,
-  };
 }

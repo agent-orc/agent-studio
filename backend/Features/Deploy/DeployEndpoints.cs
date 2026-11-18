@@ -47,6 +47,10 @@ public static class DeployEndpoints
             deploy.Notes(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
 
+        project.MapPut("/releases/{releaseId}/notes/{cardKey}", (HttpContext context, string projectName,
+            string releaseId, string cardKey, ReleaseNoteEditRequest request, DeployService deploy) =>
+            Respond(deploy.EditNote(projectName, releaseId, cardKey, request, Actor(context, projectName))));
+
         project.MapGet("/cards", (string projectName, DeployService deploy) =>
             deploy.Cards(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
@@ -66,6 +70,13 @@ public static class DeployEndpoints
             DeployService deploy) =>
             deploy.Log(projectName, deploymentId, step) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown deployment '{deploymentId}'." }));
+
+        // F2: the gate keys a refusal by the registered display name. A file read, no git.
+        project.MapGet("/release-gate", (string projectName, DeployStore store,
+            AgentStudio.Registry.ProjectRegistry registry) =>
+            Results.Ok(new ReleaseGateStatus(store.ReadReleaseRefusal(
+                (registry.FindByIdOrDisplayName(projectName) ?? registry.FindByShortCode(projectName))?.DisplayName
+                ?? projectName))));
 
         project.MapGet("/audit", (string projectName, DeployService deploy) =>
             deploy.Audit(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));

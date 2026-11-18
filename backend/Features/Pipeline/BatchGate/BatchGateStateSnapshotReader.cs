@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Pipeline;
 
@@ -9,8 +10,14 @@ public sealed record BatchGateReviewFixWait(string TaskKey, string ReviewAttempt
 public sealed record BatchGateDetachedFlight(string BatchId, string Project,
     DateTimeOffset StartedAtUtc, DateTimeOffset DetachedAtUtc, int DeadlineMinutes, string Reason);
 
-/// <summary>The next observable pilot action for a batch that has not reached a terminal phase.</summary>
-public sealed record BatchGateNextAction(string Action, DateTimeOffset DueAtUtc);
+/// <summary>
+/// The next observable action for a batch that has not reached a terminal phase.
+/// <paramref name="Actor"/> is "planner", "owner" or "none"; an owner action
+/// names the cards it acts on in <paramref name="TaskKeys"/>. The due time comes
+/// from a stored record, such as a flight claim's stage deadline, or is null.
+/// </summary>
+public sealed record BatchGateNextAction(string Actor, string Action, DateTimeOffset? DueAtUtc,
+    IReadOnlyList<string>? TaskKeys = null);
 
 public static class BatchGateStateSnapshotReader
 {
@@ -27,16 +34,35 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
         Func<string, bool>? liveFlight = null,
         Func<string, BatchGatePilotService.RecoveryDelay>? recoveryStatus = null,
+        BatchLaneIdleSummary? laneIdle = null,
         IReadOnlySet<string>? activeIsolationFlights = null,
         string? leaseDeadlineDeferredBatchId = null,
         IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
         IReadOnlySet<string>? activePerTaskFlights = null,
         BatchGateInvariantReport? invariants = null,
         string? diskPauseReason = null,
-        int? configuredGateSlots = null)
+        int? configuredGateSlots = null,
+        BatchReservationWait? reservationWait = null,
+        BatchLaneAdmissionSnapshot? laneAdmission = null)
     {
         // AGT-3569: the durable claim on the project's flight slot, live or last ended.
         var flightClaim = store.ReadFlightClaim(project);
+        // AGT-3882: what a reserving flight waits for, beside the gate slots in use.
+        var flightReservationWait = flightClaim is { End: null, Stage: AgentStudio.OrchestrationDecisions.BatchFlightStage.Reserving }
+            && reservationWait is not null
+            ? new
+            {
+                batchId = flightClaim.BatchId,
+                reservationWait.ReservingSinceUtc,
+                reservationWait.WaitMinutes,
+                holder = reservationWait.Holder,
+                queuedAhead = reservationWait.QueuedAhead,
+                heldBack = reservationWait.HeldBack,
+                pendingPushes = reservationWait.PendingPushes,
+                gateSlots,
+                reservationWait.Reason,
+            }
+            : null;
         // AGT-3694: what each per-task fallback waits for, so an overdue member
         // never shows only its rule.
         var waits = (fallbackWaits ?? []).GroupBy(wait => wait.ReviewAttemptId, StringComparer.Ordinal)
@@ -48,6 +74,10 @@ public static class BatchGateStateSnapshotReader
             .OrderBy(item => item.Subject.EnqueueSequence).ToArray();
         var preChecks = store.ListPreChecks(project).OrderByDescending(item => item.CompletedAtUtc).ToArray();
         var fallbackCauses = store.ListFallbackCauses(project);
+        // AGT-3856: per-card suites refused because a batch gates the card anyway.
+        var suiteRefusals = store.ListSuiteRefusals(project);
+        var refusalByAttempt = suiteRefusals.GroupBy(item => item.ReviewAttemptId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         var allPending = store.ListAllPending();
         var pendingByAttempt = allPending.GroupBy(item => item.ReviewAttemptId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
@@ -189,6 +219,25 @@ public static class BatchGateStateSnapshotReader
             store.TryReadPhaseRecord(manifest.BatchId, out var phaseRecord);
             var progressAt = claim is null || claim.StageStartedAtUtc <= phase.RecordedAtUtc
                 ? phase.RecordedAtUtc : claim.StageStartedAtUtc;
+            var isolationActive = phase.Phase == BatchPhase.Red
+                && activeIsolationFlights?.Contains(manifest.BatchId) == true;
+            // F13: the members a red batch still holds; they wait on its isolation.
+            var held = phase.Phase == BatchPhase.Red
+                ? manifest.Members.Where(member => pending.Any(item =>
+                    item.Subject.TaskKey == member.TaskKey
+                    && item.Subject.RunAttempt == member.RunAttempt))
+                    .Select(member => member.TaskKey).ToArray()
+                : [];
+            var findings = phase.Phase == BatchPhase.Red && manifest.ParentBatchId is null
+                ? store.ListIsolationFindings(manifest.Scope.Project)
+                    .Where(finding => finding.ParentBatchId == manifest.BatchId).ToArray()
+                : [];
+            // The pilot tick's own rule: a red parent without a live flight is
+            // paused unless every member has a finding and none is held.
+            var recovers = phase.Phase == BatchPhase.Red && manifest.ParentBatchId is null
+                && MonolithTransitionAdapter.BatchEndInterruptedIsolation(true, isolationActive,
+                    held.Length > 0, manifest.Members.All(member => findings.Any(finding =>
+                        finding.TaskKey == member.TaskKey && finding.RunAttempt == member.RunAttempt)));
             return new
             {
                 manifest.BatchId,
@@ -202,17 +251,18 @@ public static class BatchGateStateSnapshotReader
                     : Math.Max(0, (at - claim.ClaimedAtUtc).TotalMinutes),
                 reservationWaitMinutes = claim?.Stage.ToString() == "Reserving"
                     ? Math.Max(0, (at - claim.StageStartedAtUtc).TotalMinutes) : (double?)null,
-                nextAction = NextAction(phase, claim, recoveryStatus?.Invoke(manifest.BatchId), at),
+                reservationWaitsFor = claim is not null && flightReservationWait is not null
+                    ? flightReservationWait.Reason : null,
+                nextAction = phase.Phase == BatchPhase.Red && claim is null
+                    ? RedNextAction(manifest, isolationActive, recovers, findings)
+                    : NextAction(phase, claim, recoveryStatus?.Invoke(manifest.BatchId), at),
                 liveFlight = hasLiveFlight,
                 recoveryStatus = phase.Phase == BatchPhase.Running && !hasLiveFlight
                     ? recoveryStatus?.Invoke(manifest.BatchId) : null,
                 phaseReason = phase.Reason,
-                isolationActive = phase.Phase == BatchPhase.Red
-                    && activeIsolationFlights?.Contains(manifest.BatchId) == true,
-                isolationPending = phase.Phase == BatchPhase.Red
-                    && manifest.Members.Any(member => pending.Any(item =>
-                        item.Subject.TaskKey == member.TaskKey
-                        && item.Subject.RunAttempt == member.RunAttempt)),
+                isolationActive,
+                isolationPending = recovers,
+                heldTaskKeys = held,
                 phaseHistory = store.StateHistory(manifest.BatchId).Select(item => new {
                     phase = item.Phase.ToString().ToLowerInvariant(), reason = item.Reason, atUtc = item.RecordedAtUtc,
                 }).ToArray(),
@@ -354,10 +404,12 @@ public static class BatchGateStateSnapshotReader
         {
             var cause = causes.LastOrDefault(entry => entry.ReviewAttemptId == item.ReviewAttemptId);
             var wait = waits.GetValueOrDefault(item.ReviewAttemptId);
+            var refusal = cause is null ? refusalByAttempt.GetValueOrDefault(item.ReviewAttemptId) : null;
             members[item.Subject.TaskKey] = new { status = cause is null && wait is null ? "pending" : "fallback",
                 batchId = cause?.BatchId,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
-                reason = cause?.Rule, reasonDetail = cause?.Event,
+                reason = cause?.Rule ?? (refusal is null ? null : BatchGatePilotService.SuiteRefusedReason),
+                reasonDetail = cause?.Event ?? refusal?.Reason,
                 fallbackRule = cause?.Rule, fallbackEvent = cause?.Event,
                 waitKind = wait?.Kind, waitingFor = wait?.Detail, waitSinceUtc = wait?.SinceUtc,
                 engineRunId = wait?.EngineRunId, engineStatus = wait?.EngineStatus,
@@ -465,6 +517,8 @@ public static class BatchGateStateSnapshotReader
                 formedAtUtc = BatchGateFlightQueue.QueuedSince(store, oldestFormed),
                 ageMinutes = Math.Max(0, (at - BatchGateFlightQueue.QueuedSince(store, oldestFormed)).TotalMinutes),
             },
+            // AGT-3857: time a formed batch waited with no batch gate running, by cause.
+            laneIdle,
             perTaskGates,
             flightQueue = flightQueue.Select(manifest => new
             {
@@ -486,11 +540,22 @@ public static class BatchGateStateSnapshotReader
                 abandoned = moved.Count(state => state.BaseMoveOutcome == "abandoned") },
             members,
             ejectRequests = store.ListEjects(project),
+            infrastructureRetries = store.ListInfrastructureRetries(project),
             reviewFixWaits = reviewFixWaits ?? [],
             detachedFlights = detachedFlights ?? [],
             flightClaim,
+            flightReservationWait,
             fallbackWaits = fallbackWaits ?? [],
             fallbackStalls = store.ListFallbackStalls(project, 20),
+            suiteRefusals = suiteRefusals.Reverse().Take(20).ToArray(),
+            laneAdmission = laneAdmission is null ? null : new
+            {
+                laneAdmission.BatchGates,
+                laneAdmission.CompanionSuites,
+                laneAdmission.Limit,
+                // Host-wide: a suite of any project waits for this batch lane.
+                laneAdmission.Waiting,
+            },
             isolationFindings = store.ListIsolationFindings(project)
                 .Where(finding => finding.Status != "proven-red"
                     || DeterministicIsolationFinding(store, projectManifests, finding))
@@ -520,19 +585,43 @@ public static class BatchGateStateSnapshotReader
     {
         if (phase.Phase is BatchPhase.Published or BatchPhase.Paused or BatchPhase.Abandoned)
             return null;
+        // F13: a due time is a stored deadline or absent; "now + 30 s" moved on every read.
         if (claim is not null)
-            return new(claim.StageDeadlineUtc <= at ? "Expire overdue flight claim on the next pilot tick"
+            return new("planner", claim.StageDeadlineUtc <= at ? "Expire overdue flight claim on the next pilot tick"
                 : $"Advance or expire {claim.Stage.ToString().ToLowerInvariant()} flight claim",
-                claim.StageDeadlineUtc <= at ? at.AddSeconds(30) : claim.StageDeadlineUtc);
+                claim.StageDeadlineUtc <= at ? null : claim.StageDeadlineUtc);
         if (phase.Phase == BatchPhase.Running && recovery is not null)
-            return new("Recover the running batch or record a terminal reason", recovery.NextRetryAtUtc);
-        return new(phase.Phase switch
+            return new("planner", "Recover the running batch or record a terminal reason", recovery.NextRetryAtUtc);
+        return new("planner", phase.Phase switch
         {
             BatchPhase.Formed => "Start the formed batch when its flight slot opens, or record a terminal reason",
-            BatchPhase.Red => "Continue isolation or pause with a reason",
             BatchPhase.Green or BatchPhase.Publishing => "Publish the verified batch or pause with a reason",
             _ => "Advance the batch or record a terminal reason",
-        }, at.AddSeconds(30));
+        }, null);
+    }
+
+    /// <summary>
+    /// F13: the single next step of a red batch, from the facts the pilot tick
+    /// acts on. The planner acts while isolation runs or must be ended; the
+    /// owner acts on the escalated proven-red cards; otherwise nothing waits.
+    /// A red isolation child is a step of its parent, which carries the line.
+    /// </summary>
+    private static BatchGateNextAction? RedNextAction(BatchGateManifest manifest, bool isolationActive,
+        bool recovers, IReadOnlyList<BatchGateIsolationFinding> findings)
+    {
+        if (manifest.ParentBatchId is not null) return null;
+        if (isolationActive)
+            return new("planner", "Isolation is testing the members; the planner records each verdict", null);
+        if (recovers)
+            return new("planner", "No isolation flight is active; on its next tick the planner pauses this"
+                + " batch and returns the unresolved members to planning", null);
+        var provenRed = manifest.Members.Where(member => findings
+                .Where(finding => finding.TaskKey == member.TaskKey && finding.RunAttempt == member.RunAttempt)
+                .MaxBy(finding => finding.RecordedAtUtc)?.Status == "proven-red")
+            .Select(member => member.TaskKey).ToArray();
+        return provenRed.Length > 0
+            ? new("owner", "Triage the proven-red members on their cards", null, provenRed)
+            : new("none", "Isolation is complete; this batch holds no cards", null);
     }
 
     /// <summary>

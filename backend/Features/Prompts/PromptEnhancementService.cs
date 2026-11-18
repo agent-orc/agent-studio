@@ -77,7 +77,7 @@ public class PromptEnhancementService
         sw.Stop();
 
         var (text, usage) = AdHocClaudeInvoker.ParseOrFallback(raw, fallbackModel);
-        AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.PromptEnhancement, fallbackModel, usage, sw.ElapsedMilliseconds, ok);
+        AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.PromptEnhancement, fallbackModel, usage, sw.ElapsedMilliseconds, ok, CliTypes.Claude);
 
         if (!ok || string.IsNullOrWhiteSpace(text))
             throw new InvalidOperationException(error ?? "Prompt enhancer returned empty response");
@@ -217,6 +217,7 @@ public class PromptEnhancementService
             {
                 Timeout = TimeSpan.FromSeconds(HaikuTimeoutSeconds),
                 Source = AdHocUsageSources.PromptEnhancement,
+                RecordUsage = false, // This service records the parsed result below.
             }, ct).ConfigureAwait(false);
             if (!r.Ok) return (false, null, r.Error);
             return (true, CliOneShotCompatibility.ToClaudeResultEnvelope(r, model), null);

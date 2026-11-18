@@ -2,7 +2,10 @@
 
 namespace AgentStudio.Projects;
 
+using System.Net.Http.Json;
 using AgentStudio.Git;
+using AgentStudio.Host;
+using AgentStudio.Management;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Registry;
@@ -109,6 +112,51 @@ public static class ProjectSettingsEndpoints
 {
     public static void MapProjectSettingsEndpoints(this WebApplication app)
     {
+        app.MapPost("/api/projects/{projectName}/execution-readiness-probe", async Task<IResult> (
+            string projectName, ProjectExecutionProbeRequest request,
+            ProjectSettingsService settings, TaskScannerService scanner, ProjectRegistry projects,
+            ClientIdentityStore clients, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
+            IConfiguration configuration, IHttpClientFactory httpClients, CancellationToken ct) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(item =>
+                string.Equals(item.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            var project = projects.FindByIdOrDisplayName(projectName);
+            if (entry is null || project is null) return Results.NotFound(new { error = "Project not found." });
+            var projectSettings = settings.Get(projectName);
+            if (!ProjectExecutionPolicy.IsAssignedRemote(projectSettings, request.HostId, request.HostId))
+                return Results.BadRequest(new { error = "Host is not assigned to this project." });
+
+            var repository = RemoteProjectRepositoryResolver.Resolve(project, projectSettings.IntegrationBranch);
+            var preflight = clients.FindRunnerProjectPreflight(request.HostId, project.Id);
+            if (repository is null || preflight is null ||
+                !string.Equals(preflight.RegistrationFingerprint,
+                    AgentStudio.Tasks.ProjectDeliveryPreflightFingerprint.Create(repository), StringComparison.Ordinal))
+                preflight = null;
+
+            var root = string.IsNullOrWhiteSpace(entry.RepositoryPath) ? entry.RootPath : entry.RepositoryPath;
+            var definition = Directory.Exists(root) ? ProjectDefinitionReader.ReadWorkspace(root).Definition : null;
+            IReadOnlyList<AgentStudio.TaskServer.Contracts.RunnerCapabilitySnapshotDto> snapshots = hosts.ListCapabilitySnapshots();
+            if (TaskServerPlaneProxy.IsConfigured(configuration))
+            {
+                try
+                {
+                    snapshots = await httpClients.CreateClient(TaskServerPlaneProxy.ClientName)
+                        .GetFromJsonAsync<AgentStudio.TaskServer.Contracts.RunnerCapabilitySnapshotDto[]>(
+                            "/api/v1/management/remote-hosts", ct) ?? [];
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+                {
+                    SilentCatch.Warn(ex, "Project execution readiness host snapshot unavailable");
+                    snapshots = [];
+                }
+            }
+            var host = snapshots.FirstOrDefault(item =>
+                string.Equals(item.RunnerId, request.HostId, StringComparison.OrdinalIgnoreCase));
+            return Results.Ok(ProjectExecutionReadinessProbe.Evaluate(
+                repository?.DefaultBranch ?? projectSettings.IntegrationBranch,
+                definition?.Stack ?? [], preflight, host?.Capabilities ?? [], host?.Status));
+        }).RequirePermission(IamPermissions.ProjectRead);
+
         app.MapGet("/api/projects/{projectName}/chat-metadata", (
             string projectName, ProjectSettingsService settings, TaskScannerService scanner,
             ProjectRegistry projects, WorkspaceSettingsService workspaceSettings) =>
@@ -137,14 +185,15 @@ public static class ProjectSettingsEndpoints
         app.MapGet("/api/projects/{projectName}/execution", (
             string projectName,
             ProjectSettingsService settings,
-            TaskScannerService scanner) =>
+            TaskScannerService scanner,
+            ProjectRegistry registry,
+            GitService git) =>
         {
             var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
                 string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (project is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-            var repositoryPath = string.IsNullOrWhiteSpace(project.RepositoryPath)
-                ? project.RootPath
-                : project.RepositoryPath;
+            var target = ProjectCheckoutEndpoints.Resolve(projectName, scanner, registry, settings, git);
+            var repositoryPath = target?.Path;
             if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
                 return Results.Ok(new
                 {
@@ -155,10 +204,11 @@ public static class ProjectSettingsEndpoints
                     preparationWarnings = Array.Empty<object>(),
                     lastManifest = (ProjectPreparationManifest?)null,
                     @override = settings.Get(projectName).ExecutionDefinitionOverride,
-                    source = "subject-commit",
+                    source = "integration-branch",
+                    branch = target?.Branch,
                 });
-            var read = ProjectDefinitionReader.ReadWorkspace(repositoryPath);
-            var definitionPath = Path.Combine(repositoryPath, ProjectPreparationPaths.Definition.Replace('/', Path.DirectorySeparatorChar));
+            var branch = target!.Value.Branch;
+            var (tip, definition, read) = ReadExecutionDefinitionAtBranchTip(git, repositoryPath, branch);
             var manifestPath = BuildTestGateRunner.PreparationManifestPath(repositoryPath);
             ProjectPreparationManifest? manifest = null;
             try
@@ -196,14 +246,16 @@ public static class ProjectSettingsEndpoints
                 .ToArray();
             return Results.Ok(new
             {
-                repositoryDefinition = File.Exists(definitionPath) ? File.ReadAllText(definitionPath) : null,
+                repositoryDefinition = definition,
                 definitionSha256 = read.DefinitionSha256,
                 valid = read.IsValid,
                 issues = read.Issues,
                 preparationWarnings,
                 lastManifest = manifest,
                 @override = settings.Get(projectName).ExecutionDefinitionOverride,
-                source = "subject-commit",
+                source = "integration-branch",
+                branch,
+                commitSha = tip,
             });
         });
 
@@ -1513,7 +1565,7 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(await pilot.ReleaseQueueStalledAsync(projectName,
                 AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted));
         });
-        app.MapPost("/api/projects/{projectName}/batch-gate/infrastructure/{taskKey}/retry", async (
+        app.MapPost("/api/projects/{projectName}/batch-gate/infrastructure/{taskKey}/retry", (
             string projectName, string taskKey, HttpContext context, BatchGatePilotService pilot,
             TaskScannerService scanner, ProjectSettingsService settings, IConfiguration configuration) =>
         {
@@ -1528,9 +1580,10 @@ public static class ProjectSettingsEndpoints
             }
             if (!settings.Get(projectName).BatchGate.Enabled)
                 return Results.Conflict(new { error = "Re-enable batch verification after restoring the remote gate host, then retry this card's gate." });
-            return await pilot.RetryInfrastructureGateAsync(projectName, taskKey,
-                AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted)
-                ? Results.Ok(new { retried = true })
+            var request = pilot.RequestInfrastructureRetry(projectName, taskKey,
+                AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context));
+            return request is not null
+                ? Results.Accepted(value: request)
                 : Results.Conflict(new { error = "This card no longer has a current reviewed delivery waiting on gate infrastructure." });
         });
 
@@ -1764,6 +1817,21 @@ public static class ProjectSettingsEndpoints
                 return Results.BadRequest(new { error = ex.Message });
             }
         });
+    }
+
+    internal static (string? Tip, string? Definition, AgentStudio.TaskServer.Contracts.ProjectDefinitionReadResult Read)
+        ReadExecutionDefinitionAtBranchTip(GitService git, string repositoryPath, string branch)
+    {
+        var tip = git.GetBranchTip(repositoryPath, $"refs/heads/{branch}")
+            ?? git.GetBranchTip(repositoryPath, $"refs/remotes/origin/{branch}");
+        var definition = tip is null ? null : git.GetFileAtCommit(repositoryPath, tip, ProjectPreparationPaths.Definition);
+        var read = definition is null
+            ? new AgentStudio.TaskServer.Contracts.ProjectDefinitionReadResult(null,
+                [new ProjectDefinitionIssue(ProjectPreparationPaths.Definition, "definition-missing",
+                    $"Repository execution definition is missing on {branch}.")], null)
+            : ProjectDefinitionReader.Parse(definition,
+                path => git.FileExistsAtCommit(repositoryPath, tip!, path));
+        return (tip, definition, read);
     }
 
     /// <summary>

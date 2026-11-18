@@ -21,7 +21,11 @@
         <div class="publish__head">
           <div>
             <strong>{{ panel.target.kind === 'package' ? 'Package release' : 'Website deploy' }}</strong>
-            <small>{{ panel.target.label }} · {{ panel.pendingTasks.length }} pending task{{ panel.pendingTasks.length === 1 ? '' : 's' }}</small>
+            @if (panel.target.firstPublishPending) {
+              <small>{{ panel.target.label }} · first publish</small>
+            } @else {
+              <small>{{ panel.target.label }} · {{ panel.target.pendingCount }} pending commit{{ panel.target.pendingCount === 1 ? '' : 's' }}</small>
+            }
           </div>
           <button type="button" class="publish__quiet" (click)="close()">Close</button>
         </div>

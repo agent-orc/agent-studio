@@ -12,6 +12,7 @@ import type {
   EnvironmentStatus,
   Release,
   DeployRunFilter,
+  ReleaseGateStatus,
 } from '../state/deploy-area.model';
 import type { InstanceDeployView } from '../state/instance-deploy.model';
 import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
@@ -23,7 +24,8 @@ export interface ReleaseNotes {
   releaseId: string;
   version: string;
   preview: boolean;
-  notes: { cardKey: string; text: string }[];
+  /** `maintenance` marks chore cards; `edited` says a person wrote the text (F18). */
+  notes: { cardKey: string; text: string; maintenance?: boolean; edited?: boolean }[];
 }
 
 /**
@@ -93,6 +95,12 @@ export class ProjectDeployDataService {
       'Release notes could not be loaded.', true);
   }
 
+  /** Rewrites one card's note in product language; empty text restores the card title. */
+  editReleaseNote(projectName: string, releaseId: string, cardKey: string, text: string): Observable<ReleaseNotes> {
+    return this.http.put<ReleaseNotes>(
+      `${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/notes/${encodeURIComponent(cardKey)}`, { text });
+  }
+
   releasePage(projectName: string, offset: number): Observable<DeployPanel<DeployPage<Release>>> {
     return panel(this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`,
       { params: { offset, limit: 25 } }), 'Releases could not be loaded.', true);
@@ -114,6 +122,12 @@ export class ProjectDeployDataService {
     const request = this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`, { params })
       .pipe(map(page => page.items[0] ?? null));
     return panel(request, 'The release of the deployed artifact could not be loaded.', true);
+  }
+
+  /** F2: the standing release-candidate gate refusal, if the last release attempt was refused. */
+  releaseGate(projectName: string): Observable<DeployPanel<ReleaseGateStatus>> {
+    return panel(this.http.get<ReleaseGateStatus>(`${deployRoot(projectName)}/release-gate`),
+      'The release gate state could not be loaded.', true);
   }
 
   /** AGT-3201 deploy runs, newest first. */

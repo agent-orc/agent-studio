@@ -3,6 +3,12 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+Review role release drift becomes operator attention as soon as that role has
+claimed a review. The attention fact names its claimed and graded cards and
+compares the role's commit and image with Stable. An idle role still uses the
+host release watchdog's grace period. A fresh heartbeat reporting the expected
+commit and image clears the attention fact.
+
 ## Persona occurrences, PT-4
 
 PT-D4, PT-D5 and PT-D8 use the Dossier's recommended option B. The Watcher
@@ -653,6 +659,28 @@ Every free-text value in a generated compose file has `$` doubled, so Compose
 interpolates no variable from the agent's environment. Egress allowlists and
 host firewall rules for the run zone belong to IP-2.
 
+A spec can carry managed databases (AGT-3877,
+[managed databases](../../operations/managed-databases/README.md)). Before
+the app revision that uses them starts, the host provisions one
+`postgres:<version>-alpine` container per database on the environment's own
+internal data network, which the edge never joins, with an external named
+volume and the declared size limits. Studio sends only the password's
+`secret://` reference; the host resolves it with the `run-target` workload on
+`POST /api/runner/secrets/resolve`, keeps the value in memory, and writes it
+and the app's connection string to tmpfs files like other secrets (the app
+reads `<variable>_FILE`). A database the desired state stops declaring is
+stopped after the new revision is live and its volume kept; only an owner's
+deletion in `databaseDeletions` removes the volume, and the host refuses it
+while a spec still declares the database. A changed major version is refused.
+`RunTargetDatabaseBackups` (AGT-3878) checks readiness every cycle, counts
+connections every minute, dumps each database on its spec's `backup` policy
+into `RUN_TARGET_BACKUP_DIR` (default `$RUNNER_STATE_DIR/run-target-backups`,
+mounted at `/backups` in the environment's database containers), prunes
+dumps past their retention, and runs the `databaseOperations` Studio sends
+(backup, a verification restore into a networkless scratch container, an
+approved restore) once per id. Dumps and readiness checks also run in the
+supervise-only pass while Studio is unreachable.
+
 ### Integration host (standalone review loop)
 
 `RUNNER_ROLE=integration` starts `RemoteIntegrationDaemon` (AGT-3061, AGT-W65
@@ -774,6 +802,10 @@ unreported claim expires with its lease and is queued again.
   this cache policy and log `provider-auth recovered provider=... after=...`
   once per recovery. A live same-provider run is
   counter-evidence and makes the conflicting state claimable but degraded.
+- The management re-probe API accepts only a key registered or held by the
+  runner role. It keeps at most 32 distinct keys per runner, rejects another
+  key with HTTP 429, and discards queued keys when the runner is revoked or a
+  new daemon instance registers the same identity.
 - `backend/Features/Management/RunnerLinks/LinkSupervisor.cs`: Task Server-owned
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,
   remote listener cleanup, bounded retry ladder, silent child process and
@@ -1178,7 +1210,9 @@ unreported claim expires with its lease and is queued again.
   completions clear it. A rebase conflict at
   integration ends in the existing AGT-2909 dead-end exit
   (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
-  the base in one sentence and names no SHA.
+  the base in one sentence and names no SHA. This steer tells the agent to
+  leave the develop merge to the runner, which merges current develop at the
+  start of the round.
 - Operator continue, steer and extend rounds carry the result ref (AGT-3483,
   [operator-agent-level Dossier](../../operator-agent-level/index.html) OP-3).
   A round queued for a runner claim on a card with a recorded result ref saves
@@ -2706,6 +2740,15 @@ another host takes the lease only after it expires and fences the previous
 holder. `RUNNER_SOURCE_FACTS_PRODUCER=0` turns the producer off on a host.
 
 ## Operational stall monitoring (AGT-3206)
+
+The project cache and server guard share `GitStaleLockPolicy` from
+`TaskServer.Contracts`. The cache uses its one-minute stale Git lock rule before
+delivery preflight and before each fetch. It clears an aged lock only when no
+Git process owns the repository, and waits once for young or owned locks.
+Claim-path fetches disable automatic commit graph writes and maintenance.
+Failed project preflights retain the start of a continuous identical failure;
+after ten minutes the operational sweep opens one host and project case with
+the Git error. A successful preflight removes the fact and closes that case.
 
 The Watcher runs an operational sweep every five minutes by default, including
 when proposal drafting is disabled. `Watcher:OperationalMonitoringEnabled` is

@@ -82,6 +82,7 @@ app-status-bar {
 .statusbar__item.statusbar__host-problem { border: 1px solid var(--studio-border); }
 .statusbar__item--btn {
   cursor: pointer;
+  text-decoration: none;
   transition: background 0.12s ease, color 0.12s ease;
 }
 .statusbar__item--btn:hover {
@@ -196,4 +197,24 @@ app-status-bar {
   .statusbar__usage-entry, .statusbar__host-problem, .statusbar__item {
     min-height: var(--studio-target-coarse-min);
   }
+}
+
+@media (max-width: 460px) {
+  .statusbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding-block: var(--studio-spacing-1);
+  }
+  .statusbar__group--left {
+    flex: 1 1 100%;
+    max-width: none;
+    height: var(--studio-target-coarse-min);
+  }
+  .statusbar__group--right {
+    flex: 1 1 100%;
+    max-width: none;
+    margin-inline-start: 0;
+    justify-content: space-between;
+  }
+  .statusbar__usage-session, .statusbar__age { display: none; }
 }

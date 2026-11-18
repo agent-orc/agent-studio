@@ -24,7 +24,7 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
                 AdHocClaudeInvoker.Record(usageRecorder,
                     request.Source ?? AdHocUsageSources.ReviewDecision,
                     request.Model, result.Usage, (long)result.Duration.TotalMilliseconds,
-                    result.Ok, request.Project, request.JobId);
+                    result.Ok, request.CliType, request.Project, request.JobId);
             return result;
         }
         CliOneShotResult Failed(string error) =>

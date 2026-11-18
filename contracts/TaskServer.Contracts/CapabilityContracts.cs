@@ -100,7 +100,11 @@ public sealed record AdvertisedCapabilityDto(
     long? ProbeSequence = null,
     DateTime? Since = null,
     int? HttpStatus = null,
-    string? Request = null)
+    string? Request = null,
+    // AGT-3948: provider-auth only. True while the CLI's own status command
+    // confirms an active session; Since then names when the outcome became
+    // indeterminate behind that session.
+    bool? StatusSessionActive = null)
 {
     // Keep the previous in-process constructor available during rolling
     // upgrades. Rich fields are negotiated on the HTTP wire separately.
@@ -343,7 +347,8 @@ public sealed record CapabilityHealthDto(
     string? CredentialHealth = null,
     DateTime? Since = null,
     int? HttpStatus = null,
-    string? Request = null)
+    string? Request = null,
+    bool? StatusSessionActive = null)
 {
     [JsonConstructor]
     public CapabilityHealthDto(

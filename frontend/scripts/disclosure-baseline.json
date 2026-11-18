@@ -17,6 +17,7 @@
     "src/app/features/cli/components/model-selection-view/model-selection-view.component.html",
     "src/app/features/project-detail/components/project-branch-sweep/project-branch-sweep.component.html",
     "src/app/features/project-detail/components/project-runbooks/project-runbooks.html",
+    "src/app/features/project-detail/components/managed-database-backups/managed-database-backups.html",
     "src/app/features/project-detail/components/dossier-card-list/dossier-card-list.component.html",
     "src/app/features/quota/components/workspace-quota-disclosure/workspace-quota-disclosure.html",
     "src/app/features/project-detail/components/workbench-overview/workbench-overview.component.html",
@@ -251,6 +252,10 @@
     "src/app/features/usage-cockpit/components/usage-cost-chip/usage-cost-chip.html": {
       "kind": "popup-trigger",
       "reason": "Today's cost chip. It opens the cost detail as an anchored popover or phone sheet; the value chip is the affordance."
+    },
+    "src/app/features/studio-shell/components/studio-tab-overflow/studio-tab-overflow.html": {
+      "kind": "popup-trigger",
+      "reason": "The phone tab overflow opens an anchored menu of the open tabs; nothing expands in place."
     }
   }
 }

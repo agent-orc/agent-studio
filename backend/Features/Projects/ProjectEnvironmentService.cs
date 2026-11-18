@@ -20,6 +20,15 @@ public sealed record EnvironmentDeclaration(
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
     public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
+
+    /// <summary>Managed databases project.yml schema 2 declares for this environment (AGT-3877); only run-zone environments have any.</summary>
+    public IReadOnlyList<ProjectDatabaseDefinition> Databases { get; init; } = [];
+
+    /// <summary>The declared <c>managedDatabases</c> backup and alert policy (AGT-3878); null keeps the defaults for <see cref="Kind"/>.</summary>
+    public ManagedDatabaseEnvironmentPolicy? DatabasePolicy { get; init; }
+
+    public ManagedDatabaseEnvironmentPolicy EffectiveDatabasePolicy => DatabasePolicy ?? ManagedDatabaseEnvironmentPolicy.For(Kind);
+    public TelemetryAlertDeclarations TelemetryAlerts { get; init; } = new(TelemetryAlertDeclarations.Defaults, null);
     public bool? Protected { get; init; }
     public bool? Automatic { get; init; }
     public string? Requires { get; init; }
@@ -73,6 +82,9 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
     public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
+
+    /// <summary>The approved managed databases; the run zone provisions or upgrades them only through a deploy job.</summary>
+    public IReadOnlyList<ProjectDatabaseDefinition> Databases { get; init; } = [];
     public IReadOnlyList<DeployStepResult> StepResults { get; init; } = [];
     /// <summary>Preview jobs share the normal claim, lease and report queue.</summary>
     public string Kind { get; init; } = "standard";
@@ -109,7 +121,11 @@ public sealed record DeploymentFailureCard(string EnvironmentId, string Artifact
 
 public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<ProjectEnvironmentView> Environments,
     IReadOnlyList<EnvironmentPromotion> Promotions, IReadOnlyList<DeployJob> Jobs,
-    IReadOnlyList<DeploymentFailureCard> FailureCards, IReadOnlyList<RunTargetRemovalRecord>? RunTargetRemovals = null);
+    IReadOnlyList<DeploymentFailureCard> FailureCards, IReadOnlyList<RunTargetRemovalRecord>? RunTargetRemovals = null)
+{
+    /// <summary>The run host of each declared target host id; the environments route fills it (F4).</summary>
+    public IReadOnlyList<AgentStudio.Deploy.RunHostStatus>? RunHosts { get; init; }
+}
 
 public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence,
     IReadOnlyList<DeployStepResult>? Steps = null, string? ScreenshotBase64 = null,
@@ -354,6 +370,17 @@ public sealed partial class ProjectEnvironmentService
                     Error = $"{file.EnvironmentId}.json diverges from schema 2 project.yml; migrate the declaration before deploying." });
                 continue;
             }
+            // The run zone, not SSH, executes an edge-hosted environment (AGT-3877): the host
+            // reports health without SSH step results, so its job carries no SSH steps.
+            if (legacy.Hosting is not null)
+            {
+                output.Add(file with { Declaration = legacy with
+                {
+                    Variables = variables, Artifacts = definition.Artifacts, Protected = environment.Protected,
+                    Automatic = phase.Automatic, Requires = phase.Requires,
+                } });
+                continue;
+            }
             output.Add(file with { Declaration = legacy with
             {
                 Template = "ssh-v2",
@@ -362,7 +389,27 @@ public sealed partial class ProjectEnvironmentService
                 Automatic = phase.Automatic, Requires = phase.Requires,
             } });
         }
-        return InLifecycleOrder(output);
+        return InLifecycleOrder(WithDatabases(output, definition.Databases));
+    }
+
+    /// <summary>
+    /// Attaches the managed databases of each schema 2 environment (AGT-3877).
+    /// Only the run zone provisions them, so an environment outside it that a
+    /// database applies to is unusable until <c>environments</c> scopes the entry.
+    /// </summary>
+    private static IEnumerable<EnvironmentDeclarationFile> WithDatabases(IEnumerable<EnvironmentDeclarationFile> files,
+        IReadOnlyList<ProjectDatabaseDefinition> databases)
+    {
+        foreach (var file in files)
+        {
+            var name = file.Declaration is { } declaration ? PipelineMigrationPolicy.EnvironmentFor(declaration.Kind) : null;
+            var applying = name is null ? [] : databases.Where(item => item.AppliesTo(name)).ToArray();
+            if (applying.Length == 0) yield return file;
+            else if (file.Declaration!.Hosting is null)
+                yield return file with { Declaration = null, Error = $"{file.EnvironmentId} is not hosted in the run zone, "
+                    + $"so it cannot have the managed database {applying[0].Name}; limit the database to run-zone environments." };
+            else yield return file with { Declaration = file.Declaration with { Databases = applying } };
+        }
     }
 
     /// <summary>Valid declarations in lifecycle order, then broken files; ties break by id.</summary>
@@ -577,7 +624,14 @@ public sealed partial class ProjectEnvironmentService
             HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)),
             guidedFailure, timeout,
             edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null)
-        { TenantTargets = targets, Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)), Order = order };
+        {
+            TenantTargets = targets, Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)), Order = order,
+            DatabasePolicy = edgeHosted ? ManagedDatabaseEnvironmentPolicy.Parse(value, kind, Path.GetFileName(file))
+                : value.TryGetProperty("managedDatabases", out _)
+                    ? throw new JsonException("managedDatabases applies only to environments hosted in the run zone (destination \"edge\").")
+                    : null,
+            TelemetryAlerts = TelemetryAlertDeclarations.Parse(value, Path.GetFileName(file)),
+        };
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -1053,7 +1107,11 @@ public sealed partial class ProjectEnvironmentService
     /// so the run log records each reclaim. Claims older than
     /// <see cref="HostLostAfter"/> fail as <c>host-lost</c> first.
     /// </summary>
-    public DeployJob? Claim(string hostId, bool requireVerifiedRelease = false)
+    /// <param name="projectAllowed">
+    /// The projects the claiming run host is bound to (SM-9, F4); a job of any
+    /// other project stays queued. Null admits every project.
+    /// </param>
+    public DeployJob? Claim(string hostId, bool requireVerifiedRelease = false, Func<string, bool>? projectAllowed = null)
     {
         lock (_gate)
         {
@@ -1077,6 +1135,7 @@ public sealed partial class ProjectEnvironmentService
                 return null;
             foreach (var (project, state) in states)
             {
+                if (projectAllowed is not null && !projectAllowed(project)) continue;
                 var retryableEnvironments = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var job in state.Jobs.Where(item => item.HostId == hostId &&
                     item.Destination != RunTargetVocabulary.EdgeDestination &&
@@ -1589,6 +1648,7 @@ public sealed partial class ProjectEnvironmentService
                 Kind = SnapshotKind(deployed, state),
                 Hosting = deployed.Hosting ?? current.Hosting,
                 SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
+                Databases = deployed.Databases,
             }
             : current;
 
@@ -1629,10 +1689,10 @@ public sealed partial class ProjectEnvironmentService
 
     /// <summary>
     /// BD-1: the release snapshot decides what is deployed (template,
-    /// destination, health check, secrets, SSH targets); the current declaration
-    /// decides which host claims the job. After a host move, an older schema 2
-    /// release retains its target so the executor refuses to run it on the new
-    /// host. Legacy jobs have no SSH target and can use the new host.
+    /// destination, health check, secrets, SSH steps); the current declaration
+    /// decides which host claims the job. After a host move, <see cref="Queue"/>
+    /// points the snapshot's SSH steps at the new host (<see cref="OnHost"/>),
+    /// so a rollback or late approval of an older release runs there.
     /// </summary>
     private static EnvironmentDeclaration RouteToCurrentHost(EnvironmentDeclaration snapshot,
         IReadOnlyList<EnvironmentDeclaration> current)
@@ -1659,6 +1719,16 @@ public sealed partial class ProjectEnvironmentService
                 _ => step,
             }).ToArray(),
         };
+
+    /// <summary>
+    /// The SSH steps of one declaration all name its host (schema 2 compile
+    /// refuses mixed targets), and the executor runs a step only on that host.
+    /// A job therefore carries the host it is routed to as every step's
+    /// target; everything else in the step stays as the snapshot recorded it.
+    /// </summary>
+    internal static IReadOnlyList<ProjectDeployStep> OnHost(IReadOnlyList<ProjectDeployStep> steps, string hostId)
+        => steps.All(step => step.Target == hostId) ? steps
+            : steps.Select(step => step with { Target = hostId }).ToArray();
 
     private static bool HasOpenPromotion(State state, string artifact)
         => state.Promotions.Any(item => item.Artifact == artifact
@@ -1705,8 +1775,8 @@ public sealed partial class ProjectEnvironmentService
             IsRollback: rollback, RequestedBy: actor, ReleaseId: releaseId, RollbackOfJobId: rollbackOfJobId,
             GuidedFailure: declaration.GuidedFailure, RetryStep: retryStep, RetryOfJobId: retryOfJobId,
             Hosting: declaration.Hosting, EnvironmentKind: declaration.Kind)
-        { Tenant = tenant, Data = declaration.Data, SshSteps = declaration.SshSteps,
-            Variables = declaration.Variables, Artifacts = declaration.Artifacts };
+        { Tenant = tenant, Data = declaration.Data, SshSteps = OnHost(declaration.SshSteps, declaration.TargetHostId),
+            Variables = declaration.Variables, Artifacts = declaration.Artifacts, Databases = declaration.Databases };
         state.Jobs.Add(job);
         return job;
     }
@@ -1781,6 +1851,8 @@ public sealed partial class ProjectEnvironmentService
         public List<RunTargetObservedRow> Observed { get; set; } = [];
         public List<RunTargetPlacement> Placements { get; set; } = [];
         public List<RunTargetRemovalRecord> RunTargetRemovals { get; set; } = [];
+        public List<ManagedDatabaseRecord> Databases { get; set; } = [];
+        public List<ManagedDatabaseOperationRecord> DatabaseOperations { get; set; } = [];
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
     public sealed record RunTargetObservedRow(string EnvironmentId, RunTargetObservation Observation);

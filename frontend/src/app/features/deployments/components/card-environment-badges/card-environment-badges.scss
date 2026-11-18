@@ -1,5 +1,15 @@
+:host {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .card-environments {
   display: flex;
   flex-wrap: wrap;
   gap: var(--studio-spacing-1);
+
+  app-status-indicator {
+    max-width: 100%;
+  }
 }

@@ -1,12 +1,17 @@
 import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/testing';
 import { BehaviorSubject, Subject, map, of, type Observable } from 'rxjs';
 import { vi } from 'vitest';
 import { ProjectDeployAreaComponent } from './project-deploy-area';
+import { DEPLOY_LIVE_REFRESH_MS } from '../../state/deploy-area-reads';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
+import { ServerCheckoutStore } from '../../../server-checkout';
+import { urlProject } from '../../../server-checkout/testing/server-checkout.fixtures';
+import type { RegistryProjectSummary } from '../../../../models/task.model';
 import { DEPLOY_CLOCK, type DeployPanel } from '../../state/deploy-area.model';
+import { AuthSessionState } from '../../../../services/auth.service';
 import {
   ARTIFACT_B,
   DEPLOY_FIXTURE_NOW,
@@ -29,11 +34,14 @@ class FakeDeployData {
   readonly pipelinePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
   readonly healthPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
   readonly instancePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
+  readonly releaseGatePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
   readonly requests: string[] = [];
   readonly actions: string[] = [];
   actionResult = new Subject<unknown>();
   controlledReads = false;
   controlledReleases = false;
+  controlledEnvironments = false;
+  readonly environmentReads: Subject<DeployPanel<unknown>>[] = [];
   readonly releasePageReads: Subject<DeployPanel<unknown>>[] = [];
   readonly containingReads: Subject<DeployPanel<unknown>>[] = [];
   readonly statusReads: Subject<DeployPanel<unknown>>[] = [];
@@ -42,7 +50,13 @@ class FakeDeployData {
   readonly artifactLookups: { project: string; artifact: string; notAfterUtc: string | null; read: Subject<DeployPanel<unknown>> }[] = [];
   readonly runsById = new Map<string, unknown>();
 
-  environments(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`environments:${project}`); return this.environmentsPanel; }
+  environments(project: string): Observable<DeployPanel<unknown>> {
+    this.requests.push(`environments:${project}`);
+    if (!this.controlledEnvironments) return this.environmentsPanel;
+    const read = new Subject<DeployPanel<unknown>>();
+    this.environmentReads.push(read);
+    return read;
+  }
   statuses(): Observable<DeployPanel<unknown>> {
     this.requests.push('status');
     if (!this.controlledReads) return this.statusPanel;
@@ -113,6 +127,7 @@ class FakeDeployData {
   }
   pipeline(): Observable<DeployPanel<unknown>> { return this.pipelinePanel; }
   health(): Observable<DeployPanel<unknown>> { return this.healthPanel; }
+  releaseGate(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`gate:${project}`); return this.releaseGatePanel; }
   deploymentLog(_project: string, id: string): Observable<DeployPanel<unknown>> {
     this.requests.push(`log:${id}`);
     return new BehaviorSubject<DeployPanel<unknown>>({ status: 'ready', value: deploymentLogFixture(id) });
@@ -140,6 +155,7 @@ class FakeDeployData {
 describe('ProjectDeployAreaComponent', () => {
   let fixture: ComponentFixture<ProjectDeployAreaComponent>;
   let data: FakeDeployData;
+  const checkoutProject = signal<RegistryProjectSummary | null>(null);
   const host = () => fixture.nativeElement as HTMLElement;
   const byTestId = (id: string) => host().querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
   const text = (id: string) => byTestId(id)?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
@@ -159,6 +175,7 @@ describe('ProjectDeployAreaComponent', () => {
 
   beforeEach(async () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
+    checkoutProject.set(null);
     data = new FakeDeployData();
     await TestBed.configureTestingModule({
       imports: [ProjectDeployAreaComponent],
@@ -167,6 +184,9 @@ describe('ProjectDeployAreaComponent', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         { provide: ProjectDeployDataService, useValue: data },
+        { provide: ServerCheckoutStore, useValue: {
+          projectFor: () => checkoutProject(), statusFor: () => null,
+        } },
         { provide: DEPLOY_CLOCK, useValue: () => DEPLOY_FIXTURE_NOW },
       ],
     }).compileComponents();
@@ -176,7 +196,46 @@ describe('ProjectDeployAreaComponent', () => {
     await settle();
   });
 
-  afterEach(() => { host().remove(); vi.unstubAllGlobals(); });
+  afterEach(() => { host().remove(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it('shows a refused release with its reason and next step until a release clears it (F2)', async () => {
+    data.serveEverything();
+    await settle();
+    expect(data.requests).toContain('gate:Website');
+    expect(byTestId('deploy-release-refusal')).toBeNull();
+
+    data.releaseGatePanel.next({ status: 'ready', value: { refusal: {
+      commitSha: '86afada0123456789abcdef0123456789abcdef0', mode: 'required',
+      reason: 'The candidate has no green pre-main or batch gate on this exact commit.',
+      nextStep: 'Release a commit that passed the pre-main or batch gate.', atUtc: '2026-11-16T10:00:00Z',
+    } } });
+    await settle();
+    expect(text('deploy-release-refusal')).toContain('Release refused');
+    expect(text('deploy-release-refusal')).toContain('86afada01234 (delivery.fullSuite: required): The candidate has no green pre-main');
+    expect(text('deploy-release-refusal-next')).toBe('Next step: Release a commit that passed the pre-main or batch gate.');
+
+    data.releaseGatePanel.next({ status: 'ready', value: { refusal: null } });
+    await settle();
+    expect(byTestId('deploy-release-refusal')).toBeNull();
+  });
+
+  it('shows one checkout state for a URL project and skips deploy reads until its checkout exists', async () => {
+    checkoutProject.set(urlProject({ id: 'PROJ-2', displayName: 'Tally Library' }));
+    fixture.componentRef.setInput('projectName', 'Tally Library');
+    await settle();
+    const requests = data.requests.length;
+    expect(byTestId('deploy-checkout-missing')?.textContent).toContain('server checkout');
+    expect(byTestId('deploy-source-notices')).toBeNull();
+    await click('deploy-tab-pipeline');
+    await click('deploy-tab-steps');
+    await click('deploy-refresh');
+    expect(data.requests).toHaveLength(requests);
+
+    checkoutProject.set(urlProject({ id: 'PROJ-2', displayName: 'Tally Library', repositoryPath: '/srv/tally' }));
+    await settle();
+    expect(byTestId('deploy-checkout-missing')).toBeNull();
+    expect(data.requests.length).toBeGreaterThan(requests);
+  });
 
   it('shows no preview or fixture data while sources load', () => {
     expect(host().textContent).not.toContain('Preview data');
@@ -331,9 +390,81 @@ describe('ProjectDeployAreaComponent', () => {
     expect((byTestId('deploy-run-reject') as HTMLButtonElement).disabled).toBe(true);
     data.actionResult.next(deployDeploymentsFixture()[1]);
     await settle();
-    expect(data.requests).toEqual(['status', 'deployments:0:all', 'deployments:0:all', 'log:run-c-production']);
+    expect(data.requests).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all', 'log:run-c-production']);
     // The table stays while the reload is in flight.
     expect(byTestId('deploy-run-drawer')).not.toBeNull();
+  });
+
+  it('re-reads environments after an approval, so the card drops the closed promotion without a reload (F17)', async () => {
+    data.serveEverything();
+    await settle();
+    const productionApproval = () => host().querySelector('[data-testid="deploy-environment-production"] [data-testid="deploy-environment-approval"]');
+    expect(productionApproval()).not.toBeNull();
+    await click('deploy-environment-review-approval');
+    await click('deploy-run-approve');
+    expect(window.confirm).toHaveBeenCalledWith('Approve deploying release 2026.10.19.2 (1 card) to Production?');
+
+    // The server queued the run and closed the AGT-3176 promotion.
+    const runs = deployDeploymentsFixture();
+    runs[1].state = 'queued';
+    const statuses = deployStatusFixture();
+    statuses[1].currentDeployment = runs[1];
+    data.deploymentsPanel.next({ status: 'ready', value: runs });
+    data.statusPanel.next({ status: 'ready', value: statuses });
+    data.controlledEnvironments = true;
+    data.actionResult.next(runs[1]);
+    await settle();
+    // Run status alone still leaves the stale promotion on the card.
+    expect(productionApproval()).not.toBeNull();
+    expect(data.environmentReads).toHaveLength(1);
+    const environments = deployEnvironmentsFixture();
+    environments.promotions[1].status = 'approved';
+    data.environmentReads[0].next({ status: 'ready', value: environments });
+    await settle();
+    expect(productionApproval()).toBeNull();
+    expect(text('deploy-run-drawer')).toContain('Queued');
+  });
+
+  it('follows a queued run until the host reports, then stops reading (F17)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    data.serveEverything();
+    await settle();
+    // Nothing in flight: no reads without a user action.
+    data.requests.length = 0;
+    vi.advanceTimersByTime(DEPLOY_LIVE_REFRESH_MS * 3);
+    expect(data.requests).toEqual([]);
+
+    const runs = deployDeploymentsFixture();
+    runs[1].state = 'queued';
+    const statuses = deployStatusFixture();
+    statuses[1].currentDeployment = runs[1];
+    data.deploymentsPanel.next({ status: 'ready', value: runs });
+    data.statusPanel.next({ status: 'ready', value: statuses });
+    await settle();
+    expect(text('deploy-environment-production')).toContain('2026.10.18.1');
+    data.requests.length = 0;
+    vi.advanceTimersByTime(DEPLOY_LIVE_REFRESH_MS);
+    expect(data.requests).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
+
+    // The host reports healthy: the next read shows the new release on the card and in history.
+    runs[1].state = 'succeeded';
+    runs[1].finishedAtUtc = '2026-10-19T11:59:00Z';
+    statuses[1] = { ...statuses[1], currentRelease: RELEASE_3, currentDeployment: runs[1], newerRelease: null, cardsSinceLastDeploy: [] };
+    const environments = deployEnvironmentsFixture();
+    environments.environments[1].deployedArtifact = environments.environments[0].deployedArtifact;
+    environments.environments[1].history.unshift({ at: '2026-10-19T11:59:00Z', status: 'healthy',
+      artifact: environments.environments[0].deployedArtifact!, previousArtifact: null, evidence: 'health-ok' });
+    environments.promotions[1].status = 'deployed';
+    data.environmentsPanel.next({ status: 'ready', value: environments });
+    data.statusPanel.next({ status: 'ready', value: statuses });
+    data.deploymentsPanel.next({ status: 'ready', value: runs });
+    await settle();
+    expect(text('deploy-environment-production')).toContain('2026.10.19.2');
+    expect(text('deploy-environment-production')).not.toContain('Nothing deployed yet');
+    expect(host().querySelector('[data-testid="deploy-environment-production"] [data-testid="deploy-environment-approval"]')).toBeNull();
+    data.requests.length = 0;
+    vi.advanceTimersByTime(DEPLOY_LIVE_REFRESH_MS * 3);
+    expect(data.requests).toEqual([]);
   });
 
   it('shows the server refusal of an action in the drawer', async () => {
@@ -346,7 +477,7 @@ describe('ProjectDeployAreaComponent', () => {
 
     expect(text('deploy-run-action-error')).toBe('Approval requires the Owner or Maintainer role.');
     expect((byTestId('deploy-run-approve') as HTMLButtonElement).disabled).toBe(false);
-    expect(data.requests.slice(-3)).toEqual(['status', 'deployments:0:all', 'deployments:0:all']);
+    expect(data.requests.slice(-4)).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
   });
 
   it('confirms abort of a running run and refreshes after a refusal', async () => {
@@ -359,13 +490,13 @@ describe('ProjectDeployAreaComponent', () => {
     await click('deploy-run-open-run-c-production');
     await click('deploy-run-cancel');
 
-    expect(window.confirm).toHaveBeenCalledWith('Abort Production run run-c-production?');
+    expect(window.confirm).toHaveBeenCalledWith('Abort deploying release 2026.10.19.2 (1 card) to Production?');
     expect(data.actions).toEqual(['cancel:run-c-production']);
     data.requests.length = 0;
     data.actionResult.error(new HttpErrorResponse({ status: 403, error: { error: 'Only an approver may abort Production.' } }));
     await settle();
     expect(text('deploy-run-action-error')).toBe('Only an approver may abort Production.');
-    expect(data.requests).toEqual(['status', 'deployments:0:all', 'deployments:0:all']);
+    expect(data.requests).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
   });
 
   it('refreshes status and runs after an already-claimed cancellation conflict', async () => {
@@ -378,7 +509,7 @@ describe('ProjectDeployAreaComponent', () => {
     await settle();
 
     expect(text('deploy-run-action-error')).toBe('The run is already claimed.');
-    expect(data.requests).toEqual(['status', 'deployments:0:all', 'deployments:0:all']);
+    expect(data.requests).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
   });
 
   it('keeps an approval in flight when the drawer closes, switches, and Refresh is pressed', async () => {
@@ -561,8 +692,35 @@ describe('ProjectDeployAreaComponent', () => {
     expect(text('deploy-run-drawer')).toContain('Production');
     expect(data.requests).not.toContain('deployment:run-c-production');
     await click('deploy-run-approve');
-    expect(window.confirm).toHaveBeenCalledWith('Approve Production run run-c-production?');
+    expect(window.confirm).toHaveBeenCalledWith('Approve deploying release 2026.10.19.2 (1 card) to Production?');
     expect(data.actions).toEqual(['approve:run-c-production']);
+  });
+
+  it('asks a local session without sign-in to create the owner, then approves the Production run', async () => {
+    const auth = TestBed.inject(AuthSessionState);
+    auth.status.set({ profile: 'local', bootstrapRequired: true, authenticated: false });
+    data.serveEverything();
+    await settle();
+    await click('deploy-environment-review-approval');
+    await click('deploy-run-approve');
+    expect(data.actions).toEqual([]);
+    expect(window.confirm).not.toHaveBeenCalled();
+    const dialog = document.querySelector('[data-testid="local-owner-dialog"]') as HTMLElement;
+    expect(dialog.querySelector('[data-testid="local-owner-purpose"]')?.textContent).toContain('Production approval needs the owner account.');
+    for (const [id, value] of [['local-owner-username', 'local.owner'], ['local-owner-password', 'correct-horse-battery']]) {
+      const input = dialog.querySelector<HTMLInputElement>(`[data-testid="${id}"]`)!;
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+    }
+    (dialog.querySelector('[data-testid="local-owner-submit"]') as HTMLButtonElement).click();
+    TestBed.inject(HttpTestingController).expectOne('/api/v1/studio/auth/bootstrap').flush({
+      profile: 'local', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_1', username: 'local.owner', displayName: 'local.owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
+    });
+    await settle();
+    expect(window.confirm).toHaveBeenCalledWith('Approve deploying release 2026.10.19.2 (1 card) to Production?');
+    expect(data.actions).toEqual(['approve:run-c-production']);
+    expect(document.querySelector('[data-testid="local-owner-dialog"]')).toBeNull();
   });
 
   it('reads a selected run by id when no page or status contains it, and refreshes it after an action', async () => {
@@ -664,7 +822,7 @@ describe('ProjectDeployAreaComponent', () => {
   it('reloads every source on Refresh and keeps the deployment tools reachable', async () => {
     data.requests.length = 0;
     await click('deploy-refresh');
-    expect(data.requests).toEqual(['environments:Website', 'releases:0', 'status', 'deployments:0:all', 'deployments:0:all']);
+    expect(data.requests).toEqual(['environments:Website', 'releases:0', 'gate:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
 
     await click('deploy-open-tools');
     expect(host().querySelector('app-project-deployment-panel')).not.toBeNull();

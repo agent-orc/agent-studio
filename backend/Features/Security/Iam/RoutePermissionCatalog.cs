@@ -280,6 +280,8 @@ public static class RoutePermissionCatalog
         Add("PUT", IamPermissions.Anonymous, "/api/instance/deploy/runs/{}/steps/{}");
         Add("*", IamPermissions.WorkspaceAdminister, "/api/instance/deploy/reporter-tokens",
             "/api/instance/deploy/reporter-tokens/{}");
+        // F4: run host reachability across projects, for the Hosts view.
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/deploy/run-hosts");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/stop", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
@@ -291,8 +293,11 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",
             "/api/projects/{}/deploy/deployments/{}",
             "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit",
+            "/api/projects/{}/deploy/release-gate",
             "/api/projects/{}/deploy/runbooks", "/api/projects/{}/deploy/runbooks/runs",
             "/api/projects/{}/deploy/runbooks/runs/{}", "/api/projects/{}/deploy/runbooks/runs/{}/log");
+        // Release notes are product copy, written like project documentation.
+        Add("PUT", IamPermissions.ProjectDocsWrite, "/api/projects/{}/deploy/releases/{}/notes/{}");
         Environment("POST", IamPermissions.EnvironmentDeploy,
             "/api/projects/{}/deploy/environments/{}/runbooks/{}/runs", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
@@ -317,12 +322,17 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/environments/{}/volumes/**", null, "environmentId");
         Environment("W", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/volumes/**", null, "environmentId");
+        // AGT-3877: the deletion route also requires a signed-in Owner in its handler.
+        Environment("R", IamPermissions.ProjectRead,
+            "/api/projects/{}/environments/{}/databases/**", null, "environmentId");
+        Environment("W", IamPermissions.EnvironmentProductionDeploy,
+            "/api/projects/{}/environments/{}/databases/**", null, "environmentId");
 
         // OTLP intake checks its own environment token. Studio reads require
         // project access; issuing or revoking an ingest token changes project
         // configuration and is reserved to a project administrator.
         Add("POST", IamPermissions.Anonymous,
-            "/api/telemetry/otlp/v1/metrics", "/api/telemetry/otlp/v1/logs");
+            "/api/telemetry/otlp/v1/metrics", "/api/telemetry/otlp/v1/logs", "/api/telemetry/otlp/v1/traces");
         Add("R", IamPermissions.ProjectRead, "/api/projects/{}/environments/{}/telemetry/**");
         Add("W", IamPermissions.ProjectSettingsWrite,
             "/api/projects/{}/environments/{}/telemetry/tokens",

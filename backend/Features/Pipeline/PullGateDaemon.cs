@@ -24,6 +24,17 @@ public static class PullGateDaemon
         using var client = new HttpClient { BaseAddress = new Uri(serverUrl.TrimEnd('/') + "/"),
             Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return await PollAsync(client, name, (claim, ct) => ExecuteAsync(client, claim, ct),
+            Task.Delay, Console.Error.WriteLine, shutdown);
+    }
+
+    internal static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan BusyInterval = TimeSpan.FromSeconds(5);
+
+    internal static async Task<int> PollAsync(HttpClient client, string name,
+        Func<PullGateClaim, CancellationToken, Task> execute,
+        Func<TimeSpan, CancellationToken, Task> delay, Action<string> log, CancellationToken shutdown)
+    {
         var active = new List<Task>();
         var serverSlots = 1;
         while (!shutdown.IsCancellationRequested)
@@ -37,26 +48,32 @@ public static class PullGateDaemon
                     serverSlots = (await registration.Content.ReadFromJsonAsync<PullGateHost>(Json, shutdown))?.Slots ?? 1;
                 }
                 active.RemoveAll(task => task.IsCompleted);
-                if (active.Count < serverSlots)
-                {
-                    using var response = await client.PostAsync("api/pull-gates/claim", null, shutdown);
-                    response.EnsureSuccessStatusCode();
-                    var claim = await response.Content.ReadFromJsonAsync<PullGateClaim>(Json, shutdown);
-                    if (claim is not null)
-                        active.Add(ExecuteAsync(client, claim, shutdown));
-                }
-                await Task.Delay(TimeSpan.FromSeconds(active.Count == serverSlots ? 5 : 2), shutdown);
+                if (active.Count < serverSlots
+                    && await ClaimAsync(client, shutdown) is { } claim)
+                    active.Add(execute(claim, shutdown));
+                await delay(active.Count == serverSlots ? BusyInterval : IdleInterval, shutdown);
             }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
             catch (Exception exception)
             {
-                Console.Error.WriteLine("Pull gate poll failed: " + exception.Message);
-                try { await Task.Delay(TimeSpan.FromSeconds(5), shutdown); }
+                log("Pull gate poll failed: " + exception.Message);
+                try { await delay(BusyInterval, shutdown); }
                 catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
             }
         }
         await Task.WhenAll(active);
         return 0;
+    }
+
+    /// <summary>Claims one gate run; 204 or an empty body means no work.</summary>
+    internal static async Task<PullGateClaim?> ClaimAsync(HttpClient client, CancellationToken ct)
+    {
+        using var response = await client.PostAsync("api/pull-gates/claim", null, ct);
+        response.EnsureSuccessStatusCode();
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null;
+        var body = await response.Content.ReadAsStringAsync(ct);
+        return string.IsNullOrWhiteSpace(body) ? null
+            : JsonSerializer.Deserialize<PullGateClaim>(body, Json);
     }
 
     private static async Task ExecuteAsync(HttpClient client, PullGateClaim claim, CancellationToken shutdown)

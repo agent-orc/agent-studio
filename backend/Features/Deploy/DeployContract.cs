@@ -73,6 +73,16 @@ public sealed record DeployEnvironment(string Id, string ProjectId, string Name,
 }
 
 /// <summary>
+/// A release attempt the release-candidate gate refused (F2): the reason the
+/// gate answered and the owner's next step, shown in the Deploy area.
+/// </summary>
+public sealed record ReleaseGateRefusal(string CommitSha, string Mode, string Reason, string? NextStep,
+    DateTimeOffset AtUtc);
+
+/// <summary>The Deploy area read: the standing refusal, or null when the last attempt was released.</summary>
+public sealed record ReleaseGateStatus(ReleaseGateRefusal? Refusal);
+
+/// <summary>
 /// Immutable snapshot of what was built. Written once by
 /// <see cref="DeployStore.AppendRelease"/> and never rewritten.
 /// </summary>
@@ -109,6 +119,8 @@ public sealed record EnvironmentStatus(
     InterventionSummary? Intervention = null)
 {
     public string? Tenant { get; init; }
+    /// <summary>A failed run may have changed the host even though the last successful release remains the lifecycle baseline.</summary>
+    public bool ReleaseUncertain { get; init; }
 }
 
 public sealed record InterventionSummary(string DeploymentId, string FailedStep, DateTime? ExpiresAtUtc,

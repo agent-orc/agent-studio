@@ -6,6 +6,12 @@
 .studio {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  // Keep shell tracks stable when a projected or keyboard-entry child enters
+  // the grid. The skip links stay first in DOM order for keyboard navigation.
+  > .studio-titlebar { grid-row: 1; }
+  > app-workspace-quota-banner { grid-row: 2; }
+  > .studio-body { grid-row: 3; }
+  > .studio-statusbar { grid-row: 4; }
   // Single-column track, but explicit minmax(0, 1fr) so the column does
   // NOT grow to the intrinsic min-content of its children. Without
   // this, the implicit `auto` single-column expanded to the
@@ -435,17 +441,15 @@
 
 @media (max-width: 600px) {
   // The Explorer track otherwise leaves a project pane only about 100 px wide
-  // on a phone. Keep the activity bar available and give the editor the rest.
+  // on a phone, and the 48 px activity rail took another eighth of the width
+  // (AGT-3836). Both give way to the editor; the header More menu carries the
+  // rail's Activity and Dossiers destinations.
   .studio-body, .studio--sidebar-hidden .studio-body {
-    grid-template-columns: var(--studio-activitybar-w) minmax(0, 1fr) auto !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
   }
-  .studio-body > .studio-sidebar { display: none; }
+  .studio-body > :is(.studio-sidebar, app-studio-activity-bar) { display: none; }
   .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) { grid-template-rows: minmax(0, 1fr); }
-  .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) > app-studio-activity-bar > .studio-activitybar {
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) > :is(.studio-sidebar, .studio-editor) { grid-column: 2; grid-row: 1; }
+  .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) > .studio-editor { grid-column: 1; grid-row: 1; }
   .studio-body > app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open {
     grid-column: 1 / -1;
     grid-row: 1;

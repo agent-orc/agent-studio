@@ -288,6 +288,38 @@ public sealed class DeployHostCommandTests
     }
 
     [Fact]
+    public async Task Refused_claim_runs_no_step_and_exits_with_the_refusal()
+    {
+        // F6: a credential of another host is refused at claim time, before any step or secret.
+        var token = Path.GetTempFileName();
+        await File.WriteAllTextAsync(token, "deploy-test-token");
+        var calls = new List<string>();
+        var ssh = new List<string>();
+        using var client = new HttpClient(new RouteHandler(request =>
+        {
+            calls.Add(request.RequestUri!.AbsolutePath);
+            return new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = JsonContent.Create(new
+            {
+                error = "The deploy job belongs to host 'run-host-1', but the credential belongs to host 'runner_1'.",
+                code = "workload-identity-denied",
+            }) };
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        var executor = new SshDeployExecutor((file, _, _, _) =>
+        {
+            ssh.Add(file);
+            return Task.FromResult(new ProcessResult(0, "", ""));
+        });
+        try
+        {
+            Assert.Equal(1, await DeployHostCommand.RunAsync(
+                ["https://studio.test", "run-host-1", token, Path.GetTempPath()], CancellationToken.None, client, executor));
+            Assert.Equal(["/api/deploy/jobs/claim"], calls);
+            Assert.Empty(ssh);
+        }
+        finally { File.Delete(token); }
+    }
+
+    [Fact]
     public async Task UnverifiedDigest_IsRefusedBeforeTransfer()
     {
         var root = Path.Combine(Path.GetTempPath(), "deploy-unverified-test-" + Guid.NewGuid().ToString("N"));

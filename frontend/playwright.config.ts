@@ -27,7 +27,7 @@ const prebuilt = process.env.PW_PREBUILT === '1';
 const profile = process.env.PW_E2E_PROFILE ?? 'standard';
 // Profiles served through the self-signed HTTPS test proxy.
 const tls = profile === 'public-demo' || profile === 'networked-https'
-  || profile === 'networked-checkout' || profile === 'networked-https-demo';
+  || profile === 'networked-checkout' || profile === 'networked-https-demo' || profile === 'run-host';
 const backendPort = process.env.PW_E2E_BACKEND_PORT;
 const frontendPort = process.env.PW_E2E_FRONTEND_PORT;
 if (prebuilt && (!backendPort || !frontendPort || !process.env.PW_E2E_WORKSPACE)) {
@@ -90,18 +90,20 @@ export default defineConfig({
         testMatch: profile === 'recovery' ? ['**/system/crash-recovery-prompt.spec.ts', '**/settings/first-run-checklist.spec.ts']
           : profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
           : profile === 'first-run'
-            ? ['**/settings/first-run-journey.spec.ts', '**/settings/first-run-review-host-restart.spec.ts', '**/settings/second-project-server-checkout.spec.ts']
+            ? ['**/settings/first-run-journey.spec.ts', '**/settings/first-run-off-stable-grade.spec.ts',
+              '**/settings/first-run-review-host-restart.spec.ts', '**/settings/second-project-server-checkout.spec.ts']
           : profile === 'concept-remote' ? '**/project/concept-remote-journey.spec.ts'
           : profile === 'networked-monolith' ? '**/settings/first-run-networked-monolith.spec.ts'
           : profile === 'networked-https' ? ['**/security/product-session-networked-https.spec.ts', '**/security/owner-second-factor-human-pace.spec.ts', '**/security/owner-bootstrap-networked-https.spec.ts', '**/security/reviewer-role.networked-https.spec.ts']
           : profile === 'networked-checkout' ? '**/security/networked-project-checkout.spec.ts'
           : profile === 'networked-https-demo' ? '**/security/product-card-detail.spec.ts'
           : profile === 'operator-cli' ? '**/operator/studio-op-operator-cli.spec.ts'
-          : profile === 'owner-day' ? ['**/batch-gate/owner-day-real-backend.spec.ts', '**/board/owner-day-acceptance.spec.ts', '**/task-detail/owner-day-demo-19-acceptance-refusal.spec.ts', '**/tokens/owner-day-token-usage.spec.ts']
+          : profile === 'run-host' ? '**/settings/run-host-enrollment.spec.ts'
+          : profile === 'owner-day' ? ['**/batch-gate/owner-day-real-backend.spec.ts', '**/board/owner-day-acceptance.spec.ts', '**/task-detail/owner-day-demo-19-acceptance-refusal.spec.ts', '**/tokens/owner-day-token-usage.spec.ts', '**/usage-cockpit/subscription-week-real-receipts.spec.ts']
           : profile === 'demo' ? ['**/usage-cockpit/cockpit-integration-matrix.spec.ts', '**/project/dossier-decision-live.spec.ts']
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|board\/owner-day-acceptance\.spec\.ts|task-detail\/owner-day-demo-19-acceptance-refusal\.spec\.ts|tokens\/owner-day-token-usage\.spec\.ts|batch-gate\/owner-day-real-backend\.spec\.ts|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-review-host-restart\.spec\.ts|settings\/second-project-server-checkout\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/(product-session-networked-https|owner-second-factor-human-pace|owner-bootstrap-networked-https|reviewer-role\.networked-https|networked-project-checkout|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts|project\/(dossier-decision-live|concept-remote-journey)\.spec\.ts/
+          ? /visual-evidence\/|board\/owner-day-acceptance\.spec\.ts|task-detail\/owner-day-demo-19-acceptance-refusal\.spec\.ts|tokens\/owner-day-token-usage\.spec\.ts|batch-gate\/owner-day-real-backend\.spec\.ts|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-review-host-restart\.spec\.ts|settings\/second-project-server-checkout\.spec\.ts|settings\/first-run-off-stable-grade\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|settings\/run-host-enrollment\.spec\.ts|security\/(product-session-networked-https|owner-second-factor-human-pace|owner-bootstrap-networked-https|reviewer-role\.networked-https|networked-project-checkout|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts|project\/(dossier-decision-live|concept-remote-journey)\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },

@@ -45,6 +45,7 @@
 
 .acceptance-refusal__label { color: var(--studio-fg-strong); font-weight: 600; }
 .acceptance-refusal__hint { margin: 0; color: var(--studio-fg-muted); overflow-wrap: anywhere; }
+.acceptance-refusal__secondary { margin: 0; padding-inline-start: var(--studio-spacing-3); color: var(--studio-fg-muted); overflow-wrap: anywhere; }
 
 .acceptance-refusal__input {
   width: 100%;

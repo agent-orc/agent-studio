@@ -3384,52 +3384,6 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
     }
 
     [Fact]
-    public async Task Per_task_fallback_interrupted_past_its_start_budget_escalates_as_gate_infra()
-    {
-        using var factory = BuildFactory();
-        _ = factory.CreateClient();
-        EnableBatchGate(factory, closeSize: 4);
-        var member = SeedMember(factory, "DOC-BUDGET", "docs/budget.md");
-        var store = factory.Services.GetRequiredService<BatchGateStore>();
-        var pending = Assert.Single(store.ListPending());
-        BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
-            new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
-                FallbackGateActive: true,
-                FallbackGateStarts: BatchGatePilotService.FallbackGateStartBudget));
-        _gate.Fallback = request => Green(request.ExpectedSha);
-
-        await factory.Services.GetRequiredService<BatchGatePilotService>()
-            .TickAsync(CancellationToken.None);
-
-        Assert.Equal(0, _gate.FallbackRuns);
-        AssertLane(member.Key, TaskStates.Escalated);
-        var parked = factory.Services.GetRequiredService<TaskScannerService>()
-            .FindJob(member.Key, _watchPath)!.ParkedBlocker;
-        Assert.Equal(HumanReviewEscalationCategories.GateInfrastructure, parked?.BlockerType);
-        Assert.Contains("retry the gate", parked?.Reason);
-        Assert.Null(Ownership(member.Key));
-        Assert.Empty(store.ListPending());
-
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
-        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
-        settings.SetBatchGate(ProjectName, Settings(factory) with { Enabled = false });
-        var disabledRetry = await client.PostAsync(
-            $"/api/projects/{ProjectName}/batch-gate/infrastructure/{member.Key}/retry", null);
-        Assert.Equal(System.Net.HttpStatusCode.Conflict, disabledRetry.StatusCode);
-        Assert.Contains("Re-enable batch verification", await disabledRetry.Content.ReadAsStringAsync());
-        AssertLane(member.Key, TaskStates.Escalated);
-        Assert.Empty(store.ListPending());
-        settings.SetBatchGate(ProjectName, Settings(factory) with { Enabled = true });
-        var retry = await client.PostAsync(
-            $"/api/projects/{ProjectName}/batch-gate/infrastructure/{member.Key}/retry", null);
-        Assert.Equal(System.Net.HttpStatusCode.OK, retry.StatusCode);
-        AssertLane(member.Key, TaskStates.AutoReview);
-        Assert.Single(store.ListPending());
-        Assert.Equal(0, _gate.FallbackRuns);
-    }
-
-    [Fact]
     public async Task Review_settlement_that_cannot_enqueue_runs_the_per_task_gate_before_answering()
     {
         using var factory = BuildFactory();
@@ -3952,6 +3906,116 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
     }
 }
 
+public sealed class BatchGateInfrastructureRetryTests : BatchGatePilotServiceTests
+{
+    [Fact]
+    public async Task Per_task_fallback_interrupted_past_its_start_budget_escalates_as_gate_infra()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-BUDGET", "docs/budget.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+            new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                FallbackGateActive: true,
+                FallbackGateStarts: BatchGatePilotService.FallbackGateStartBudget));
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
+        var parked = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!.ParkedBlocker;
+        Assert.Equal(HumanReviewEscalationCategories.GateInfrastructure, parked?.BlockerType);
+        Assert.Contains("retry the gate", parked?.Reason);
+        Assert.Null(Ownership(member.Key));
+        Assert.Empty(store.ListPending());
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        settings.SetBatchGate(ProjectName, Settings(factory) with { Enabled = false });
+        var disabledRetry = await client.PostAsync(
+            $"/api/projects/{ProjectName}/batch-gate/infrastructure/{member.Key}/retry", null);
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, disabledRetry.StatusCode);
+        Assert.Contains("Re-enable batch verification", await disabledRetry.Content.ReadAsStringAsync());
+        AssertLane(member.Key, TaskStates.Escalated);
+        Assert.Empty(store.ListPending());
+        settings.SetBatchGate(ProjectName, Settings(factory) with { Enabled = true });
+        var retry = await client.PostAsync(
+            $"/api/projects/{ProjectName}/batch-gate/infrastructure/{member.Key}/retry", null);
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, retry.StatusCode);
+        var requested = await retry.Content.ReadFromJsonAsync<BatchGateInfrastructureRetry>();
+        Assert.NotNull(requested);
+        Assert.Equal("pending", requested.Status);
+        var duplicate = await client.PostAsync(
+            $"/api/projects/{ProjectName}/batch-gate/infrastructure/{member.Key}/retry", null);
+        Assert.Equal(requested.RequestId,
+            (await duplicate.Content.ReadFromJsonAsync<BatchGateInfrastructureRetry>())!.RequestId);
+        AssertLane(member.Key, TaskStates.Escalated);
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+        Assert.Equal("applied", store.ReadInfrastructureRetry(ProjectName, pending.ReviewAttemptId)?.Status);
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, member.Key)));
+    }
+
+    [Fact]
+    public async Task Infrastructure_retry_answers_while_tick_is_held_and_records_later_refusal()
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-HELD-RETRY", "docs/held-retry.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+            new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                FallbackGateActive: true,
+                FallbackGateStarts: BatchGatePilotService.FallbackGateStartBudget));
+        await pilot.TickAsync(CancellationToken.None);
+        AssertLane(member.Key, TaskStates.Escalated);
+
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        pilot.DuringTickForTesting = async () => { entered.SetResult(); await release.Task; };
+        var heldTick = pilot.TickAsync(CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            var response = await client.PostAsync(
+                $"/api/projects/{ProjectName}/batch-gate/infrastructure/{member.Key}/retry", null)
+                .WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
+            var request = (await response.Content.ReadFromJsonAsync<BatchGateInfrastructureRetry>())!;
+            Assert.Equal("pending", request.Status);
+            Assert.Equal(request.RequestId, store.ReadInfrastructureRetry(ProjectName, pending.ReviewAttemptId)?.RequestId);
+            Assert.Contains(request.RequestId, JsonSerializer.Serialize(pilot.State(ProjectName)));
+            var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+            settings.SetBatchGate(ProjectName, Settings(factory) with { Enabled = false });
+        }
+        finally { release.SetResult(); }
+        await heldTick;
+        var refused = store.ReadInfrastructureRetry(ProjectName, pending.ReviewAttemptId);
+        Assert.Equal("refused", refused?.Status);
+        Assert.Contains("disabled", refused?.Reason);
+        AssertLane(member.Key, TaskStates.Escalated);
+        var settingsAfterRefusal = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        settingsAfterRefusal.SetBatchGate(ProjectName, Settings(factory) with { Enabled = true });
+        var repeated = await client.PostAsync(
+            $"/api/projects/{ProjectName}/batch-gate/infrastructure/{member.Key}/retry", null);
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, repeated.StatusCode);
+        var nextRequest = (await repeated.Content.ReadFromJsonAsync<BatchGateInfrastructureRetry>())!;
+        Assert.Equal("pending", nextRequest.Status);
+        Assert.NotEqual(refused?.RequestId, nextRequest.RequestId);
+    }
+
+}
+
 public abstract partial class BatchGatePilotServiceTests
 {
     private protected BatchGateManifest ClosePendingBatch(WebApplicationFactory<Program> factory)
@@ -4391,6 +4455,9 @@ public abstract partial class BatchGatePilotServiceTests
                 services.AddSingleton<IBuildTestGateRunner>(_gate);
                 services.RemoveAll<IGateHostProbe>();
                 services.AddSingleton<IGateHostProbe>(_probe);
+                // AGT-3866: disk admission never reads the host running the suite.
+                services.RemoveAll<Contract.IHostFilesystemProbe>();
+                services.AddSingleton<Contract.IHostFilesystemProbe>(Contract.FixedHostFilesystemProbe.Healthy);
                 services.RemoveAll<AttemptAuthorityService>();
                 services.AddSingleton(sp => new AttemptAuthorityService(
                     sp.GetRequiredService<IConfiguration>(),

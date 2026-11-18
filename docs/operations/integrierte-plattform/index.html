@@ -367,6 +367,7 @@ runbooks:
 </table>
 </div>
 <p><b>Empfehlung:</b> A als Grundlage, C als Adapter für Betreiber mit eigener Infrastruktur. B nur, wenn ein Betreiber Hochverfügbarkeit über mehrere Rechner braucht; dann ist B ein weiterer Adapter, kein Umbau. Für Daten (D5) zuerst nur zustandslose Anwendungen und statische Seiten, Datenbanken vom Betreiber angebunden. Eine verwaltete Datenbank mit Sicherung folgt als eigener Schnitt.</p>
+<p><b>Entscheidung:</b> Der Owner hat IP-D5 am 16.11.2026 mit B beantwortet. Die verwaltete Datenbank kommt sofort als Schnitt IP-17 (AGT-3877): project.yml deklariert sie je Umgebung, die Laufzeitzone stellt sie beim Deploy bereit, Studio erzeugt den Zugang. Sicherung, Wiederherstellung und Health liefert MD-2 (AGT-3878): tägliche logische Sicherungen außerhalb des Volumes mit Aufbewahrung je Umgebung, ein Wiederherstellungs-Runbook mit Owner-Freigabe in Produktion und Probe-Wiederherstellung, Lebendigkeit, Größe und Verbindungen in den Betriebsdaten. WAL-Archivierung mit Wiederherstellung zu einem Zeitpunkt folgt später.</p>
 
 <h2 id="s8"><span class="no">§8</span>Betrieb: Health, Monitoring, Nutzung, Last, Logs</h2>
 <p>Operator-Vorgabe vom 16.10.2026, sinngemäß: Dazu kommt Operations. Gewünscht sind Zahlen zu den eigenen Anwendungen, also Health, Monitoring, Nutzung, Last und Logs, alles in derselben Plattform.</p>
@@ -519,7 +520,7 @@ runbooks:
 <ul>
   <li>Alle Geheimnisse von MemoWikis werden für die Plattform neu erzeugt und nur über den Secret-Provider eingetragen; alte Werte werden nicht übernommen.</li>
   <li>Durchspielen: Projekt anlegen, Geheimnisse je Umgebung als Verweise, Vorschau je Karte, Stage, Freigabe, Prod; ein zweiter Nutzer mit Rolle Produkt; eine Rotation während des Betriebs.</li>
-  <li>Daten: MemoWikis hat eine Datenbank. Nach IP-D5 A wird sie vom Betreiber angebunden, bis eine verwaltete Datenbank existiert.</li>
+  <li>Daten: MemoWikis hat eine Datenbank. Der Owner hat IP-D5 am 16.11.2026 mit B entschieden: Die Laufzeitzone stellt sie als verwaltete PostgreSQL-Datenbank bereit (Schnitt IP-17, AGT-3877), mit Zugang aus dem Secret-Provider. Sicherung, Wiederherstellung und Health der Datenbank liefert MD-2 (AGT-3878); eine vom Betreiber angebundene Datenbank (IP-5) bleibt möglich.</li>
 </ul>
 
 <h2 id="s13"><span class="no">§13</span>Entscheidungen</h2>
@@ -592,6 +593,7 @@ runbooks:
 
 <div class="decision" data-decision-id="ip-workload-identitaet" data-decision-kind="single" data-decision-label="IP-D10 Workload-Identität">
   <h3>IP-D10 · Wie weisen sich Aufträge und Apps aus?</h3>
+  <p>Decision background and refined options: <a href="../../workload-identitaet/index.html">Workload identity Dossier</a>.</p>
   <label data-option-id="eigene-identitaet" data-option-label="A · Eigene signierte Identität je Auftrag und Deployment im SPIFFE-Format; OIDC-Föderation zu Cloud-Zielen statt gespeicherter Schlüssel (Empfehlung)"><input type="radio" name="ip-workload-identitaet" value="eigene-identitaet"><span><b>A · Signierte Identität, Föderation</b><span class="d">Keine dauerhaften Schlüssel in Aufträgen und Apps; Cloud-Ziele vertrauen der Plattform direkt.</span></span></label>
   <label data-option-id="gespeicherte-schluessel" data-option-label="B · Gespeicherte Schlüssel je Ziel"><input type="radio" name="ip-workload-identitaet" value="gespeicherte-schluessel"><span><b>B · Gespeicherte Schlüssel</b><span class="d">Einfach; jeder Schlüssel muss rotiert und geschützt werden.</span></span></label>
   <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>

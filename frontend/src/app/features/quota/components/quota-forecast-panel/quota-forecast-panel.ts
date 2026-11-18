@@ -1,4 +1,5 @@
-import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
+import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockpit.service';
 import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { catchError, forkJoin, of, switchMap } from 'rxjs';
 import type { CliType } from '../../../../models/task.model';
@@ -70,6 +71,7 @@ interface ForecastCard {
 })
 export class QuotaForecastPanelComponent implements OnInit {
   private readonly quotaApi = inject(QuotaApiService);
+  private readonly cockpit = inject(UsageCockpitService);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly loading = signal(false);
@@ -154,6 +156,13 @@ export class QuotaForecastPanelComponent implements OnInit {
 
   when(iso: string | null): string {
     if (!iso) return 'unknown';
-    return formatZonedTime(iso, browserTimeZone()) ?? 'unknown';
+    return formatZonedWithUtc(iso, this.cockpit.snapshot()?.timeZone ?? browserTimeZone()) ?? 'unknown';
+  }
+
+  weeklyPeriod(window: QuotaHistoryWindow): string {
+    const reset = window.forecast.resetAt;
+    const end = reset ? Date.parse(reset) : NaN;
+    if (!Number.isFinite(end)) return 'Provider week: start and reset unavailable.';
+    return `Provider week: estimated start ${new Date(end - 7 * 86_400_000).toISOString()} to reset ${new Date(end).toISOString()}.`;
   }
 }

@@ -125,7 +125,8 @@ public static class ProjectDocsEndpoints
             return Results.Ok(docs.GetWikiWorkbenchOverview(names, requested));
         });
 
-        app.MapGet("/api/projects/{projectName}/workbenches/{id}", (string projectName, string id, ProjectDocsService docs, DossierCardsService cards, WorkbenchRevisionRoundService revisions) =>
+        app.MapGet("/api/projects/{projectName}/workbenches/{id}", (string projectName, string id, ProjectDocsService docs, DossierCardsService cards, WorkbenchRevisionRoundService revisions,
+            WorkbenchPromotionService promotions) =>
         {
             var item = docs.GetWikiWorkbenchCatalogue(projectName, includeHistory: true)?.Items
                 .FirstOrDefault(candidate => candidate.Id == id);
@@ -141,6 +142,8 @@ public static class ProjectDocsEndpoints
                     Workbench = item ?? document.Workbench,
                     Cards = cards.List(projectName, document.Workbench),
                     RevisionCard = revisions.Target(projectName, document.Workbench.SourceTaskKeys),
+                    RevisionRound = revisions.SettledRound(projectName, document),
+                    Promotion = promotions.Resolve(projectName, document.Workbench),
                 });
         });
 
@@ -210,6 +213,12 @@ public static class ProjectDocsEndpoints
                     : body.RevisionPrompt.Trim();
                 var round = await revisions.StartAsync(projectName, card, prompt, body.Actor.Trim(),
                     body.CliType, body.Model, body.ThinkingLevel, ct);
+                if (round.Status is "started" or "queued" or "saved")
+                {
+                    decisions.RecordAppliedReworkRoute(projectName, id, body.OperationId, card.Route,
+                        new WorkbenchAgentRoute(body.CliType, body.Model, body.ThinkingLevel));
+                    docs.InvalidateWikiContent(projectName);
+                }
                 return WorkbenchDecisionHttpResult(result with { RevisionCard = card, RevisionRound = round });
             });
 

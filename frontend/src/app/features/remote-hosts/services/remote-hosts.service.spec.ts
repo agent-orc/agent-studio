@@ -46,6 +46,7 @@ function flushHostHydration(http: HttpTestingController): void {
     request.flush({ observedAt: '2026-09-15T12:00:00Z', stable: { version: '0.3.0' }, behindCount: 0, hosts: [] });
   }
   for (const request of http.match('/api/v1/management/provider-refusals?days=14')) request.flush([]);
+  for (const request of http.match('/api/deploy/run-hosts')) request.flush([]);
 }
 
 describe('RemoteHostsService', () => {
@@ -137,6 +138,32 @@ describe('RemoteHostsService client registry hydration', () => {
     flushRunnerInfrastructureFailures(http);
     http.verify();
   });
+  it('lists a run host in the networked profile from its last claim, not a heartbeat (F4)', () => {
+    vi.useRealTimers();
+    TestBed.configureTestingModule({
+      providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()],
+    });
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', authenticated: true, bootstrapRequired: false,
+    });
+    const svc = TestBed.inject(RemoteHostsService);
+    const http = TestBed.inject(HttpTestingController);
+    svc.reload();
+    http.expectOne('/api/clients').flush([]);
+    http.expectOne('/api/deploy/run-hosts').flush([{
+      id: 'runner_deploy', name: 'run-host-1', state: 'reachable', projects: ['PROJ-002'],
+      lastSeenAt: '2026-11-16T10:00:00Z', lastClaimAt: '2026-11-16T09:59:00Z', lastReportAt: '2026-11-16T10:00:00Z',
+    }]);
+    http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    expect(svc.hosts()).toEqual([expect.objectContaining({
+      id: 'runner_deploy', name: 'run-host-1', serviceRole: 'deploy', status: 'online',
+      lastClaimAt: '2026-11-16T09:59:00Z', lastReportAt: '2026-11-16T10:00:00Z',
+    })]);
+    flushHostHydration(http);
+    flushRunnerInfrastructureFailures(http);
+    http.verify();
+  });
+
   it('hydrates runner infrastructure failures for Execution Hosts', () => {
     TestBed.configureTestingModule({
       providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()],
@@ -185,6 +212,7 @@ describe('RemoteHostsService client registry hydration', () => {
       count: 2,
     })]);
     flushRunnerInfrastructureFailures(http);
+    for (const request of http.match('/api/deploy/run-hosts')) request.flush([]);
     http.verify();
   });
 
@@ -892,6 +920,7 @@ describe('RemoteHostsService client registry hydration', () => {
     // A host the server did not report must not inherit a stale verdict.
     expect(svc.hosts().find(item => item.clientId !== 'agent-runner-01')?.releaseDrift).toBeNull();
     flushRunnerInfrastructureFailures(http);
+    for (const request of http.match('/api/deploy/run-hosts')) request.flush([]);
     http.verify();
   });
 
@@ -1039,10 +1068,48 @@ describe('RemoteHostsService client registry hydration', () => {
     svc.reprobe('agent-runner-01');
     expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBe('reprobe');
     http.expectOne('/api/clients/agent-runner-01/runner-project-preflights/invalidate').flush({ id: 'agent-runner-01' });
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBeNull();
     http.expectOne('/api/clients').flush([]);
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
     flushHostHydration(http);
     flushRunnerInfrastructureFailures(http);
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBeNull();
+
+    svc.reprobe('agent-runner-01');
+    http.expectOne('/api/clients/agent-runner-01/runner-project-preflights/invalidate').flush({ id: 'agent-runner-01' });
+    http.expectOne('/api/clients').flush([]);
+    http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    flushHostHydration(http);
+    flushRunnerInfrastructureFailures(http);
+    http.verify();
+  });
+
+  it('frees the role after an accepted capability re-probe so another key can be re-probed', () => {
+    TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
+    const svc = TestBed.inject(RemoteHostsService);
+    svc.hosts.set([seedRemoteHosts(0)[0], knownRunner()]);
+    const http = TestBed.inject(HttpTestingController);
+    const url = '/api/v1/management/remote-hosts/agent-runner-01/capabilities/reprobe';
+    const flushReload = () => {
+      http.expectOne('/api/clients').flush([]);
+      http.expectOne('/api/v1/management/remote-hosts').flush([]);
+      flushHostHydration(http);
+      flushRunnerInfrastructureFailures(http);
+    };
+    svc.reload();
+    flushReload();
+
+    svc.reprobeCapability('agent-runner-01', 'git');
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBe('reprobe');
+    const first = http.expectOne(url);
+    expect(first.request.body).toEqual({ capability: 'git' });
+    first.flush(null, { status: 202, statusText: 'Accepted' });
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBeNull();
+    flushReload();
+    expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.busyAction).toBeNull();
+
+    svc.reprobeCapability('agent-runner-01', 'node');
+    expect(http.expectOne(url).request.body).toEqual({ capability: 'node' });
     http.verify();
   });
 });

@@ -514,6 +514,10 @@ builder.Services.AddSingleton<CodexSignInCoordinator>();
 builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
+// AGT-3866: every disk-pressure consumer measures through this probe. The
+// process default is the real file system; test projects pin it at module load.
+builder.Services.AddSingleton<AgentStudio.TaskServer.Contracts.IHostFilesystemProbe>(
+    _ => AgentStudio.TaskServer.Contracts.HostFilesystemProbes.Default);
 builder.Services.AddSingleton<ApiHostDiskService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiHostDiskService>());
 builder.Services.AddSingleton<EnvironmentFlowService>();
@@ -700,6 +704,7 @@ builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconcil
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.RunHostDirectory>();
 builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
     sp.GetRequiredService<IConfiguration>()["HostedData:LocalVolumeRoot"] is { Length: > 0 } root
         ? new LocalHostedVolumeBackupEngine(root, Path.Combine(
@@ -708,6 +713,9 @@ builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
             sp.GetRequiredService<TimeProvider>())
         : new UnboundHostedVolumeBackupEngine());
 builder.Services.AddSingleton<HostedVolumeBackupService>();
+builder.Services.AddSingleton<ManagedDatabaseCredentials>();
+builder.Services.AddSingleton<ManagedDatabaseAlerts>();
+builder.Services.AddSingleton<ManagedDatabaseMetrics>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<HostedVolumeBackupWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
@@ -719,9 +727,10 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityReleaseRangeVerdictClient>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
-    AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+    AgentStudio.Projects.StoreOperationsTelemetryReader>();
 builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
@@ -741,6 +750,8 @@ builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
 builder.Services.AddSingleton(_ => new HealthCheckConnector());
 builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
 builder.Services.AddSingleton<HealthCheckStore>();
+builder.Services.AddSingleton<IncidentActions>();
+builder.Services.AddSingleton<TelemetryAlertReader>();
 builder.Services.AddSingleton<HealthAlerts>();
 builder.Services.AddSingleton<EnvironmentHealthService>();
 // Test hosts never probe the addresses their fixture declarations name.
@@ -1220,9 +1231,15 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateRunLedger(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "gate-run-ledger"),
     logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.GateRunLedger>>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
+// AGT-3856: while a batch gate runs, at most one other full suite starts.
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchLaneAdmission>(sp =>
+    new AgentStudio.Pipeline.BatchLaneAdmission(
+        logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.BatchLaneAdmission>>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner>(sp =>
     new AgentStudio.Pipeline.LedgeredBuildTestGateRunner(
-        sp.GetRequiredService<AgentStudio.Pipeline.RemoteBuildTestGateRunner>(),
+        new AgentStudio.Pipeline.BatchLaneAdmissionGateRunner(
+            sp.GetRequiredService<AgentStudio.Pipeline.RemoteBuildTestGateRunner>(),
+            sp.GetRequiredService<AgentStudio.Pipeline.BatchLaneAdmission>()),
         sp.GetRequiredService<AgentStudio.Pipeline.GateRunLedger>(),
         sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>(),
         sp.GetRequiredService<ILogger<AgentStudio.Pipeline.LedgeredBuildTestGateRunner>>()));
@@ -1482,6 +1499,10 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTas
     () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
     task => sp.GetRequiredService<TaskRunnerService>().GetQuotaFallbackForJob(task.Id, task.ProjectName)
         ?? task.QuotaFallback));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorReviewRetryFactSource(
+    () => sp.GetRequiredService<AttemptAuthorityService>().ScheduledReviewInfrastructureRetries(),
+    () => sp.GetRequiredService<ReviewInfrastructureRetryScheduler>().TickFailed,
+    sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorWatcherCaseFactSource(
     sp.GetRequiredService<AgentStudio.Watcher.WatcherCaseStore>(), sp.GetRequiredService<IConfiguration>()["TaskRepository"]));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBatchGateFactSource(
@@ -1503,6 +1524,7 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPro
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGateHostFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
@@ -1593,6 +1615,7 @@ builder.Services.AddSingleton<WorkbenchChangeNotifier>();
 builder.Services.AddSingleton<IWorkbenchSpawnedCardCleanup, WorkbenchSpawnedCardCleanup>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();
 builder.Services.AddSingleton<WorkbenchRevisionRoundService>();
+builder.Services.AddSingleton<WorkbenchPromotionService>();
 builder.Services.AddSingleton<WorkbenchReviewService>();
 // AGT-2803: the classification vocabulary. The areas registry merges the
 // product defaults with the project additions from the workspace project

@@ -182,6 +182,27 @@ public sealed class SecretPolicyTests
     }
 
     [Fact]
+    public void Deploy_job_binding_accepts_the_runner_its_host_name_resolves_to_and_names_both_hosts_on_refusal()
+    {
+        // F6: project.yml names the host 'run-host-1'; the enrolled runner has a generated id.
+        var request = new SecretWorkloadRequest("deploy-job", "memowikis", "job-1", "lease");
+        var job = new DeployJobLease("job-1", "memowikis", "stage", "run-host-1", ["DATABASE_URL"],
+            HostRunnerId: "runner_97ff");
+        var host = new RunnerPrincipal("runner_97ff", "run-host-1", "cred_1",
+            new HashSet<string>([RunnerScopes.Deploy], StringComparer.Ordinal));
+
+        Assert.True(SecretWorkloadBinding.Decide(host, request, job, null).Decision.Allowed);
+
+        var other = new RunnerPrincipal("runner_other", "other-host", "cred_2",
+            new HashSet<string>([RunnerScopes.Deploy], StringComparer.Ordinal));
+        var refused = SecretWorkloadBinding.Decide(other, request, job, null).Decision;
+        Assert.Equal("workload-identity-denied", refused.Code);
+        Assert.Contains("'run-host-1'", refused.Reason);
+        Assert.Contains("'runner_other'", refused.Reason);
+        Assert.False(SecretWorkloadBinding.Decide(host, request, job with { HostRunnerId = null }, null).Decision.Allowed);
+    }
+
+    [Fact]
     public void Task_run_binding_needs_lease_scope_and_the_live_lease_of_this_runner()
     {
         var runner = Runner("runner_1", RunnerScopes.Lease);
@@ -212,5 +233,6 @@ public sealed class SecretPolicyTests
     {
         public DeployJobLease? FindClaimedDeployJob(string project, string jobId, string leaseToken) => null;
         public TaskRunLease? FindLiveTaskRun(string taskKey) => null;
+        public RunTargetCredentialLease? FindRunTargetCredentials(string project, string environmentId) => null;
     }
 }

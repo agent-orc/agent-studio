@@ -2690,7 +2690,7 @@
         "today": "0.10375",
         "week": "0.54435",
         "Status": "partial",
-        "Reason": "Some models have no historical USD price."
+        "Reason": "No historical USD price for Unknown model."
       },
       {
         "Name": "beta",
@@ -2851,16 +2851,16 @@
           "TokenUsageSource": null,
           "ModelKnown": true,
           "PricingGaps": [],
-          "InputTokens": 11000,
+          "InputTokens": 9000,
           "OutputTokens": 1300,
           "CacheReadTokens": 9000,
           "CacheCreationTokens": 0,
-          "TotalTokens": 21300,
-          "input": "0.046",
+          "TotalTokens": 19300,
+          "input": "0.036",
           "output": "0.031",
           "cacheRead": "0.0024",
           "cacheCreation": "0",
-          "cost": "0.0794",
+          "cost": "0.0694",
           "Runs": 2
         },
         {
@@ -2942,12 +2942,12 @@
           "Runs": 1
         }
       ],
-      "TotalTokens": 206472,
-      "input": "0.153005",
+      "TotalTokens": 204472,
+      "input": "0.143005",
       "output": "0.136025",
       "cacheRead": "0.07748",
       "cacheCreation": "0.0375",
-      "total": "0.40401",
+      "total": "0.39401",
       "AnyModelUnknown": true,
       "UnpricedRuns": 1,
       "PricingGaps": [
@@ -3008,16 +3008,16 @@
           "TokenUsageSource": null,
           "ModelKnown": true,
           "PricingGaps": [],
-          "InputTokens": 11000,
+          "InputTokens": 9000,
           "OutputTokens": 1300,
           "CacheReadTokens": 9000,
           "CacheCreationTokens": 0,
-          "TotalTokens": 21300,
-          "input": "0.046",
+          "TotalTokens": 19300,
+          "input": "0.036",
           "output": "0.031",
           "cacheRead": "0.0024",
           "cacheCreation": "0",
-          "cost": "0.0794",
+          "cost": "0.0694",
           "Runs": 2
         },
         {
@@ -3099,12 +3099,12 @@
           "Runs": 1
         }
       ],
-      "TotalTokens": 388450,
-      "input": "0.327091",
+      "TotalTokens": 386450,
+      "input": "0.317091",
       "output": "0.299409",
       "cacheRead": "0.19748",
       "cacheCreation": "0.0975",
-      "total": "0.92148",
+      "total": "0.91148",
       "AnyModelUnknown": true,
       "UnpricedRuns": 1,
       "PricingGaps": [
@@ -3120,8 +3120,8 @@
         {
           "Attempt": 1,
           "Current": false,
-          "TotalTokens": 108900,
-          "cost": "0.591",
+          "TotalTokens": 78900,
+          "cost": "0.441",
           "AnyModelUnknown": true,
           "PricingGaps": [
             {
@@ -3139,12 +3139,12 @@
               "UnpricedRuns": 0,
               "PricingGaps": [],
               "Steps": 1,
-              "InputTokens": 60000,
+              "InputTokens": 30000,
               "OutputTokens": 9000,
               "CacheReadTokens": 30000,
               "CacheCreationTokens": 0,
-              "TotalTokens": 99000,
-              "cost": "0.585"
+              "TotalTokens": 69000,
+              "cost": "0.435"
             },
             {
               "Model": "claude-opus-5-5",
@@ -3298,12 +3298,12 @@
           "UnpricedRuns": 0,
           "PricingGaps": [],
           "Steps": 1,
-          "InputTokens": 60000,
+          "InputTokens": 30000,
           "OutputTokens": 9000,
           "CacheReadTokens": 30000,
           "CacheCreationTokens": 0,
-          "TotalTokens": 99000,
-          "cost": "0.585"
+          "TotalTokens": 69000,
+          "cost": "0.435"
         },
         {
           "Model": "gpt-6-sol",
@@ -3402,8 +3402,8 @@
           "cost": "0"
         }
       ],
-      "TotalTokens": 304472,
-      "cost": "0.92701",
+      "TotalTokens": 274472,
+      "cost": "0.77701",
       "AnyModelUnknown": true,
       "UnpricedRuns": 2,
       "PricingGaps": [
@@ -3547,15 +3547,15 @@
         "UnpricedRuns": 0
       },
       "agentRuns": {
-        "Tokens": 460980,
-        "priced": "1.415",
+        "Tokens": 430980,
+        "priced": "1.265",
         "UnpricedTokens": 330,
         "Runs": 3,
         "UnpricedRuns": 1
       },
       "other": {
-        "Tokens": 33170,
-        "priced": "0.0894",
+        "Tokens": 31170,
+        "priced": "0.0794",
         "UnpricedTokens": 6270,
         "Runs": 7,
         "UnpricedRuns": 2

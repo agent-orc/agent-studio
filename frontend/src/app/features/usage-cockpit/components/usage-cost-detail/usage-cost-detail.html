@@ -21,6 +21,7 @@
       <div>
         <dt>Today</dt>
         <dd class="usage-detail__num" data-testid="usage-detail-today">{{ c.today }}</dd>
+        @if (c.unpricedTodayRuns) { <dd>Priced subtotal + <a href="#/workspace/settings/tokens">{{ c.unpricedTodayRuns }} {{ c.unpricedTodayRuns === 1 ? 'run' : 'runs' }} without price</a></dd> }
         @if (c.dayStart; as s) {
           <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time></dd>
           <dd class="usage-detail__utc" data-testid="usage-detail-day-utc">{{ s.utc }} to {{ c.dayEnd?.utc }}</dd>
@@ -28,11 +29,12 @@
         @if (c.budgetDaily) { <dd class="usage-detail__muted">Budget {{ c.budgetDaily }}, {{ c.budgetDailyRemaining }}</dd> }
       </div>
       <div>
-        <dt>This week</dt>
+        <dt>Workspace calendar week</dt>
         <dd class="usage-detail__num" data-testid="usage-detail-week">{{ c.week }}</dd>
+        @if (c.unpricedWeekRuns) { <dd>Priced subtotal + <a href="#/workspace/settings/tokens">{{ c.unpricedWeekRuns }} {{ c.unpricedWeekRuns === 1 ? 'run' : 'runs' }} without price</a></dd> }
         @if (c.weekStart; as s) {
           <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time></dd>
-          <dd class="usage-detail__utc" data-testid="usage-detail-week-utc">{{ s.utc }} to {{ c.weekEnd?.utc }}</dd>
+          <dd class="usage-detail__utc" data-testid="usage-detail-week-utc">Start {{ s.utc }}; reset {{ c.weekEnd?.utc }}</dd>
         }
         @if (c.budgetWeekly) { <dd class="usage-detail__muted">Budget {{ c.budgetWeekly }}, {{ c.budgetWeeklyRemaining }}</dd> }
       </div>
@@ -41,7 +43,7 @@
     <table class="usage-detail__table" data-testid="usage-detail-projects">
       <caption class="usage-detail__caption">Cost by project, including unattributed spend</caption>
       <thead>
-        <tr><th scope="col">Project</th><th scope="col" class="usage-detail__num">Today</th><th scope="col" class="usage-detail__num">This week</th></tr>
+        <tr><th scope="col">Project</th><th scope="col" class="usage-detail__num">Today</th><th scope="col" class="usage-detail__num">Workspace week</th></tr>
       </thead>
       <tbody>
         @for (p of c.projects; track p.key) {
@@ -77,6 +79,18 @@
     </table>
     @if (!c.reconcile.complete) {
       <p class="usage-detail__note" data-testid="usage-detail-reconcile-partial">Some amounts are unavailable, so the rows may not add up to the total.</p>
+    }
+
+    @if (c.oneShotSources.length > 0) {
+      <table class="usage-detail__table" data-testid="usage-detail-one-shot-sources">
+        <caption class="usage-detail__caption">One-shot cost by source, included in the totals above</caption>
+        <thead><tr><th scope="col">Source</th><th scope="col" class="usage-detail__num">Today</th><th scope="col" class="usage-detail__num">Workspace week</th></tr></thead>
+        <tbody>
+          @for (row of c.oneShotSources; track row.source) {
+            <tr><th scope="row">{{ row.source }}</th><td class="usage-detail__num">{{ row.today }}</td><td class="usage-detail__num">{{ row.week }}</td></tr>
+          }
+        </tbody>
+      </table>
     }
 
     <h4 class="usage-detail__subtitle">Live runs</h4>
@@ -130,6 +144,6 @@
     }
     <p class="usage-detail__links">
       <a [href]="c.todayLedgerHref" data-testid="usage-detail-ledger-today">Open token ledger, today</a>
-      <a [href]="c.weekLedgerHref" data-testid="usage-detail-ledger-week">Open token ledger, this week</a>
+      <a [href]="c.weekLedgerHref" data-testid="usage-detail-ledger-week">Open token ledger, workspace week</a>
     </p>
   </section>

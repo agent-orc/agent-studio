@@ -16,8 +16,10 @@ area of the Studio's own source project shows:
   shows **failed at <step>**; a run that reports nothing for 30 minutes shows
   **stalled after <step>**.
 
-Card badges then read `Production · live since <UTC time> · <version>`, and the
-flow counter `deployed` counts the cards that went live today.
+Card badges of the source project's cards then read
+`Production · live since <UTC time> · <version>`; badges of declared
+environments keep `<Environment> · Live · <version> · <date>`. The flow counter
+`deployed` counts the cards that went live today.
 
 The source project is the project whose repository holds the running commit.
 Set `InstanceDeploy:SourceProject` in the instance configuration to name it

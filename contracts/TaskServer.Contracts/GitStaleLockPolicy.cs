@@ -45,6 +45,18 @@ public static class GitStaleLockPolicy
     public static readonly TimeSpan DefaultThreshold = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan DefaultWait = TimeSpan.FromSeconds(1);
 
+    /// <summary>Fixed Git lock paths for a full repository write sweep.</summary>
+    public static IEnumerable<string> FixedLockPaths(string gitDirectory, string commonDirectory)
+    {
+        yield return Path.Combine(gitDirectory, "index.lock");
+        yield return Path.Combine(gitDirectory, "HEAD.lock");
+        yield return Path.Combine(commonDirectory, "shallow.lock");
+        yield return Path.Combine(commonDirectory, "packed-refs.lock");
+        yield return Path.Combine(commonDirectory, "objects", "info", "commit-graphs", "commit-graph-chain.lock");
+        yield return Path.Combine(commonDirectory, "objects", "info", "commit-graph.lock");
+        yield return Path.Combine(commonDirectory, "objects", "maintenance.lock");
+    }
+
     /// <summary>
     /// Slack on both sides of a killed command's lifetime and on the
     /// "started after the lock was written" exclusion. File times come from a

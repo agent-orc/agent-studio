@@ -52,6 +52,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 |---|---|
 | Product installer for Windows and Linux (for published releases; none exists yet) | [operations/setup/install.md](../operations/setup/install.md) |
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
+| Managed PostgreSQL databases for hosted apps: project.yml `databases`, run-zone provisioning, generated credentials, retention and owner deletion (IP-D5 option B, AGT-3877); backups, restore runbook, liveness, size and connection metrics (AGT-3878) | [operations/managed-databases/](../operations/managed-databases/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
@@ -114,6 +115,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Deployment story: operator and administrator journeys from one box to many runner hosts, current availability, option C reconciliation and recovery gates (AGT-2906) | [decision dossier](../operations/deployment-story/index.html) |
 | Credentials and logins: host inventory, incident classification, guided renewal, rotation and typed recovery runbooks (AGT-2968) | [decision Dossier](../credentials-and-logins/index.html) |
 | Dynamic placement: work containers placed by load across hosts, one host agent and budget, pulled gates, per-work-item credentials (AGT-3171) | [decision Dossier](../dynamic-placement/index.html) |
+| Workload identity for runs, hosts, deployments and apps: signed identities, federation and staged adoption for IP-D10 | [decision Dossier](../workload-identitaet/index.html) |
 | Restart continuity release drill for one local and one Remote in-flight run (AGT-2780) | [operations/testing/restart-continuity-drill.md](../operations/testing/restart-continuity-drill.md) |
 | Tunnel-loss and fenced recovery drill for coding and review: bounded authority, exact re-adoption, quarantine, replay once (AGT-2937, AGT-W65 D9) | [operations/testing/tunnel-loss-drill.md](../operations/testing/tunnel-loss-drill.md) |
 | Tunnel-loss drill evidence: correlated synthetic outage report, raw decisions, and step receipts (AGT-2937) | [operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md](../operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md) |
@@ -268,6 +270,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Background polling leaves an open HTTP request at `verify()` | [system/common-problems/open-http-request-at-verify-from-chat-polling/](../system/common-problems/open-http-request-at-verify-from-chat-polling/) |
 | Background chat polling test measure | [system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md](../system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md) |
 | Ready shows waiting for sign-in but the host is logged in | [common-problems/ready-sign-in-runner-link-down/](../operations/common-problems/ready-sign-in-runner-link-down/) |
+| provider-auth stays indeterminate after a provider limit reset until the daemon restarts (AGT-3948) | [common-problems/provider-auth-indeterminate-latch-after-limit/](../operations/common-problems/provider-auth-indeterminate-latch-after-limit/) |
 | claude CLI not available right after a CLI auto-update (launcher stub) | [common-problems/claude-launcher-stub-after-autoupdate/](../operations/common-problems/claude-launcher-stub-after-autoupdate/) |
 | Every process of the runner account dies in one second (sentinel pid broadcast kill) | [common-problems/sentinel-pid-broadcast-kill/](../operations/common-problems/sentinel-pid-broadcast-kill/) |
 | Designated topics (AGENTS/wiki-sync current-state index; post-agents-wiki-sync) | [concepts/designated-topics/README.md](../concepts/designated-topics/README.md) |

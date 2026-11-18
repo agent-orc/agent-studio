@@ -71,7 +71,7 @@ public class TitleGenerationService
         sw.Stop();
 
         var (text, usage) = AdHocClaudeInvoker.ParseOrFallback(raw, fallbackModel);
-        AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.TitleGeneration, fallbackModel, usage, sw.ElapsedMilliseconds, ok);
+        AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.TitleGeneration, fallbackModel, usage, sw.ElapsedMilliseconds, ok, CliTypes.Claude);
 
         if (!ok || string.IsNullOrWhiteSpace(text))
             throw new InvalidOperationException(error ?? "Title generator returned empty response");
@@ -146,6 +146,7 @@ public class TitleGenerationService
             {
                 Timeout = TimeSpan.FromSeconds(HaikuTimeoutSeconds),
                 Source = AdHocUsageSources.TitleGeneration,
+                RecordUsage = false, // This service records the parsed result below.
                 SelectionConsumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.OneShot("title"),
             }, ct).ConfigureAwait(false);
             if (!r.Ok) return (false, null, r.Error);

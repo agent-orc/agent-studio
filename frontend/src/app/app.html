@@ -22,6 +22,7 @@
       <div class="app-shell" data-testid="app-shell">
       <app-studio-shell #studioShell data-testid="studio-shell-root"
                         [knownProjectNames]="projectNames()"
+                        [pickupModes]="jobService.projectPickupModes()"
                         [projectWatchPaths]="watchPaths()"
                         [filterBadgeCount]="filterBadgeCount()"
                         (projectDeleted)="loadWatchPaths()"
@@ -114,8 +115,12 @@
         <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure' || studioTabState.activeTab()?.kind === 'magazine' || studioTabState.activeTab()?.kind === 'team'">
           <app-workspace-banner [projects]="bannerProjects()" />
           @if (triage.moveRefusal(); as refusal) {
-            @if (selectedJob()?.info?.taskKey === refusal.taskKey) {
-              <p class="task-move-refusal" data-testid="task-move-refusal" role="alert">{{ refusal.message }}</p>
+            @if (selectedJob()?.info; as info) {
+              @if (info.taskKey === refusal.taskKey) {
+                @defer (on immediate) {
+                  <app-task-move-refusal [refusal]="refusal" [job]="info" [mutationsBlocked]="updateClient.mutationsBlocked()" />
+                }
+              }
             }
           }
           @switch (studioTabState.activeTab()?.kind) {
@@ -598,7 +603,9 @@
             <main class="workspace__main">
               @if (triage.moveRefusal(); as refusal) {
                 @if (detail.info.taskKey === refusal.taskKey) {
-                  <p class="task-move-refusal" data-testid="task-move-refusal" role="alert">{{ refusal.message }}</p>
+                  @defer (on immediate) {
+                    <app-task-move-refusal [refusal]="refusal" [job]="detail.info" [mutationsBlocked]="updateClient.mutationsBlocked()" />
+                  }
                 }
               }
               @defer (when selectedJob() !== null) {

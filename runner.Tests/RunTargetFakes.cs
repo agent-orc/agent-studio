@@ -95,10 +95,114 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
         return Task.FromResult(RunTargetDockerResult.Success);
     }
 
+    /// <summary>Named volumes that exist; a deleted volume takes its data with it.</summary>
+    public HashSet<string> Volumes { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Database containers whose <c>pg_isready</c> fails.</summary>
+    public HashSet<string> NotReady { get; } = new(StringComparer.Ordinal);
+
+    public Task<RunTargetDockerResult> EnsureVolumeAsync(string volume, CancellationToken ct)
+    {
+        Calls.Add("volume " + volume);
+        Volumes.Add(volume);
+        return Task.FromResult(RunTargetDockerResult.Success);
+    }
+
+    public Task<RunTargetDockerResult> RemoveVolumeAsync(string volume, CancellationToken ct)
+    {
+        Calls.Add("volume-rm " + volume);
+        Volumes.Remove(volume);
+        return Task.FromResult(RunTargetDockerResult.Success);
+    }
+
+    /// <summary>Every command run in a container, with its arguments joined by spaces.</summary>
+    public List<string> Execs { get; } = [];
+
+    /// <summary>A command this returns true for fails like a broken tool would.</summary>
+    public Func<string, IReadOnlyList<string>, bool>? FailExec { get; set; }
+
+    /// <summary>Dump files as the database containers see them under <c>/backups</c>; the host directory behind them is shared per environment.</summary>
+    public HashSet<string> BackupFiles { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Scratch containers started for verification, with the host directory each one mounted.</summary>
+    public List<(string Container, string Image, string HostDirectory, string MountPath)> Scratches { get; } = [];
+    public int TablesInScratch { get; set; } = 12;
+
+    public Task<RunTargetDockerResult> ExecAsync(string container, IReadOnlyList<string> command, CancellationToken ct)
+    {
+        Calls.Add($"exec {container} {command[0]}");
+        Execs.Add($"{container} {string.Join(' ', command)}");
+        if (!Containers.TryGetValue(container, out var status) || status.State != RunTargetContainerState.Running)
+            return Task.FromResult(new RunTargetDockerResult(false, "container is not running"));
+        if (FailExec?.Invoke(container, command) == true)
+            return Task.FromResult(new RunTargetDockerResult(false, $"{command[0]}: error: simulated failure"));
+        RunTargetDockerResult Ok(string output = "") => new(true, output);
+        RunTargetDockerResult Missing(string path) => new(false, $"{command[0]}: {path}: No such file or directory");
+        return Task.FromResult(command[0] switch
+        {
+            "pg_isready" => NotReady.Contains(container)
+                ? new RunTargetDockerResult(false, "no response") : RunTargetDockerResult.Success,
+            "du" => new RunTargetDockerResult(true, "2048\t" + command[^1] + "\n"),
+            "pg_dump" => Touch(command[^1], add: true),
+            "pg_restore" => BackupFiles.Contains(command[^1]) ? Ok("; Archive created\n") : Missing(command[^1]),
+            "mv" => BackupFiles.Remove(command[1]) && BackupFiles.Add(command[2]) ? Ok() : Missing(command[1]),
+            "stat" => BackupFiles.Contains(command[^1]) ? Ok("4096\n") : Missing(command[^1]),
+            "rm" => Touch(command[^1], add: false),
+            "psql" => Ok(string.Join(' ', command).Contains("max_connections", StringComparison.Ordinal) ? "3|100\n"
+                : string.Join(' ', command).Contains("pg_class", StringComparison.Ordinal) ? TablesInScratch + "\n" : ""),
+            _ => new RunTargetDockerResult(false, "unexpected command"),
+        });
+    }
+
+    private RunTargetDockerResult Touch(string path, bool add)
+    {
+        if (add) BackupFiles.Add(path);
+        else BackupFiles.Remove(path);
+        return RunTargetDockerResult.Success;
+    }
+
+    public Task<RunTargetDockerResult> StartScratchAsync(string container, string image, string hostDirectory, string mountPath,
+        CancellationToken ct)
+    {
+        Calls.Add("scratch " + container);
+        Scratches.Add((container, image, hostDirectory, mountPath));
+        Containers[container] = new(RunTargetContainerState.Running, 0);
+        return Task.FromResult(RunTargetDockerResult.Success);
+    }
+
+    public Task<RunTargetDockerResult> RemoveContainerAsync(string container, CancellationToken ct)
+    {
+        Calls.Add("rm " + container);
+        Containers.Remove(container);
+        return Task.FromResult(RunTargetDockerResult.Success);
+    }
+
+    public Task<RunTargetDockerResult> RunOnceAsync(string image, string hostDirectory, IReadOnlyList<string> command,
+        CancellationToken ct)
+    {
+        Calls.Add($"run-once {image} {hostDirectory} {string.Join(' ', command)}");
+        if (command is ["rm", "-rf", var directory]) BackupFiles.RemoveWhere(item => item.StartsWith(directory + "/", StringComparison.Ordinal));
+        return Task.FromResult(RunTargetDockerResult.Success);
+    }
+
     /// <summary>The container exits after Docker's own <c>on-failure:3</c> restarts.</summary>
     public void Crash(string project)
         => Containers[project] = new(RunTargetContainerState.Exited,
             (Containers.TryGetValue(project, out var status) ? status.RestartCount : 0) + 3);
+}
+
+/// <summary>Credentials Studio issues, keyed by <c>project/environment/reference</c>; <see cref="Reads"/> records each request.</summary>
+internal sealed class FakeRunTargetCredentials(Dictionary<string, string> values) : IRunTargetCredentialSource
+{
+    public List<string> Reads { get; } = [];
+    public bool Unreachable { get; set; }
+
+    public Task<string?> ReadAsync(string project, string environmentId, string reference, CancellationToken ct)
+    {
+        Reads.Add(reference);
+        if (Unreachable) throw new HttpRequestException("connection refused");
+        return Task.FromResult(values.TryGetValue($"{project}/{environmentId}/{reference}", out var value) ? value : null);
+    }
 }
 
 /// <summary>Secret values keyed by <c>project/secretRef</c>, like the per-project host secret roots.</summary>

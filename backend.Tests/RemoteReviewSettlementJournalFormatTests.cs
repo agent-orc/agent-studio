@@ -383,6 +383,28 @@ public sealed class RemoteReviewSettlementJournalFormatTests : IDisposable
             authority, review.AttemptId);
     }
 
+    [Fact]
+    public void Settled_review_is_evidence_pending_until_its_grade_report_is_written()
+    {
+        // AGT-3845: the settlement moves the card into Human Review before the
+        // evidence projection writes the grade report. The card says so, and
+        // clients read it again instead of keeping a detail without the grade.
+        var folder = Seed(RecordedFixture, RecordedAttempt);
+        var entry = RemoteReviewSettlementJournal.Read(folder, RecordedAttempt).Entry!;
+        RemoteReviewSettlementJournal.Write(folder, entry with { EvidenceComplete = false, RepairReason = null });
+
+        Assert.True(TaskDetailResources.ReviewEvidencePending(folder, RecordedAttempt));
+        Assert.False(TaskDetailResources.ReviewEvidencePending(folder, null));
+        Assert.False(TaskDetailResources.ReviewEvidencePending(folder, "review_other"));
+
+        File.WriteAllText(Path.Combine(folder, RemoteReviewReportEvidence.EvidenceFileName(RecordedAttempt)), "report");
+        Assert.False(TaskDetailResources.ReviewEvidencePending(folder, RecordedAttempt));
+
+        File.Delete(Path.Combine(folder, RemoteReviewReportEvidence.EvidenceFileName(RecordedAttempt)));
+        RemoteReviewSettlementJournal.Write(folder, entry with { EvidenceComplete = true });
+        Assert.False(TaskDetailResources.ReviewEvidencePending(folder, RecordedAttempt));
+    }
+
     private string Seed(string fixture, string attemptId)
     {
         var folder = Path.Combine(_root, attemptId);

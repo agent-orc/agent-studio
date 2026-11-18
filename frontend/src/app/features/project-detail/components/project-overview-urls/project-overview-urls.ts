@@ -114,7 +114,7 @@ export class ProjectOverviewUrlsComponent {
           .flatMap(workspace => workspace.projects)
           .find(candidate => candidate.displayName === name);
         this.projectId.set(project?.id ?? null);
-        this.urls.set([...(project?.urls ?? [])].sort((a, b) => a.sortOrder - b.sortOrder));
+        this.urls.set([...(project?.urls ?? [])].filter(url => url.id !== 'repo').sort((a, b) => a.sortOrder - b.sortOrder));
         this.loading.set(false);
       },
       error: () => {
