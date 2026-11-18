@@ -3695,7 +3695,8 @@ in
 - `environments` are ordered: Staging alone, or Staging then Production. Production
   must be `protected`: every deploy, redeploy, or rollback into it needs an
   Owner or Maintainer approval. Staging deploys automatically after
-  integration, so `protected: true` on Staging is refused as
+  integration (an integration release, see
+  [Deployment as a first-class citizen](../../concepts/deployment-first-class.md#releases-standard-lifecycle-and-deploy-runs-bd-1)), so `protected: true` on Staging is refused as
   `staging-protection-unsupported`. The shorthand `[staging, production]`
   protects Production. When the file describes a deployment but omits
   `environments`, the default is Staging and protected Production. When

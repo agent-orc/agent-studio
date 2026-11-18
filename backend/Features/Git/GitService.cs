@@ -9174,6 +9174,26 @@ public partial class GitService
     }
 
     /// <summary>
+    /// Writes the uncompressed <c>git archive</c> of a full commit SHA to
+    /// <paramref name="outputFile"/>, limited to <paramref name="path"/> when
+    /// given. An integration release packs the gated tree this way. False when
+    /// git cannot read the commit or the path.
+    /// </summary>
+    public bool ArchiveCommit(string repoRoot, string sha, string? path, string outputFile)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Regex.IsMatch(sha, @"\A[0-9a-f]{40}\z")
+            || path is not null && !Regex.IsMatch(path,
+                AgentStudio.TaskServer.Contracts.ProjectDeploymentVocabulary.ArtifactPathPattern)) return false;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return false;
+        string[] args = path is null or "."
+            ? ["archive", "--format=tar", "-o", outputFile, sha]
+            : ["archive", "--format=tar", "-o", outputFile, sha, path];
+        var (_, _, code) = RunGitArgs(root, args);
+        return code == 0 && File.Exists(outputFile);
+    }
+
+    /// <summary>
     /// Reads one tracked file from the first parent of a validated commit. The
     /// Dossier maintenance gate uses this as the immutable baseline for proving
     /// that a delivery only appended inside its bounded implementation log.

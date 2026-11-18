@@ -975,6 +975,33 @@ public sealed partial class ProjectEnvironmentService
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
         if (!HasIndependentReleaseEvidence(project, artifact, commit)) return false;
+        return RecordBuiltArtifact(project, artifact, commit,
+            () => _registry.PushVerified(project, commit, artifact, builderIdentity));
+    }
+
+    /// <summary>
+    /// An integration release: Studio packed <paramref name="packagePath"/>
+    /// from <paramref name="commit"/> after the project's own gate passed on
+    /// it (<paramref name="gateRunId"/>). Records it like a gate-built
+    /// artifact and returns the artifact, or null when the commit is not on
+    /// the integration branch or the package cannot be stored.
+    /// </summary>
+    public string? RegisterIntegrationArtifact(string project, string commit, string packagePath, string gateRunId)
+    {
+        if (!Commit.IsMatch(commit)) return null;
+        string artifact;
+        using (var stream = File.OpenRead(packagePath))
+            artifact = "release-package@sha256:" + Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        return RecordBuiltArtifact(project, artifact, commit,
+            () => _registry.PushStudioPackage(project, commit, packagePath, gateRunId, IntegrationReleaseBuilder))
+            ? artifact : null;
+    }
+
+    /// <summary>Builder identity of packages Studio packs from its own gate verdict.</summary>
+    public const string IntegrationReleaseBuilder = "studio-integration";
+
+    private bool RecordBuiltArtifact(string project, string artifact, string commit, Func<bool> register)
+    {
         var repo = _git.ResolveRepoRootForProject(project);
         if (repo is null || !_git.IsGitRepo(repo)) return false;
         var branch = _git.ResolveIntegrationBranch(repo, _settings.Get(project).IntegrationBranch);
@@ -983,7 +1010,7 @@ public sealed partial class ProjectEnvironmentService
             return false;
         lock (_gate)
         {
-            if (!_registry.PushVerified(project, commit, artifact, builderIdentity)) return false;
+            if (!register()) return false;
             var path = ArtifactPath(project, commit, artifact);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             if (File.Exists(path))

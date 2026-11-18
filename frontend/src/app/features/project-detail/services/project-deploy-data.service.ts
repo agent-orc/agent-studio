@@ -10,6 +10,7 @@ import type {
   DeploymentLogLine,
   DeploymentLogResponse,
   EnvironmentStatus,
+  IntegrationReleaseStatus,
   Release,
   DeployRunFilter,
   ReleaseGateStatus,
@@ -106,6 +107,17 @@ export class ProjectDeployDataService {
     const request = this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`, { params })
       .pipe(map(page => page.items[0] ?? null));
     return panel(request, 'The release of the deployed artifact could not be loaded.', true);
+  }
+
+  /** What creates the next release and what blocks it (AGT-3891). */
+  integrationRelease(projectName: string): Observable<DeployPanel<IntegrationReleaseStatus>> {
+    return panel(this.http.get<IntegrationReleaseStatus>(`${deployRoot(projectName)}/integration-release`),
+      'The next release could not be determined.', true);
+  }
+
+  /** Creates the release of the gated integration branch tip; the answer is the new status. */
+  createIntegrationRelease(projectName: string): Observable<IntegrationReleaseStatus> {
+    return this.http.post<IntegrationReleaseStatus>(`${deployRoot(projectName)}/integration-release`, {});
   }
 
   /** F2: the standing release-candidate gate refusal, if the last release attempt was refused. */
