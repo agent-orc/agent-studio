@@ -1,4 +1,5 @@
-import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
+import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockpit.service';
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { QuotaApiService } from '../../../quota';
 import type { ActiveModelSwitch, EffectiveModelSelection, ModelSelectionEvent, SelectionRoute } from '../../../quota/services/quota-api.service';
@@ -52,6 +53,7 @@ export function selectionQuery(filters: SelectionFilters, now = new Date()): Rec
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ModelSelectionViewComponent implements OnInit {
+  private readonly cockpit = inject(UsageCockpitService);
   private readonly api = inject(QuotaApiService);
   readonly filters = signal<SelectionFilters>(readSelectionFilters(window.location.search));
   readonly active = signal<ActiveModelSwitch[]>([]);
@@ -125,7 +127,7 @@ export class ModelSelectionViewComponent implements OnInit {
     return `/?job=${encodeURIComponent(item.taskKey ?? '')}`;
   }
   formatTime(value: string | null): string {
-    return formatZonedTime(value, browserTimeZone()) ?? 'Not known';
+    return formatZonedWithUtc(value, this.cockpit.snapshot()?.timeZone ?? browserTimeZone()) ?? 'Not known';
   }
 
   private writeUrl(): void {

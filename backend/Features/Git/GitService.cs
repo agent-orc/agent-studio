@@ -3158,12 +3158,12 @@ public partial class GitService
             sw.Stop();
             if (p.ExitCode != 0)
             {
-                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, jobId: jobId);
+                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, cliType: CliTypes.Codex, jobId: jobId);
                 return new GenerateMessageResult(null, $"codex exited {p.ExitCode}: {stderr.Trim()}");
             }
 
             var text = ParseCodexAgentMessage(stdout);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, jobId: jobId);
+            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, cliType: CliTypes.Codex, jobId: jobId);
 
             var (msg, suspicious) = ParseCommitReview(text);
             if (!string.IsNullOrWhiteSpace(suspicious))

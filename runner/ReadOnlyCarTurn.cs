@@ -69,6 +69,8 @@ internal static class ReadOnlyCarTurn
         driver.OnFinished += OnFinished;
         try
         {
+            var environment = OutputCapEnvironment(cliType, maxOutputTokens) ?? new Dictionary<string, string>();
+            CarWorkerExecution.ApplyThinkingEnvironment(environment, cliType, model, thinkingLevel);
             var (run, error) = await driver.StartAsync(
                 new CliRunRequest
                 {
@@ -79,7 +81,7 @@ internal static class ReadOnlyCarTurn
                     ThinkingLevel = thinkingLevel,
                     PermissionMode = CliPermissionModes.ReadOnly,
                     ContextMode = CliContextModes.Shared,
-                    ExtraEnvironment = WorkerEdgeCredentialBoundary.BlankedOver(OutputCapEnvironment(cliType, maxOutputTokens)),
+                    ExtraEnvironment = WorkerEdgeCredentialBoundary.BlankedOver(environment),
                     Tuning = DecisionCapTuning(cliType, maxOutputTokens, maxInputTokens),
                 },
                 shutdown);

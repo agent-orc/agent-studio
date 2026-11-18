@@ -40,7 +40,7 @@ interface DeployMocks {
   pipelineDefinition: Answer;
   health?: Answer;
   /** POST approve, reject, or cancel; records each call. */
-  act?: (action: string, deploymentId: string, body?: unknown) => Answer;
+  act?: (action: string, deploymentId: string, body?: unknown, csrf?: string) => Answer;
 }
 
 const json = (body: unknown, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -166,7 +166,7 @@ async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false)
   await page.route(new RegExp(`${DEPLOY}/deployments/[^/]+/(approve|reject|cancel|intervention)$`), route => {
     const [id, action] = route.request().url().split('/').slice(-2);
     return answer(route, route.request().method() === 'POST' && deploy.act
-      ? deploy.act(action, id, route.request().postDataJSON()) : MISSING);
+      ? deploy.act(action, id, route.request().postDataJSON(), route.request().headers()['x-csrf-token']) : MISSING);
   });
   await page.route(`**/api/projects/${PROJECT}/pipeline-definition`, route => answer(route, deploy.pipelineDefinition));
 }
@@ -197,6 +197,50 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('persists signed-in cookies across a browser restart and approves Production', async ({ browser, baseURL }) => {
+    const first = await browser.newContext({ baseURL });
+    const signInPage = await first.newPage();
+    await openDeploy(signInPage, fullMocks());
+    await signInPage.route('**/api/auth/login', route => route.fulfill({
+      ...json({ authenticated: true, csrfToken: 'restart-proof' }),
+      headers: { 'Set-Cookie': 'agentstudio-csrf=restart-proof; Path=/; Max-Age=604800; SameSite=Strict' },
+    }));
+    const loginStatus = await signInPage.evaluate(async () => (await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'owner', password: 'test-password' }),
+    })).status);
+    expect(loginStatus).toBe(200);
+    await first.addCookies([{ name: 'agentstudio-session', value: 'owner-session', url: baseURL!,
+      expires: Math.floor(Date.now() / 1000) + 604800, httpOnly: true, sameSite: 'Strict' }]);
+    const stored = await first.storageState();
+    expect(stored.cookies.find(cookie => cookie.name === 'agentstudio-session')?.expires).toBeGreaterThan(0);
+    expect(stored.cookies.find(cookie => cookie.name === 'agentstudio-csrf')?.expires).toBeGreaterThan(0);
+    await first.close();
+
+    let approved = false;
+    const restarted = await browser.newContext({ baseURL, storageState: stored });
+    try {
+      const page = await restarted.newPage();
+      let deployments = deployDeploymentsFixture();
+      const mocks = fullMocks({ act: (action, id, _body, csrf) => {
+        if (action !== 'approve') return MISSING;
+        approved = csrf === 'restart-proof';
+        if (!approved) return { status: 401, body: { error: 'Sign in again to approve.' } };
+        deployments = deployments.map(run => run.id === id ? { ...run, state: 'queued', approvedBy: 'owner' } : run);
+        return deployments.find(run => run.id === id);
+      } });
+      Object.defineProperty(mocks, 'deployments', { get: () => deployments });
+      await openDeploy(page, mocks);
+      await page.getByTestId('deploy-tab-history').click();
+      await page.getByTestId('deploy-run-open-run-c-production').click();
+      await page.getByTestId('deploy-run-approve').click();
+      await expect(page.getByTestId('deploy-run-action-error')).toHaveCount(0);
+      await expect(page.getByTestId('deploy-run-outcome')).toHaveText('Queued');
+      expect(approved).toBe(true);
+    } finally {
+      await restarted.close();
+    }
+  });
   test('failed Production deployment leaves its running release uncertain', async ({ page }) => {
     const environments = deployEnvironmentsFixture();
     const production = environments.environments[1];
@@ -989,6 +1033,48 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('deploy-run-drawer')).toContainText('Production');
     await page.getByTestId('deploy-run-approve').click();
     await expect.poll(() => calls).toEqual(['approve:run-c-production']);
+  });
+
+  test('F17: after approval and the host report, the Production card follows without a reload', async ({ page }) => {
+    let environments = deployEnvironmentsFixture();
+    let status = deployStatusFixture();
+    let deployments = deployDeploymentsFixture();
+    const confirms: string[] = [];
+    page.on('dialog', dialog => confirms.push(dialog.message()));
+    const mocks = fullMocks({
+      act: (_action, id) => {
+        // The server queues the run and closes the AGT-3176 promotion of its artifact.
+        deployments = deployments.map(item => item.id === id ? { ...item, state: 'queued', approvedBy: 'local.owner' } : item);
+        status = status.map(item => item.currentDeployment?.id === id ? { ...item, currentDeployment: deployments.find(run => run.id === id)! } : item);
+        environments = { ...environments, promotions: environments.promotions.map(item => item.status === 'pending' ? { ...item, status: 'approved' } : item) };
+        return deployments.find(item => item.id === id);
+      },
+    });
+    for (const [key, read] of [['environments', () => environments], ['status', () => status], ['deployments', () => deployments]] as const)
+      Object.defineProperty(mocks, key, { get: read });
+    await openDeploy(page, mocks);
+
+    const card = page.getByTestId('deploy-environment-production');
+    await expect(card.getByTestId('deploy-environment-approval')).toBeVisible();
+    await card.getByRole('button', { name: 'Review the pending approval for Production' }).click();
+    await page.getByTestId('deploy-run-approve').click();
+    await expect(page.getByTestId('deploy-run-outcome')).toHaveText('Queued');
+    expect(confirms).toEqual(['Approve deploying release 2026.10.19.2 (1 card) to Production?']);
+    await expect(card.getByTestId('deploy-environment-approval')).toHaveCount(0, { timeout: 5_000 });
+
+    // The host reports healthy; nobody reloads the page.
+    const [stage] = environments.environments;
+    deployments = deployments.map(item => item.id === 'run-c-production'
+      ? { ...item, state: 'succeeded', startedAtUtc: '2026-10-19T11:56:00Z', finishedAtUtc: '2026-10-19T11:58:00Z' } : item);
+    const production = deployments.find(item => item.id === 'run-c-production')!;
+    status = status.map(item => item.environment.id === 'production'
+      ? { ...item, currentRelease: deployReleasesFixture()[0], currentDeployment: production, newerRelease: null, cardsSinceLastDeploy: [] } : item);
+    environments = { ...environments, promotions: environments.promotions.map(item => item.status === 'approved' ? { ...item, status: 'deployed' } : item),
+      environments: environments.environments.map(item => item.declaration.id === 'production' ? { ...item, deployedArtifact: stage.deployedArtifact,
+        history: [{ at: '2026-10-19T11:58:00Z', status: 'healthy', artifact: stage.deployedArtifact!, previousArtifact: ARTIFACT_A, evidence: 'health-ok' }, ...item.history] } : item) };
+    await expect(card.getByTestId('deploy-environment-release')).toContainText('2026.10.19.2', { timeout: 5_000 });
+    await expect(page.getByTestId('deploy-run-outcome')).toHaveText('Succeeded', { timeout: 5_000 });
+    await capture(page, 'deploy-production-live-after-approve-1280-light');
   });
 
   test('captures every view in light and dark at 1280 and 1920 px', async ({ page }) => {

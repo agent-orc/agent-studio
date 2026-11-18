@@ -34,6 +34,32 @@ runtime incident and raises an Activity alert. A later running observation
 closes the incident and records recovery. The project Operations view shows the
 host restart count and last crash output even without application telemetry.
 
+## Run host identity and liveness
+
+An Owner issues a run host identity from Settings > Access > Runner
+enrollments or Hosts > Add host, both with the identity "Run host (deploy)".
+The enrollment code carries only `runner.deploy` and the projects the Owner
+chooses; the claim route skips jobs of other projects, so a code without a
+project deploys nothing. The page prints the host commands: `agent-host
+--enroll` saves the runner id (`runner_...`) in `installation.env`, the second
+command copies it into `/etc/agent-runner/deploy.env` as `RUNNER_HOSTNAME`,
+and `agent-runner-deploy.service` claims with that id as its `hostId`. The
+same id, or the host's unique enrollment name, is the `targetHostId` of every
+environment the host serves. The Task
+Server host join token stays coding and review only: it mints a Task Server
+principal, which these routes do not accept.
+
+A run host sends no claim heartbeat. Its contact is its claims, renewals,
+reports and run-target polls: each one stamps the identity's `lastSeenAt`, a
+claim that returns a job also `lastClaimAt`, and a report `lastReportAt`.
+`GET /api/deploy/run-hosts` lists every run host with a `state` of
+`reachable` (contact within two minutes), `unreachable`, or `no-contact`;
+Hosts shows each one as a "Run host" role row. `GET
+/api/projects/{project}/environments` adds `runHosts`, the status of each
+declared `targetHostId` under that id, resolving an enrollment name to its run
+host, with `not-enrolled` for an id no run host holds, and
+the Deploy area names that host and its state on each environment card.
+
 The claim response supplies `id`, `project`, `environmentId`, `hostId`,
 `artifact`, `template`, `destination`, `healthUrl`, `secretRefs`, `containerPort`,
 `previousArtifact`, `status`, `leaseToken`, timestamps, and claim metadata.

@@ -19,6 +19,22 @@ public sealed class ModelQualificationTests
         ],
     };
 
+    [Theory]
+    [InlineData("low")]
+    [InlineData("medium")]
+    [InlineData("high")]
+    [InlineData("xhigh")]
+    [InlineData("max")]
+    public void Fable52ExplicitPin_WinsQualification(string level)
+    {
+        var task = Task("fable-ui", TaskTypes.Feature, modelExplicit: true, thinkingExplicit: true) with
+        { CliType = CliTypes.Claude, Model = ModelIds.ClaudeFable52, ThinkingLevel = level };
+        var result = Service(economyMode: true).Qualify(task, "Build an interactive deployment view.", ClaudeModelDiscovery.FallbackCatalog(), []);
+        Assert.Equal(ModelIds.ClaudeFable52, result.SelectedModel);
+        Assert.Equal(level, result.SelectedThinkingLevel);
+        Assert.Equal("task-override", result.SelectionSource);
+    }
+
     [Fact]
     public void NewFeatureWithoutExplicitSelectionGetsPolicyTier()
     {

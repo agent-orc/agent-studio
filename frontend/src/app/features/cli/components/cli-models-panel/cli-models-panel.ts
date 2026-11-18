@@ -1,4 +1,5 @@
-import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
+import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockpit.service';
 import { ChangeDetectionStrategy, Component, OnInit, computed, forwardRef, inject, signal } from '@angular/core';
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../models/cli.model';
@@ -55,11 +56,11 @@ export function fallbackStateTone(state: string | null | undefined): StatusTone 
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CliModelsPanelComponent implements OnInit {
+  private readonly cockpit = inject(UsageCockpitService);
   private readonly catalog = inject(CliCatalogStore);
   private readonly routesApi = inject(QuotaApiService);
   private readonly jobs = inject(TaskService);
   private readonly workspaceOrchestrator = inject(WorkspaceOrchestratorSettingsService);
-  /** AGT-2716 — public so the template can read `migrations.version()` directly. */
   readonly migrations = inject(ModelMigrationCatalogStore);
   readonly routes = signal<Record<string, CliModelRouteProfile>>({});
   readonly fallbackRoutes = signal<CliModelFallbackRoute[]>([]);
@@ -320,7 +321,7 @@ export class CliModelsPanelComponent implements OnInit {
   }
 
   shortDate(value: string): string {
-    return formatZonedTime(value, browserTimeZone()) ?? value;
+    return formatZonedWithUtc(value, this.cockpit.snapshot()?.timeZone ?? browserTimeZone()) ?? value;
   }
 
   setEconomyMode(enabled: boolean): void {

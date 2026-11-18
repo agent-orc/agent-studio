@@ -102,6 +102,15 @@ case "${PW_E2E_PROFILE:-standard}" in
       first_run_prepare
     fi
     ;;
+  # run-host: a fresh networked monolith over HTTPS whose Owner, with a
+  # sealed second factor, enrolls a run host from the Hosts wizard (F4).
+  run-host)
+    export Security__Profile=networked
+    export Security__TrustedProxyAddresses=127.0.0.1
+    export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    source "${REPO_ROOT}/scripts/networked-https-e2e-key.sh"
+    e2e_networked_https_key_prepare
+    ;;
   # networked-https: a networked monolith with a second project, so a Product
   # session bound to the first one proves it never sees the other (AGT-3668).
   networked-https)

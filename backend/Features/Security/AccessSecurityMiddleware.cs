@@ -412,6 +412,12 @@ public sealed class AccessSecurityMiddleware
 
         if (human is null)
         {
+            if (IsDeployApprovalRequest(path, context.Request.Method))
+            {
+                await Reject(context, 401, "Sign in again to approve.", "Sign in again to approve.",
+                    loginUrl: "/api/auth/login");
+                return;
+            }
             var managementRequest = path.StartsWith("/api/v1/management", StringComparison.OrdinalIgnoreCase);
             await Reject(
                 context,
@@ -500,7 +506,11 @@ public sealed class AccessSecurityMiddleware
         }
         if (!safeMethod && !_store.ValidateCsrf(human.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault()))
         {
-            await Reject(context, 403, "csrf-invalid", "A valid CSRF token is required for browser mutations.");
+            if (IsDeployApprovalRequest(path, context.Request.Method))
+                await Reject(context, 401, "Sign in again to approve.", "Sign in again to approve.",
+                    loginUrl: "/api/auth/login");
+            else
+                await Reject(context, 403, "csrf-invalid", "A valid CSRF token is required for browser mutations.");
             return;
         }
 
@@ -1336,6 +1346,13 @@ public sealed class AccessSecurityMiddleware
         var path = string.IsNullOrWhiteSpace(value) ? "/" : value;
         return path.Length > 1 ? path.TrimEnd('/') : path;
     }
+
+    private static bool IsDeployApprovalRequest(string path, string method)
+        => HttpMethods.IsPost(method)
+           && path.StartsWith("/api/projects/", StringComparison.OrdinalIgnoreCase)
+           && path.EndsWith("/approve", StringComparison.OrdinalIgnoreCase)
+           && (path.Contains("/deploy/deployments/", StringComparison.OrdinalIgnoreCase)
+               || path.Contains("/deploy/runbooks/runs/", StringComparison.OrdinalIgnoreCase));
 
     private bool IsProxiedTaskServerPlane(HttpContext context, string path)
         => TaskServerPlaneProxy.IsConfigured(_configuration)

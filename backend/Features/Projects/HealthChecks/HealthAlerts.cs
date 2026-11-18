@@ -3,6 +3,7 @@ using System.Text;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.Deploy;
 
 namespace AgentStudio.Projects;
 
@@ -12,15 +13,17 @@ public sealed record FailingCheck(HealthCheckDefinition Check, HealthIncident In
 /// <summary>
 /// Bounded side effects of the health checks (IP-14): one typed Activity entry per environment
 /// incident change, and one card per environment incident that the checks of that incident
-/// comment on and that a later incident of the same environment updates while it is still open.
+/// comment on. A recurrence within the cool-down reopens that card.
 /// Card creation is idempotent so a retried tick cannot duplicate a card. Targets appear
 /// without user info and query strings.
 /// </summary>
 public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService mutations, TimelineLog timeline,
-    OrchestratorLog activity, TimeProvider clock, ILogger<HealthAlerts> logger)
+    OrchestratorLog activity, TimeProvider clock, ILogger<HealthAlerts> logger,
+    TaskStateMachine states, DeployStore deployStore)
 {
     public const string Tag = "environment-health";
     private static readonly string[] TerminalLanes = [TaskStates.Completed, TaskStates.Archive];
+    private static readonly TimeSpan ReopenCooldown = TimeSpan.FromMinutes(30);
 
     /// <returns>The incident with its card and event recorded, as far as they succeeded.</returns>
     public EnvironmentIncident ReportOpened(string project, EnvironmentDeclaration environment, EnvironmentIncident incident,
@@ -30,7 +33,17 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
         if (watchPath is null) return incident;
         if (incident.CardId is null)
         {
-            var reusable = OpenCard(state.IncidentCardId, watchPath);
+            var recent = state.LastIncident is { EndedAt: { } ended }
+                && clock.GetUtcNow() - ended <= ReopenCooldown;
+            var reusable = recent ? Card(project, state.IncidentCardId) : null;
+            if (reusable is { State: TaskStates.Completed })
+            {
+                var moved = states.MoveJob(reusable.Id, TaskStates.Backlog, watchPath,
+                    cause: TimelineActors.System, expectedSourceState: TaskStates.Completed,
+                    reason: "Environment incident recurred during the recovery cool-down.");
+                reusable = moved.Status == MoveJobStatus.Success ? Card(project, reusable.Id) : null;
+            }
+            if (reusable is not null && TerminalLanes.Contains(reusable.State)) reusable = null;
             if (reusable is not null)
             {
                 Comment(reusable, $"Incident reopened since {Stamp(incident.StartedAt)}: {Describe(failing)}.", incident, null, "reopened");
@@ -49,6 +62,7 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
                     TargetState = TaskStates.Backlog,
                     TaskType = TaskTypes.Bug,
                     Tags = [Tag],
+                    RequiresIntegration = false,
                     CreationSource = "environment-health",
                     CreatedBy = TimelineActors.System,
                 });
@@ -90,7 +104,7 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
     public EnvironmentIncident ReportRecovered(string project, EnvironmentIncident incident,
         IReadOnlyList<HealthIncident> checks)
     {
-        if ((incident.RecoveryReported && incident.RecoveryCommentReported != false)
+        if ((incident.RecoveryReported && incident.RecoveryCommentReported == true && incident.RecoveryMoveReported)
             || incident.EndedAt is not { } ended) return incident;
         var watchPath = WatchPath(project);
         if (watchPath is null) return incident;
@@ -98,12 +112,26 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
         var removed = checks.Count > 0 && checks.All(check => check.EndReason == "check-removed");
         var how = removed ? "closed because its failing checks were removed from the declaration" : "recovered";
         var probes = checks.Sum(check => check.FailedProbes);
+        var deployments = deployStore.ReadDeployments(project);
+        var linkedDeployments = deployments.Where(run => run.IncidentId == incident.Id).ToArray();
+        var linkedRunbooks = deployStore.ReadRunbookRuns(project).Where(run => run.IncidentId == incident.Id).ToArray();
+        var releases = deployStore.ReadReleases(project).ToDictionary(item => item.Id, StringComparer.Ordinal);
+        var running = deployments.Where(run => run.EnvironmentId == incident.EnvironmentId
+                && run.State == DeploymentStates.Succeeded && run.FinishedAtUtc <= ended.UtcDateTime)
+            .OrderByDescending(run => run.FinishedAtUtc).FirstOrDefault();
+        var runningRelease = running is null ? "unknown" : releases.GetValueOrDefault(running.ReleaseId)?.Version ?? running.ReleaseId;
+        var actions = linkedDeployments.Select(run => $"{run.Trigger} by {run.RequestedBy ?? "deploy-host"}"
+                + $" release {releases.GetValueOrDefault(run.ReleaseId)?.Version ?? run.ReleaseId}: {run.State}")
+            .Concat(linkedRunbooks.Select(run => $"runbook {run.Name} by {run.RequestedBy}"
+                + $" release {(run.ReleaseId is null ? "unknown" : releases.GetValueOrDefault(run.ReleaseId)?.Version ?? run.ReleaseId)}: {run.State}")).ToArray();
         if (incident.RecoveryCommentReported != true)
         {
             var card = Card(project, incident.CardId);
             incident = incident with { RecoveryCommentReported = card is null || Comment(card,
                 $"Environment {how} {Stamp(ended)} after {duration}; {probes} failed probes since "
-                + $"{Stamp(incident.StartedAt)}. {string.Join(" ", checks.Select(Ended))}", incident, null, "recovered") };
+                + $"{Stamp(incident.StartedAt)}. Running release: {runningRelease}. "
+                + $"Actions: {(actions.Length == 0 ? "none" : string.Join("; ", actions))}. "
+                + string.Join(" ", checks.Select(Ended)), incident, null, "recovered") };
         }
         var raised = incident.RecoveryReported || activity.Append(watchPath, new OrchestratorLogEntry
         {
@@ -114,7 +142,24 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
             Reasoning = $"Incident {incident.Id} closed.",
             JobId = incident.CardId,
         });
-        return incident with { RecoveryReported = raised };
+        var movedToTerminal = incident.RecoveryMoveReported;
+        if (!movedToTerminal && incident.CardId is { } cardId)
+        {
+            var card = Card(project, cardId);
+            if (card is not null)
+            {
+                mutations.SetJobRequiresIntegration(cardId, false, watchPath);
+                var moved = states.MoveJob(cardId, TaskStates.Completed, watchPath,
+                    cause: TimelineActors.System, expectedSourceState: card.State,
+                    reason: $"Environment {how} after {duration}.");
+                movedToTerminal = moved.Status == MoveJobStatus.Success;
+                if (!movedToTerminal)
+                    logger.LogWarning("environment-health card closure failed card={Card} status={Status}", cardId, moved.Status);
+            }
+            else movedToTerminal = true;
+        }
+        if (incident.CardId is null) movedToTerminal = true;
+        return incident with { RecoveryReported = raised, RecoveryMoveReported = movedToTerminal };
     }
 
     /// <returns>True when the warning reached the Activity stream.</returns>
@@ -229,7 +274,7 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
                     + $"{(sample.LatencyMs is { } ms ? ms.ToString(CultureInfo.InvariantCulture) + " ms" : "-")} | {sample.Error ?? "-"} |\n");
         }
         text.Append("\nOther checks of this environment that fail during the incident and their recoveries comment on this card. ");
-        text.Append("The incident closes when every check has recovered; a later incident of this environment updates this card while it is open.\n");
+        text.Append("The incident closes when every check has recovered; a recurrence within 30 minutes reopens this card.\n");
         return text.ToString();
     }
 

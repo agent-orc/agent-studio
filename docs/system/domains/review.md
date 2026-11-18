@@ -7,6 +7,13 @@ already applied the project's gate policy to that merge. The record must name
 the same project, branch, and first-parent SHA. Other uncovered commits still
 refuse acceptance. Their refusal names the source card when known, or the
 commit author, and omits batch diagnostics when the project has no batch gate.
+A passed full-suite gate on a later publication of the same branch also covers
+every earlier publication contained in its tested first-parent tree. Acceptance
+records the covering gate SHA and completion time in the card's completion
+evidence. A failed gate or a tested tree that does not contain the publication
+does not cover it. When a containing later batch gate is still running, the
+refusal says acceptance waits for that run. Otherwise the refusal explains the
+Owner or operator candidate-verification endpoint for the uncovered SHA.
 
 A server-authored document-key discovery commit is gate-neutral only when its
 first-parent diff changes existing `docs/**/workbench.json` descriptors solely
@@ -105,6 +112,12 @@ cache write can serve their reads. Custom prompt overrides and Codex aspects
 retain their existing prompt layout and scheduling. The frozen prompt bytes
 version this layout for review-plan digests. Each grade report shows cache
 creation and read tokens by aspect and as a review total.
+
+Coding aspects also carry the agent's `results/status.md` report as status text.
+The plan redacts credentials in that text and the generated summary before
+freezing the prompt. If `results/` or its `status.md` is a symbolic link, the
+plan withholds the agent report and says so in the status text. The review
+inventory excludes the report excerpt when the status text carries it.
 
 If the first aspect reports neither cache creation nor cache read tokens, the
 runner logs `review-aspect-cache-unconfirmed` and runs the remaining aspects
@@ -931,6 +944,11 @@ budget.
   the key. The empty claim carries `unclaimable-plan-requirements`, names the
   key, and tells the operator which setting is missing. The attempt stays
   queued and no retry budget is spent.
+  Card live status and Execution Hosts show a refused capability only while the
+  same attempt is current and pending and the executor still cannot admit the
+  key. A recovered key restores the card's queue position. Execution Hosts
+  labels a refused key `not registered` only when the role's current
+  registration omits it; old refusals do not add waiting work to held keys.
 - **Plan-less attempts.** A lease-expiry successor and a settled-run recovery
   attempt carry no plan, and an attempt may carry no repository URL; the
   claim endpoint builds both at hand-out. Before selection it therefore

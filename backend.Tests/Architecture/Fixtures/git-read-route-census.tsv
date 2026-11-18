@@ -77,6 +77,7 @@
 /api/deploy/hosts/{hostId}/containers	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/deploy/jobs/{project}/{jobId}/artifact	free	-	-	-
 /api/deploy/matrix	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/deploy/run-hosts	free	-	-	-
 /api/deploy/run-targets/{hostId}/desired-state	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/develop-states	free	-	-	-
 /api/devtools/e2e-jobs	free	-	-	-

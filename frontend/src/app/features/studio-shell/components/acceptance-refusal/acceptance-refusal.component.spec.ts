@@ -101,6 +101,11 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
     await click('acceptance-refusal-action');
     expect(find('acceptance-refusal-form')).not.toBeNull();
     expect((find('acceptance-refusal-submit') as HTMLButtonElement).disabled).toBe(true);
+    expect(find('acceptance-refusal-form')?.textContent).toContain('at least 8 characters');
+    typeReason(' short  ');
+    expect((find('acceptance-refusal-submit') as HTMLButtonElement).disabled).toBe(true);
+    typeReason(' 12345678 ');
+    expect((find('acceptance-refusal-submit') as HTMLButtonElement).disabled).toBe(false);
 
     typeReason('  Concept card: the Dossier is the delivery, nothing to integrate.  ');
     await click('acceptance-refusal-submit');

@@ -311,10 +311,20 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
             changed = true;
         }
         if (environmentState.LastIncident is { } last
-            && (!last.RecoveryReported || last.RecoveryCommentReported == false))
+            && (!last.RecoveryReported || last.RecoveryCommentReported != true || !last.RecoveryMoveReported))
         {
             environmentState.LastIncident = alerts.ReportRecovered(project, last, Ended(checks, last));
             changed = true;
+        }
+        if (environmentState.LastIncident is { EndedAt: not null } completed)
+        {
+            var index = environmentState.IncidentHistory.FindIndex(item => item.Id == completed.Id);
+            if (index < 0 || environmentState.IncidentHistory[index] != completed)
+            {
+                if (index < 0) environmentState.IncidentHistory.Add(completed);
+                else environmentState.IncidentHistory[index] = completed;
+                changed = true;
+            }
         }
         return changed;
     }
@@ -336,6 +346,8 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         var folded = store.ApplyRetention(project, now);
         if (folded > 0)
             logger.LogInformation("environment-health retention project={Project} foldedDays={Folded}", project, folded);
+        foreach (var environment in state.Environments.Values)
+            environment.IncidentHistory.RemoveAll(item => item.EndedAt < now.AddDays(-31));
         state.LastRetentionAt = now;
         store.Save(project, state);
     }

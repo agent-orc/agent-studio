@@ -83,6 +83,40 @@ public class GitServiceRunLocationTests : IDisposable
         Assert.Equal(jobId, oneShot.Request.JobId);
     }
 
+    [Fact]
+    public async Task Local_commit_message_records_codex_even_without_usage()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (repoRoot, jobId, watchPath) = SetupRepoAndJob();
+        WriteFile(repoRoot, "README.md", "seed");
+        RunGit(repoRoot, "add", "-A");
+        RunGit(repoRoot, "commit", "-q", "-m", "seed");
+        WriteFile(repoRoot, "README.md", "changed");
+
+        var codex = Path.Combine(_tempDir, "codex-test.sh");
+        File.WriteAllText(codex, "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"COMMIT_REVIEW: ALLOW\\nDescribe the change\"}}'\n");
+        File.SetUnixFileMode(codex, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WatchPaths:0:Name"] = "Demo",
+            ["WatchPaths:0:RootPath"] = repoRoot,
+            ["WatchPaths:0:RepositoryPath"] = repoRoot,
+            ["WatchPaths:0:Path"] = watchPath,
+            ["Security:Profile"] = "local",
+            ["CodexCli:Path"] = codex,
+            ["TaskRepository"] = _tempDir,
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var recorder = new AdHocUsageRecorder(NullLogger<AdHocUsageRecorder>.Instance, config);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config, usage: recorder);
+
+        var result = await git.GenerateCommitMessageAsync(jobId, watchPath);
+
+        Assert.Equal("Describe the change", result.Message);
+        Assert.Equal(CliTypes.Codex, Assert.Single(recorder.ReadAll()).CliType);
+    }
+
     private sealed class CommitMessageOneShot : ICliOneShot
     {
         public string CliType => CliTypes.Codex;

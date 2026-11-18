@@ -47,6 +47,10 @@ public static class DeployEndpoints
             deploy.Notes(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
 
+        project.MapPut("/releases/{releaseId}/notes/{cardKey}", (HttpContext context, string projectName,
+            string releaseId, string cardKey, ReleaseNoteEditRequest request, DeployService deploy) =>
+            Respond(deploy.EditNote(projectName, releaseId, cardKey, request, Actor(context, projectName))));
+
         project.MapGet("/cards", (string projectName, DeployService deploy) =>
             deploy.Cards(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
@@ -97,7 +101,7 @@ public static class DeployEndpoints
 
         project.MapPost("/runbooks/runs/{runId}/approve", (HttpContext context, string projectName,
             string runId, RunbookService runbooks) =>
-            Respond(runbooks.Approve(projectName, runId, Actor(context, projectName))))
+            RespondApproval(context, runbooks.Approve(projectName, runId, Actor(context, projectName))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/runbooks/runs/{runId}/reject", (HttpContext context, string projectName,
@@ -141,7 +145,7 @@ public static class DeployEndpoints
 
         project.MapPost("/deployments/{deploymentId}/approve", (HttpContext context, string projectName,
             string deploymentId, DeploymentApprovalRequest? request, DeployService deploy) =>
-            QuotaRefusable(() => Respond(deploy.Approve(projectName, deploymentId,
+            QuotaRefusable(() => RespondApproval(context, deploy.Approve(projectName, deploymentId,
                 Actor(context, projectName), request?.GuidedFailure))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
@@ -222,6 +226,16 @@ public static class DeployEndpoints
         DeployOutcomeKind.Forbidden => Results.Json(new { error = outcome.Error }, statusCode: StatusCodes.Status403Forbidden),
         _ => Results.Conflict(new { error = outcome.Error }),
     };
+
+    private static IResult RespondApproval<T>(HttpContext context, DeployOutcome<T> outcome)
+    {
+        if (outcome.Kind == DeployOutcomeKind.Forbidden &&
+            DeployApprovalAuthority.SignedInUser(context,
+                context.RequestServices.GetRequiredService<AccessSecurityStore>()) is null)
+            return Results.Json(new { error = "Sign in again to approve." },
+                statusCode: StatusCodes.Status401Unauthorized);
+        return Respond(outcome);
+    }
 
     /// <summary>Maps a quota refusal from a deploy action to 409 with reason <c>quota</c>.</summary>
     internal static IResult QuotaRefusable(Func<IResult> action)

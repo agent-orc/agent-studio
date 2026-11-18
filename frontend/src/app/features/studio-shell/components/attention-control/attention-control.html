@@ -43,6 +43,9 @@
                     @if (item.project) { <span class="attention-list__project">{{ item.project }}</span> }
                     <span class="attention-list__age">{{ age(item) }}</span>
                   </div>
+                  @if (item.type === 'environment.incident-open') {
+                    <app-status-indicator tone="danger" label="Incident open" [compact]="true" testId="attention-incident-status" />
+                  }
                   @if (item.type === 'human-review.ready') {
                     @if (attention.readinessFor(item); as readiness) {
                       <app-status-indicator [tone]="readinessPresentation(readiness.readiness).tone"
@@ -60,6 +63,10 @@
                 </div>
                 <button type="button" class="attention-list__action" data-testid="attention-row-action"
                         (click)="act(item, group.spec)">{{ actionLabel(item, group.spec) }}</button>
+                @if (item.type === 'environment.incident-open') {
+                  <button type="button" class="attention-list__action attention-list__action--secondary" data-testid="attention-open-operations"
+                          (click)="openOperations(item)">Open Operations</button>
+                }
               </li>
             }
           </ul>
