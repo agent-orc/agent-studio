@@ -11,6 +11,8 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
     private static readonly string[] DurationNames = ["http.server.request.duration", "http.server.duration"];
     private static readonly string[] RequestNames = ["http.server.request.count", "http.server.requests"];
     private static readonly string[] CpuNames = ["process.cpu.utilization", "container.cpu.utilization", "system.cpu.utilization", "process.cpu.time", "container.cpu.usage"];
+    /// <summary>CPU conventions that report cumulative CPU seconds instead of cores.</summary>
+    private static readonly HashSet<string> CpuTimeNames = new(["process.cpu.time", "container.cpu.usage"], StringComparer.Ordinal);
     private static readonly string[] MemoryNames = ["process.memory.usage", "container.memory.usage", "system.memory.usage"];
     private static readonly string[] DiskNames = ["system.filesystem.usage", "container.filesystem.usage"];
     /// <summary>The release id Studio's deploy injects first (M5), then the sender's own conventions.</summary>
@@ -95,16 +97,40 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
             }
         }
 
-        AddGauge(First(names, CpuNames), (sample, value) => sample.Cpu = (sample.Cpu ?? 0) + value, CpuValue);
+        var cpuName = First(names, CpuNames);
+        if (cpuName is not null && CpuTimeNames.Contains(cpuName)) AddCpuCores(cpuName);
+        else AddGauge(cpuName, (sample, value) => sample.Cpu = (sample.Cpu ?? 0) + value);
         AddGauge(First(names, MemoryNames), (sample, value) => sample.Memory = (sample.Memory ?? 0) + value);
         AddGauge(First(names, DiskNames), (sample, value) => sample.Disk = (sample.Disk ?? 0) + value);
         AddGauge(First(names, NetworkNames), (sample, value) => sample.Network = (sample.Network ?? 0) + value);
 
-        void AddGauge(string? name, Action<Sample, double> add, Func<double, string, double>? convert = null)
+        // CPU time is a cumulative counter of CPU seconds per process and state. The store
+        // turns cumulative sums into per-point deltas when it writes them (restarts included),
+        // so a bucket's sum is the CPU seconds spent inside it. Dividing by the wall time the
+        // bucket covers gives the average cores. The latest bucket is still running and covers
+        // only the time since it began, at least a minute because its first delta spans the
+        // export interval before it. A series that is not a sum (a gauge carrying the running
+        // total) holds no deltas; summing it would count the same seconds with every export.
+        void AddCpuCores(string name)
+        {
+            var untilSeconds = until.ToUnixTimeSeconds();
+            var minimumSeconds = MetricBucketPolicy.NativeSeconds(MetricResolution.Minute);
+            foreach (var series in Query(name, MetricAggregation.Sum).Series)
+            {
+                if (!string.Equals(series.Kind, nameof(MetricKind.Sum), StringComparison.Ordinal)) continue;
+                foreach (var point in series.Points)
+                {
+                    var covered = Math.Clamp(untilSeconds - point.Time.ToUnixTimeSeconds(), minimumSeconds, plan.StepSeconds);
+                    var sample = At(point.Time);
+                    sample.Cpu = (sample.Cpu ?? 0) + point.Value / covered;
+                }
+            }
+        }
+
+        void AddGauge(string? name, Action<Sample, double> add)
         {
             if (name is null) return;
-            var aggregation = name is "process.cpu.time" or "container.cpu.usage"
-                or "system.network.io" or "container.network.io" or "process.network.io"
+            var aggregation = name is "system.network.io" or "container.network.io" or "process.network.io"
                 ? MetricAggregation.Sum : MetricAggregation.Last;
             foreach (var series in Query(name, aggregation).Series)
             {
@@ -112,7 +138,7 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
                 if (name is "system.filesystem.usage" or "system.memory.usage"
                     && state is not null && state != "used") continue;
                 if (name == "system.cpu.utilization" && state == "idle") continue;
-                foreach (var point in series.Points) add(At(point.Time), (convert ?? ((value, _) => value))(point.Value, name));
+                foreach (var point in series.Points) add(At(point.Time), point.Value);
             }
         }
 
@@ -199,7 +225,6 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
         }
         return fallback;
     }
-    private static double CpuValue(double value, string name) => name.EndsWith(".time", StringComparison.Ordinal) || name.EndsWith(".usage", StringComparison.Ordinal) ? value / 3600 : value;
     private static long? ToLong(double? value) => value is null ? null : (long)Math.Round(value.Value);
 
     private sealed class Sample

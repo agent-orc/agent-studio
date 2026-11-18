@@ -265,8 +265,12 @@ from `http.route` and omit any query string.
 
 CPU selects the first present convention among `process.cpu.utilization`,
 `container.cpu.utilization`, `system.cpu.utilization`, `process.cpu.time`, and
-`container.cpu.usage`. Utilization is shown in cores; CPU time and usage are
-converted from seconds per hourly bucket. Memory selects `process.memory.usage`,
+`container.cpu.usage`. Utilization is shown in cores. CPU time and usage are
+cumulative counters of CPU seconds: the CPU seconds spent in each hour are
+divided by the time that hour covers (the current hour so far, at least a
+minute), summed over processes and states, so the summary shows the cores used
+in the latest hour. A CPU time or usage series sent as a gauge carries a running
+total and is ignored. Memory selects `process.memory.usage`,
 `container.memory.usage`, then `system.memory.usage`. Disk selects
 `system.filesystem.usage`, then `container.filesystem.usage`. Used-state gauge
 series are summed within the latest bucket. `system.network.io`,
