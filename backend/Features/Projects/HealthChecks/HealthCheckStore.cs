@@ -19,14 +19,15 @@ public sealed record HealthIncident(string Id, string EnvironmentId, string Chec
 /// </summary>
 public sealed record EnvironmentIncident(string Id, string EnvironmentId, string EnvironmentName,
     DateTimeOffset StartedAt, DateTimeOffset? EndedAt = null, string? CardId = null, bool OpenedEventRaised = false,
-    bool RecoveryReported = false, bool? RecoveryCommentReported = null, string? EnvironmentKind = null,
-    bool OpenedWebhookDelivered = false, bool RecoveryWebhookDelivered = false);
+    bool RecoveryReported = false, bool? RecoveryCommentReported = null, bool RecoveryMoveReported = false,
+    string? EnvironmentKind = null, bool OpenedWebhookDelivered = false, bool RecoveryWebhookDelivered = false);
 
 public sealed class EnvironmentHealthState
 {
     public EnvironmentIncident? OpenIncident { get; set; }
     public EnvironmentIncident? LastIncident { get; set; }
-    /// <summary>The card of the latest incident; a later incident updates it while it is open.</summary>
+    public List<EnvironmentIncident> IncidentHistory { get; set; } = [];
+    /// <summary>The latest incident card, available for reuse during the recovery cool-down.</summary>
     public string? IncidentCardId { get; set; }
 }
 

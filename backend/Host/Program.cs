@@ -704,6 +704,7 @@ builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconcil
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.RunHostDirectory>();
 builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
     sp.GetRequiredService<IConfiguration>()["HostedData:LocalVolumeRoot"] is { Length: > 0 } root
         ? new LocalHostedVolumeBackupEngine(root, Path.Combine(
@@ -745,6 +746,7 @@ builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
 builder.Services.AddSingleton(_ => new HealthCheckConnector());
 builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
 builder.Services.AddSingleton<HealthCheckStore>();
+builder.Services.AddSingleton<IncidentActions>();
 builder.Services.AddSingleton<TelemetryAlertReader>();
 builder.Services.AddSingleton<HealthAlerts>();
 builder.Services.AddHttpClient(IncidentWebhookService.HttpClientName, client =>
