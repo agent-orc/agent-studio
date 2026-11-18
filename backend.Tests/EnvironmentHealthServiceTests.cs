@@ -6,6 +6,7 @@ using AgentStudio.Registry;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.Deploy;
 using AgentStudio.Telemetry;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -273,6 +274,16 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Contains("unexpected-status", File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md")));
         Assert.Equal(OrchestratorLogKinds.Alert, Assert.Single(fixture.Activity()).Kind);
         Assert.Equal(card.Id, fixture.Activity()[0].JobId);
+        var incidentId = fixture.Store.Load(Project).Environments["stage"].OpenIncident!.Id;
+        new DeployStore(fixture.Configuration).SaveDeployments(Project, [new DeploymentRecord
+        {
+            Id = "rollback-1", ReleaseId = "release-1", EnvironmentId = "stage",
+            State = DeploymentStates.Succeeded, Trigger = DeploymentTriggers.Rollback,
+            DeployStep = DeployStepNames.StartContainer, RequestedBy = "operator",
+            CreatedAtUtc = _clock.GetUtcNow().UtcDateTime,
+            FinishedAtUtc = _clock.GetUtcNow().UtcDateTime,
+            IncidentId = incidentId, IncidentCardId = card.Id,
+        }]);
 
         await Sequence(fixture, true, true);
 
@@ -280,23 +291,27 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Equal("up", environment.Status);
         Assert.Null(environment.CurrentIncident);
         Assert.Equal((card.Id, _clock.GetUtcNow()), (environment.LastIncident!.CardId, environment.LastIncident.EndedAt!.Value));
+        Assert.Equal(TaskStates.Completed, Assert.Single(fixture.Cards()).State);
         var comment = Assert.Single(fixture.Comments(card));
         Assert.Equal("recovered", comment.Details!["change"]);
+        Assert.Contains("rollback by operator release release-1: succeeded", comment.Summary);
+        Assert.Contains("Running release: release-1", comment.Summary);
         Assert.Equal([OrchestratorLogTopics.EnvironmentIncidentOpened, OrchestratorLogTopics.EnvironmentIncidentRecovered],
             fixture.Activity().Select(entry => entry.Topic));
         Assert.Equal(0.4, environment.Uptime24h!.Value, 6);
     }
 
     [Fact]
-    public async Task CardCreation_IsIdempotent_AcrossTicksReopeningAndALostCardId()
+    public async Task CardCreation_IsIdempotent_AcrossTicksRecurrenceAndALostCardId()
     {
         var fixture = Build();
         await Sequence(fixture, false, false, false, false, false);
         var card = Assert.Single(fixture.Cards());
 
-        // A later failure is a separate incident even while the first card remains in Backlog.
+        // A recurrence inside the recovery cool-down has its own current incident record.
         await Sequence(fixture, true, true, false, false, false);
         Assert.Equal(2, fixture.Cards().Count);
+        Assert.Equal(TaskStates.Completed, fixture.Scanner.FindJob(card.Id, fixture.WatchPath)!.State);
         Assert.NotEqual(card.Id, fixture.Store.Load(Project).Environments["stage"].OpenIncident!.CardId);
         Assert.Equal(["recovered"], fixture.Comments(card).Select(item => item.Details!["change"]));
 
@@ -319,7 +334,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Equal(3, fixture.Cards().Count);
         Assert.Equal(lost, store.Load(Project).Environments["stage"].OpenIncident!.CardId);
 
-        // A finished card is not reused: the next incident gets its own card.
+        // A later incident gets its own card even when the prior one is complete.
         await Sequence(fixture, true, true);
         new TaskStateMachine(fixture.Scanner, NullLogger<TaskStateMachine>.Instance)
             .MoveJob(lost!, TaskStates.Completed, fixture.WatchPath, reason: "test: incident handled");
@@ -815,7 +830,10 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance, timeline: timeline);
         var activity = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
-        var alerts = new HealthAlerts(scanner, mutations, timeline, activity, _clock, NullLogger<HealthAlerts>.Instance, context);
+        var stateMachine = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance,
+            timeline: timeline, configuration: configuration);
+        var alerts = new HealthAlerts(scanner, mutations, timeline, activity, _clock,
+            NullLogger<HealthAlerts>.Instance, stateMachine, new AgentStudio.Deploy.DeployStore(configuration), context);
         var store = new HealthCheckStore(configuration);
         var logger = new CapturingLogger<EnvironmentHealthService>();
         var connector = new HealthCheckConnector();
@@ -842,7 +860,8 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         public IReadOnlyList<TaskInfo> Cards() => Scanner.ScanAllJobs()
             .Where(card => card.Tags.Contains(HealthAlerts.Tag) || card.Id.StartsWith("health-", StringComparison.Ordinal)).ToArray();
 
-        public IReadOnlyList<TimelineEvent> Comments(TaskInfo card) => Timeline.ReadAll(card.FolderPath)
+        public IReadOnlyList<TimelineEvent> Comments(TaskInfo card) => Timeline.ReadAll(
+                Scanner.FindJob(card.Id, WatchPath)?.FolderPath ?? card.FolderPath)
             .Where(item => item.Kind == TimelineEventKinds.EnvironmentHealthUpdated).ToArray();
 
         public IReadOnlyList<OrchestratorLogEntry> Activity() => Log.Read(WatchPath);

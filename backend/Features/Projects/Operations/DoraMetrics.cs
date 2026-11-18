@@ -6,12 +6,13 @@ public sealed record DoraSummary(int SuccessfulProductionDeploys, double? Deploy
     double? MedianCardToProductionHours, int CardsMeasured, double? ChangeFailureRate,
     double? MedianRecoveryHours, int RecoveriesMeasured);
 
-/// <summary>Pure projection of terminal production runs. A failed run starts an outage; the next successful run closes it.</summary>
+/// <summary>Pure projection of production deploys and observed environment incidents.</summary>
 public static class DoraMetrics
 {
     public static DoraSummary Calculate(IReadOnlyList<DeployEnvironment> environments,
         IReadOnlyList<Release> releases, IReadOnlyList<Deployment> deployments,
-        IReadOnlyDictionary<string, DateTime> cardCreatedAt, DateTimeOffset since, DateTimeOffset until)
+        IReadOnlyDictionary<string, DateTime> cardCreatedAt, DateTimeOffset since, DateTimeOffset until,
+        IReadOnlyList<EnvironmentIncident>? incidents = null)
     {
         var production = environments.Where(item => item.Kind == EnvironmentKinds.Production)
             .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
@@ -38,6 +39,17 @@ public static class DoraMetrics
                     failedChanges.Add(latestChange.Id);
             }
         }
+        var observed = (incidents ?? []).Where(item => production.Contains(item.EnvironmentId)
+            && item.StartedAt <= until && item.EndedAt >= since && item.EndedAt <= until).ToArray();
+        foreach (var incident in observed)
+        {
+            var prior = history.Where(run => run.EnvironmentId == incident.EnvironmentId
+                    && run.Trigger is DeploymentTriggers.Deploy or DeploymentTriggers.Redeploy
+                    && run.State == DeploymentStates.Succeeded
+                    && run.FinishedAtUtc <= incident.StartedAt.UtcDateTime)
+                .LastOrDefault();
+            if (prior is not null && changes.Any(run => run.Id == prior.Id)) failedChanges.Add(prior.Id);
+        }
         var leads = new List<double>();
         var arrivedCards = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var run in history.Where(item => item.State == DeploymentStates.Succeeded))
@@ -62,11 +74,15 @@ public static class DoraMetrics
                     failureAt ??= run.FinishedAtUtc;
                 else if (failureAt is not null && run.State == DeploymentStates.Succeeded)
                 {
-                    recoveries.Add((run.FinishedAtUtc!.Value - failureAt.Value).TotalHours);
+                    if (!observed.Any(incident => incident.EnvironmentId == environment
+                        && incident.StartedAt.UtcDateTime <= run.FinishedAtUtc
+                        && incident.EndedAt?.UtcDateTime >= failureAt))
+                        recoveries.Add((run.FinishedAtUtc!.Value - failureAt.Value).TotalHours);
                     failureAt = null;
                 }
             }
         }
+        recoveries.AddRange(observed.Select(item => (item.EndedAt!.Value - item.StartedAt).TotalHours));
         var weeks = (until - since).TotalDays / 7;
         var terminalChanges = changes.Count(item => item.State is DeploymentStates.Succeeded or DeploymentStates.Failed);
         return new(successes.Length, weeks > 0 ? successes.Length / weeks : null,
