@@ -26,6 +26,9 @@ export class ProjectDeployOverviewComponent {
   readonly panel = input.required<DeployPanel<unknown>>();
   readonly cards = input.required<readonly EnvironmentCardView[]>();
   readonly now = input.required<number>();
+  readonly busy = input(false);
+  readonly stop = output<string>();
+  readonly remove = output<string>();
   readonly projectName = input('');
   /** The parsed project.yml, or null while it loads or when it is unavailable. */
   readonly definition = input<PipelineDefinitionResponse | null>(null);

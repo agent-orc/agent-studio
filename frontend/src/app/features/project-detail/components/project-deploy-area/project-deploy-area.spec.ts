@@ -140,6 +140,11 @@ class FakeDeployData {
     this.actOptions.push(options);
     return this.actionResult;
   }
+  stopEnvironment(_project: string, id: string): Observable<void> { this.actions.push(`stop:${id}`); return of(void 0); }
+  confirmRunTargetRemoval(_project: string, id: string, hostId: string): Observable<void> {
+    this.actions.push(`remove:${id}:${hostId}`);
+    return of(void 0);
+  }
 
   serveEverything(): void {
     this.environmentsPanel.next({ status: 'ready', value: deployEnvironmentsFixture() });
@@ -274,6 +279,43 @@ describe('ProjectDeployAreaComponent', () => {
     expect(host().querySelectorAll('[data-testid^="deploy-run-row-"]')).toHaveLength(7);
     await click('deploy-tab-pipeline');
     expect(byTestId('pipeline-node-production')).not.toBeNull();
+  });
+
+  it('confirms stop and queues it without deleting the declaration', async () => {
+    data.serveEverything();
+    await settle();
+
+    await click('deploy-environment-stop');
+
+    expect(data.actions).toContain('stop:stage');
+    expect(vi.mocked(window.confirm).mock.calls[0][0]).toContain('environment secrets are kept');
+    expect(text('deploy-environment-action-message')).toContain('Stop queued');
+  });
+
+  it('queues a declaration change card and confirms host removal only after it is pending', async () => {
+    data.serveEverything();
+    await settle();
+
+    await click('deploy-environment-remove');
+    expect(vi.mocked(window.confirm).mock.calls[0][0]).toContain('app stays on its host');
+    expect(vi.mocked(window.confirm).mock.calls[0][0]).toContain('check-removed');
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/watch-paths').flush([{ name: 'Website', path: '/srv/tasks/website' }]);
+    const create = http.expectOne('/api/tasks');
+    expect(create.request.body.promptMarkdown).toContain('Do not add a removal tombstone');
+    create.flush({ id: 'WEB-100' });
+    await settle();
+    expect(text('deploy-environment-action-message')).toContain('WEB-100');
+    expect(data.actions).not.toContain('remove:stage:run-host');
+
+    const environments: import('../../../../models/project-overview.model').ProjectEnvironments = deployEnvironmentsFixture();
+    environments.runTargetRemovals = [{ environmentId: 'stage', hostId: 'run-host', kind: 'stage', status: 'pending-confirmation' }];
+    data.environmentsPanel.next({ status: 'ready', value: environments });
+    await settle();
+    host().querySelector<HTMLButtonElement>('[data-testid="deploy-pending-removal"] button')!.click();
+    await settle();
+    expect(data.actions).toContain('remove:stage:run-host');
+    expect(vi.mocked(window.confirm).mock.calls.at(-1)?.[0]).toContain('environment secrets are kept');
   });
 
   it('keeps the other panels and shows the error when a deploy route fails', async () => {

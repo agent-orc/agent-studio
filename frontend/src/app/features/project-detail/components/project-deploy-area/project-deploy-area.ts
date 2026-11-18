@@ -20,6 +20,8 @@ import type { PipelineDefinitionResponse } from '../../services/project-pipeline
 import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
 import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
 import { LocalOwnerSessionService } from '../../../../services/local-owner-session.service';
+import { ProjectDeployEnvironmentActions } from '../../services/project-deploy-environment-actions.service';
+import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { LocalOwnerDialogComponent } from '../../../../components/local-owner-dialog/local-owner-dialog';
 import { serverCheckoutMissing } from '../../../server-checkout/server-checkout.model';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
@@ -53,12 +55,13 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
 @Component({
   selector: 'app-project-deploy-area',
   standalone: true,
+  providers: [ProjectDeployEnvironmentActions],
   imports: [
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent, LocalOwnerDialogComponent,
+    FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -70,6 +73,7 @@ export class ProjectDeployAreaComponent {
   private readonly cardLookup = inject(OperationsCardLookupService);
   private readonly clock = inject(DEPLOY_CLOCK);
   private readonly localOwner = inject(LocalOwnerSessionService);
+  private readonly environmentActions = inject(ProjectDeployEnvironmentActions);
   private subscriptions = new Subscription();
   private runReads = new Subscription();
   private releaseReads = new Subscription();
@@ -85,7 +89,6 @@ export class ProjectDeployAreaComponent {
   private mutationAction: DeployRunAction | null = null;
   private runOpener: HTMLElement | null = null;
   private openedTarget: { project: string; id: string } | null = null;
-
   readonly projectName = input.required<string>();
   readonly checkoutMissing = computed(() => {
     const project = this.serverCheckout.projectFor({ name: this.projectName() });
@@ -121,6 +124,11 @@ export class ProjectDeployAreaComponent {
   readonly releaseRefusal = computed(() => ready(this.releaseGatePanel())?.refusal ?? null);
   readonly logPanel = signal<DeployPanel<DeploymentLogLine[]>>({ status: 'loading' });
   readonly actionState = signal<DeployRunActionState>(IDLE);
+  readonly environmentActionMessage = this.environmentActions.message;
+  readonly environmentActionError = this.environmentActions.error;
+  readonly environmentActionBusy = this.environmentActions.busy;
+  readonly pendingRemovals = computed(() => (ready(this.environmentPanel())?.runTargetRemovals ?? [])
+    .filter(item => item.status === 'pending-confirmation'));
   readonly selectedRunId = signal<string | null>(null);
   readonly highlightedReleaseId = signal<string | null>(null);
   readonly secrets = new DeployAreaSecrets(this.data, this); // F14: secret gaps for the cards and the run drawer
@@ -150,7 +158,6 @@ export class ProjectDeployAreaComponent {
   readonly fetchedRun = signal<DeployPanel<Deployment> | null>(null);
   /** Releases of host artifacts that status does not name, by lookup key (project-scoped). */
   readonly artifactReleases = signal<ReadonlyMap<string, DeployPanel<Release | null>>>(new Map());
-
   private readonly sources = computed(() => ({
     environments: ready(this.environmentPanel()),
     statuses: ready(this.statusPanel()),
@@ -207,8 +214,7 @@ export class ProjectDeployAreaComponent {
         for (const reads of [this.subscriptions, this.runReads, this.releaseReads, this.logReads, this.cardReads, this.liveReads,
           this.runFetch, this.artifactReads]) reads.unsubscribe();
         this.artifactReads = new Subscription();
-        this.mutations.unsubscribe();
-        this.mutations = new Subscription();
+        this.mutations.unsubscribe(); this.mutations = new Subscription();
         this.mutationAction = null;
       });
     });
@@ -227,12 +233,10 @@ export class ProjectDeployAreaComponent {
     });
     this.watchArtifactReleases();
   }
-
   private openTargetRelease(target: { project: string; id: string }): void {
     this.openedTarget = target;
     this.openRelease(target.id);
   }
-
   private watchArtifactReleases(): void {
     effect(() => {
       // Without AGT-3201 (status route missing) there are no release records to look up.
@@ -242,7 +246,6 @@ export class ProjectDeployAreaComponent {
       untracked(() => this.resolveArtifacts(lookups));
     });
   }
-
   show(view: DeployView): void {
     if (!this.checkoutMissing() && view !== 'history' && this.historyFilter() !== ALL_DEPLOY_RUNS) {
       this.historyFilter.set(ALL_DEPLOY_RUNS);
@@ -252,14 +255,16 @@ export class ProjectDeployAreaComponent {
     this.view.set(view);
     this.viewChange.emit(view);
   }
-
   refresh(): void { if (!this.checkoutMissing()) this.load(this.projectName(), false); }
-
+  stopEnvironment(id: string): void { this.environmentActions.stop(this.projectName(),
+    this.cards().find(item => item.id === id), () => this.refresh()); }
+  removeEnvironment(id: string): void { this.environmentActions.remove(this.projectName(),
+    this.cards().find(item => item.id === id)); }
+  confirmRemoval(id: string, hostId: string): void { this.environmentActions.confirm(this.projectName(), id, hostId, () => this.refresh()); }
   openFlowDetail(target: FlowDetailTarget): void {
     if (target === 'steps') this.show('steps');
     else this.openRail.emit(target);
   }
-
   openRun(runId: string): void {
     this.runOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.selectedRunId.set(runId);
@@ -267,7 +272,6 @@ export class ProjectDeployAreaComponent {
     this.fetchRunIfUnknown(runId);
     this.loadLog(runId);
   }
-
   closeRun(): void {
     this.logReads.unsubscribe();
     this.runFetch.unsubscribe();
@@ -278,7 +282,6 @@ export class ProjectDeployAreaComponent {
     this.runOpener = null;
     if (opener?.isConnected) queueMicrotask(() => opener.focus());
   }
-
   act(action: DeployRunAction, reason?: string): void {
     const runId = this.selectedRunId();
     if (!runId || this.mutationAction) return;
@@ -315,15 +318,13 @@ export class ProjectDeployAreaComponent {
 
   /** F17: an action or a host report changes the cards too: environments, health, status, and runs are read again. */
   private refreshLive(projectName: string): void {
-    this.liveReads.unsubscribe();
-    this.liveReads = new Subscription();
+    this.liveReads.unsubscribe(); this.liveReads = new Subscription();
     this.liveReads.add(this.data.environments(projectName).subscribe(intoPanel(this.environmentPanel, true)));
     this.liveReads.add(this.data.health(projectName).subscribe(intoPanel(this.healthPanel, true)));
     this.reloadRuns(projectName, true);
     const runId = this.selectedRunId();
     if (runId) this.refetchRun(runId);
   }
-
   private load(projectName: string, resetSelection: boolean): void {
     this.liveReads.unsubscribe();
     this.subscriptions.unsubscribe();
