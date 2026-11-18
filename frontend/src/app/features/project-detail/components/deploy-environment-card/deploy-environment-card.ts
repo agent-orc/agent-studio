@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import {
   HEALTH_LABEL,
@@ -18,6 +18,8 @@ import type { RollbackOffer } from '../../state/rollback-offer.model';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
+import { ClientService } from '../../../../services/client.service';
+import { principalName } from '../../../../pipes/principal-name.pipe';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
@@ -95,6 +97,10 @@ export class DeployEnvironmentCardComponent {
     const run = this.environment().lastRun;
     return run ? ago(formatAge(run.at, this.now())) : null;
   });
+  /** Display names of the principals that requested the approval and decided the intervention. */
+  private readonly clients = inject(ClientService);
+  readonly approvalRequester = computed(() => principalName(this.clients, this.environment().awaitingApproval?.requestedBy));
+  readonly interventionDecider = computed(() => principalName(this.clients, this.environment().intervention?.decidedBy));
 
   reviewApproval(): void {
     const approval = this.environment().awaitingApproval;

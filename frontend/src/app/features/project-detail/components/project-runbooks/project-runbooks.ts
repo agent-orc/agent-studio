@@ -6,6 +6,7 @@ import { DisclosureMarkerComponent } from '../../../../components/disclosure-mar
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { clearVisibleInterval, setVisibleInterval, type VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import { historyRunStateTone } from '../../state/deploy-status-tone';
+import { PrincipalNamePipe } from '../../../../pipes/principal-name.pipe';
 
 interface RunbookDefinition { name: string; steps: string[]; environments: string[]; verify?: string | null }
 interface RunbookStep { name: string; state: string; logRef: string }
@@ -28,7 +29,7 @@ export const RUNBOOK_POLL_MS = 5_000;
 @Component({
   selector: 'app-project-runbooks',
   standalone: true,
-  imports: [DisclosureMarkerComponent, LoadingSurfaceComponent, PendingButtonDirective, StatusIndicatorComponent],
+  imports: [PrincipalNamePipe, DisclosureMarkerComponent, LoadingSurfaceComponent, PendingButtonDirective, StatusIndicatorComponent],
   templateUrl: './project-runbooks.html',
   styleUrl: './project-runbooks.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

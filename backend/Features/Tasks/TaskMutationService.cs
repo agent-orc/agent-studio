@@ -2218,7 +2218,8 @@ public class TaskMutationService
             TimelineEventKinds.PromptCreated,
             string.Equals(req.CreationSource, TimelineActors.Orchestrator, StringComparison.OrdinalIgnoreCase)
                 ? TimelineActors.Orchestrator
-                : string.IsNullOrWhiteSpace(req.Agent) ? TimelineActors.System : TimelineActors.Human(ownerClientId),
+                : TimelineActors.ForAutomatedCreator(req.CreatedBy)
+                    ?? (string.IsNullOrWhiteSpace(req.Agent) ? TimelineActors.System : TimelineActors.Human(ownerClientId)),
             summary: string.IsNullOrWhiteSpace(req.Title) ? $"Task {jobId} created" : $"Task created: {req.Title}",
             payloadRef: "prompt.md",
             details: new()

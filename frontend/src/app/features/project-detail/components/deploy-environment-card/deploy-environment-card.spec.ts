@@ -1,6 +1,7 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { DeployEnvironmentCardComponent } from './deploy-environment-card';
+import { ClientService } from '../../../../services/client.service';
 import { buildEnvironmentCards, type EnvironmentCardView } from '../../state/deploy-area.model';
 import {
   DEPLOY_FIXTURE_NOW,
@@ -99,6 +100,18 @@ describe('DeployEnvironmentCardComponent', () => {
       decision: 'skip', decidedBy: 'local.owner',
     } });
     expect(text('deploy-environment-intervention')).toBe('health: skip by local.owner. Open run');
+  });
+
+  it('names the approval requester and the intervention decider by display name, not by user id', async () => {
+    TestBed.inject(ClientService).humanNames.set({ usr_ecaff70110: 'Ada Owner', usr_0b1d2c3e4f: 'Sam Maintainer' });
+    await render({ ...fullCards()[0],
+      awaitingApproval: { deploymentId: 'pending-run', subject: 'Release 2026.10.19.3', requestedBy: 'usr_0b1d2c3e4f' },
+      intervention: { deploymentId: 'failed-run', failedStep: 'health', expiresAtUtc: null,
+        decision: 'skip', decidedBy: 'usr_ecaff70110' } });
+
+    expect(text('deploy-environment-approval')).toBe('Awaiting approval: Release 2026.10.19.3, requested by Sam Maintainer');
+    expect(text('deploy-environment-intervention')).toBe('health: skip by Ada Owner. Open run');
+    expect(host().textContent).not.toContain('usr_');
   });
 
   it('opens an older pending intervention while the last run is newer', async () => {
