@@ -75,6 +75,9 @@
 .releases__quality-cards li { display: flex; justify-content: space-between; gap: var(--studio-spacing-3); border-bottom: 1px solid var(--studio-border); padding: var(--studio-spacing-1) 0; }
 .releases__quality button { @include deploy.button; }
 .releases__facts { @include deploy.fact-list; }
+.releases__deploy { margin-top: var(--studio-spacing-4); }
+.releases__deploy h4 { margin: 0 0 var(--studio-spacing-2); color: var(--studio-fg-strong); }
+.releases__deploy p { margin: 0; }
 .releases__digests { margin: 0; padding: 0; list-style: none; }
 .releases__pages { display: flex; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }
 .releases__pages button { @include deploy.button; }

@@ -49,9 +49,11 @@
         @case ('overview') {
           <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()" [busy]="environmentActionBusy()"
             [projectName]="projectName()" [definition]="pipelineDefinition()"
+            [actions]="deployActions.cards()" [actionState]="deployActions.state()"
             [rollbackOffers]="rollback.offers()" [rollbackBusy]="rollback.state().environmentId"
             (openRun)="openRun($event)" (openTools)="show('tools')" (rollback)="rollback.request($event)"
-            (definitionChanged)="refresh()" (stop)="stopEnvironment($event)" (remove)="removeEnvironment($event)"
+            (definitionChanged)="refresh()" (startAction)="deployActions.start($event)"
+            (stop)="stopEnvironment($event)" (remove)="removeEnvironment($event)"
             (openSecrets)="secrets.environment.set($event); show('secrets')" />
           @if (environmentActionMessage(); as message) { <p role="status" data-testid="deploy-environment-action-message">{{ message }}</p> }
           @if (environmentActionError(); as error) { <p role="alert" data-testid="deploy-environment-action-error">{{ error }}</p> }
@@ -71,7 +73,9 @@
             <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">deployment tools</button>.</p>
         }
         @case ('releases') { <app-project-deploy-releases (released)="refresh()" [panel]="releasePanel()" [projectName]="projectName()" [environments]="cards()" [now]="now()" [highlightedReleaseId]="highlightedReleaseId()"
-          [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" (openSecrets)="secrets.environment.set($event); show('secrets')" /> }
+          [total]="releaseTotal()" [offset]="releaseOffset()" [actions]="deployActions.releasePanel()" [actionState]="deployActions.state()"
+          (pageChange)="changeReleasePage($event)" (selectedRelease)="deployActions.selectRelease($event)" (startAction)="deployActions.start($event)"
+          (openSecrets)="secrets.environment.set($event); show('secrets')" /> }
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading…</p> } }
         @case ('flow') { @defer { <app-flow-health-page [projectName]="projectName()" (openDetail)="openFlowDetail($event)" /> } @placeholder { <p>Loading flow health…</p> } }
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" (openFlowHealth)="show('flow')" /> }

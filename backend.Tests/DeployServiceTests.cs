@@ -1445,6 +1445,94 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void StagingDeployByAPerson_AfterTheAutomaticRunFailed_AsksForTheSameProductionApproval()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: false);
+        Assert.Equal("failed", environments.Read("demo")!.Promotions.Single().Status);
+
+        // The retry after the secret fix (F7): a person deploys the release to Staging again.
+        var retry = deploy.RequestDeployment("demo", release.Id, new("stage"), Operator);
+        Assert.Equal(DeploymentStates.Queued, retry.Value!.State);
+        Report(deploy, environments, "stage-host", healthy: true);
+
+        var promotion = environments.Read("demo")!.Promotions.Last();
+        Assert.Equal(("pending", release.Id), (promotion.Status, promotion.ReleaseId));
+        var waiting = Assert.Single(deploy.Deployments("demo", "production")!);
+        Assert.Equal((DeploymentStates.AwaitingApproval, release.Id, DeploymentReconciler.LifecycleActor),
+            (waiting.State, waiting.ReleaseId, waiting.RequestedBy));
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "approval-requested" && entry.DeploymentId == waiting.Id);
+
+        Assert.Equal(DeploymentStates.Queued, deploy.Approve("demo", waiting.Id, Owner).Value!.State);
+        Assert.Equal("production-queued", environments.Read("demo")!.Promotions.Last().Status);
+        Report(deploy, environments, "prod-host", healthy: true);
+        Assert.Equal(release.Id, deploy.Status("demo")!.Single(item => item.Environment.Id == "production").CurrentRelease?.Id);
+    }
+
+    [Fact]
+    public void StagingRedeployByAPerson_ReopensAnExpiredApproval_ButNotForTheReleaseProductionRuns()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        _clock.Advance(TimeSpan.FromHours(25));
+        var expired = Assert.Single(deploy.Deployments("demo", "production")!);
+        Assert.Equal(DeploymentStates.Cancelled, expired.State);
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Redeploy("demo", "stage", approve: false, Operator).Kind);
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = deploy.Deployments("demo", "production")!.Single(item => item.State == DeploymentStates.AwaitingApproval);
+        Assert.Equal(release.Id, waiting.ReleaseId);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        Report(deploy, environments, "prod-host", healthy: true);
+
+        // Production runs the release now: a Staging redeploy asks for nothing.
+        var promotions = environments.Read("demo")!.Promotions.Count;
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Redeploy("demo", "stage", approve: false, Operator).Kind);
+        Report(deploy, environments, "stage-host", healthy: true);
+        Assert.Equal(promotions, environments.Read("demo")!.Promotions.Count);
+        Assert.DoesNotContain(deploy.Deployments("demo", "production")!, item => item.State == DeploymentStates.AwaitingApproval);
+    }
+
+    [Fact]
+    public void Actions_FollowTheLifecycle_AndNameEachRefusal()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Assert.Null(deploy.Actions("demo", "unknown-release", Owner));
+
+        // Staging runs the automatic job; Production waits for Staging.
+        var queued = deploy.Actions("demo", release.Id, Operator)!;
+        var stage = queued.Single(item => item.EnvironmentId == "stage");
+        Assert.Equal((DeployActionKinds.Deploy, false), (stage.Action, stage.Allowed));
+        Assert.Contains("already queued", stage.Reason);
+        var production = queued.Single(item => item.EnvironmentId == "production");
+        Assert.False(production.Allowed);
+        Assert.Contains("requires a successful deployment", production.Reason);
+
+        Report(deploy, environments, "stage-host", healthy: false);
+        var cards = deploy.Actions("demo", null, Operator)!;
+        Assert.Equal((true, false, release.Id), cards.Where(item => item.EnvironmentId == "stage")
+            .Select(item => (item.Allowed, item.NeedsApproval, item.ReleaseId)).Single());
+        Assert.Contains("requires a successful deployment", cards.Single(item => item.EnvironmentId == "production").Reason);
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.RequestDeployment("demo", release.Id, new("stage"), Operator).Kind);
+        DeployThroughProduction(deploy, environments, release, Owner);
+
+        // Production runs the release: a redeploy, direct for the approver, a request for everybody else.
+        var forOwner = deploy.Actions("demo", null, Owner)!.Single(item => item.EnvironmentId == "production");
+        Assert.Equal((DeployActionKinds.Redeploy, true, false), (forOwner.Action, forOwner.Allowed, forOwner.NeedsApproval));
+        var forOperator = deploy.Actions("demo", release.Id, Operator)!.Single(item => item.EnvironmentId == "production");
+        Assert.Equal((DeployActionKinds.Redeploy, true, true), (forOperator.Action, forOperator.Allowed, forOperator.NeedsApproval));
+        Assert.Equal(DeploymentStates.AwaitingApproval,
+            deploy.Redeploy("demo", "production", approve: false, Operator).Value!.State);
+        var pending = deploy.Actions("demo", null, Owner)!.Single(item => item.EnvironmentId == "production");
+        Assert.False(pending.Allowed);
+        Assert.Contains("awaiting approval", pending.Reason);
+    }
+
+    [Fact]
     public void Rollback_SkipsAReleaseThatHadAProductionIncidentWhileRunning()
     {
         var (_, environments, store) = Build();

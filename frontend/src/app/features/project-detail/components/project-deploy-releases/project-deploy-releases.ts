@@ -5,7 +5,17 @@ import { QualityStudioService } from '../../../../services/quality-studio.servic
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { ProjectDeployReleaseNotesComponent } from '../project-deploy-release-notes/project-deploy-release-notes';
-import { formatAge, type DeployPanel, type EnvironmentCardView, type IntegrationReleaseStatus, type Release, type SecretReadinessResponse } from '../../state/deploy-area.model';
+import { DeployActionsComponent } from '../deploy-actions/deploy-actions';
+import {
+  formatAge,
+  type DeployActionOption,
+  type DeployActionState,
+  type DeployPanel,
+  type EnvironmentCardView,
+  type IntegrationReleaseStatus,
+  type Release,
+  type SecretReadinessResponse,
+} from '../../state/deploy-area.model';
 import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
@@ -26,12 +36,12 @@ const NEXT_RELEASE: Readonly<Record<IntegrationReleaseStatus['state'], { tone: S
   blocked: { tone: 'warning', label: 'Blocked' },
 };
 
-/** Release list with the selected release's cards, artifacts, and where it runs. */
+/** Release list with the selected release's cards, artifacts, where it runs, and where it may deploy next. */
 @Component({
   selector: 'app-project-deploy-releases',
   standalone: true,
   imports: [DatePipe, EmptyStateComponent, LoadingSurfaceComponent, ProjectDeployReleaseNotesComponent, StatusIndicatorComponent,
-    DeploySecretGapsComponent],
+    DeployActionsComponent, DeploySecretGapsComponent],
   templateUrl: './project-deploy-releases.html',
   styleUrl: './project-deploy-releases.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -46,7 +56,12 @@ export class ProjectDeployReleasesComponent {
   readonly total = input<number>(0);
   readonly offset = input<number>(0);
   readonly highlightedReleaseId = input<string | null>(null);
+  /** Deploy options of the selected release; the parent loads them for {@link selectedRelease}. */
+  readonly actions = input<DeployPanel<DeployActionOption[]>>({ status: 'loading' });
+  readonly actionState = input<DeployActionState>({ busy: null, error: null });
   readonly pageChange = output<number>();
+  readonly selectedRelease = output<string | null>();
+  readonly startAction = output<DeployActionOption>();
   /** A release was created from this tab; the Deploy area reloads releases and runs. */
   readonly released = output<void>();
   /** F14: open the binding panel on an environment the selected release misses secrets in. */
@@ -64,6 +79,10 @@ export class ProjectDeployReleasesComponent {
 
   constructor() {
     effect(() => this.selectedId.set(this.highlightedReleaseId()));
+    effect(() => {
+      const id = this.selected()?.id ?? null;
+      untracked(() => this.selectedRelease.emit(id));
+    });
     // Read again whenever the release list is read again (load, refresh, page change).
     effect(() => {
       const project = this.projectName();
@@ -134,6 +153,20 @@ export class ProjectDeployReleasesComponent {
     return release
       ? this.environments().filter(env => env.releaseVersion === release.version).map(env => env.name)
       : [];
+  });
+
+  readonly environmentNames = computed<ReadonlyMap<string, string>>(() =>
+    new Map(this.environments().map(env => [env.id, env.name])));
+  /** Options for the shown release only, so a late answer for another release never shows here. */
+  readonly releaseActions = computed(() => {
+    const panel = this.actions();
+    const id = this.selected()?.id;
+    return panel.status === 'ready' ? panel.value.filter(item => item.releaseId === id) : [];
+  });
+
+  readonly actionsError = computed(() => {
+    const panel = this.actions();
+    return panel.status === 'error' ? panel.message : '';
   });
 
   readonly secrets = computed(() => {

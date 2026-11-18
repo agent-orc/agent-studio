@@ -447,6 +447,64 @@ public sealed class DeployService
     }
 
     /// <summary>
+    /// The deploy actions the lifecycle allows the actor, with the reason of
+    /// each refusal. For one release: deploy it into each environment, or
+    /// redeploy it where it is current. Without a release: per environment,
+    /// deploy the next release and redeploy the current one. Reads only.
+    /// </summary>
+    public IReadOnlyList<DeployActionOption>? Actions(string project, string? releaseId, DeployActor actor)
+    {
+        lock (_gate)
+        {
+            var snapshot = ReadOnlySnapshot(project);
+            if (snapshot is null) return null;
+            Release? selected = null;
+            if (releaseId is not null && !snapshot.ReleaseById.TryGetValue(releaseId, out selected)) return null;
+            var deployments = snapshot.Deployments(project).Where(item => item.Tenant is null).ToArray();
+            var statuses = EnvironmentStatusProjection.Project(snapshot.Environments, snapshot.Releases, deployments,
+                new Dictionary<string, string>());
+            var options = new List<DeployActionOption>();
+            foreach (var status in statuses)
+            {
+                var environment = status.Environment;
+                var current = status.CurrentRelease;
+                if (selected is not null)
+                {
+                    options.Add(ActionFor(project, snapshot, selected, environment,
+                        current?.Id == selected.Id ? DeployIntent.Redeploy : DeployIntent.Deploy, actor));
+                    continue;
+                }
+                // The next release the card names, or else the newest newer one, so the card shows why it waits.
+                var next = status.NewerRelease ?? snapshot.Releases
+                    .Where(item => current is null || EnvironmentStatusProjection.IsNewer(item, current))
+                    .OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal).LastOrDefault();
+                if (next is not null) options.Add(ActionFor(project, snapshot, next, environment, DeployIntent.Deploy, actor));
+                if (current is not null)
+                    options.Add(ActionFor(project, snapshot, current, environment, DeployIntent.Redeploy, actor));
+            }
+            return options;
+        }
+    }
+
+    private static DeployActionOption ActionFor(string project, Snapshot snapshot, Release release,
+        DeployEnvironment environment, DeployIntent intent, DeployActor actor)
+    {
+        var action = intent == DeployIntent.Redeploy ? DeployActionKinds.Redeploy : DeployActionKinds.Deploy;
+        if (!snapshot.Records.TryGetValue(release.Id, out var record)
+            || record.Environments.All(item => item.Id != environment.Id))
+            return new(environment.Id, action, release.Id, release.Version, false, false,
+                MissingSnapshot(release, environment).Error);
+        var decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, release, environment, intent,
+            approve: actor.IsApprover, actor, excludeRunId: null, tenant: null));
+        // An approver of another phase role can still ask for the approval.
+        if (decision.Forbidden)
+            decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, release, environment, intent,
+                approve: false, actor, excludeRunId: null, tenant: null));
+        return new(environment.Id, action, release.Id, release.Version, decision.Outcome != LifecycleOutcome.Reject,
+            decision.Outcome == LifecycleOutcome.AwaitApproval, decision.Reason);
+    }
+
+    /// <summary>
     /// F14: the secret names a deploy of the release carries into each lifecycle
     /// environment, the same names the host job lists in <c>SecretRefs</c>.
     /// Without a release id the newest release answers, because it is the one
@@ -997,7 +1055,8 @@ public sealed class DeployService
 
             var now = _clock.GetUtcNow().UtcDateTime;
             var guided = guidedFailure ?? run.GuidedFailure;
-            var job = QueueJob(project, snapshot, run.Trigger, target with { GuidedFailure = guided }, release, actor.Id, run.Tenant);
+            var job = QueueJob(project, snapshot, run.Trigger, target with { GuidedFailure = guided }, release, actor.Id, run.Tenant,
+                PromotionTarget(project, snapshot, release, environment, intent, run.Tenant));
             if (job is null) return DeployOutcome<Deployment>.Conflict("The deploy job could not be queued.");
             var approved = run with
             {
@@ -1254,7 +1313,8 @@ public sealed class DeployService
         if (decision.Outcome == LifecycleOutcome.Queue)
         {
             job = QueueJob(project, snapshot, trigger, target with { GuidedFailure = guidedFailure ?? target.GuidedFailure },
-                release, decision.ApprovedBy ?? actor.Id, tenant);
+                release, decision.ApprovedBy ?? actor.Id, tenant,
+                PromotionTarget(project, snapshot, release, environment, intent, tenant));
             if (job is null) return DeployOutcome<Deployment>.Conflict("The deploy job could not be queued.");
         }
         var run = NewRun(release, environment, record.Environments,
@@ -1399,7 +1459,7 @@ public sealed class DeployService
     /// that promotion, so the older promotion state stays consistent.
     /// </summary>
     private DeployJob? QueueJob(string project, Snapshot snapshot, string trigger, EnvironmentDeclaration target,
-        Release release, string actor, string? tenant)
+        Release release, string actor, string? tenant, string? promoteTo = null)
     {
         var artifact = release.ArtifactDigests[0];
         var record = snapshot.Records[release.Id];
@@ -1414,7 +1474,28 @@ public sealed class DeployService
         }
         return _environments.QueueDeployment(project, target, artifact, actor,
             rollback: trigger == DeploymentTriggers.Rollback, tenant: tenant, releaseId: release.Id,
-            variables: values, secretVariableRefs: secrets);
+            variables: values, secretVariableRefs: secrets, promoteTo: promoteTo);
+    }
+
+    /// <summary>
+    /// The Production environment a person's Staging deploy or redeploy
+    /// promotes into, as the automatic Staging job does: only while Production
+    /// does not run this release or a newer one and has no run of it under way.
+    /// Without this a Staging retry by a person never asked for the Production
+    /// approval (F7).
+    /// </summary>
+    private static string? PromotionTarget(string project, Snapshot snapshot, Release release,
+        DeployEnvironment environment, DeployIntent intent, string? tenant)
+    {
+        if (tenant is not null || intent == DeployIntent.Rollback || environment.Kind != EnvironmentKinds.Staging)
+            return null;
+        var production = snapshot.Environments.FirstOrDefault(item => item.Kind == EnvironmentKinds.Production);
+        if (production is null) return null;
+        var here = snapshot.Deployments(project)
+            .Where(item => item.EnvironmentId == production.Id && item.Tenant is null).ToArray();
+        if (here.Any(item => item.ReleaseId == release.Id && DeploymentStates.IsActive(item.State))) return null;
+        return EnvironmentStatusProjection.Position(release, EnvironmentStatusProjection.CurrentRelease(here,
+            snapshot.ReleaseById)) is ReleasePosition.NoCurrent or ReleasePosition.Newer ? production.Id : null;
     }
 
     /// <summary>F14: an approval the approver confirmed despite missing secret bindings says so in log and audit.</summary>

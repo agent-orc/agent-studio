@@ -4,6 +4,7 @@ import { Observable, catchError, map, of, startWith } from 'rxjs';
 import { TaskService } from '../../../services/task.service';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
 import type {
+  DeployActionOption,
   DeployPanel,
   DeployRunAction,
   Deployment,
@@ -179,6 +180,29 @@ export class ProjectDeployDataService {
       `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${intervention ? 'intervention' : action}`,
       intervention ? { action, reason }
         : action === 'approve' && options.confirmMissingSecrets ? { confirmMissingSecrets: true } : {});
+  }
+
+  /** Per environment: deploy the next release and redeploy the current one, as the lifecycle allows. */
+  deployActions(projectName: string): Observable<DeployPanel<DeployActionOption[]>> {
+    return panel(this.http.get<DeployActionOption[]>(`${deployRoot(projectName)}/actions`),
+      'Deploy actions could not be loaded.', true);
+  }
+
+  releaseDeployActions(projectName: string, releaseId: string): Observable<DeployPanel<DeployActionOption[]>> {
+    return panel(this.http.get<DeployActionOption[]>(
+      `${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/actions`),
+    'Deploy actions could not be loaded.', true);
+  }
+
+  /** Starts the option through the lifecycle routes; the server decides again and names a refusal. */
+  start(projectName: string, option: DeployActionOption): Observable<Deployment> {
+    const approve = !option.needsApproval;
+    return option.action === 'redeploy'
+      ? this.http.post<Deployment>(
+        `${deployRoot(projectName)}/environments/${encodeURIComponent(option.environmentId)}/redeploy`, { approve })
+      : this.http.post<Deployment>(
+        `${deployRoot(projectName)}/releases/${encodeURIComponent(option.releaseId)}/deployments`,
+        { environmentId: option.environmentId, approve });
   }
 
   /**

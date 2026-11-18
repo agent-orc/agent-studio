@@ -10,7 +10,7 @@ import { ProjectDeployDataService } from '../../services/project-deploy-data.ser
 import { ServerCheckoutStore } from '../../../server-checkout';
 import { urlProject } from '../../../server-checkout/testing/server-checkout.fixtures';
 import type { RegistryProjectSummary } from '../../../../models/task.model';
-import { DEPLOY_CLOCK, type DeployPanel } from '../../state/deploy-area.model';
+import { DEPLOY_CLOCK, type DeployActionOption, type DeployPanel } from '../../state/deploy-area.model';
 import { AuthSessionState } from '../../../../services/auth.service';
 import {
   ARTIFACT_B,
@@ -144,6 +144,20 @@ class FakeDeployData {
     this.actions.push(`${action}:${id}`);
     this.actOptions.push(options);
     return this.actionResult;
+  }
+  readonly deployActionsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
+  readonly releaseActionReads: string[] = [];
+  releaseActionsAnswer: (releaseId: string) => DeployPanel<unknown> = () => ({ status: 'ready', value: [] });
+  readonly starts: DeployActionOption[] = [];
+  startResult = new Subject<unknown>();
+  deployActions(): Observable<DeployPanel<unknown>> { return this.deployActionsPanel; }
+  releaseDeployActions(_project: string, releaseId: string): Observable<DeployPanel<unknown>> {
+    this.releaseActionReads.push(releaseId);
+    return of(this.releaseActionsAnswer(releaseId));
+  }
+  start(_project: string, option: DeployActionOption): Observable<unknown> {
+    this.starts.push(option);
+    return this.startResult;
   }
   readonly rollbacks: string[] = [];
   rollbackResult = new Subject<unknown>();
@@ -915,6 +929,83 @@ describe('ProjectDeployAreaComponent', () => {
     await click('deploy-tab-history');
     expect((byTestId('deploy-history-filter-environment') as HTMLSelectElement).value).toBe('all');
     expect(host().querySelectorAll('[data-testid^="deploy-run-row-"]')).toHaveLength(7);
+  });
+
+  const option = (environmentId: string, action: 'deploy' | 'redeploy', releaseId: string, extra: Partial<DeployActionOption> = {}): DeployActionOption =>
+    ({ environmentId, action, releaseId, releaseVersion: RELEASE_3.version, allowed: true, needsApproval: false, reason: null, ...extra });
+
+  it('offers deploy, approval request and redeploy on the environment cards with the lifecycle refusal reasons', async () => {
+    data.serveEverything();
+    data.deployActionsPanel.next({ status: 'ready', value: [
+      option('stage', 'redeploy', RELEASE_3.id),
+      option('production', 'deploy', RELEASE_3.id, { needsApproval: true }),
+      option('production', 'redeploy', RELEASE_2.id, { allowed: false,
+        reason: 'This release is already queued, running or awaiting approval in Production.' }),
+      option('stage', 'deploy', RELEASE_2.id, { allowed: false,
+        reason: 'The release is older than the current release in Staging. Use rollback.' }),
+    ] });
+    await settle();
+
+    expect(text('deploy-action-redeploy-stage')).toBe('Redeploy Staging');
+    const request = byTestId('deploy-action-deploy-production') as HTMLButtonElement;
+    expect(request.textContent?.trim()).toBe('Request Production approval');
+    expect(request.classList).toContain('deploy-actions__primary');
+    const refused = byTestId('deploy-action-deploy-stage') as HTMLButtonElement;
+    expect(refused.disabled).toBe(true);
+    expect(text('deploy-action-deploy-stage-reason')).toBe(
+      'Deploy to Staging: The release is older than the current release in Staging. Use rollback.');
+    expect(refused.getAttribute('aria-describedby')).toBe(byTestId('deploy-action-deploy-stage-reason')!.id);
+    // Production shows its waiting approval; a refusal there would only repeat it.
+    expect(byTestId('deploy-action-redeploy-production')).toBeNull();
+
+    // A request needs no confirmation; the started run opens with its log.
+    await click('deploy-action-deploy-production');
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(data.starts.map(item => `${item.action}:${item.environmentId}:${item.needsApproval}`)).toEqual(['deploy:production:true']);
+    expect(request.disabled).toBe(true);
+    data.requests.length = 0;
+    data.runsById.set('run-requested', { ...deployDeploymentsFixture()[1], id: 'run-requested', state: 'awaiting-approval' });
+    data.startResult.next({ id: 'run-requested' });
+    await settle();
+    expect(data.requests).toContain('status');
+    expect(data.requests).toContain('log:run-requested');
+    expect(byTestId('deploy-run-drawer')).not.toBeNull();
+  });
+
+  it('confirms a direct Production deploy and shows the server refusal next to the buttons', async () => {
+    data.serveEverything();
+    data.deployActionsPanel.next({ status: 'ready', value: [option('production', 'deploy', RELEASE_3.id)] });
+    await settle();
+
+    expect(text('deploy-action-deploy-production')).toBe('Deploy to Production');
+    await click('deploy-action-deploy-production');
+    expect(window.confirm).toHaveBeenCalledWith('Deploy release 2026.10.19.2 to Production?');
+    data.startResult.error(new HttpErrorResponse({ status: 409,
+      error: { error: 'Wait until the active deployment in Production has finished.' } }));
+    await settle();
+
+    expect(text('deploy-action-error')).toBe('Wait until the active deployment in Production has finished.');
+    expect((byTestId('deploy-action-deploy-production') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('reads the deploy actions of the shown release on its detail', async () => {
+    data.serveEverything();
+    data.releaseActionsAnswer = releaseId => ({ status: 'ready', value: releaseId === RELEASE_2.id
+      ? [option('stage', 'deploy', RELEASE_2.id, { allowed: false,
+        reason: 'The release is older than the current release in Staging. Use rollback.' })]
+      : [option('stage', 'redeploy', releaseId), option('production', 'deploy', releaseId, { needsApproval: true })] });
+    await settle();
+    await click('deploy-tab-releases');
+
+    expect(data.releaseActionReads.at(-1)).toBe(RELEASE_3.id);
+    expect(text('deploy-release-actions')).toContain('Redeploy Staging');
+    expect(text('deploy-release-actions')).toContain('Request Production approval');
+
+    await click(`deploy-release-${RELEASE_2.id}`);
+    expect(data.releaseActionReads.at(-1)).toBe(RELEASE_2.id);
+    expect((byTestId('deploy-action-deploy-stage') as HTMLButtonElement).disabled).toBe(true);
+    expect(text('deploy-action-deploy-stage-reason')).toBe(
+      'Deploy to Staging: The release is older than the current release in Staging. Use rollback.');
   });
 
   it('reloads every source on Refresh and keeps the deployment tools reachable', async () => {

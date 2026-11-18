@@ -97,6 +97,18 @@
                   }
                 </dd>
               </dl>
+              <section class="releases__deploy" data-testid="deploy-release-actions" aria-labelledby="deploy-release-actions-title">
+                <h4 id="deploy-release-actions-title">Deploy</h4>
+                @switch (actions().status) {
+                  @case ('loading') { <p class="releases__muted">Checking where this release may deploy…</p> }
+                  @case ('error') { <p class="releases__muted" data-testid="deploy-release-actions-error">{{ actionsError() }}</p> }
+                  @case ('unavailable') { <p class="releases__muted">This server does not offer deploy actions yet.</p> }
+                  @default {
+                    <app-deploy-actions [options]="releaseActions()" [environmentNames]="environmentNames()" [state]="actionState()"
+                      [groupLabel]="'Deploy actions for release ' + release.version" (startAction)="startAction.emit($event)" />
+                  }
+                }
+              </section>
               @defer (on immediate) { <app-project-deploy-release-notes [release]="release" /> }
             </article>
           }

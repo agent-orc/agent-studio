@@ -11,6 +11,7 @@ import { EnvironmentHealthPanelComponent } from '../../../environment-health';
 import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
+import { DeployActionsStore } from '../../state/deploy-actions.store';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 import { ManagedDatabasesPanelComponent } from '../managed-databases-panel/managed-databases-panel';
 import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-page/project-secrets-page.component';
@@ -38,14 +39,12 @@ import {
   type DeployPanel, type DeployRunAction,
   type Deployment,
   type DeploymentLogLine, type EnvironmentStatus,
-  type Release,
-  type DeployRunFilter,
+  type Release, type DeployRunFilter,
   type ArtifactReleaseLookup,
   type ReleaseGateStatus,
 } from '../../state/deploy-area.model';
-import {
-  DEPLOY_LIVE_REFRESH_MS, deployInFlight, deployNotices, deployRunConfirmation, intoPanel, isProductionRun, pageItems,
-} from '../../state/deploy-area-reads';
+import { DEPLOY_LIVE_REFRESH_MS, deployInFlight, deploymentEnvironment, deployNotices, deployRunConfirmation, intoPanel,
+  isProductionRun, pageItems } from '../../state/deploy-area-reads';
 import { DeployAreaSecrets, missingSecretsPrompt } from './deploy-area-secrets';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
@@ -131,6 +130,10 @@ export class ProjectDeployAreaComponent {
     .filter(item => item.status === 'pending-confirmation'));
   readonly selectedRunId = signal<string | null>(null);
   readonly highlightedReleaseId = signal<string | null>(null);
+  /** Deploy, approval-request and redeploy options of the cards and the shown release. */
+  readonly deployActions = new DeployActionsStore(this.data, { project: () => this.projectName(),
+    environment: id => deploymentEnvironment(id, this.cards(), this.statusPanel(), this.environmentPanel()),
+    settled: (project, run) => { this.reloadRuns(project, true); if (run) this.openRun(run.id); } });
   readonly secrets = new DeployAreaSecrets(this.data, this); // F14: secret gaps for the cards and the run drawer
   openRelease(id: string): void {
     this.highlightedReleaseId.set(id);
@@ -216,6 +219,7 @@ export class ProjectDeployAreaComponent {
         this.artifactReads = new Subscription();
         this.mutations.unsubscribe(); this.mutations = new Subscription();
         this.mutationAction = null;
+        this.deployActions.dispose();
       });
     });
     effect(onCleanup => {
@@ -231,13 +235,6 @@ export class ProjectDeployAreaComponent {
         if (target && target !== this.openedTarget && target.project === this.projectName()) this.openTargetRelease(target);
       });
     });
-    this.watchArtifactReleases();
-  }
-  private openTargetRelease(target: { project: string; id: string }): void {
-    this.openedTarget = target;
-    this.openRelease(target.id);
-  }
-  private watchArtifactReleases(): void {
     effect(() => {
       // Without AGT-3201 (status route missing) there are no release records to look up.
       const status = this.statusPanel().status;
@@ -245,6 +242,10 @@ export class ProjectDeployAreaComponent {
       const lookups = artifactReleaseLookups({ environments: ready(this.environmentPanel()), statuses: ready(this.statusPanel()) });
       untracked(() => this.resolveArtifacts(lookups));
     });
+  }
+  private openTargetRelease(target: { project: string; id: string }): void {
+    this.openedTarget = target;
+    this.openRelease(target.id);
   }
   show(view: DeployView): void {
     if (!this.checkoutMissing() && view !== 'history' && this.historyFilter() !== ALL_DEPLOY_RUNS) {
@@ -261,10 +262,7 @@ export class ProjectDeployAreaComponent {
   removeEnvironment(id: string): void { this.environmentActions.remove(this.projectName(),
     this.cards().find(item => item.id === id)); }
   confirmRemoval(id: string, hostId: string): void { this.environmentActions.confirm(this.projectName(), id, hostId, () => this.refresh()); }
-  openFlowDetail(target: FlowDetailTarget): void {
-    if (target === 'steps') this.show('steps');
-    else this.openRail.emit(target);
-  }
+  openFlowDetail(target: FlowDetailTarget): void { if (target === 'steps') this.show('steps'); else this.openRail.emit(target); }
   openRun(runId: string): void {
     this.runOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.selectedRunId.set(runId);
@@ -342,6 +340,7 @@ export class ProjectDeployAreaComponent {
       this.releaseOffset.set(0);
       this.releaseTotal.set(0);
       this.artifactReleases.set(new Map());
+      this.deployActions.reset();
       for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel, this.releaseGatePanel] as const)
         (target as WritableSignal<DeployPanel<unknown>>).set({ status: 'loading' });
     } else {
@@ -359,7 +358,7 @@ export class ProjectDeployAreaComponent {
     this.secrets.load(projectName, resetSelection);
   }
 
-  /** Status and runs change together after an approval, rejection, or cancellation. */
+  /** Status, runs and deploy actions change together after an approval, rejection, cancellation, or start. */
   private reloadRuns(projectName: string, keepShown: boolean): void {
     this.now.set(this.clock());
     this.runReads.unsubscribe();
@@ -368,6 +367,7 @@ export class ProjectDeployAreaComponent {
     this.runReads.add(this.data.statuses(projectName).subscribe(panel => {
       if (generation === this.readGeneration) intoPanel(this.statusPanel, keepShown)(panel);
     }));
+    this.runReads.add(this.deployActions.load(projectName, keepShown, () => generation === this.readGeneration));
     this.runReads.add(this.data.deploymentPage(projectName, 0).subscribe(panel => {
       if (generation !== this.readGeneration) return;
       intoPanel(this.deploymentPanel, keepShown)(pageItems(panel));

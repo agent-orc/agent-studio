@@ -223,6 +223,39 @@ export function runActions(state: RunState): DeployRunAction[] {
 }
 
 /**
+ * A deploy or redeploy a person may start in one environment, as the server's
+ * lifecycle decided it for the signed-in actor (`GET /deploy/actions`,
+ * `GET /deploy/releases/{id}/actions`). `needsApproval` means the request waits
+ * for an Owner or Maintainer; a refused action carries the lifecycle's reason.
+ */
+export interface DeployActionOption {
+  environmentId: string;
+  action: 'deploy' | 'redeploy';
+  releaseId: string;
+  releaseVersion: string;
+  allowed: boolean;
+  needsApproval: boolean;
+  reason: string | null;
+}
+
+/** Busy and failed start requests, keyed by {@link deployActionKey}. */
+export interface DeployActionState {
+  busy: string | null;
+  error: { key: string; message: string } | null;
+}
+
+export function deployActionKey(option: Pick<DeployActionOption, 'action' | 'environmentId' | 'releaseId'>): string {
+  return `${option.action}:${option.environmentId}:${option.releaseId}`;
+}
+
+/** "Deploy to Staging", "Request Production approval", "Redeploy Production", "Request Production redeploy". */
+export function deployActionLabel(option: Pick<DeployActionOption, 'action' | 'needsApproval'>, environmentName: string): string {
+  if (option.action === 'redeploy')
+    return option.needsApproval ? `Request ${environmentName} redeploy` : `Redeploy ${environmentName}`;
+  return option.needsApproval ? `Request ${environmentName} approval` : `Deploy to ${environmentName}`;
+}
+
+/**
  * One panel's data. `unavailable` means the route is not on this server yet
  * (AGT-3201 before it ships); it is not an error.
  */

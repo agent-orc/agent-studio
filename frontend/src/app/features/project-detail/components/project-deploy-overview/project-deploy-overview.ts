@@ -6,7 +6,9 @@ import { DeployEnvironmentCardComponent } from '../deploy-environment-card/deplo
 import type { RollbackOffer } from '../../state/rollback-offer.model';
 import { ProjectDeployStepsFormComponent } from '../project-deploy-steps-form/project-deploy-steps-form';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
-import { declaredEnvironments, type DeployPanel, type EnvironmentCardView } from '../../state/deploy-area.model';
+import {
+  declaredEnvironments, type DeployActionOption, type DeployActionState, type DeployPanel, type EnvironmentCardView,
+} from '../../state/deploy-area.model';
 
 /**
  * Overview: one status card per declared environment. Environments project.yml
@@ -35,6 +37,9 @@ export class ProjectDeployOverviewComponent {
   readonly definition = input<PipelineDefinitionResponse | null>(null);
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  readonly actions = input<readonly DeployActionOption[]>([]);
+  readonly actionState = input<DeployActionState>({ busy: null, error: null });
+  readonly startAction = output<DeployActionOption>();
   readonly rollbackOffers = input<readonly RollbackOffer[]>([]);
   /** The environment whose rollback request is on its way. */
   readonly rollbackBusy = input<string | null>(null);
