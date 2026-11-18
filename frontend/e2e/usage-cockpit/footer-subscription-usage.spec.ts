@@ -275,3 +275,32 @@ test('legacy shell keeps usage in the footer and account actions in the header',
   await expect(page.getByTestId('usage-detail-surface')).toBeVisible();
   await page.getByTestId('usage-detail-close').click();
 });
+
+
+test('Fable weekly allowance appears independently in the footer in both themes', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.clock.setFixedTime(FIXTURE_NOW);
+  await page.route('**/api/usage/cockpit**', route => {
+    const snapshot = cockpit();
+    const claude = snapshot.clis.find(cli => cli.cliId === 'claude')!;
+    claude.windows.push({ ...claude.windows[0], id: 'claude/weekly-fable', label: 'Weekly (Fable)', usedPct: 84 });
+    return route.fulfill({ json: snapshot });
+  });
+  await page.goto('/');
+  await dismissDevErrorDialog(page);
+  const footer = page.getByTestId('footer-usage-claude');
+  await expect(footer).toContainText('Fable 84%');
+  await expect(footer).toContainText('WK 7%');
+  await expect(footer).toHaveAttribute('aria-label', /Fable weekly 84 percent used/);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await expect(footer).toContainText('Fable 84%');
+      const bounds = await footer.boundingBox();
+      expect(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width).toBe(true);
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+      await page.screenshot({ path: join(shots, `fable-weekly-${width}-${theme}--mocked.png`), animations: 'disabled' });
+    }
+  }
+});

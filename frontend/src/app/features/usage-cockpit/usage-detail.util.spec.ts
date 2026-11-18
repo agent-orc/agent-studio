@@ -69,7 +69,7 @@ function snapshot(overrides: Partial<UsageCockpitResponse> = {}): UsageCockpitRe
 describe('instants and countdowns', () => {
   it('shows workspace-local and UTC separately', () => {
     expect(instantView('2026-09-29T07:00:00Z', ZONE)).toEqual({
-      local: 'Tue 29 Sept, 09:00 Europe/Berlin', utc: 'Tue 29 Sept, 07:00 UTC',
+      local: 'Tue 29 Sept, 09:00', utc: 'Tue 29 Sept, 07:00 UTC',
       text: 'Tue 29 Sept, 09:00 Europe/Berlin (Tue 29 Sept, 07:00 UTC)', iso: '2026-09-29T07:00:00.000Z',
     });
     // AGT-3794-F14: a UTC alias reads as UTC, once.

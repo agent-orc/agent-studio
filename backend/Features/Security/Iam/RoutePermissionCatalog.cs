@@ -274,6 +274,8 @@ public static class RoutePermissionCatalog
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
             IamEnvironments.Production);
         Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix", "/api/deploy/cards");
+        // F4: run host reachability across projects, for the Hosts view.
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/deploy/run-hosts");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/stop", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,

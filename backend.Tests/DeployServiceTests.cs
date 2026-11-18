@@ -11,6 +11,9 @@ using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Security;
 using AgentStudio.TestSupport;
+using AgentStudio.Tasks;
+using AgentStudio.Registry;
+using AgentStudio.Runner;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -292,6 +295,18 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void RunHostClaim_SkipsJobsOfProjectsTheHostIsNotBoundTo()
+    {
+        var (deploy, environments, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+
+        Assert.Null(environments.Claim("stage-host", requireVerifiedRelease: true, project => project == "other"));
+        Assert.Equal("queued", environments.Read("demo")!.Jobs.Single().Status);
+        var claimed = environments.Claim("stage-host", requireVerifiedRelease: true, project => project == "demo");
+        Assert.Equal("demo", claimed!.Project);
+    }
+
+    [Fact]
     public void AutomaticRollbackAfterRestart_BindsTheHealthySourceReleaseAndChecksProvenance()
     {
         var (deploy, environments, _) = Build();
@@ -484,9 +499,11 @@ public sealed class DeployServiceTests : IDisposable
             "variables:\n  - name: LOG_LEVEL\n    value: info\n  - name: DATABASE_URL",
             StringComparison.Ordinal));
         Commit("runbook-definition");
-        var runbooks = Runbooks(environments, store);
+        var (actions, card, timeline) = OpenIncident("stage");
+        var runbooks = Runbooks(environments, store, actions);
 
         var requested = runbooks.Request("demo", "stage", "restart", Operator);
+        Assert.Equal("incident-stage", Assert.Single(store.ReadRunbookRuns("demo")).IncidentId);
         Assert.Equal(DeployOutcomeKind.Ok, requested.Kind);
         Assert.Equal(DeploymentStates.Queued, requested.Value!.State);
         var job = environments.Claim("stage-host", requireVerifiedRelease: true)!;
@@ -505,6 +522,9 @@ public sealed class DeployServiceTests : IDisposable
 
         var result = runbooks.Run("demo", requested.Value.Id)!;
         Assert.Equal(DeploymentStates.Succeeded, result.State);
+        Assert.Equal("incident-stage", store.ReadRunbookRuns("demo").Single(item => item.Id == result.Id).IncidentId);
+        Assert.Contains(timeline.ReadAll(card.FolderPath), entry => entry.Summary.Contains("Runbook restart")
+            && entry.Summary.Contains("succeeded") && entry.Actor == Operator.Id);
         Assert.All(result.Steps, step => Assert.Equal(DeploymentStates.Succeeded, step.State));
         Assert.Contains(runbooks.Log("demo", result.Id, "health")!.Lines,
             line => line.Message == "Operation succeeded.");
@@ -1335,6 +1355,31 @@ public sealed class DeployServiceTests : IDisposable
             (redeploy.Value!.State, redeploy.Value.ReleaseId, redeploy.Value.Trigger));
         Assert.Equal(DeployOutcomeKind.Conflict, deploy.Redeploy("demo", "stage", approve: false, Operator).Kind);
         Assert.Equal(Artifact('b'), environments.Claim("stage-host")!.Artifact);
+    }
+
+    [Fact]
+    public void Rollback_started_during_an_incident_links_its_result_to_the_card()
+    {
+        var (deploy, environments, store) = Build();
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        DeployThroughProduction(deploy, environments, first, Owner);
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, second, Owner);
+        var (actions, card, timeline) = OpenIncident("production");
+        var linked = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null, incidentActions: actions);
+
+        var rollback = linked.Rollback("demo", "production", approve: true, Owner).Value!;
+        var record = store.ReadDeployments("demo").Single(item => item.Id == rollback.Id);
+        Assert.Equal(("incident-production", card.Id), (record.IncidentId, record.IncidentCardId));
+        var job = environments.Claim("prod-host")!;
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        linked.SyncAfterHostCall("demo");
+        Assert.Equal("incident-production", store.ReadDeployments("demo")
+            .Single(item => item.Id == rollback.Id).IncidentId);
+        Assert.Contains(timeline.ReadAll(card.FolderPath), entry => entry.Summary.Contains("rollback")
+            && entry.Summary.Contains("succeeded") && entry.Summary.Contains(first.Version)
+            && entry.Actor == Owner.Id);
     }
 
     [Fact]
@@ -2849,7 +2894,8 @@ public sealed class DeployServiceTests : IDisposable
             environments, store);
     }
 
-    private RunbookService Runbooks(ProjectEnvironmentService environments, DeployStore store)
+    private RunbookService Runbooks(ProjectEnvironmentService environments, DeployStore store,
+        IncidentActions? actions = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -2862,7 +2908,32 @@ public sealed class DeployServiceTests : IDisposable
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         return new RunbookService(environments, store, git, settings, _clock,
-            NullLogger<RunbookService>.Instance);
+            NullLogger<RunbookService>.Instance, actions);
+    }
+
+    private (IncidentActions Actions, TaskInfo Card, TimelineLog Timeline) OpenIncident(string environmentId)
+    {
+        var config = _configuration!;
+        var scanner = _scanner!;
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var mutations = new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance, timeline: timeline);
+        var cardId = mutations.CreateJob(new CreateTaskRequest { Id = "health-" + environmentId,
+            Title = "Health incident", PromptMarkdown = "Environment is failing.", WatchPath = _watch,
+            TargetState = TaskStates.Backlog, TaskType = TaskTypes.Bug, RequiresIntegration = false });
+        var card = scanner.FindJob(cardId!, _watch)!;
+        var health = new HealthCheckStore(config);
+        var state = health.Load("demo");
+        state.Environments[environmentId] = new EnvironmentHealthState
+        {
+            OpenIncident = new EnvironmentIncident("incident-" + environmentId, environmentId,
+                environmentId, _clock.GetUtcNow(), CardId: cardId),
+        };
+        health.Save("demo", state);
+        return (new IncidentActions(health, scanner, timeline, _clock), card, timeline);
     }
 
     private DeployService Reopen()

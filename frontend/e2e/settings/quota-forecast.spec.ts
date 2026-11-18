@@ -1,10 +1,12 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { setTheme } from '../helpers/theme';
+import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
+import { SNAPSHOT } from '../../src/mockups/usage-chips/app/usage-chips.fixtures';
+import { formatZonedWithUtc } from '../../src/app/services/usage-time.util';
 
 // The production service worker can bypass Playwright's mocked API routes.
-test.use({ serviceWorkers: 'block' });
+test.use({ serviceWorkers: 'block', timezoneId: 'UTC' });
 
 /**
  * AGT-3001 · Quota forecast in CLI Management (mocked).
@@ -106,8 +108,19 @@ const modelRoutes = {
 /** Open CLI Management the way an operator does: Settings, then the rail entry. */
 async function openCliManagement(page: Page): Promise<void> {
   await page.goto('/');
-  await page.getByTestId('studio-titlebar-settings').click();
-  await page.getByTestId('workspace-settings-rail-caps').click();
+  for (const testId of ['studio-titlebar-settings', 'workspace-settings-rail-caps']) {
+    const target = page.getByTestId(testId);
+    await expect(target).toBeVisible({ timeout: 20_000 });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await dismissDevErrorDialog(page);
+      try {
+        await target.click({ timeout: 4_000 });
+        break;
+      } catch (error) {
+        if (attempt === 2) throw error;
+      }
+    }
+  }
   await expect(page.getByTestId('cli-admin-panel')).toBeVisible({ timeout: 20_000 });
 }
 
@@ -129,6 +142,7 @@ async function installRoutes(page: Page, now: number): Promise<void> {
   await page.route('**/api/environment**', json({ isDev: false, devTools: {} }));
   await page.route('**/api/cli/*/models*', json({ models: [], source: 'stubbed' }));
   await page.route('**/api/cli/usage**', json({ at: iso(now), sessions: [] }));
+  await page.route('**/api/usage/cockpit**', json(SNAPSHOT));
   await page.route(/\/api\/runner\/status(\?|$)/, json({ projects: {} }));
   await page.route('**/api/cli/quota**', route => {
     const url = new URL(route.request().url());
@@ -169,6 +183,9 @@ test('quota forecast shows curve, rate, forecast, reset, session gauge, and the 
   await expect(claudeWeekly.getByTestId('quota-stat-rate')).toHaveText('2.0%/h');
   await expect(claudeWeekly.getByTestId('quota-forecast-sentence')).toContainText('before the reset');
   await expect(claudeWeekly.getByTestId('quota-forecast-badge')).toBeVisible();
+  const resetAt = claudeHistory(now).windows[1].forecast.resetAt;
+  await expect(claudeWeekly.getByTestId('quota-stat-reset'))
+    .toHaveText(formatZonedWithUtc(resetAt, SNAPSHOT.timeZone)!);
   await expect(claudeWeekly.getByTestId('quota-curve-line')).toBeVisible();
   await expect(claudeWeekly.getByTestId('quota-curve-forecast')).toBeAttached();
   await expect(claude.getByTestId('quota-session-gauge')).toContainText('62%');

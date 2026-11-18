@@ -127,7 +127,7 @@ Store layout under `<TaskRepository>/health-checks/<project>/`:
 
 | Path | Contents | Retention |
 |---|---|---|
-| `state.json` | Counters, open and last incidents of checks and environments, card ids, certificate warnings | current |
+| `state.json` | Counters, open and completed incidents of checks and environments, card ids, certificate warnings | current; completed environment incidents: 31 days |
 | `<environment>/<check>/raw/<yyyy-MM-dd>.jsonl` | One sample per probe or observed telemetry rule evaluation | 30 days |
 | `<environment>/<check>/hourly.jsonl` | Count, failures, p50, p95, max latency per hour of every completed day | 400 days |
 
@@ -160,16 +160,19 @@ checks fail together raises one alert and one card. Reports
 
 - Open: an `alert` Activity entry with topic `environment-incident-opened` and
   a Backlog bug card tagged `environment-health` with every failing check, its
-  target and its last ten probes. If the card of this environment's previous
-  incident is still open, the new incident comments on that card instead
-  (`change: reopened`).
+  target and its last ten probes. A recurrence within 30 minutes of recovery
+  reopens the resolved card (`change: reopened`).
 - More checks: a check that fails while the environment incident is open
   comments on its card (`check-failing`); a check that recovers while others
   still fail comments too (`check-recovered`).
 - Recovery: when the last check recovers, an `observation` Activity entry
-  `environment-incident-recovered` and a `recovered` comment with the duration.
+  `environment-incident-recovered` and a `recovered` comment with the duration,
+  failed probes, linked operations and running release. The card moves to Completed.
   The comment and Activity entry are tracked separately so a failed Activity
   write does not repeat a successful card comment.
+- Operations: a deploy, redeploy, rollback or runbook requested while the
+  incident is open retains its incident id. The card records the actor, release
+  and result when the operation is requested and when its state changes.
 - Removed checks: a check (or environment) that no longer appears in the
   declarations closes its open incident on the next tick (`check-removed`); the
   recovery report says so. A broken declaration file does not count as a

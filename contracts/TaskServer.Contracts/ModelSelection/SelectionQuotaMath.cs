@@ -20,6 +20,15 @@ namespace AgentStudio.Cli;
 /// </summary>
 public static class SelectionQuotaMath
 {
+    /// <summary>Fable's reported weekly allowance applies only to Fable routes.</summary>
+    public static QuotaSnapshot? ForModel(QuotaSnapshot? snapshot, string? model)
+        => snapshot?.Windows is null ? snapshot : snapshot with
+        {
+            Windows = snapshot.Windows.Where(window =>
+                !window.Label.Contains("fable", StringComparison.OrdinalIgnoreCase)
+                || model?.StartsWith("claude-fable-", StringComparison.OrdinalIgnoreCase) == true).ToList(),
+        };
+
     /// <summary>
     /// Below this elapsed fraction we refuse to project: extrapolating from a
     /// sliver of a window produces wildly unstable numbers (5% of a 5-hour

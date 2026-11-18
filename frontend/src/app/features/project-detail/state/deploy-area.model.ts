@@ -1,5 +1,6 @@
 import { InjectionToken } from '@angular/core';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
+import type { RunHostState } from '../../../models/run-host.model';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../services/project-pipeline-definition.service';
 
@@ -254,6 +255,16 @@ export interface EnvironmentCardView {
   lastRun: CardRun | null;
   awaitingApproval: CardApproval | null;
   intervention?: EnvironmentStatus['intervention'];
+  /** The run host that serves the environment (F4); null when the environment list is unavailable. */
+  host?: EnvironmentHostView | null;
+}
+
+export interface EnvironmentHostView {
+  id: string;
+  name: string;
+  /** Null while the server did not report run hosts; the host id still names the target. */
+  state: RunHostState | null;
+  lastSeenAt: string | null;
 }
 
 /** Ready panel values; null means that source is loading, failed, or absent. */
@@ -487,6 +498,7 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       lastRun,
       awaitingApproval: approvalFor(base, runs, sources),
       intervention: status?.intervention,
+      host: hostOf(base, sources.environments),
     };
   });
 }
@@ -522,6 +534,15 @@ export function declaredEnvironments(definition: PipelineDefinitionResponse | nu
       protected: item.protected,
       hasSteps: item.steps.length > 0,
     }));
+}
+
+function hostOf(base: CardBase, environments: ProjectEnvironments | null): EnvironmentHostView | null {
+  const id = base.view?.declaration.targetHostId;
+  if (!id) return null;
+  const host = environments?.runHosts?.find(item => item.id === id);
+  return host
+    ? { id, name: host.name, state: host.state, lastSeenAt: host.lastSeenAt }
+    : { id, name: id, state: null, lastSeenAt: null };
 }
 
 function cardsFor(deployed: boolean, release: Release | null, releaseRecordsKnown: boolean): DeployCards {

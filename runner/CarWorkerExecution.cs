@@ -176,6 +176,7 @@ internal static class CarWorkerExecution
             // The agent's own build/test/lint must resolve against the caches
             // repository preparation restored into for this run (TE-52).
             PreparationCacheEnvironment.Apply(extraEnvironment, spec.Environment);
+            ApplyThinkingEnvironment(extraEnvironment, cliType, spec.Model, spec.ThinkingLevel);
             WorkerEdgeCredentialBoundary.RemoveFrom(extraEnvironment);
             // The candidate token must win over the clean home's inherited environment.
             // Only this sign-in's async flow sees it; other CAR children keep the accepted token.
@@ -271,6 +272,18 @@ internal static class CarWorkerExecution
                 }
             }
         }
+    }
+
+    // CAR 0.3.1 does not know Fable 5.2's ladder. Use Claude Code's native
+    // effort override so worker and read-only turns retain an explicit card level.
+    internal static void ApplyThinkingEnvironment(
+        Dictionary<string, string> environment, string cli, string? model, string? thinking)
+    {
+        if (cli != CliSelection.ClaudeCli || model is null
+            || !ExecutionModelIdentity.Equivalent(model, "claude-fable-5-2")) return;
+        var level = thinking?.Trim().ToLowerInvariant();
+        if (level is "low" or "medium" or "high" or "xhigh" or "max")
+            environment["CLAUDE_CODE_EFFORT_LEVEL"] = level;
     }
 
     /// <summary>The production CAR options for one worker spec.</summary>
