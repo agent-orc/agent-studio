@@ -241,9 +241,18 @@ describe('content refusal next steps after the merge of AGT-3867 (AGT-3830)', ()
   const concerns = { ...readinessItem('AGT-1', 'review-concerns'), taskKey: 'wp::AGT-1' };
 
   it('offers the round beside Review again when an override cannot admit the card', () => {
-    const report = { ...concerns, refusal: 'Completion refused: the required report is missing (results/report.md).' };
+    const report = { ...concerns, overrideAllowed: false,
+      refusal: 'Completion refused: the required report is missing (results/report.md).' };
     expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, report)?.secondaryAction)
       .toEqual({ action: 'send-round', actionLabel: 'Send a round…' });
+  });
+
+  it('offers the round beside Review again for a server refusal of a missing report without a dry run', () => {
+    const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap',
+      message: 'Acceptance refused: the required report is missing (results/report.md).' };
+    expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false, null))
+      .toMatchObject({ action: 'review-again', replacesAccept: true,
+        secondaryAction: { action: 'send-round', actionLabel: 'Send a round…' } });
   });
 
   it('keeps a recorded server refusal ahead of a stale ready dry run', () => {
