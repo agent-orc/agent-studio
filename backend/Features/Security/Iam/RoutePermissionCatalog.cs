@@ -267,6 +267,7 @@ public static class RoutePermissionCatalog
         // rollback names an environment id the middleware resolves to the
         // kind of its declaration.
         Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/environments/releases", IamEnvironments.Stage);
+        Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/deploy/integration-release", IamEnvironments.Stage);
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
             "/api/projects/{}/environments/promotions/*", IamEnvironments.Production);
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,

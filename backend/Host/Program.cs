@@ -724,7 +724,12 @@ builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeploySecretReadiness>();
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityReleaseRangeVerdictClient>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
+builder.Services.AddSingleton<AgentStudio.Deploy.IntegrationReleaseService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.IntegrationReleaseReconciler>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();
+builder.Services.AddSingleton<AgentStudio.Deploy.RunbookVerifier>();
+builder.Services.AddSingleton<AgentStudio.Security.IUserDisplayNames>(sp => sp.GetRequiredService<AccessSecurityStore>());
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
     AgentStudio.Projects.StoreOperationsTelemetryReader>();

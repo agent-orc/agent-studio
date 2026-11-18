@@ -56,6 +56,8 @@ export interface ServerAcceptanceRefusal {
   taskKey: string;
   code: string | null;
   message: string;
+  /** F2: the run whose delivery was refused (its start); a later run's delivery drops the refusal. */
+  delivery?: string | null;
 }
 
 const OVERRIDE_LABEL = 'Accept with override…';
@@ -128,8 +130,9 @@ export function acceptanceRefusalFor(
   // AGT-3830: a server content refusal, or the readiness check that predicts
   // it, makes the next step (review again, or accept with a written reason)
   // the primary instead of an Accept that can only be refused again.
-  // The server's actual refusal outranks a stale ready dry run. A successful
-  // review request clears the recorded refusal before refreshing readiness.
+  // The server's actual refusal outranks a stale ready dry run.
+  // `AcceptanceRefusalStore.forCard` drops it once a round, a review request,
+  // a newer ready check or a new delivery replaces it (F2).
   if (server && server.taskKey === info.taskKey && server.code === CONTENT_REFUSAL_CODE)
     return ownReadiness && CONTENT_REFUSAL_CLASSES.has(ownReadiness.readiness)
       ? contentRefusal(readinessReason(ownReadiness), 'server', ownReadiness.refusal, ownReadiness, hold, info)
@@ -175,7 +178,7 @@ export function injectAcceptanceRefusalTooltip(info: () => TaskInfo): Signal<str
   const readiness = inject(AcceptanceReadinessStore);
   return computed(() => {
     const card = info();
-    const refusal = acceptanceRefusalFor(card, refusals.forTask(card.taskKey), false, readiness.itemFor(card));
+    const refusal = acceptanceRefusalFor(card, refusals.forCard(card), false, readiness.itemFor(card));
     return refusal ? acceptanceRefusalTooltip(refusal) : null;
   });
 }
@@ -277,11 +280,17 @@ export function serverAcceptanceRefusal(info: TaskInfo, error: unknown): ServerA
   const body = (error as { error?: { code?: unknown; hint?: unknown } } | null)?.error;
   const code = typeof body?.code === 'string' ? body.code : null;
   const hint = typeof body?.hint === 'string' && body.hint.trim() ? body.hint.trim() : null;
+  const delivery = deliveryOf(info);
   return {
     taskKey: info.taskKey,
     code,
     message: hint ?? acceptanceRefusalSentence(serverErrorMessage(error, 'The server refused the acceptance.')),
+    ...(delivery ? { delivery } : {}),
   };
+}
+
+function deliveryOf(info: Pick<TaskInfo, 'execution'>): string | null {
+  return info.execution?.startedAt || null;
 }
 
 /**
@@ -290,7 +299,9 @@ export function serverAcceptanceRefusal(info: TaskInfo, error: unknown): ServerA
  */
 @Injectable({ providedIn: 'root' })
 export class AcceptanceRefusalStore {
-  private readonly refusals = signal<ReadonlyMap<string, ServerAcceptanceRefusal>>(new Map());
+  private readonly readiness = inject(AcceptanceReadinessStore);
+  /** Each refusal with the readiness sequence it was recorded at (F2). */
+  private readonly refusals = signal<ReadonlyMap<string, { refusal: ServerAcceptanceRefusal; at: number }>>(new Map());
   private readonly focus = signal<{ taskKey: string; at: number } | null>(null);
   /**
    * AGT-3830: the card whose refusal reason should take focus once it renders.
@@ -306,11 +317,26 @@ export class AcceptanceRefusalStore {
   }
 
   forTask(taskKey: string | null | undefined): ServerAcceptanceRefusal | null {
-    return taskKey ? this.refusals().get(taskKey) ?? null : null;
+    return taskKey ? this.refusals().get(taskKey)?.refusal ?? null : null;
+  }
+
+  /**
+   * F2: the recorded refusal of `info` while it still describes the card.
+   * A round or a content review requested afterwards, a later readiness
+   * check that answers `ready`, or a new delivery drops it; otherwise the
+   * toolbar and the Accept tooltip kept the old reason until a reload.
+   */
+  forCard(info: Pick<TaskInfo, 'taskKey' | 'id' | 'execution'>): ServerAcceptanceRefusal | null {
+    const entry = info.taskKey ? this.refusals().get(info.taskKey) : undefined;
+    if (!entry) return null;
+    const delivery = deliveryOf(info);
+    if (entry.refusal.delivery && delivery && delivery !== entry.refusal.delivery) return null;
+    return this.readiness.supersedes(info, entry.at) ? null : entry.refusal;
   }
 
   record(refusal: ServerAcceptanceRefusal): void {
-    this.refusals.update(current => new Map(current).set(refusal.taskKey, refusal));
+    const at = this.readiness.sequence();
+    this.refusals.update(current => new Map(current).set(refusal.taskKey, { refusal, at }));
   }
 
   requestOverride(taskKey: string): void {

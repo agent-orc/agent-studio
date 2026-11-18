@@ -1,5 +1,6 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
+import { Subscription } from 'rxjs';
 import { QualityStudioService } from '../../../../services/quality-studio.service';
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
@@ -11,10 +12,11 @@ import {
   type DeployActionState,
   type DeployPanel,
   type EnvironmentCardView,
+  type IntegrationReleaseStatus,
   type Release,
   type SecretReadinessResponse,
 } from '../../state/deploy-area.model';
-import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
+import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
@@ -23,6 +25,16 @@ const VERDICT_TONE: Readonly<Record<string, StatusTone>> = { green: 'success', r
 export function verdictTone(status: string): StatusTone {
   return Object.hasOwn(VERDICT_TONE, status) ? VERDICT_TONE[status] : 'neutral';
 }
+
+/** Next-release state onto the shared tones and a short label (AGT-3891). */
+const NEXT_RELEASE: Readonly<Record<IntegrationReleaseStatus['state'], { tone: StatusTone; label: string }>> = {
+  unconfigured: { tone: 'neutral', label: 'No environments' },
+  'promotion-train': { tone: 'info', label: 'Promotion train' },
+  'waiting-for-gate': { tone: 'running', label: 'Waiting for the gate' },
+  ready: { tone: 'info', label: 'Ready to release' },
+  released: { tone: 'success', label: 'Tip released' },
+  blocked: { tone: 'warning', label: 'Blocked' },
+};
 
 /** Release list with the selected release's cards, artifacts, where it runs, and where it may deploy next. */
 @Component({
@@ -50,6 +62,8 @@ export class ProjectDeployReleasesComponent {
   readonly pageChange = output<number>();
   readonly selectedRelease = output<string | null>();
   readonly startAction = output<DeployActionOption>();
+  /** A release was created from this tab; the Deploy area reloads releases and runs. */
+  readonly released = output<void>();
   /** F14: open the binding panel on an environment the selected release misses secrets in. */
   readonly openSecrets = output<string>();
   readonly selectedId = signal<string | null>(null);
@@ -58,12 +72,24 @@ export class ProjectDeployReleasesComponent {
   /** F14: secret readiness of the selected release, keyed so a late answer for another release never shows. */
   private readonly secretPanel = signal<{ key: string; panel: DeployPanel<SecretReadinessResponse> } | null>(null);
 
+  readonly next = signal<DeployPanel<IntegrationReleaseStatus>>({ status: 'loading' });
+  readonly creating = signal(false);
+  readonly createError = signal<string | null>(null);
+  private nextRead = new Subscription();
+
   constructor() {
     effect(() => this.selectedId.set(this.highlightedReleaseId()));
     effect(() => {
       const id = this.selected()?.id ?? null;
       untracked(() => this.selectedRelease.emit(id));
     });
+    // Read again whenever the release list is read again (load, refresh, page change).
+    effect(() => {
+      const project = this.projectName();
+      if (this.panel().status === 'loading') return;
+      untracked(() => this.loadNext(project));
+    });
+    inject(DestroyRef).onDestroy(() => this.nextRead.unsubscribe());
     effect(onCleanup => {
       const project = this.projectName();
       const releaseId = this.selected()?.id;
@@ -72,6 +98,41 @@ export class ProjectDeployReleasesComponent {
       const subscription = this.data.secretReadiness(project, releaseId)
         .subscribe(panel => this.secretPanel.set({ key, panel }));
       onCleanup(() => subscription.unsubscribe());
+    });
+  }
+
+  /** What creates the next release; null while loading or on a server without the route. */
+  readonly nextRelease = computed(() => {
+    const next = this.next();
+    return next.status === 'ready' ? next.value : null;
+  });
+  readonly nextTone = computed(() => {
+    const next = this.nextRelease();
+    return next ? NEXT_RELEASE[next.state] ?? { tone: 'neutral' as const, label: next.state } : null;
+  });
+
+  create(): void {
+    if (this.creating()) return;
+    this.creating.set(true);
+    this.createError.set(null);
+    this.data.createIntegrationRelease(this.projectName()).subscribe({
+      next: status => {
+        this.creating.set(false);
+        this.next.set({ status: 'ready', value: status });
+        if (status.state === 'released') this.released.emit();
+      },
+      error: (error: unknown) => {
+        this.creating.set(false);
+        this.createError.set(serverMessage(error) ?? 'The release could not be created. Try again.');
+      },
+    });
+  }
+
+  private loadNext(project: string): void {
+    this.nextRead.unsubscribe();
+    this.nextRead = this.data.integrationRelease(project).subscribe(panel => {
+      // Keep the shown status while it reloads, so the tab does not flicker on refresh.
+      if (panel.status !== 'loading' || this.next().status !== 'ready') this.next.set(panel);
     });
   }
 

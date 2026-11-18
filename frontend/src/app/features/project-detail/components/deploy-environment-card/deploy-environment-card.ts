@@ -13,6 +13,7 @@ import {
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { DeployActionsComponent } from '../deploy-actions/deploy-actions';
+import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
 
@@ -24,7 +25,7 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent, DeployActionsComponent, DeploySecretGapsComponent],
+  imports: [DatePipe, StatusIndicatorComponent, PendingButtonDirective, DeployActionsComponent, DeploySecretGapsComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -32,8 +33,11 @@ function ago(age: string | null): string | null {
 export class DeployEnvironmentCardComponent {
   readonly environment = input.required<EnvironmentCardView>();
   readonly now = input.required<number>();
+  readonly busy = input(false);
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  readonly stop = output<string>();
+  readonly remove = output<string>();
   /** Deploy and redeploy options of this environment, as the server's lifecycle decided them. */
   readonly actions = input<readonly DeployActionOption[]>([]);
   readonly actionState = input<DeployActionState>({ busy: null, error: null });

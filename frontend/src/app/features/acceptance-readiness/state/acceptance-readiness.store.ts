@@ -41,6 +41,15 @@ export class AcceptanceReadinessStore {
 
   private readonly items = signal<ReadonlyMap<string, AcceptanceReadinessItem>>(new Map());
   private readonly checking = new Set<string>();
+  /**
+   * F2: a client sequence for ordering a recorded Accept refusal against
+   * later checks and owner steps. `answeredAt` holds, per card, the sequence
+   * of the request its current answer came from; `addressedAt` the sequence
+   * of the last round or content review the owner requested for it.
+   */
+  private sequenceNo = 0;
+  private readonly answeredAt = signal<ReadonlyMap<string, number>>(new Map());
+  private readonly addressedAt = signal<ReadonlyMap<string, number>>(new Map());
   readonly checkedAt = signal<string | null>(null);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
@@ -73,6 +82,28 @@ export class AcceptanceReadinessStore {
     return readyJobs(jobs, this.items());
   }
 
+  /** The current sequence; a refusal recorded now is older than every later check or step. */
+  sequence(): number {
+    return this.sequenceNo;
+  }
+
+  /**
+   * F2: true when something newer than `since` replaces a refusal of `job`:
+   * the owner sent a round or requested a content review, or a check asked
+   * after it answers `ready`.
+   */
+  supersedes(job: Pick<TaskInfo, 'taskKey' | 'id'>, since: number): boolean {
+    const key = readinessKey(job);
+    if ((this.addressedAt().get(key) ?? -1) > since) return true;
+    return (this.answeredAt().get(key) ?? -1) > since && this.items().get(key)?.readiness === 'ready';
+  }
+
+  /** F2: the owner requested the step that closes the gap of `job` (a round or a content review). */
+  markAddressed(job: Pick<TaskInfo, 'taskKey' | 'id'>): void {
+    const at = ++this.sequenceNo;
+    this.addressedAt.update(current => new Map(current).set(readinessKey(job), at));
+  }
+
   /** Runs the completion checks for the lane's cards without moving any of them. */
   async refresh(jobs: readonly TaskInfo[]): Promise<void> {
     const cards = jobs.filter(job => job.state === TaskState.HumanReview);
@@ -83,12 +114,18 @@ export class AcceptanceReadinessStore {
     }
     this.loading.set(true);
     this.error.set(null);
+    const asked = ++this.sequenceNo;
     try {
       const report = await firstValueFrom(this.http.post<AcceptanceReadinessReport>(
         '/api/tasks/acceptance-readiness',
         { items: cards.map(job => ({ jobId: job.id, watchPath: job.watchPath })) },
       ));
       this.items.set(new Map(report.items.map(item => [item.taskKey || item.jobId, item])));
+      this.answeredAt.update(current => {
+        const next = new Map(current);
+        for (const item of report.items) next.set(item.taskKey || item.jobId, asked);
+        return next;
+      });
       this.checkedAt.set(report.checkedAtUtc);
     } catch (err) {
       this.error.set(errorMessage(err, 'The acceptance checks could not run.'));
@@ -127,6 +164,7 @@ export class AcceptanceReadinessStore {
     const key = readinessKey(job);
     if (job.state !== TaskState.HumanReview || this.checking.has(key)) return;
     this.checking.add(key);
+    const asked = ++this.sequenceNo;
     try {
       const report = await firstValueFrom(this.http.post<AcceptanceReadinessReport>(
         '/api/tasks/acceptance-readiness',
@@ -141,6 +179,7 @@ export class AcceptanceReadinessStore {
         else next.delete(key);
         return next;
       });
+      if (item) this.answeredAt.update(current => new Map(current).set(key, asked));
     } catch {
       // The board check and the server refusal still name the reason.
     } finally {
@@ -204,6 +243,7 @@ export class AcceptanceReadinessStore {
         undefined, undefined, undefined, undefined, undefined, 'Close the gap that refused the acceptance of this card.', baseRef.trim() || undefined,
       ));
       this.roundDraft.set(null);
+      this.markAddressed(draft.job);
       this.tasks.refresh(true);
       return true;
     } catch (err) {

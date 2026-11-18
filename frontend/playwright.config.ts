@@ -91,7 +91,8 @@ export default defineConfig({
           : profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
           : profile === 'first-run'
             ? ['**/settings/first-run-journey.spec.ts', '**/settings/first-run-off-stable-grade.spec.ts',
-              '**/settings/first-run-review-host-restart.spec.ts', '**/settings/second-project-server-checkout.spec.ts']
+              '**/settings/first-run-review-host-restart.spec.ts', '**/settings/second-project-server-checkout.spec.ts',
+              '**/settings/first-run-integration-release.spec.ts']
           : profile === 'concept-remote' ? '**/project/concept-remote-journey.spec.ts'
           : profile === 'deploy-lifecycle' ? '**/project/deploy-staging-retry-production-approval.spec.ts'
           : profile === 'networked-monolith' ? '**/settings/first-run-networked-monolith.spec.ts'
@@ -104,7 +105,7 @@ export default defineConfig({
           : profile === 'demo' ? ['**/usage-cockpit/cockpit-integration-matrix.spec.ts', '**/project/dossier-decision-live.spec.ts']
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|board\/owner-day-acceptance\.spec\.ts|task-detail\/owner-day-demo-19-acceptance-refusal\.spec\.ts|tokens\/owner-day-token-usage\.spec\.ts|batch-gate\/owner-day-real-backend\.spec\.ts|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-review-host-restart\.spec\.ts|settings\/second-project-server-checkout\.spec\.ts|settings\/first-run-off-stable-grade\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|settings\/run-host-enrollment\.spec\.ts|security\/(product-session-networked-https|owner-second-factor-human-pace|owner-bootstrap-networked-https|reviewer-role\.networked-https|networked-project-checkout|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts|project\/(dossier-decision-live|concept-remote-journey|deploy-staging-retry-production-approval)\.spec\.ts/
+          ? /visual-evidence\/|board\/owner-day-acceptance\.spec\.ts|task-detail\/owner-day-demo-19-acceptance-refusal\.spec\.ts|tokens\/owner-day-token-usage\.spec\.ts|batch-gate\/owner-day-real-backend\.spec\.ts|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-integration-release\.spec\.ts|settings\/first-run-review-host-restart\.spec\.ts|settings\/second-project-server-checkout\.spec\.ts|settings\/first-run-off-stable-grade\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|settings\/run-host-enrollment\.spec\.ts|security\/(product-session-networked-https|owner-second-factor-human-pace|owner-bootstrap-networked-https|reviewer-role\.networked-https|networked-project-checkout|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts|project\/(dossier-decision-live|concept-remote-journey|deploy-staging-retry-production-approval)\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },

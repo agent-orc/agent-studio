@@ -7,6 +7,9 @@ namespace AgentStudio.TaskServer;
 
 public sealed partial class TaskServerStore
 {
+    private string CliUpgradeCommand =>
+        $"sudo /usr/local/sbin/agent-runner-deploy update-clis {_options.CodexCliTargetVersion} {_options.ClaudeCliTargetVersion}";
+
     private static readonly (string Model, string Cli, string Minimum)[] ModelCliMinimums =
     [
         ("gpt-6-astra", "codex", "0.153.0"),
@@ -28,10 +31,11 @@ public sealed partial class TaskServerStore
             if (string.IsNullOrWhiteSpace(hostId)) return;
             var capabilities = new List<CapabilityHealthDto>();
             await using (var command = Command(connection, """
-                SELECT capability_key, version, identity_value, advertised_at
-                  FROM runner_capabilities
-                 WHERE runner_id = $runner AND capability_key LIKE 'cli-execution:%';
-                """, transaction, ("$runner", runnerId)))
+                SELECT c.capability_key, c.version, c.identity_value, c.advertised_at
+                  FROM runner_capabilities c JOIN runners r ON r.id = c.runner_id
+                 WHERE r.host_id = $host AND r.status = 'active'
+                   AND c.capability_key LIKE 'cli-execution:%';
+                """, transaction, ("$host", hostId)))
             await using (var reader = await command.ExecuteReaderAsync(ct))
             {
                 while (await reader.ReadAsync(ct))
@@ -44,7 +48,12 @@ public sealed partial class TaskServerStore
             }
             var installations = InstalledCliProjection.FromCapabilities(
                 capabilities, _options.CodexCliTargetVersion, _options.ClaudeCliTargetVersion);
-            foreach (var cli in installations)
+            // A current coding identity must not clear an older review
+            // installation on the same host. Track the oldest reported version.
+            var oldestInstallations = installations.GroupBy(item => item.Name, StringComparer.Ordinal)
+                .Select(group => group.Aggregate((oldest, item) =>
+                    InstalledCliVersionPolicy.IsBelow(item.Version, oldest.Version) ? item : oldest));
+            foreach (var cli in oldestInstallations)
             {
                 if (!cli.IsBelowTarget)
                 {
@@ -59,7 +68,11 @@ public sealed partial class TaskServerStore
                     VALUES($host, $cli, $installed, $target, $now, NULL)
                     ON CONFLICT(host_id, cli_name) DO UPDATE SET
                         installed_version = excluded.installed_version,
-                        target_version = excluded.target_version;
+                        target_version = excluded.target_version,
+                        first_detected_at = CASE WHEN target_version <> excluded.target_version
+                            THEN excluded.first_detected_at ELSE first_detected_at END,
+                        alarmed_at = CASE WHEN target_version <> excluded.target_version
+                            THEN NULL ELSE alarmed_at END;
                     """, ct, transaction,
                     ("$host", hostId), ("$cli", cli.Name), ("$installed", cli.Version),
                     ("$target", cli.TargetVersion), ("$now", Iso(UtcNow)));
@@ -67,7 +80,7 @@ public sealed partial class TaskServerStore
                     SELECT first_detected_at FROM studio_host_cli_drift
                      WHERE host_id = $host AND cli_name = $cli AND alarmed_at IS NULL;
                     """, ct, transaction, ("$host", hostId), ("$cli", cli.Name));
-                if (first is not null && Parse(Convert.ToString(first, CultureInfo.InvariantCulture)!) <= UtcNow.AddHours(-24))
+                if (first is not null && Parse(Convert.ToString(first, CultureInfo.InvariantCulture)!) < UtcNow.AddHours(-1))
                 {
                     await ExecuteAsync(connection, """
                         UPDATE studio_host_cli_drift SET alarmed_at = $now
@@ -77,7 +90,7 @@ public sealed partial class TaskServerStore
                     {
                         hostId,
                         cli = cli.Name,
-                        summary = $"{hostId}: {cli.Name} {cli.Version} is below target {cli.TargetVersion} for more than 24 hours.",
+                        summary = $"{hostId}: {cli.Name} {cli.Version} is below target {cli.TargetVersion} for more than one hour. Run on {hostId}: {CliUpgradeCommand}.",
                     }));
                 }
 
