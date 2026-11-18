@@ -29,6 +29,10 @@ public sealed record HostReleaseDriftSnapshot(
     IReadOnlyList<HostReleaseDriftEntry> Hosts,
     int DiffersCount = 0);
 
+/// <summary>One review claim, including a completed grade when present.</summary>
+public sealed record ReviewHostWork(string RunnerId, string HostId, string CardKey,
+    DateTime ClaimedAt, bool Graded, DateTime? GradedAt = null);
+
 /// <summary>
 /// Periodically compares every registered runner role against the release this
 /// server runs and raises one operator-feed alarm per host release that has

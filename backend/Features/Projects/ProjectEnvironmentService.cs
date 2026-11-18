@@ -28,6 +28,7 @@ public sealed record EnvironmentDeclaration(
     public ManagedDatabaseEnvironmentPolicy? DatabasePolicy { get; init; }
 
     public ManagedDatabaseEnvironmentPolicy EffectiveDatabasePolicy => DatabasePolicy ?? ManagedDatabaseEnvironmentPolicy.For(Kind);
+    public TelemetryAlertDeclarations TelemetryAlerts { get; init; } = new(TelemetryAlertDeclarations.Defaults, null);
     public bool? Protected { get; init; }
 
     /// <summary>
@@ -644,6 +645,7 @@ public sealed partial class ProjectEnvironmentService
                 : value.TryGetProperty("managedDatabases", out _)
                     ? throw new JsonException("managedDatabases applies only to environments hosted in the run zone (destination \"edge\").")
                     : null,
+            TelemetryAlerts = TelemetryAlertDeclarations.Parse(value, Path.GetFileName(file)),
         };
     }
 

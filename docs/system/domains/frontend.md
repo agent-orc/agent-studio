@@ -1,7 +1,12 @@
 # Frontend Domain Map
 
-Version: 2026-11-14
+Version: 2026-11-17
 Status: System-of-record map for frontend changes.
+
+Needs you shows a review-host row when a differing release claims review work.
+The status-bar trigger shows a compact Review host cue while the row is open;
+the row opens the affected Execution Hosts detail and its Update review host
+panel.
 
 Concept cards and detail views show the dossier and review state without code
 delivery indicators. They omit build and test evidence, delivery integration,
@@ -41,19 +46,25 @@ toast opens the new card; on failure the draft remains available.
 ## Modal keyboard contract
 
 `ModalStackService` owns Escape ordering and the focus scope of registered true
-modals. A dialog registers its dialog element and the subtree that contains its
-backdrop. While it is open, Tab and Shift+Tab wrap within the dialog, outside
-focus is redirected inside, and the rest of the page is inert. A higher
-nonmodal entry handles Escape first but does not release the modal focus scope.
+modals. A modal that uses its focus scope registers its dialog element and the
+subtree that contains its backdrop. While it is open, Tab and Shift+Tab wrap
+within the dialog, outside focus is redirected inside, and the rest of the page
+is inert. A higher nonmodal entry handles Escape first but does not release the
+modal focus scope.
 A portaled child can register its interactive root with the stack so it stays
 focusable while the page remains inert. Tab traverses that root's controls and
 returns to the first dialog control at its edge; Shift+Tab returns to the last.
-This also contains menus whose rows use `tabindex="-1"`. The caller moves
-initial focus into the dialog after render and returns focus to its opener after
-closing. The batch gate panel, global search palette, and modal workspace
+This also contains menus whose rows use `tabindex="-1"`. Custom modal owners
+move initial focus into the dialog after render and return focus to its opener
+after closing. The batch gate panel, global search palette, and modal workspace
 settings view (including CLI Management) use this contract. Menus and popovers
 remain stack entries for Escape ordering without a modal focus scope; portaled
 menus also register their interactive root.
+
+The shared `app-dialog` registers its own Escape entry while mounted and uses
+`ModalFocusDirective` for focus containment. Its `closeRequest` lets the owner
+close it, then the directive returns focus to the opener. Owners with an
+existing entry set `stackManagedExternally` so one dialog has one Escape entry.
 
 ## Initial bundle budget
 
@@ -705,6 +716,12 @@ occur. It is not a claim about tunnel transfer time.
   is not the status `currentRelease` resolves its release with one `limit=1`
   read. Runs named by `/status` open without being on a loaded page; any other
   run is read from `/deployments/<id>`. The unpaged routes remain for existing clients.
+  The Deploy card, Operations overview, and deployment tools resolve the
+  environment release through the same running-release projection. A failed
+  deploy or rollback makes the running release uncertain until a later
+  successful host report confirms an artifact. The last successful release
+  remains the lifecycle baseline for promotion and rollback decisions; it is
+  not presented as the running release while host state is uncertain.
   Each source has its own loading or error state, so a failed deploy route
   leaves declared environment cards visible. A route 404 without an error body
   means the route is unavailable; a 404 with `{ error }` is shown as a server

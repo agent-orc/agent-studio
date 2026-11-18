@@ -1,6 +1,6 @@
 # Application telemetry intake (OTLP)
 
-Agent Studio accepts OpenTelemetry metrics and logs from the applications it
+Agent Studio accepts OpenTelemetry metrics, logs, and traces from the applications it
 deploys and keeps them in a built-in store, one store per project environment.
 This implements Dossier
 [integrierte-plattform](../integrierte-plattform/index.html) section 8.3 (IP-15)
@@ -63,7 +63,7 @@ configured for this.
 
    ```http
    POST /api/projects/{project}/environments/{environment}/telemetry/tokens
-   {"name": "shop-api", "signals": ["metrics", "logs"], "expiresAt": null}
+   {"name": "shop-api", "signals": ["metrics", "logs", "traces"], "expiresAt": null}
    ```
 
    The response carries `secret`, `otlpEndpoint`, and `otlpHeaders`.
@@ -75,7 +75,7 @@ configured for this.
    OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <secret>"
    ```
 
-   The SDK appends `/v1/metrics` and `/v1/logs`. Traces are not accepted yet.
+   The SDK appends `/v1/metrics`, `/v1/logs`, or `/v1/traces`.
 
 List tokens with `GET .../telemetry/tokens` and revoke one with
 `DELETE .../telemetry/tokens/{tokenId}`. A revoked or expired token gets
@@ -173,9 +173,9 @@ of the body read until the request is queued or refused.
 Configure collectors to send at most 20,000 points or records per request (for
 the batch processor, `send_batch_max_size`).
 
-Points older than the hourly retention, log records older than the log
+Points older than the hourly retention, log records and spans older than the log
 retention, and anything more than 10 minutes in the future count as rejected.
-Log bodies, event names, severity text, and the attribute values of logs and metrics pass through the
+Log bodies, event names, severity text, span names, and the attribute values of logs, metrics, and spans pass through the
 credential redactor before durable staging, storage, queries, or export. Values held by the secret provider (AGT-3222) will
 be masked once that provider exists.
 
@@ -190,6 +190,7 @@ with `Telemetry:StoreRoot`.
 | Metrics at one-minute resolution | 14 days | `Telemetry:MetricMinuteRetentionDays` |
 | Hourly metric aggregates | 90 days | `Telemetry:MetricHourRetentionDays` |
 | Logs | 7 days, at most 256 MiB of record payload per environment | `Telemetry:LogRetentionDays`, `Telemetry:LogMaxBytesPerEnvironment` |
+| Spans | 7 days, at most 256 MiB of record payload per environment | `Telemetry:LogRetentionDays`, `Telemetry:LogMaxBytesPerEnvironment` |
 | Series per environment | 10,000 series and 32 MiB of estimated series cache (2 bytes per character of name and attribute JSON plus 192 bytes per series); intake refuses a request that would exceed either cap before returning 200 | `Telemetry:MaxSeriesPerEnvironment`, `Telemetry:MaxSeriesBytesPerEnvironment` |
 | Minute buckets of all environments together | about 2 GiB (96 bytes estimated per bucket) | `Telemetry:MaxMinuteBucketBytes` |
 | Hour buckets of all environments together | about 1 GiB (96 bytes estimated per bucket) | `Telemetry:MaxHourBucketBytes` |
@@ -230,6 +231,11 @@ and follow the Studio session and project-membership rules.
   newest first. `minSeverity` is 1 to 24 or a level name. `text` is a
   case-insensitive substring of the body. Pass the returned `nextCursor` to
   read the next page.
+- `GET /traces?from=&to=&limit=`: failed traces and traces lasting at least
+  500 ms in a window of at most 30 days, ordered by failure and duration.
+  The response includes trace IDs, duration, span count, and root name.
+- `GET /traces/{traceId}`: spans ordered by start time, including parent IDs,
+  duration, failure state, and masked attributes for the Operations waterfall.
 
 Attribute values are compared as text. Resource attributes, record
 attributes, and the instrumentation scope name (`otel.scope.name`) are merged.

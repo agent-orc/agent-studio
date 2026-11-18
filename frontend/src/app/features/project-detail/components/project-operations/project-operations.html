@@ -97,8 +97,34 @@
         @else { <ol class="project-operations__log-lines">@for (line of result.lines; track line.at + line.message) {
           <li><time [attr.datetime]="line.at">{{ line.at | date:'medium':'UTC' }} UTC</time><strong>{{ line.level }}</strong><span>{{ line.message }}</span>
             @if (line.releaseId) { <button type="button" (click)="openRelease.emit(line.releaseId)">Release {{ line.releaseId }}</button> }
+            @if (line.traceId) { <button type="button" data-testid="operations-log-trace" (click)="openTrace(line.traceId)">View trace</button> }
           </li>
         }</ol> }
+      }
+    </section>
+    <section class="project-operations__traces" aria-labelledby="operations-traces-title" data-testid="operations-traces">
+      <h3 id="operations-traces-title">Slow and failed traces</h3>
+      <p>Find requests in the selected environment and time window. Traces over 500 ms and failed traces appear here.</p>
+      <button type="button" data-testid="operations-search-traces" (click)="searchTraces()">Search traces</button>
+      @if (traceError(); as message) { <p role="alert">{{ message }}</p> }
+      @if (traces(); as rows) {
+        @if (!rows.length) { <p role="status">No slow or failed traces match this window.</p> }
+        @else { <ol class="project-operations__trace-list">@for (trace of rows; track trace.traceId) {
+          <li><button type="button" (click)="openTrace(trace.traceId)">{{ trace.name }} · {{ trace.durationMs }} ms · {{ trace.spanCount }} spans @if (trace.failed) { · Failed }</button></li>
+        }</ol> }
+      }
+      @if (selectedTraceId(); as traceId) {
+        <h4>Span waterfall for {{ traceId }}</h4>
+        @if (spans(); as rows) {
+          @if (!rows.length) { <p role="status">No spans are stored for this trace.</p> }
+          @else { <ol class="project-operations__waterfall" data-testid="operations-span-waterfall">@for (span of rows; track span.spanId) {
+            <li><span class="project-operations__span-name">{{ span.name }}</span>
+              <span class="project-operations__span-track"><span class="project-operations__span-bar"
+                [class.project-operations__span-bar--failed]="span.failed"
+                [style.margin-left.%]="spanOffset(span)" [style.width.%]="spanWidth(span)"></span></span>
+              <span class="project-operations__span-duration">{{ span.durationMs }} ms</span></li>
+          }</ol> }
+        }
       }
     </section>
   } @else if (!error()) { <app-loading-surface kind="list" label="Loading operations…" /> }

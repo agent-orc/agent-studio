@@ -45,6 +45,7 @@
               <app-status-indicator tone="warning" label="Full before reset" testId="quota-forecast-badge" />
             }
           </div>
+          <p data-testid="quota-weekly-period">{{ weeklyPeriod(row.window) }}</p>
           <dl class="weekly__stats">
             <div><dt>Used</dt><dd data-testid="quota-stat-current">{{ pct(row.window.forecast.currentPct) }}</dd></div>
             <div><dt>Rate (3 h)</dt><dd data-testid="quota-stat-rate">{{ rate(row.window.forecast.ratePctPerHour) }}</dd></div>

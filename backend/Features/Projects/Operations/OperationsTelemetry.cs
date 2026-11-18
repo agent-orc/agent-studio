@@ -27,4 +27,5 @@ public sealed record OperationsMetricSample(DateTimeOffset At, double? ResponseP
 public sealed record OperationsLogQuery(string Project, string EnvironmentId, DateTimeOffset Since,
     DateTimeOffset Until, string? Level, string? ReleaseId, string? Text, int Limit);
 
-public sealed record OperationsLogLine(DateTimeOffset At, string Level, string Message, string? ReleaseId);
+public sealed record OperationsLogLine(DateTimeOffset At, string Level, string Message, string? ReleaseId,
+    string? TraceId = null);

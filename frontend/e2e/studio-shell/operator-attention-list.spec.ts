@@ -62,6 +62,42 @@ async function screenshot(page: Page, name: string): Promise<void> {
 }
 
 test.describe('Operator attention list', () => {
+  test('review host drift shows a status cue and opens its host detail', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.route('**/api/workbenches', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }),
+    }));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [] }),
+    }));
+    await page.route('**/api/operator/backups', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'ok', warnings: [], backups: [], offHost: {} }),
+    }));
+    const item = { id: 'review-host.drift|first-run-review', type: 'review-host.drift', project: null,
+      cardKey: null, cards: ['AGT-3648'],
+      reason: 'Review host first-run-review worked on AGT-3648 while running commit f947f2b, image review@sha256:bbbb; Stable expects commit 3d61e8b, image review@sha256:aaaa. Graded cards: AGT-3648.',
+      observedAt: new Date().toISOString(), suggestedOperations: [],
+      evidence: [{ label: 'Review host', href: '/workspace/settings/environment?host=first-run-review' }] };
+    await page.route('**/api/operator/attention', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items: [item], count: 1 }),
+    }));
+    await gotoStudio(page);
+    await setTheme(page, 'light');
+    await expect(page.getByTestId('review-host-drift-cue')).toBeVisible();
+    await page.getByTestId('studio-attention-trigger').click();
+    await expect(page.locator('[data-attention-type="review-host.drift"]')).toContainText('AGT-3648');
+    await expect(page.locator('[data-attention-type="review-host.drift"] [data-testid="attention-row-reason"]'))
+      .toHaveCSS('display', 'block');
+    await screenshot(page, 'review-host-drift-attention-1280-light');
+    await setTheme(page, 'dark');
+    await screenshot(page, 'review-host-drift-attention-1280-dark');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByTestId('review-host-drift-cue')).toBeVisible();
+    await screenshot(page, 'review-host-drift-attention-390-dark');
+    await page.locator('[data-attention-type="review-host.drift"] [data-testid="attention-row-action"]').click();
+    await expect(page).toHaveURL(/environment\?host=first-run-review/);
+  });
+
   test('accepts three Human Review cards from Needs you and auto-advance with a stale board projection', async ({ page }) => {
     test.setTimeout(240_000);
     const [watch] = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');

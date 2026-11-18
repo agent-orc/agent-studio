@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { AuthSessionState } from '../../../services/auth.service';
-import { SecretsService, type SecretEnvironment } from '../secrets.service';
+import { SecretsService, environmentLabel, type SecretEnvironment } from '../secrets.service';
 import { SecretsPanelComponent } from '../secrets-panel/secrets-panel.component';
 
 interface Binding { name: string; reference: string; approvedBy: string | null }
@@ -22,6 +22,7 @@ export class ProjectSecretsPageComponent {
   private readonly auth = inject(AuthSessionState);
   readonly projectName = input.required<string>();
   readonly environment = signal('preview');
+  readonly label = environmentLabel;
   readonly environments = signal<readonly SecretEnvironment[]>([{ id: 'preview', kind: 'preview' }]);
   readonly isProduction = computed(() => this.environments().some(item =>
     item.id === this.environment() && item.kind === 'production'));

@@ -107,7 +107,7 @@ public sealed class TelemetryOperationsReader(TelemetryStore store, TelemetryOpt
             TelemetryAdmissionPolicy.UnixNanos(query.Until), severity, query.Text, attributes, query.Limit, null));
         return page.Records.Select(record => new OperationsLogLine(record.Time,
             (record.SeverityNumber is >= 1 and <= 24 ? TelemetrySeverity.Name(record.SeverityNumber) : record.Severity).ToLowerInvariant(),
-            record.Body, record.Attributes.GetValueOrDefault(DeployTelemetryVocabulary.ReleaseAttribute))).ToArray();
+            record.Body, record.Attributes.GetValueOrDefault(DeployTelemetryVocabulary.ReleaseAttribute), record.TraceId)).ToArray();
     }
 
     private static readonly IReadOnlyDictionary<string, string> Empty = new Dictionary<string, string>();

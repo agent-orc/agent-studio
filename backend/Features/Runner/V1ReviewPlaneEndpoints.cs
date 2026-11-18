@@ -4067,7 +4067,9 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     CredentialObservedAt: capability.CredentialObservedAt,
                     HealthOutcome: request.CredentialHealthVersion == 2 ? capability.HealthOutcome : null,
                     ServiceAvailability: request.CredentialHealthVersion == 2 ? capability.ServiceAvailability : null,
-                    CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null);
+                    CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null,
+                    Since: capability.Since,
+                    StatusSessionActive: capability.StatusSessionActive);
             })
             .GroupBy(capability => capability.Key, StringComparer.Ordinal)
             .Select(group => group.Last())
@@ -4624,6 +4626,24 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 admitted.Remove(hold.Key);
             return admitted;
         }
+    }
+
+    /// <summary>The keys this review role registered, including keys currently held by a probe.</summary>
+    public IReadOnlySet<string> RegisteredReviewCapabilities(string runnerId, string instanceId)
+    {
+        lock (_gate)
+        {
+            return _registrations.TryGetValue(runnerId, out var registration)
+                && registration.InstanceId == instanceId
+                ? registration.Capabilities.ToHashSet(StringComparer.Ordinal)
+                : new HashSet<string>(StringComparer.Ordinal);
+        }
+    }
+
+    public string? InstanceIdOf(string runnerId)
+    {
+        lock (_gate)
+            return _registrations.TryGetValue(runnerId, out var registration) ? registration.InstanceId : null;
     }
 
     /// <summary>
