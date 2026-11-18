@@ -93,4 +93,28 @@ describe('WorkspaceDeploymentDashboardComponent', () => {
     expect(dashboardHealth('unknown')).toEqual({ tone: 'neutral', label: 'Unknown' });
     expect(dashboardHealth('later').tone).toBe('neutral');
   });
+
+  it('does not present a failed rollback target or stale release as running', async () => {
+    TestBed.configureTestingModule({
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+        { provide: DEPLOYMENT_CLOCK, useValue: () => fixedNow }],
+    });
+    const fixture = TestBed.createComponent(WorkspaceDeploymentDashboardComponent);
+    fixture.componentRef.setInput('projectNames', ['Website']);
+    fixture.componentRef.setInput('workspaces', [group]);
+    const failed = { ...status('production', null, 'succeeded'), releaseUncertain: true,
+      currentDeployment: { ...status('production', null, 'succeeded').currentDeployment!, state: 'failed' as const } };
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/deploy/matrix').flush({ environmentKinds: ['production'], projects: [
+      { projectId: 'Website', error: null, statuses: [failed], tenantStatuses: [] },
+    ] });
+    fixture.detectChanges();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    http.expectOne('/api/projects/Website/deploy/delivery-lanes').flush({ projectId: 'Website', lanes: [] });
+    await fixture.whenStable();
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(text).toContain('Running release uncertain. A failed release may be running.');
+    expect(text).toContain('Deploy time unknown');
+    expect(text).not.toContain('Release 2026.10.16.3');
+  });
 });

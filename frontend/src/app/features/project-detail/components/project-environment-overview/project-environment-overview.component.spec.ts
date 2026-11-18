@@ -96,4 +96,22 @@ describe('ProjectEnvironmentOverviewComponent', () => {
     expect(text(host, `${production} [data-testid="environment-state-digest"]`)).toBe('website@sha256:aaaaaaaaaaaa');
     expect(text(host, production)).not.toContain('registry.example/website@sha256');
   });
+
+  it('shows uncertainty after a failed host report instead of naming its target', async () => {
+    const { fixture, http } = await mount();
+    const artifact = 'app@sha256:' + 'b'.repeat(64);
+    const host = await answer(fixture, http, 'Alpha', {
+      environments: { project: 'Alpha', environments: [
+        { declaration: declaration('stage', 'Stage'), deployedArtifact: artifact, health: 'failed', pendingArtifact: null,
+          history: [{ at: '2026-11-16T12:00:00Z', status: 'failed', artifact, previousArtifact: null, evidence: 'health-http-failed' }] },
+      ], promotions: [], failureCards: [] },
+      status: [{
+        environment: { id: 'stage' }, currentRelease: { version: '2026.11.16.1', artifactDigests: [artifact] },
+        currentDeployment: null, newerRelease: null, cardsSinceLastDeploy: [], health: 'unhealthy', releaseUncertain: true,
+      }],
+    });
+    expect(text(host, '[data-testid="project-environment-stage"] [data-testid="environment-state-release"]'))
+      .toBe('Running release uncertain. A failed release may be running.');
+    expect(host.querySelector('[data-testid="project-environment-stage"] [data-testid="environment-state-digest"]')).toBeNull();
+  });
 });

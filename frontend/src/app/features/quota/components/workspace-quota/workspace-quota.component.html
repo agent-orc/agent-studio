@@ -7,7 +7,7 @@
   </header>
   @if (error(); as problem) { <p role="alert">{{ problem }}</p> }
   @if (snapshot(); as quota) {
-    <p>Current UTC week ends {{ quota.weekEndUtc | slice:0:10 }}. {{ quota.message }}</p>
+    <p data-testid="workspace-quota-week-period">Admission week: {{ quota.weekStartUtc | date:'d MMM y, HH:mm':'UTC' }} UTC to {{ quota.weekEndUtc | date:'d MMM y, HH:mm':'UTC' }} UTC. {{ quota.message }}</p>
     @if (quota.limits && !quota.meterComplete) { <p role="status" data-testid="workspace-quota-meter">Some usage records are unavailable. Admission waits for the meter.</p> }
     <div class="workspace-quota__metrics">
       <div><strong>{{ quota.usage.modelTokens | number }}</strong> tokens used

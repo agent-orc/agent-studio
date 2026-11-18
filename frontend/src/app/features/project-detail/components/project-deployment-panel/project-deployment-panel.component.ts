@@ -77,7 +77,10 @@ export class ProjectDeploymentPanelComponent {
     this.pendingEnvironmentAction.set(`rollback:${id}`);
     this.tasks.rollbackProjectEnvironment(this.projectName(), id).subscribe({
       next: () => { this.pendingEnvironmentAction.set(null); this.loadEnvironments(this.projectName()); },
-      error: () => { this.pendingEnvironmentAction.set(null); this.environmentError.set('Rollback could not be queued.'); },
+      error: error => {
+        this.pendingEnvironmentAction.set(null);
+        this.environmentError.set(`${error?.error?.error ?? 'Rollback could not be queued.'} Redeploy the last known release or fix forward.`);
+      },
     });
   }
 

@@ -557,6 +557,7 @@ public sealed partial class BatchGatePilotService
             if (DuringTickForTesting is { } hold) await hold().ConfigureAwait(false);
             // AGT-3755: a tick that waited for the lock across host stop ends here.
             _shutdown.Token.ThrowIfCancellationRequested();
+            await ProcessInfrastructureRetriesAsync(ct).ConfigureAwait(false);
             // AGT-3563: every later step reads each manifest's phase record.
             ReconcilePhaseRecords();
             // AGT-3568: an intent a dead host left open owns its generations

@@ -18,7 +18,7 @@ public sealed partial class RemoteReviewAuthorityTests
     public async Task Tunnel_drill_review_attempt_beyond_expiry_is_re_adopted_exactly_and_its_report_settles_once()
     {
         var clock = new ManualTimeProvider(ReviewDrillStart);
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var evidence = new List<string>();
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -63,7 +63,7 @@ public sealed partial class RemoteReviewAuthorityTests
     public async Task Tunnel_drill_superseded_review_generation_is_rejected_after_an_explicit_refenced_reclaim()
     {
         var clock = new ManualTimeProvider(ReviewDrillStart);
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var evidence = new List<string>();
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();

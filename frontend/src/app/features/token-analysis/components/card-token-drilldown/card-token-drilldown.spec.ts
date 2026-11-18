@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { CardTokenDrilldownComponent } from './card-token-drilldown';
 import { fixtureDetail } from '../../testing/token-analysis.fixtures';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
 
 describe('CardTokenDrilldownComponent', () => {
   it('renders its data', async () => {
@@ -11,7 +12,8 @@ describe('CardTokenDrilldownComponent', () => {
       providers: [provideZonelessChangeDetection()],
     }).compileComponents();
     const fixture = TestBed.createComponent(CardTokenDrilldownComponent);
-    fixture.componentRef.setInput('detail', fixtureDetail());
+    const detail = fixtureDetail();
+    fixture.componentRef.setInput('detail', detail);
     fixture.detectChanges();
     await fixture.whenStable();
     const root: HTMLElement = fixture.nativeElement;
@@ -19,5 +21,7 @@ describe('CardTokenDrilldownComponent', () => {
     const gate = root.querySelector('[data-kind="gate"]');
     expect(gate?.textContent).toContain('1m 0s');
     expect(gate?.textContent).toContain('fail');
+    expect(root.querySelector('.dd__when span')?.textContent?.trim())
+      .toBe(formatZonedWithUtc(detail.events[0].at, browserTimeZone()));
   });
 });

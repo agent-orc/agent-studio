@@ -19,6 +19,7 @@ public sealed record HealthCheckDefinition(
     {
         "http" => Url ?? "",
         "database" => "database " + Host,
+        "telemetry" => Host ?? "",
         _ => $"{Host}:{Port}",
     };
 }
@@ -80,6 +81,8 @@ public static class HealthCheckDeclarations
             var kind = Text("kind") ?? "";
             if (!Identifier.IsMatch(id) || kind is not ("http" or "tcp" or "tls"))
                 throw new JsonException($"Environment {file} has a health check with an invalid id or kind.");
+            if (TelemetryAlertDeclarations.Defaults.Any(rule => id == "telemetry-" + rule.Id))
+                throw new JsonException($"Health check id {id} is reserved for a telemetry rule.");
             var url = Text("url");
             var host = Text("host");
             var port = Number("port");

@@ -540,6 +540,7 @@ public static class BatchGateStateSnapshotReader
                 abandoned = moved.Count(state => state.BaseMoveOutcome == "abandoned") },
             members,
             ejectRequests = store.ListEjects(project),
+            infrastructureRetries = store.ListInfrastructureRetries(project),
             reviewFixWaits = reviewFixWaits ?? [],
             detachedFlights = detachedFlights ?? [],
             flightClaim,

@@ -1,7 +1,9 @@
 <div class="environment-state" data-testid="environment-state">
   <span class="environment-state__health"><span class="environment-state__sr">Health: </span><app-status-indicator [tone]="health().tone" [label]="health().label" testId="environment-state-health" /></span>
   <p class="environment-state__release" data-testid="environment-state-release">
-    @if (release().version; as version) {
+    @if (release().uncertain) {
+      <strong>Running release uncertain.</strong> A failed release may be running.
+    } @else if (release().version; as version) {
       <strong>Release {{ version }}</strong>
     } @else if (release().digest) {
       <strong>No release record</strong>
