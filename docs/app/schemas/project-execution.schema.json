@@ -342,6 +342,11 @@
                 },
                 "telemetry": {
                   "$ref": "#/$defs/environmentTelemetry"
+                },
+                "healthChecksAllowPrivateNetwork": {
+                  "description": "Lets the control plane's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses, for an environment hosted on a LAN or VPN. Loopback, link-local and cloud metadata addresses stay refused.",
+                  "type": "boolean",
+                  "default": false
                 }
               }
             },
@@ -361,6 +366,11 @@
                 },
                 "telemetry": {
                   "$ref": "#/$defs/environmentTelemetry"
+                },
+                "healthChecksAllowPrivateNetwork": {
+                  "description": "Lets the control plane's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses, for an environment hosted on a LAN or VPN. Loopback, link-local and cloud metadata addresses stay refused.",
+                  "type": "boolean",
+                  "default": false
                 }
               }
             }

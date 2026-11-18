@@ -34,6 +34,13 @@ environments:
   - name: production
     protected: true
     telemetry: true
+lifecycles:
+  standard:
+    - phase: staging
+      automatic: true
+    - phase: production
+      approval: [Owner, Maintainer]
+      requires: staging
 # Replace app-host with the id of your deploy host and the health URLs with the
 # addresses your proxy serves; see docs/deployments/README.md.
 deploy:

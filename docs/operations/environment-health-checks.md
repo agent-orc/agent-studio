@@ -5,7 +5,8 @@ IP-14 of the [integrated platform Dossier](integrierte-plattform/index.html)
 from outside the host that runs the app, so a host that is down cannot report
 itself healthy. The results feed uptime, latency and incidents in the project's
 Deploy area (Operations tab) and the workspace Environment view. Incidents
-become Activity entries and cards.
+become Activity entries and cards. A project owner can also configure an HTTPS
+webhook in project Settings to receive production incident events outside Studio.
 
 Production environments also evaluate telemetry rules every worker tick. The
 default rules are 5xx share of `http.server.request.duration` at 5% over two
@@ -96,7 +97,7 @@ use no proxy and close the connection after each request.
 | Addresses | Policy |
 |---|---|
 | Loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`, `fe80::/10`), unspecified (`0.0.0.0/8`, `::`), multicast and reserved (`224.0.0.0/3`, `ff00::/8`), cloud metadata (`169.254.169.254`, `100.100.100.200`, `168.63.129.16`, `fd00:ec2::254`), and IPv4-mapped forms of these | Always refused |
-| RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), shared address space (`100.64.0.0/10`), IPv6 unique-local (`fc00::/7`) | Only with `"healthChecksAllowPrivateNetwork": true` on the environment |
+| RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), shared address space (`100.64.0.0/10`), IPv6 unique-local (`fc00::/7`) | Only with `"healthChecksAllowPrivateNetwork": true` on the environment (in schema 2, `healthChecksAllowPrivateNetwork: true` on the environment entry under `environments` in `project.yml`) |
 | Everything else | Allowed |
 
 IPv4 addresses embedded in `64:ff9b::/96` and `2002::/16` follow the same
@@ -104,7 +105,9 @@ blocked, private, or public classification as the embedded IPv4 address.
 
 A refused target fails with `address-blocked` before a byte is sent. That is a
 declaration problem, not an outage: the check shows `invalid`, and the result
-is neither stored in the series nor counted toward an incident.
+is neither stored in the series nor counted toward an incident. The environment
+carries the refused target and its fix in `error`, and the Deploy overview card
+shows it beside a warning-toned Misconfigured badge (F16).
 
 ## Runtime
 
@@ -127,7 +130,7 @@ Store layout under `<TaskRepository>/health-checks/<project>/`:
 
 | Path | Contents | Retention |
 |---|---|---|
-| `state.json` | Counters, open and last incidents of checks and environments, card ids, certificate warnings | current |
+| `state.json` | Counters, open and completed incidents of checks and environments, card ids, certificate warnings | current; completed environment incidents: 31 days |
 | `<environment>/<check>/raw/<yyyy-MM-dd>.jsonl` | One sample per probe or observed telemetry rule evaluation | 30 days |
 | `<environment>/<check>/hourly.jsonl` | Count, failures, p50, p95, max latency per hour of every completed day | 400 days |
 
@@ -160,20 +163,28 @@ checks fail together raises one alert and one card. Reports
 
 - Open: an `alert` Activity entry with topic `environment-incident-opened` and
   a Backlog bug card tagged `environment-health` with every failing check, its
-  target and its last ten probes. If the card of this environment's previous
-  incident is still open, the new incident comments on that card instead
-  (`change: reopened`).
+  target and its last ten probes. A recurrence within 30 minutes of recovery
+  reopens the resolved card (`change: reopened`).
 - More checks: a check that fails while the environment incident is open
   comments on its card (`check-failing`); a check that recovers while others
   still fail comments too (`check-recovered`).
 - Recovery: when the last check recovers, an `observation` Activity entry
-  `environment-incident-recovered` and a `recovered` comment with the duration.
+  `environment-incident-recovered` and a `recovered` comment with the duration,
+  failed probes, linked operations and running release. The card moves to Completed.
   The comment and Activity entry are tracked separately so a failed Activity
   write does not repeat a successful card comment.
+- Operations: a deploy, redeploy, rollback or runbook requested while the
+  incident is open retains its incident id. The card records the actor, release
+  and result when the operation is requested and when its state changes.
 - Removed checks: a check (or environment) that no longer appears in the
   declarations closes its open incident on the next tick (`check-removed`); the
   recovery report says so. A broken declaration file does not count as a
   removal.
+- Needs you reads open environment incidents from the durable health state.
+  Each appears before routine decisions with its project, environment, start
+  time and failing checks. The row opens the incident card or the project's
+  Operations view; recovery removes it on the next operator poll. Successful
+  deployments remain in deployment history and do not appear in Needs you.
 - Certificate: a `tls` check warns once when the certificate is within 14 days
   of expiry and once more within 3 days (`environment-certificate-expiring`).
   The first warning creates a chore card, and the second one comments on it.
@@ -191,3 +202,33 @@ and fragment.
 - `GET /api/environment/health`: every declared environment of the workspace,
   down first, then invalid. An environment that cannot be watched carries
   `error`.
+
+## Production incident notifications
+
+Project Settings has an Incident notifications section for owners. Save one
+HTTPS webhook URL per project, then use Send test to verify the receiver. The
+URL may carry a receiver token in its query string; the read API and Settings
+show only the destination host. Removing the webhook stops delivery. Studio
+stores the URL in `incident-webhooks.json` beside the task repository and writes
+the file with owner-only permissions on Unix hosts.
+
+The control-plane health tick sends `opened` and `recovered` events for
+production environment incidents. The default tick is 15 seconds; delivery
+has a 10-second deadline and a failed send is retried on the next tick. A
+successful send is recorded on the incident, so later failures of that same
+incident do not resend `opened`. A process crash between receiver acceptance
+and receipt persistence can cause one repeat; receivers should use the event,
+environment and `startedAt` as an idempotency key.
+
+The JSON body has `event`, `project`, `environment`, `environmentName`,
+`signal`, `startedAt` and `link`. The link goes to the project's Operations
+view using the Studio origin saved with the webhook. Targets, URL user info,
+query strings and receiver tokens are never included in the body. Webhook
+delivery does not block incident cards or Activity entries.
+
+- `GET /api/projects/{projectName}/incident-webhook`: configured state and
+  destination host, for a project settings writer.
+- `PUT /api/projects/{projectName}/incident-webhook`: save `{url,
+  studioBaseUrl}` or remove with `url: null`.
+- `POST /api/projects/{projectName}/incident-webhook/test`: send a `test`
+  payload through the saved channel.

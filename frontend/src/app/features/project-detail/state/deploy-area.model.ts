@@ -2,6 +2,7 @@ import { InjectionToken } from '@angular/core';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
 import type { RunHostState } from '../../../models/run-host.model';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
+import type { PipelineDefinitionResponse } from '../services/project-pipeline-definition.service';
 
 // BD-1 wire contract served by AGT-3201 under /api/projects/{project}/deploy
 // (backend/Features/Deploy/DeployContract.cs). States, triggers and health
@@ -224,7 +225,8 @@ export interface DeployRun {
 }
 
 export type DeployCards = { status: 'known'; keys: string[] } | { status: 'unknown'; reason: string };
-export type DeployHealth = { status: 'reported'; state: HealthState } | { status: 'no-checks' };
+/** `problem`: why a misconfigured check is not probed and how to fix the declaration (F16). */
+export type DeployHealth = { status: 'reported'; state: HealthState; problem?: string | null } | { status: 'no-checks' };
 
 /** The latest run of a card: an AGT-3201 deployment, or the last AGT-3176 host report without it. */
 export interface CardRun {
@@ -502,6 +504,39 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
   });
 }
 
+/** Display name of a project.yml environment id. */
+export function environmentLabel(name: string): string {
+  return name === 'staging' ? 'Staging' : name === 'production' ? 'Production' : name;
+}
+
+/** An environment project.yml declares that has no deployable status card yet (F5). */
+export interface DeclaredEnvironmentView {
+  name: string;
+  label: string;
+  protected: boolean;
+  /** False when project.yml has no deploy step for it yet. */
+  hasSteps: boolean;
+}
+
+/**
+ * Environments a schema 2 project.yml declares without a status card: before
+ * deploy steps exist the environment service cannot deploy them, so Overview
+ * shows them from the parsed definition instead of the legacy JSON guidance.
+ */
+export function declaredEnvironments(definition: PipelineDefinitionResponse | null,
+  cards: readonly EnvironmentCardView[]): DeclaredEnvironmentView[] {
+  if (definition?.schemaVersion !== 2 || !definition.diagram) return [];
+  const shown = new Set(cards.flatMap(card => [card.id, card.name.toLowerCase()]));
+  return definition.diagram.environments
+    .filter(item => !shown.has(item.name) && !shown.has(item.name === 'staging' ? 'stage' : item.name))
+    .map(item => ({
+      name: item.name,
+      label: environmentLabel(item.name),
+      protected: item.protected,
+      hasSteps: item.steps.length > 0,
+    }));
+}
+
 function hostOf(base: CardBase, environments: ProjectEnvironments | null): EnvironmentHostView | null {
   const id = base.view?.declaration.targetHostId;
   if (!id) return null;
@@ -522,7 +557,9 @@ function cardsFor(deployed: boolean, release: Release | null, releaseRecordsKnow
 function healthFor(status: EnvironmentStatus | null, base: CardBase, health?: EnvironmentHealthResponse | null): DeployHealth {
   const observed = health?.environments.find(item => item.environmentId === base.id);
   if (observed && (observed.checks.length > 0 || observed.status === 'invalid'))
-    return { status: 'reported', state: observed.status };
+    return observed.status === 'invalid'
+      ? { status: 'reported', state: observed.status, problem: observed.error }
+      : { status: 'reported', state: observed.status };
   if (base.view && !base.healthUrl && !base.hasChecks) return { status: 'no-checks' };
   // AGT-3201 health wins when it knows; it reads a host rollback as unknown, AGT-3176 as healthy.
   const reported = status ? STATUS_HEALTH[status.health] ?? 'unknown' : 'unknown';

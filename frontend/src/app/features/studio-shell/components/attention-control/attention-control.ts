@@ -120,7 +120,11 @@ export class AttentionControlComponent {
     this.close(false);
     switch (target) {
       case 'card':
-        this.references.openReferenceOrNotify(attentionCard(item)!, { focusDecision: true });
+        this.references.openReferenceOrNotify(attentionCard(item)!,
+          { focusDecision: item.type !== 'environment.incident-open' });
+        return;
+      case 'operations':
+        this.openOperations(item);
         return;
       case 'dossiers':
         if (item.project && item.dossierId) {
@@ -155,6 +159,13 @@ export class AttentionControlComponent {
         this.openActivity();
         return;
     }
+  }
+
+  openOperations(item: OperatorAttentionItem): void {
+    if (!item.project) return;
+    this.close(false);
+    this.tabs.open({ kind: 'hub', projectName: item.project, section: 'operations' });
+    this.panels.noteEditorActivation();
   }
 
   openActivity(): void {

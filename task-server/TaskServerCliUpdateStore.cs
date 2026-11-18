@@ -12,6 +12,8 @@ public sealed partial class TaskServerStore
         ("gpt-6-astra", "codex", "0.153.0"),
         (CodexCliRelease.Gpt61Sol, "codex", CodexCliRelease.Gpt61MinimumVersion),
         (CodexCliRelease.Gpt61Terra, "codex", CodexCliRelease.Gpt61MinimumVersion),
+        (CodexCliRelease.Gpt62Sol, "codex", CodexCliRelease.Gpt62MinimumVersion),
+        (CodexCliRelease.Gpt62Astra, "codex", CodexCliRelease.Gpt62MinimumVersion),
         ("claude-opus-5", "claude", "2.1.281"),
     ];
 
