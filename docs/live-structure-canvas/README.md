@@ -2,7 +2,7 @@
 
 Concept Dossier. Open [index.html](index.html); decisions and slices are in [workbench.json](workbench.json).
 
-`index.html` is self-contained and generated. Edit the sources, then rebuild and check from the repository root:
+`index.html` is self-contained and generated. The build inlines the prototype minified (esbuild from `frontend/node_modules`) and fails above 230,000 characters, so the concept review snapshot (256,000 characters a file) reads the whole Dossier; `src/` is the readable source. Edit the sources, then rebuild and check from the repository root:
 
 ```sh
 node docs/live-structure-canvas/build.mjs     # src/*, workbench.json, bench results -> index.html, schema/

@@ -32,7 +32,12 @@ writeFileSync(resolve(dir, 'schema/structure-view-spec.v1.schema.json'), JSON.st
 writeFileSync(resolve(dir, 'schema/example-operations-warden.json'), JSON.stringify(Model.specs['operations-warden'], null, 2) + '\n');
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const scripts = ['engine.js', 'layers.js', 'spec.js', 'model.js', 'app.js'].map(f => read(src(f)));
+// The inlined prototype is minified (esbuild from the frontend toolchain, npm --prefix frontend ci):
+// the review snapshot reads index.html only up to 256,000 characters, and src/ stays the readable source.
+const { transformSync } = require(resolve(dir, '../../frontend/node_modules/esbuild'));
+const minify = (code, loader) => transformSync(code, { loader, minify: true, legalComments: 'none' }).code.trim();
+const scripts = ['engine.js', 'layers.js', 'spec.js', 'model.js', 'app.js'].map(f => minify(read(src(f)), 'js'));
+const MAX_INDEX_CHARS = 230000;
 const prodKb = ['engine.js', 'layers.js', 'spec.js'].reduce((s, f) => s + Buffer.byteLength(read(src(f))), 0) / 1024;
 
 // Benchmark tables from bench/results.json (median of the runs).
@@ -122,7 +127,7 @@ const flowFps = name => { const r = bench && bench.renderers.find(x => x.name ==
 let html = read(src('index.template.html'));
 const replace = (k, v) => { if (!html.includes(k)) throw new Error('Template lacks ' + k); html = html.split(k).join(v); };
 replace('{{ARTICLE_STYLE}}', articleStyle);
-replace('{{CANVAS_CSS}}', read(src('canvas.css')));
+replace('{{CANVAS_CSS}}', minify(read(src('canvas.css')), 'css'));
 replace('{{PROTOTYPE}}', read(src('prototype.html')));
 replace('{{BENCH_TABLE}}', rendererTable());
 replace('{{CHART_TABLE}}', chartTable());
@@ -149,6 +154,7 @@ replace('{{REAL_DELTAS}}', real ? `${real.deltas} deltas over the ${real.replayS
 replace('{{SCRIPT}}', scripts.join('\n').replace(/<\/script/gi, '<\\/script'));
 if (/\{\{[A-Z_:a-z-]+\}\}/.test(html)) throw new Error('Unresolved placeholder: ' + html.match(/\{\{[A-Z_:a-z-]+\}\}/)[0]);
 if (html.includes('—')) throw new Error('Em dash found');
+if (html.length > MAX_INDEX_CHARS) throw new Error(`index.html has ${html.length} characters; the review snapshot needs it below ${MAX_INDEX_CHARS}`);
 writeFileSync(resolve(dir, 'index.html'), html);
 const prodGz = gzipSync(Buffer.from(['engine.js', 'layers.js', 'spec.js'].map(f => read(src(f))).join('\n'))).length / 1024;
-console.log(JSON.stringify({ bytes: Buffer.byteLength(html), prototypeSourceKb: +prodKb.toFixed(1), prototypeSourceGzipKb: +prodGz.toFixed(1) }, null, 2));
+console.log(JSON.stringify({ bytes: Buffer.byteLength(html), characters: html.length, prototypeSourceKb: +prodKb.toFixed(1), prototypeSourceGzipKb: +prodGz.toFixed(1) }, null, 2));
