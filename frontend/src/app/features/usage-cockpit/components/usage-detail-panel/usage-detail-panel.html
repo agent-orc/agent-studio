@@ -64,7 +64,7 @@
       <table class="usage-detail__table" [attr.data-testid]="'usage-detail-windows-' + cli.cliId">
         <caption class="usage-detail__caption">Quota windows, percentage used and left</caption>
         <thead>
-          <tr><th scope="col">Window</th><th scope="col" class="usage-detail__num">Used</th><th scope="col" class="usage-detail__num">Left</th><th scope="col">Resets ({{ v.timeZone }})</th><th scope="col">UTC</th></tr>
+          <tr><th scope="col">Window</th><th scope="col" class="usage-detail__num">Used</th><th scope="col" class="usage-detail__num">Left</th><th scope="col">Resets ({{ v.timeZone }})</th>@if (v.timeZone !== 'UTC') { <th scope="col">UTC</th> }</tr>
         </thead>
         <tbody>
           @for (w of cli.windows; track w.id) {
@@ -80,13 +80,15 @@
                   <span class="usage-detail__muted">{{ w.resetLabel ?? 'Not reported' }}</span>
                 }
               </td>
-              <td>
-                @if (w.reset; as r) {
-                  <time [attr.datetime]="r.iso" data-testid="usage-detail-reset-utc">{{ r.utc }}</time>
-                } @else {
-                  <span class="usage-detail__muted">Not reported</span>
-                }
-              </td>
+              @if (v.timeZone !== 'UTC') {
+                <td>
+                  @if (w.reset; as r) {
+                    <time [attr.datetime]="r.iso" data-testid="usage-detail-reset-utc">{{ r.utc }}</time>
+                  } @else {
+                    <span class="usage-detail__muted">Not reported</span>
+                  }
+                </td>
+              }
             </tr>
             @if (w.start; as start) {
               <tr><td colspan="5" class="usage-detail__note" data-testid="usage-detail-provider-week-period">Provider week: {{ w.startEstimated ? 'estimated start' : 'start' }} {{ start.utc }}; reset {{ w.reset?.utc }}.</td></tr>

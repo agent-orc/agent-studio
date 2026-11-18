@@ -293,6 +293,18 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void RunHostClaim_SkipsJobsOfProjectsTheHostIsNotBoundTo()
+    {
+        var (deploy, environments, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+
+        Assert.Null(environments.Claim("stage-host", requireVerifiedRelease: true, project => project == "other"));
+        Assert.Equal("queued", environments.Read("demo")!.Jobs.Single().Status);
+        var claimed = environments.Claim("stage-host", requireVerifiedRelease: true, project => project == "demo");
+        Assert.Equal("demo", claimed!.Project);
+    }
+
+    [Fact]
     public void AutomaticRollbackAfterRestart_BindsTheHealthySourceReleaseAndChecksProvenance()
     {
         var (deploy, environments, _) = Build();

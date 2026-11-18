@@ -594,19 +594,15 @@ public sealed class DeployService
     }
 
     public IReadOnlyList<CardDeploymentView>? Cards(string project)
-        => Cards(project, _scanner.ScanAllJobsWithArchive()
-            .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
-            .Select(item => string.IsNullOrWhiteSpace(item.Key) ? item.Id : item.Key!));
-
-    private IReadOnlyList<CardDeploymentView>? Cards(string project, IEnumerable<string> cardKeys)
     {
+        var integratedCardKeys = CaptureDeliveryVerifications(project).Integrated.Keys;
         lock (_gate)
         {
             var snapshot = SyncLocked(project);
             if (snapshot is null) return null;
             var repo = _git.ResolveRepoRootForProject(project);
             return CardDeploymentProjection.Project(project, snapshot.Environments,
-                snapshot.Releases, snapshot.Deployments(project), cardKeys,
+                snapshot.Releases, snapshot.Deployments(project), integratedCardKeys,
                 (origin, target) => repo is not null && Contains(repo, origin.CommitSha, target.CommitSha));
         }
     }
@@ -614,16 +610,13 @@ public sealed class DeployService
     public IReadOnlyList<CardDeploymentView> CardMatrix()
     {
         var cards = new List<CardDeploymentView>();
-        var byProject = _scanner.ScanAllJobsWithArchive()
-            .ToLookup(item => item.ProjectName, StringComparer.OrdinalIgnoreCase);
         foreach (var project in _scanner.GetWatchPaths().Select(item => item.Name)
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             try
             {
                 if (_environments.Declarations(project) is not { Count: > 0 }) continue;
-                if (Cards(project, byProject[project].Select(item => string.IsNullOrWhiteSpace(item.Key)
-                        ? item.Id : item.Key!)) is { } projected) cards.AddRange(projected);
+                if (Cards(project) is { } projected) cards.AddRange(projected);
             }
             catch (JsonException ex)
             {

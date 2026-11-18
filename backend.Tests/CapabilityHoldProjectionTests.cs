@@ -151,15 +151,31 @@ public sealed class CapabilityHoldProjectionTests
     {
         var registry = Registry([Contract.ReviewCapabilities.ReviewExecutor, Codex]);
 
-        Assert.False(registry.RequestReprobe("unknown-runner", Codex));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.RunnerNotRegistered,
+            registry.RequestReprobe("unknown-runner", Codex));
         Assert.Null(registry.TakeReprobeRequests(Runner));
-        Assert.True(registry.RequestReprobe(Runner, Codex));
-        Assert.True(registry.RequestReprobe(Runner, Codex));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.UnknownCapability,
+            registry.RequestReprobe(Runner, Claude));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.Queued, registry.RequestReprobe(Runner, Codex));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.Queued, registry.RequestReprobe(Runner, Codex));
 
         Assert.Equal([Codex], registry.TakeReprobeRequests(Runner));
         Assert.Null(registry.TakeReprobeRequests(Runner));
         Assert.Equal(["git:fetch", Codex],
             CapabilityReprobeDelivery.Merge(["git:fetch"], [Codex, "git:fetch"]).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void ReprobeQueue_IsBounded_AndClearedWhenIdentityIsRemoved()
+    {
+        var capabilities = Enumerable.Range(0, 33).Select(i => $"provider-auth:provider{i}").ToArray();
+        var registry = Registry([Contract.ReviewCapabilities.ReviewExecutor, .. capabilities]);
+        foreach (var key in capabilities.Take(32))
+            Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.Queued, registry.RequestReprobe(Runner, key));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.QueueFull,
+            registry.RequestReprobe(Runner, capabilities[32]));
+        registry.ClearReprobeRequests(Runner);
+        Assert.Null(registry.TakeReprobeRequests(Runner));
     }
 
     private V1ReviewExecutorRegistry Registry(IReadOnlyList<string> capabilities)

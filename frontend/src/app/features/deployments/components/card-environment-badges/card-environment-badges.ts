@@ -8,6 +8,7 @@ import { CardDeploymentService } from '../../services/card-deployment.service';
 const CARD_ENVIRONMENT_TONE: Readonly<Record<CardEnvironmentBadge['state'], StatusTone>> = {
   succeeded: 'success',
   failed: 'danger',
+  'failed-rolled-back': 'danger',
   'rolled-back': 'warning',
   'awaiting-approval': 'warning',
   running: 'running',
@@ -39,8 +40,12 @@ export class CardEnvironmentBadgesComponent {
 
   label(name: string, kind: string, state: string): string {
     if (state === 'not-deployed') return kind === 'production' ? 'Not yet in Production' : 'Staging pending';
-    if (state === 'rolled-back') return `${name} · rolled back`;
-    return `${name} · ${state === 'succeeded' ? 'live' : state}`;
+    const wording: Record<string, string> = {
+      succeeded: 'Live', failed: 'Failed', 'failed-rolled-back': 'Failed, rolled back',
+      'rolled-back': 'Rolled back', 'awaiting-approval': 'Approval pending',
+      running: 'Deploying', queued: 'Queued', cancelled: 'Cancelled',
+    };
+    return `${name} · ${wording[state] ?? 'Status unavailable'}`;
   }
 
   text(badge: CardEnvironmentBadge): string {

@@ -49,6 +49,15 @@ public class AdHocUsageTests
     }
 
     [Fact]
+    public void Record_requires_executing_cli_from_every_caller()
+    {
+        var method = typeof(AdHocClaudeInvoker).GetMethod(nameof(AdHocClaudeInvoker.Record))!;
+        var cliParameter = Assert.Single(method.GetParameters(), parameter => parameter.Name == "cliType");
+        Assert.False(cliParameter.IsOptional);
+        Assert.False(cliParameter.HasDefaultValue);
+    }
+
+    [Fact]
     public void Recorder_TolerantToTornLines()
     {
         using var temp = new TempDir();
