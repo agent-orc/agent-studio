@@ -416,7 +416,8 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         ProjectHealthState state, DateTimeOffset now)
         => declarations.Select(environment =>
         {
-            var checks = EffectiveChecks(environment).Select(check =>
+            var definitions = EffectiveChecks(environment);
+            var checks = definitions.Select(check =>
             {
                 var checkState = state.Checks.GetValueOrDefault(HealthCheckStore.Key(environment.Id, check.Id));
                 // 24 hours come from raw samples; 7 and 30 days from the hourly aggregates plus the raw tail.
@@ -457,8 +458,18 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
                 primary?.Latency24h ?? new(null, null, null),
                 states.Select(item => item.OpenIncident).OfType<HealthIncident>().MinBy(item => item.StartedAt),
                 states.Select(item => item.LastIncident).OfType<HealthIncident>().MaxBy(item => item.EndedAt),
-                checks);
+                checks, status == "invalid" ? AddressProblem(environment, definitions, checks) : null);
         }).ToArray();
+
+    /// <summary>The fix for each refused target; the card shows it instead of a bare Misconfigured.</summary>
+    private static string? AddressProblem(EnvironmentDeclaration environment,
+        IReadOnlyList<HealthCheckDefinition> definitions, IReadOnlyList<EnvironmentHealthCheckView> checks)
+    {
+        var problems = definitions.Zip(checks)
+            .Where(pair => pair.Second.Status == "invalid" && pair.Second.LastSample?.Error == HealthSample.AddressBlocked)
+            .Select(pair => HealthAddressProblems.Describe(environment, pair.First)).ToArray();
+        return problems.Length == 0 ? null : string.Join(" ", problems);
+    }
 
     private static IReadOnlyList<HealthCheckDefinition> EffectiveChecks(EnvironmentDeclaration environment)
         => environment.Kind == "production"

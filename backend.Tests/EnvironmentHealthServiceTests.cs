@@ -536,6 +536,43 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Null(environment.CurrentIncident);
         Assert.Empty(fixture.Cards());
         Assert.Empty(fixture.Activity());
+        // F16: the environment names each refused target and its fix instead of a bare Misconfigured.
+        Assert.Contains("Health check meta targets http://169.254.169.254/latest/meta-data/, which the control plane never probes",
+            environment.Error);
+        Assert.Contains("Health check local targets localhost:5030", environment.Error);
+    }
+
+    [Fact]
+    public async Task PrivateTargets_NameTheOptIn_AndProbeOnceItIsDeclared()
+    {
+        var connects = new List<IPEndPoint>();
+        var connector = new HealthCheckConnector(
+            (_, _) => throw new InvalidOperationException("an address literal is never resolved"),
+            (endpoint, _) =>
+            {
+                lock (connects) connects.Add(endpoint);
+                return Task.FromException<Socket>(new SocketException((int)SocketError.ConnectionRefused));
+            });
+        var fixture = Build(checks: """[ { "id": "lan", "kind": "tcp", "host": "172.17.0.1", "port": 8080 } ]""",
+            probe: new NetworkHealthCheckProbe(new FakeHttpClients(_target), connector, _clock));
+
+        await Ticks(fixture, 1);
+
+        var blocked = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal("invalid", blocked.Status);
+        Assert.Contains("Health check lan targets 172.17.0.1:8080, a private network address", blocked.Error);
+        Assert.Contains("\"healthChecksAllowPrivateNetwork\": true in docs/deployments/environments/stage.json", blocked.Error);
+        Assert.Empty(connects);
+
+        File.WriteAllText(Path.Combine(fixture.Declarations, "stage.json"), Stage(
+            """[ { "id": "lan", "kind": "tcp", "host": "172.17.0.1", "port": 8080 } ]""")
+            .Replace("\"id\": \"stage\",", "\"id\": \"stage\", \"healthChecksAllowPrivateNetwork\": true,", StringComparison.Ordinal));
+        await Ticks(fixture, 1);
+
+        var probed = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal(new IPEndPoint(IPAddress.Parse("172.17.0.1"), 8080), Assert.Single(connects));
+        Assert.NotEqual("invalid", probed.Status);
+        Assert.Null(probed.Error);
     }
 
     [Fact]
