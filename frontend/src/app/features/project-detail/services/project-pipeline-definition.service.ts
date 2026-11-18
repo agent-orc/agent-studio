@@ -74,6 +74,26 @@ export interface PipelineDefinitionResponse {
   definitionSha256?: string | null;
   diagram?: PipelineDiagram | null;
   migrationAvailable: boolean;
+  /** Schema 2 with environments but no artifacts or deploy steps: the deploy-step form applies (F5). */
+  deployStepsAvailable?: boolean;
+}
+
+/** One environment of the deploy-step form; static artifacts use `directory`, containers `composeFile` and `service`. */
+export interface DeployStepsEnvironmentInput {
+  name: string;
+  target: string;
+  directory?: string | null;
+  composeFile?: string | null;
+  service?: string | null;
+  healthUrl: string;
+  healthTimeoutSeconds: number | null;
+}
+
+export interface DeployStepsInput {
+  artifactType: 'static' | 'container';
+  /** The bundle directory of a static artifact, or the Dockerfile of a container artifact. */
+  artifactPath: string;
+  environments: DeployStepsEnvironmentInput[];
 }
 
 /** Dry run of the schema 2 migration; nothing is written until it is confirmed. */
@@ -118,6 +138,20 @@ export class ProjectPipelineDefinitionService {
     return this.http.post<PipelineMigrationConfirmResponse>(`${this.url(project)}/migration`, {
       baseSha256: migration.baseSha256,
       proposalSha256: migration.proposalSha256,
+    });
+  }
+
+  /** Dry run of the deploy-step form: the proposed project.yml with its issues. Nothing is written. */
+  previewDeploySteps(project: string, input: DeployStepsInput): Observable<PipelineMigrationResponse> {
+    return this.http.post<PipelineMigrationResponse>(`${this.url(project)}/deploy-steps/preview`, input);
+  }
+
+  /** Writes the reviewed preview; the server refuses it when project.yml or the form changed since. */
+  confirmDeploySteps(project: string, input: DeployStepsInput, preview: PipelineMigrationResponse): Observable<PipelineMigrationConfirmResponse> {
+    return this.http.post<PipelineMigrationConfirmResponse>(`${this.url(project)}/deploy-steps`, {
+      ...input,
+      baseSha256: preview.baseSha256,
+      proposalSha256: preview.proposalSha256,
     });
   }
 

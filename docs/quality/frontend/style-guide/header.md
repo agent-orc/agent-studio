@@ -20,7 +20,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 2 | Task toolbar | Run activity, execution host, pane toggles, lane pager, paging lane, acceptance refusal, primary action, menu | Task tab active; individual controls follow their capability | One action row; `ccc0039eb` (AGT-2819 extraction). Host belongs here and nowhere in the Overview title. |
 | Task 2a | `app-task-move-refusal` | Why this card's last move was refused; for a content refusal the review's concern, Accept with a written reason and Review again | The open card's last move was refused | Acute notice below the toolbar; its refusal toast docks below it and the toolbar (`below-toolbar`), never over them. AGT-3873. |
 | Task 3 | Global alert banner | Cross-task integration alert | Alert threshold reached | Single alert banner in `app-workspace-banner`; `5d496e73e`. |
-| Task 3a | Phone primary lane action | Current lane decision | Primary action available below 600 px | Full-width shared primary button above task notices. |
+| Task 3a | Phone primary lane action | Current lane decision, or the acceptance refusal that replaces it | Primary action or refusal available below 600 px | Full-width shared primary button above task notices; a content refusal renders as a stacked block (AGT-3830). |
 | Task 4 | `app-task-resource-status` | Resource limitation affecting this task | Resource finding exists | Notice; `2b1436acc`. |
 | Task 5 | `app-detail-header` | Legacy task identity and actions | Legacy focused view; hidden in Studio | Header row; original detail extraction `839f3c9801`. |
 | Task 6 | `app-archived-task-notice` | Archive state and restore | Archived task | Notice; `1bc7b5703`. |
@@ -63,22 +63,35 @@ execution host (a concrete execution location), pane toggles (task tab),
 previous task, pager position, next task, paging lane select, acceptance
 refusal, primary lane action (only when available), and text-only overflow
 menu. `studio-tab-actions` owns these controls (`ccc0039eb`, AGT-2819).
-The acceptance refusal (`app-acceptance-refusal`, AGT-3704) renders only for a
-Human Review Accept that is held by its integration verdict or was refused by
-the server. It shows the reason as a compact warning indicator and exactly one
-action: Retry integration for a failed integration, Send a round when the
-admission answer forbids an override, otherwise Accept with override, which
-asks for a written reason. It is omitted during the bounded
-Git wait (the primary's skeleton is that progress) and when the attempt-gap
-notice owns the refusal. The reason truncates first at narrow widths; its
-tooltip keeps the full sentence. The primary action can be Run now
+The acceptance refusal (`app-acceptance-refusal`, AGT-3704) renders for a
+Human Review Accept held by its integration verdict, refused by the server,
+or refused by the card's acceptance readiness. It shows the reason beside its
+next action: Retry integration for a failed integration, Send a round… when no
+override can admit the card (AGT-3867, AGT-3934), otherwise Accept with override,
+which asks for a written reason. A hold is omitted during the bounded Git wait (the
+primary's skeleton is that progress); the attempt-gap notice owns its own refusal.
+The reason truncates first at narrow widths; its tooltip keeps the full
+sentence. AGT-3830: a content refusal (acceptance readiness
+`review-concerns` or `no-content-verdict`, or a server `completion-content-gap`)
+replaces Accept instead of preceding it: Review again is the primary, Accept
+with a reason… sits beside it (Send a round… where the completion policy lets
+no override admit the card, AGT-3867), and the reason reads the same words as the board
+and Needs you. The open card checks its own readiness through
+`POST /api/tasks/acceptance-readiness`. After a refused click the card stays
+open: an overridable refusal opens its written-reason form in place (AGT-3873),
+whose focused field is described by the reason, and otherwise the reason takes
+focus. Its actionable status toast docks below the toolbar and the phone's
+full-width refusal actions, stays above the status bar, and closes with Escape.
+The refusal is rendered once: in the toolbar, or below 600 px in the phone's
+full-width block, never as a hidden twin. The primary action can be Run now
 or the current lane's decision; its label comes from triage policy. The host
 chip is a factual badge, the pager is a compact action group, and the lane
 select is a navigation control. The menu owns secondary task actions.
 In Human Review, the primary action uses the fresh task-detail integration
 verdict. An integrated or not-applicable delivery offers Accept without waiting
 for optional Git provenance; a held action names its delivery reason on hover.
-Below 600 px, the same primary action renders full width above the task detail;
+Below 600 px, the same primary action renders full width above the task detail,
+or the acceptance refusal in full above its full-width actions;
 the toolbar keeps its secondary menu. The phone pane switcher follows the task
 notices and command deck and chooses one pane; selecting a previously hidden
 pane reveals it in the shared pane visibility state.

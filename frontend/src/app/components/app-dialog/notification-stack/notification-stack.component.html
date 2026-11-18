@@ -43,6 +43,7 @@
 </div>
 
 <div class="app-notify-stack app-notify-stack--below-toolbar" data-testid="notification-stack-below-toolbar"
-     [style.top.px]="belowToolbarTop()">
+     [style.top.px]="belowToolbarTop()"
+     [style.--notify-dock-top]="(belowToolbarTop() ?? 96) + 'px'">
   <ng-container [ngTemplateOutlet]="toasts" [ngTemplateOutletContext]="{ $implicit: belowToolbar() }"></ng-container>
 </div>

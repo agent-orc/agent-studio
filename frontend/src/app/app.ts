@@ -65,6 +65,7 @@ import {
   type MergeAcceptView,
   type TriageButton,
 } from './features/task-detail/runtime';
+import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 import {
   buildComposerLocationContext,
   OrchestratorFeedStore,
@@ -170,7 +171,6 @@ import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
 import { ServerCheckoutBoardNoticeComponent } from './features/server-checkout';
-import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -1452,7 +1452,7 @@ export class App implements OnInit, OnDestroy {
     // Hold git-dependent acceptance until the branch/merge status has loaded, so
     // a click cannot trigger a merge while the label is still a guess (AGT-2006).
     if (this.studioPrimaryAwaitingGit() || this.studioPrimaryBlockedByIntegration()
-      || this.studioPrimaryDecisionRefusal()) return;
+      || this.studioPrimaryDecisionRefusal() || this.studioAcceptanceRefusal()?.replacesAccept) return;
     this.dispatchStudioTriage(sel.info, p);
   }
 
