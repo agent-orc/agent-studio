@@ -37,8 +37,12 @@ catalog ids, aliases, display labels, and bare `sonnet` / `opus` aliases.
 Per-project, workspace, and ad-hoc `byModel` rows carry `modelId` and `cli`;
 `model` is a display label. Historical receipts that stored labels resolve on
 read, without changing `task.json`. `GET /api/token-pricing/unpriced-models`
-returns ids for models with at least one unpriced historical call, including
-`NoPriceForDate`. GPT-4.1 and GPT-4o are absent from the curated CLI
+returns ids for models with an unpriced call in the current workspace calendar
+week, including `NoPriceForDate` and attributed or unattributed workspace
+one-shot receipts. Its `weekStartUtc`, `weekEndUtc`, and `timeZone` describe the
+same period as the usage cost detail. Row calls and tokens include only the
+unpriced receipts, even when that model has priced calls in the same week.
+GPT-4.1 and GPT-4o are absent from the curated CLI
 registry because the pinned catalog has no listings for them; old usage
 remains explicitly unpriced.
 
