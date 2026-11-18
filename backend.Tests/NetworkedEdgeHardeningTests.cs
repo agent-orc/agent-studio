@@ -414,6 +414,8 @@ public sealed class NetworkedEdgeHardeningOwnHostTests : NetworkedEdgeHardeningT
         var csrf = Assert.Single(cookies, value => value.StartsWith("__Host-agentstudio-csrf=", StringComparison.Ordinal));
         AssertHostOnly(session, httpOnly: true);
         AssertHostOnly(csrf, httpOnly: false);
+        Assert.Contains("max-age=604800", session, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("max-age=604800", csrf, StringComparison.OrdinalIgnoreCase);
 
         var auth = await bootstrap.Content.ReadFromJsonAsync<AuthStatusResponse>();
         var token = session[(AccessSecurityStore.SessionCookieName.Length + 1)..].Split(';')[0];
@@ -421,6 +423,28 @@ public sealed class NetworkedEdgeHardeningOwnHostTests : NetworkedEdgeHardeningT
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
         foreach (var deletion in logout.Headers.GetValues("Set-Cookie"))
             Assert.DoesNotContain("domain=", deletion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Approval_without_session_or_csrf_proof_asks_for_sign_in()
+    {
+        var projectPath = Path.Combine(_workspace, "projects", ProjectName);
+        Directory.CreateDirectory(projectPath);
+        using var factory = BuildFactory(projectPath: projectPath);
+        using var client = NewClient(factory);
+        using var bootstrap = await SendAsync(client, HttpMethod.Post, "/api/auth/bootstrap", origin: Studio,
+            body: new { username = "first.owner", password = Password, displayName = "First Owner", bootstrapCode = "website-setup-code" });
+        bootstrap.EnsureSuccessStatusCode();
+        var login = factory.Services.GetRequiredService<AccessSecurityStore>()
+            .Login("first.owner", Password, "approval-proof-test");
+        var path = $"/api/projects/{ProjectName}/deploy/deployments/missing/approve";
+
+        using var unsigned = await SendAsync(client, HttpMethod.Post, path, origin: Studio);
+        Assert.Equal(HttpStatusCode.Unauthorized, unsigned.StatusCode);
+        Assert.Contains("Sign in again to approve", await unsigned.Content.ReadAsStringAsync());
+        using var noCsrf = await SendAsync(client, HttpMethod.Post, path, login.SessionToken, Studio);
+        Assert.Equal(HttpStatusCode.Unauthorized, noCsrf.StatusCode);
+        Assert.Contains("Sign in again to approve", await noCsrf.Content.ReadAsStringAsync());
     }
 
     [Fact]

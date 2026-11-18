@@ -177,6 +177,11 @@ checks fail together raises one alert and one card. Reports
   declarations closes its open incident on the next tick (`check-removed`); the
   recovery report says so. A broken declaration file does not count as a
   removal.
+- Needs you reads open environment incidents from the durable health state.
+  Each appears before routine decisions with its project, environment, start
+  time and failing checks. The row opens the incident card or the project's
+  Operations view; recovery removes it on the next operator poll. Successful
+  deployments remain in deployment history and do not appear in Needs you.
 - Certificate: a `tls` check warns once when the certificate is within 14 days
   of expiry and once more within 3 days (`environment-certificate-expiring`).
   The first warning creates a chore card, and the second one comments on it.
