@@ -76,8 +76,8 @@
               [compact]="true" testId="managed-database-operation-state" />
             <span>{{ describe(operation) }}</span>
           </div>
-          <small>Requested by {{ operation.requestedBy }} {{ operation.requestedAt | date:'d MMM y, HH:mm':'UTC' }} UTC
-            @if (operation.approvedBy) { · {{ operation.state === 'rejected' ? 'Rejected' : 'Approved' }} by {{ operation.approvedBy }}
+          <small>Requested by {{ operation.requestedBy | principalName }} {{ operation.requestedAt | date:'d MMM y, HH:mm':'UTC' }} UTC
+            @if (operation.approvedBy) { · {{ operation.state === 'rejected' ? 'Rejected' : 'Approved' }} by {{ operation.approvedBy | principalName }}
               @if (operation.approvedAt) { {{ operation.approvedAt | date:'d MMM y, HH:mm':'UTC' }} UTC } }
             @if (operation.finishedAt) { · Finished {{ operation.finishedAt | date:'d MMM y, HH:mm':'UTC' }} UTC }</small>
           @if (operation.message) { <p>{{ operation.message }}</p> }

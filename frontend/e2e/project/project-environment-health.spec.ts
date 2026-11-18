@@ -27,6 +27,7 @@ const environments = (project: string) => [
     currentIncident: { id: 'production/http/20261019T074500Z', environmentId: 'production', checkId: 'http',
       startedAt: '2026-10-19T07:45:00Z', firstError: 'timeout', failedProbes: 15, endedAt: null,
       cardId: 'health-production-202610190745' },
+    incidentCardKey: 'NS-2',
     lastIncident: null,
     checks: [
       check({ status: 'down', lastSample: sample(false), consecutiveFailures: 15, uptime24h: 0.9861 }),
@@ -79,13 +80,16 @@ test('Operations tab shows uptime, latency, the open incident and certificate ex
   await expect(production).toContainText('98.61 %');
   await expect(production).toContainText('284 ms');
   await expect(production.getByTestId('environment-health-incident')).toContainText('15 failed probes');
+  // The playthrough: the incident card is linked by the key the board shows, not by its folder slug.
+  await expect(production.getByTestId('environment-health-incident-card')).toHaveText('NS-2');
+  await expect(production.getByTestId('environment-health-incident')).not.toContainText('health-production-202610190745');
   await expect(production.getByTestId('environment-health-check-tls')).toContainText('Certificate expires in 10 days');
   await expect(panel.getByTestId('environment-health-stage')).toContainText('Last incident');
   const preview = panel.getByTestId('environment-health-preview');
   await expect(preview).toContainText('Misconfigured');
   await expect(preview.getByTestId('environment-health-error')).toContainText('intervalSeconds must be an integer');
 
-  for (const [width, height] of [[1440, 900], [1920, 1080]]) {
+  for (const [width, height] of [[390, 844], [1280, 900], [1440, 900], [1920, 1080]]) {
     await page.setViewportSize({ width, height });
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);

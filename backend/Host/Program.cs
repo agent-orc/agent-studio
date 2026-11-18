@@ -1536,7 +1536,8 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDri
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
     sp.GetRequiredService<HealthCheckStore>(),
-    () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name)));
+    () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),
+    (project, cardId) => sp.GetRequiredService<EnvironmentHealthService>().CardKey(project, cardId)));
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
