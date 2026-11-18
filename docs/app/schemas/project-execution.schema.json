@@ -748,6 +748,11 @@
           },
           "environments": {
             "$ref": "#/$defs/environmentScope"
+          },
+          "verify": {
+            "description": "What must pass after the steps before the run succeeds: health:<health check id> of the environment, or alert:<telemetry alert rule id> that must not fire.",
+            "type": "string",
+            "pattern": "^(health|alert):[a-z0-9][a-z0-9._-]{0,63}$"
           }
         }
       }

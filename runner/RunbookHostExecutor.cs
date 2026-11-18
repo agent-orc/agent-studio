@@ -6,13 +6,14 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
-public sealed record RunbookHostStepResult(int Index, bool Success);
+/// <param name="Output">The masked, bounded tail of the step's stdout and stderr, one line per entry.</param>
+public sealed record RunbookHostStepResult(int Index, bool Success, string? Output = null);
 public sealed record RunbookHostResult(bool Success, IReadOnlyList<RunbookHostStepResult> Steps);
 
 /// <summary>
 /// Runs operator-installed scripts by identifier on the assigned deploy host.
 /// No repository command or shell text arrives from project.yml. Script output
-/// is drained locally; only bounded step results return to the control plane.
+/// returns only as a bounded tail per step with every secret value masked.
 /// </summary>
 public static class RunbookHostExecutor
 {
@@ -67,6 +68,8 @@ public static class RunbookHostExecutor
             values[name] = (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), cancellationToken))
                 .TrimEnd('\r', '\n');
         }
+        var mask = SecretLiterals(values, secretVariables.Keys.Concat(environmentSecretRefs
+            .Select(secret => secret.Replace('-', '_').Replace('.', '_').ToUpperInvariant())));
         var results = new List<RunbookHostStepResult>();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(RunTimeout);
@@ -74,13 +77,13 @@ public static class RunbookHostExecutor
         {
             if (deadline.IsCancellationRequested)
             {
-                results.Add(new(index, false));
+                results.Add(new(index, false, "The runbook time limit ended before this step started."));
                 break;
             }
             var script = Path.Combine(scriptRoot, project, steps[index] + ".sh");
             if (!File.Exists(script))
             {
-                results.Add(new(index, false));
+                results.Add(new(index, false, $"Script {script} is not installed on this host."));
                 break;
             }
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
@@ -98,14 +101,16 @@ public static class RunbookHostExecutor
             start.ArgumentList.Add(script);
             foreach (var (name, value) in values) start.Environment[name] = value;
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Runbook step could not start.");
-            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
-            var error = process.StandardError.BaseStream.CopyToAsync(Stream.Null);
+            var tail = new StepOutput(mask);
+            var output = tail.DrainAsync(process.StandardOutput);
+            var error = tail.DrainAsync(process.StandardError);
             try
             {
                 await process.WaitForExitAsync(timeout.Token);
                 // A child can inherit a redirected pipe after the script exits.
                 await Task.WhenAll(output, error).WaitAsync(timeout.Token);
-                results.Add(new(index, process.ExitCode == 0));
+                if (process.ExitCode != 0) tail.Note($"Exit code {process.ExitCode}.");
+                results.Add(new(index, process.ExitCode == 0, tail.Text()));
             }
             catch (OperationCanceledException)
             {
@@ -114,11 +119,83 @@ public static class RunbookHostExecutor
                 await SettleAsync(process.WaitForExitAsync(CancellationToken.None));
                 await SettleAsync(Task.WhenAll(output, error));
                 cancellationToken.ThrowIfCancellationRequested();
-                results.Add(new(index, false));
+                tail.Note("The step was stopped at its time limit.");
+                results.Add(new(index, false, tail.Text()));
             }
             if (!results[^1].Success) break;
         }
         return new(results.Count == steps.Count && results.All(result => result.Success), results);
+    }
+
+    /// <summary>Every secret value the scripts receive, and each line of a multi-line one, longest first.</summary>
+    private static string[] SecretLiterals(IReadOnlyDictionary<string, string> values, IEnumerable<string> names)
+        => names.Distinct(StringComparer.Ordinal).Where(values.ContainsKey).Select(name => values[name])
+            .SelectMany(value => value.Split('\n').Select(line => line.TrimEnd('\r')).Append(value))
+            .Where(value => value.Length >= StepOutput.MinimumSecretLength).Distinct(StringComparer.Ordinal)
+            .OrderByDescending(value => value.Length).ToArray();
+
+    /// <summary>
+    /// The last <see cref="MaxLines"/> lines of stdout and stderr, interleaved as they arrive.
+    /// Each line is masked before it is cut, so a cut never exposes the start of a secret.
+    /// </summary>
+    internal sealed class StepOutput(IReadOnlyList<string> secrets)
+    {
+        public const int MaxLines = 200;
+        public const int MaxLineLength = 400;
+        public const int MinimumSecretLength = 4;
+        /// <summary>Raw characters kept per line before masking; longer lines are cut here.</summary>
+        private const int MaxRawLineLength = 8192;
+        private const string Masked = "[masked]";
+        private readonly object _gate = new();
+        private readonly Queue<string> _lines = new();
+        private int _omitted;
+
+        public async Task DrainAsync(StreamReader reader)
+        {
+            var buffer = new char[4096];
+            var line = new StringBuilder();
+            int read;
+            while ((read = await reader.ReadAsync(buffer)) > 0)
+            {
+                for (var i = 0; i < read; i++)
+                {
+                    if (buffer[i] == '\n')
+                    {
+                        Add(line.ToString());
+                        line.Clear();
+                    }
+                    else if (line.Length < MaxRawLineLength) line.Append(buffer[i]);
+                }
+            }
+            if (line.Length > 0) Add(line.ToString());
+        }
+
+        public void Note(string message) => Add(message);
+
+        public string? Text()
+        {
+            lock (_gate)
+            {
+                if (_lines.Count == 0) return null;
+                var lines = _omitted > 0 ? _lines.Prepend($"({_omitted} earlier lines omitted)") : _lines;
+                return string.Join('\n', lines);
+            }
+        }
+
+        private void Add(string raw)
+        {
+            var text = raw.TrimEnd('\r');
+            foreach (var secret in secrets) text = text.Replace(secret, Masked, StringComparison.Ordinal);
+            text = new string(text.Select(ch => ch == '\t' ? ' ' : ch).Where(ch => !char.IsControl(ch)).ToArray());
+            if (text.Length > MaxLineLength) text = text[..MaxLineLength] + "…";
+            lock (_gate)
+            {
+                _lines.Enqueue(text);
+                if (_lines.Count <= MaxLines) return;
+                _lines.Dequeue();
+                _omitted++;
+            }
+        }
     }
 
     private static void Terminate(Process process, string runMarker)

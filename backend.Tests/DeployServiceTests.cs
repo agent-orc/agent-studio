@@ -537,6 +537,126 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Runbook_log_keeps_the_masked_bounded_output_of_each_step_and_names_people()
+    {
+        // M4: the log said only "Operation succeeded." and showed requester and approver as user ids.
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: free-disk\n    steps: [docker-prune, journal-vacuum]\n    environments: [production]\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store, names: new Directory_(new Dictionary<string, string>
+        {
+            [Operator.Id] = "Olivia Operator", [Owner.Id] = "Oscar Owner",
+        }));
+        var requested = runbooks.Request("demo", "production", "free-disk", Operator).Value!;
+        Assert.Equal("Olivia Operator", requested.RequestedByName);
+        var approved = runbooks.Approve("demo", requested.Id, Owner).Value!;
+        Assert.Equal(Owner.Id, approved.ApprovedBy);
+        Assert.Equal("Oscar Owner", approved.ApprovedByName);
+        var job = environments.Claim("prod-host")!;
+        var token = "ghp_" + new string('a', 36);
+        var prune = string.Join('\n', Enumerable.Range(0, 250).Select(index => $"deleted layer {index}")
+            .Append("Total reclaimed space: 1.2GB"));
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok",
+            RunbookResults: [new(0, true, prune), new(1, true, $"Vacuuming done with {token}\n" + new string('x', 900))])));
+        runbooks.SyncAfterHostCall("demo");
+
+        var run = runbooks.Run("demo", requested.Id)!;
+        Assert.Equal(DeploymentStates.Succeeded, run.State);
+        Assert.Equal("Olivia Operator", run.RequestedByName);
+        Assert.Equal("Oscar Owner", run.ApprovedByName);
+        var log = runbooks.Log("demo", requested.Id, null)!.Lines;
+        Assert.Contains(log, line => line.Step == "approval" && line.Message == "Approved by Oscar Owner.");
+        Assert.Contains(log, line => line.Message.StartsWith("Requested by Olivia Operator.", StringComparison.Ordinal));
+        var pruneLines = log.Where(line => line.Step == "docker-prune").Select(line => line.Message).ToArray();
+        Assert.Equal(RunbookStepOutput.MaxLines + 1, pruneLines.Length);
+        Assert.Equal("Total reclaimed space: 1.2GB", pruneLines[^2]);
+        Assert.Equal("Operation succeeded.", pruneLines[^1]);
+        var vacuum = log.Where(line => line.Step == "journal-vacuum").Select(line => line.Message).ToArray();
+        Assert.Contains(vacuum, line => line.StartsWith("Vacuuming done with [REDACTED", StringComparison.Ordinal));
+        Assert.DoesNotContain(log, line => line.Message.Contains(token, StringComparison.Ordinal));
+        Assert.All(log, line => Assert.True(line.Message.Length <= RunbookStepOutput.MaxLineLength + 1));
+    }
+
+    [Fact]
+    public async Task Runbook_with_verify_fails_when_the_named_health_check_does_not_pass_after_the_scripts()
+    {
+        // M4: the restart runbook reported succeeded while the application still answered 504.
+        var (deploy, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: restart\n    steps: [restart-container]\n    verify: health:http\n");
+        Commit("runbook-definition");
+        var probe = new ScriptedProbe(new HealthSample(_clock.GetUtcNow(), false, 4012, 504, "status"));
+        var runbooks = Runbooks(environments, store, verifier: Verifier(environments, probe));
+
+        var requested = runbooks.Request("demo", "stage", "restart", Operator).Value!;
+        Assert.Equal("health check http", requested.Verifies);
+        Assert.Equal(["restart-container", "verification"], requested.Steps.Select(step => step.Name));
+        var job = environments.Claim("stage-host")!;
+        Assert.Equal(["restart-container"], job.RunbookSteps);
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok",
+            RunbookResults: [new(0, true, "Container demo restarted.")])));
+        runbooks.SyncAfterHostCall("demo");
+        await runbooks.WaitForVerificationsAsync();
+
+        var run = runbooks.Run("demo", requested.Id)!;
+        Assert.Equal(DeploymentStates.Failed, run.State);
+        Assert.Equal([DeploymentStates.Succeeded, DeploymentStates.Failed], run.Steps.Select(step => step.State));
+        Assert.Equal(2, probe.Probed.Count);
+        Assert.Equal("https://stage.example/health", probe.Probed[0].Url);
+        Assert.False(run.Verification!.Passed);
+        Assert.Equal("health check http", run.Verification.Target);
+        Assert.Equal("Health check http (https://stage.example/health) did not pass in 2 attempts over 0 s: answered 504 after 4012 ms.",
+            run.Verification.Detail);
+        Assert.Contains(runbooks.Log("demo", requested.Id, "verification")!.Lines,
+            line => line.Message == run.Verification.Detail);
+        Assert.Contains(runbooks.Log("demo", requested.Id, "restart-container")!.Lines,
+            line => line.Message == "Container demo restarted.");
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "runbook-failed" && entry.DeploymentId == run.Id);
+        Assert.DoesNotContain(deploy.Audit("demo")!, entry => entry.Action == "runbook-succeeded");
+    }
+
+    [Fact]
+    public async Task Runbook_with_verify_succeeds_and_says_what_was_verified()
+    {
+        var (deploy, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: restart\n    steps: [restart-container]\n    verify: health:http\n");
+        Commit("runbook-definition");
+        var probe = new ScriptedProbe(new HealthSample(_clock.GetUtcNow(), false, null, null, "timeout"),
+            new HealthSample(_clock.GetUtcNow(), true, 41, 200, null));
+        var runbooks = Runbooks(environments, store, verifier: Verifier(environments, probe));
+        var requested = runbooks.Request("demo", "stage", "restart", Operator).Value!;
+        var job = environments.Claim("stage-host")!;
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok",
+            RunbookResults: [new(0, true)])));
+
+        runbooks.SyncAfterHostCall("demo");
+        await runbooks.WaitForVerificationsAsync();
+
+        var run = runbooks.Run("demo", requested.Id)!;
+        Assert.Equal(DeploymentStates.Succeeded, run.State);
+        Assert.NotNull(run.FinishedAtUtc);
+        Assert.True(run.Verification!.Passed);
+        Assert.Equal("Health check http (https://stage.example/health) passed: answered 200 after 41 ms.", run.Verification.Detail);
+        Assert.Equal(DeploymentStates.Succeeded, run.Steps[^1].State);
+        Assert.Single(deploy.Audit("demo")!, entry => entry.Action == "runbook-succeeded" && entry.DeploymentId == run.Id);
+    }
+
+    [Fact]
+    public void Runbook_that_verifies_an_undeclared_check_is_refused_before_it_queues()
+    {
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: restart\n    steps: [restart-container]\n    verify: health:deep\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store,
+            verifier: Verifier(environments, new ScriptedProbe(new HealthSample(_clock.GetUtcNow(), true, 1, 200, null))));
+
+        var refused = runbooks.Request("demo", "stage", "restart", Operator);
+
+        Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
+        Assert.Contains("declares no health check deep", refused.Error);
+        Assert.Null(environments.Claim("stage-host"));
+    }
+
+    [Fact]
     public void Production_runbook_waits_for_owner_or_maintainer_and_records_rejection()
     {
         var (_, environments, store) = Build();
@@ -2906,7 +3026,7 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     private RunbookService Runbooks(ProjectEnvironmentService environments, DeployStore store,
-        IncidentActions? actions = null)
+        IncidentActions? actions = null, RunbookVerifier? verifier = null, IUserDisplayNames? names = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -2919,7 +3039,32 @@ public sealed class DeployServiceTests : IDisposable
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         return new RunbookService(environments, store, git, settings, _clock,
-            NullLogger<RunbookService>.Instance, actions);
+            NullLogger<RunbookService>.Instance, actions, verifier, names);
+    }
+
+    private RunbookVerifier Verifier(ProjectEnvironmentService environments, IHealthCheckProbe probe)
+        => new(environments, probe, _clock, new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Runbooks:VerifyAttempts"] = "2", ["Runbooks:VerifyIntervalSeconds"] = "0" })
+            .Build());
+
+    private sealed class ScriptedProbe(params HealthSample[] samples) : IHealthCheckProbe
+    {
+        private readonly Queue<HealthSample> _samples = new(samples);
+        public List<HealthCheckDefinition> Probed { get; } = [];
+
+        public Task<HealthSample> ProbeAsync(HealthCheckDefinition check, CancellationToken cancellationToken)
+        {
+            lock (_samples)
+            {
+                Probed.Add(check);
+                return Task.FromResult(_samples.Count > 1 ? _samples.Dequeue() : _samples.Peek());
+            }
+        }
+    }
+
+    private sealed class Directory_(IReadOnlyDictionary<string, string> names) : IUserDisplayNames
+    {
+        public string? DisplayNameOf(string userId) => names.GetValueOrDefault(userId);
     }
 
     private (IncidentActions Actions, TaskInfo Card, TimelineLog Timeline) OpenIncident(string environmentId)
