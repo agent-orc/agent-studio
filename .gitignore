@@ -9,7 +9,14 @@ frontend/build_log.txt
 # isolated-workspace pointer). Runtime only; never committed.
 .worktree-test-stack/
 .orchestrator/
-.claude/
+# Local Claude Code state stays untracked. The exception is a skill that must
+# be found natively by Claude Code, which reads .claude/skills/ but not
+# .agents/skills/: each one is a tracked relative symlink into .agents/skills/
+# (see .agents/skills/README.md, "How agents find this").
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/visual-design
 # tools/ holds local binary tooling (PtyProbe, etc.). Use tools/* so we can
 # re-include specific tracked files below; a bare tools/ would prevent any
 # whitelisting under it.
