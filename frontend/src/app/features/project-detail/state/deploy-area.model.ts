@@ -90,6 +90,7 @@ export interface EnvironmentStatus {
   newerRelease: Release | null;
   cardsSinceLastDeploy: string[];
   health: string;
+  releaseUncertain?: boolean;
   intervention?: { deploymentId: string; failedStep: string; expiresAtUtc: string | null;
     decision: string | null; decidedBy: string | null } | null;
 }
@@ -152,7 +153,7 @@ export function triggerLabel(raw: string): string {
   return (DEPLOY_TRIGGERS as readonly string[]).includes(raw) ? TRIGGER_LABEL[raw as keyof typeof TRIGGER_LABEL] : raw;
 }
 
-export type HealthState = 'healthy' | 'unhealthy' | 'unknown' | 'up' | 'degraded' | 'down' | 'invalid';
+export type HealthState = 'healthy' | 'unhealthy' | 'unknown' | 'up' | 'degraded' | 'down' | 'invalid' | 'not-observed';
 /** AGT-3201 `EnvironmentStatus.health`. */
 const STATUS_HEALTH: Record<string, HealthState> = { healthy: 'healthy', unhealthy: 'unhealthy', unknown: 'unknown' };
 /** AGT-3176 `environments[].health`, from the latest host report. */
@@ -164,7 +165,7 @@ const HOST_REPORT: Record<string, { state: DeploymentState; trigger: string }> =
   failed: { state: 'failed', trigger: 'deploy' },
 };
 
-export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'No data', up: 'Up', degraded: 'Degraded', down: 'Down', invalid: 'Misconfigured' };
+export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'No data', up: 'Up', degraded: 'Degraded', down: 'Down', invalid: 'Misconfigured', 'not-observed': 'Not observed' };
 
 /** Actions the lifecycle accepts per state (AGT-3201 StandardLifecyclePolicy); the server still decides. */
 export type DeployRunAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'skip' | 'abort';
@@ -244,6 +245,7 @@ export interface EnvironmentCardView {
   address: string | null;
   artifact: string | null;
   releaseVersion: string | null;
+  releaseUncertain?: boolean;
   deployedAt: string | null;
   cards: DeployCards;
   newer: { version: string; cardKeys: string[] } | null;
@@ -322,6 +324,36 @@ export function artifactLookupKey(artifact: string, notAfterUtc: string | null):
 
 export interface ArtifactReleaseLookup { key: string; artifact: string; notAfterUtc: string | null }
 
+/** One release decision shared by the Deploy card and project environment views. */
+export function runningReleaseOf(view: ProjectEnvironments['environments'][number] | null,
+  status: EnvironmentStatus | null): { artifact: string | null; release: Release | null; uncertain: boolean } {
+  const latestHost = view?.history[0];
+  const latestRun = status?.currentDeployment;
+  const failedRun = latestRun?.state === 'failed' || latestRun?.state === 'waiting-for-intervention'
+    ? latestRun : null;
+  const hostConfirmedAfterFailure = latestHost && (latestHost.status === 'healthy' || latestHost.status === 'rolled-back')
+    && failedRun && Date.parse(latestHost.at) > Date.parse(failedRun.finishedAtUtc ?? failedRun.createdAtUtc);
+  const acceptedHealthSkip = status?.intervention?.decision === 'skip' && status.intervention.failedStep === 'health';
+  const uncertain = !acceptedHealthSkip && Boolean((status?.releaseUncertain === true && !hostConfirmedAfterFailure)
+    || (failedRun && !hostConfirmedAfterFailure)
+    || latestHost?.status === 'failed');
+  if (uncertain) return { artifact: null, release: null, uncertain: true };
+  const artifact = status?.intervention && !hostConfirmedAfterFailure
+    ? view?.history.find(row => carriesArtifact(status.currentRelease, row.artifact))?.artifact
+      ?? status.currentRelease?.artifactDigests[0] ?? null
+    : view?.deployedArtifact ?? status?.currentRelease?.artifactDigests[0] ?? null;
+  const release = carriesArtifact(status?.currentRelease, artifact) ? status!.currentRelease : null;
+  return { artifact, release, uncertain: false };
+}
+
+export function runningReleaseLabel(view: ProjectEnvironments['environments'][number],
+  status: EnvironmentStatus | null): string {
+  const running = runningReleaseOf(view, status);
+  if (running.uncertain) return 'Running release uncertain. A failed release may be running.';
+  if (running.release) return `Release ${running.release.version}`;
+  return running.artifact ? `Running ${shortArtifact(running.artifact)}` : 'Nothing deployed yet';
+}
+
 /** The latest successful host report for the deployed artifact (AGT-3176). */
 function hostReportOf(view: CardBase['view']): ProjectEnvironments['environments'][number]['history'][number] | null {
   return view?.history.find(row => HOST_REPORT[row.status]?.state === 'succeeded'
@@ -336,8 +368,8 @@ function hostReportOf(view: CardBase['view']): ProjectEnvironments['environments
 export function artifactReleaseLookups(sources: Pick<DeploySources, 'environments' | 'statuses'>): ArtifactReleaseLookup[] {
   const lookups = new Map<string, ArtifactReleaseLookup>();
   for (const view of sources.environments?.environments ?? []) {
-    const artifact = view.deployedArtifact;
     const status = sources.statuses?.find(item => item.environment.id === view.declaration.id);
+    const artifact = runningReleaseOf(view, status ?? null).artifact;
     if (!artifact || carriesArtifact(status?.currentRelease, artifact)) continue;
     const notAfterUtc = hostReportOf(view)?.at ?? null;
     const key = artifactLookupKey(artifact, notAfterUtc);
@@ -419,14 +451,12 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       ? [...pageRuns, ...(statusRun && !pageRuns.some(item => item.id === statusRun.id) ? [statusRun] : [])].sort(newestFirst)
       : null;
     const report = hostReportOf(base.view);
-    const releaseDigest = status?.currentRelease?.artifactDigests[0] ?? null;
-    const artifact = status?.intervention
-      ? base.view?.history.find(row => digestOf(row.artifact) === digestOf(releaseDigest ?? ''))?.artifact ?? releaseDigest
-      : base.view?.deployedArtifact ?? releaseDigest;
+    const running = runningReleaseOf(base.view, status);
+    const artifact = running.artifact;
     // The release of the latest successful run names the deployment; a digest
     // match on a visible release page could name another release with the same digest.
     const lookup = artifact ? sources.artifactReleases?.get(artifactLookupKey(artifact, report?.at ?? null)) : undefined;
-    const statusRelease = status?.currentRelease ?? null;
+    const statusRelease = running.release;
     const release = carriesArtifact(statusRelease, artifact) ? statusRelease
       : lookup?.status === 'ready' && carriesArtifact(lookup.value, artifact) ? lookup.value : null;
     const lookupPending = !release && artifact !== null && lookup?.status === 'loading';
@@ -434,7 +464,7 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       ? status.currentDeployment : null;
     const matchingRun = runs?.filter(item => item.state === 'succeeded' && item.releaseId === release?.id)
       .sort((a, b) => Date.parse(b.finishedAtUtc ?? '') - Date.parse(a.finishedAtUtc ?? ''))[0] ?? null;
-    const deployedAt = [current?.finishedAtUtc, matchingRun?.finishedAtUtc, report?.at]
+    const deployedAt = running.uncertain ? null : [current?.finishedAtUtc, matchingRun?.finishedAtUtc, report?.at]
       .filter((at): at is string => !!at).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
     const releaseRun = runs?.length ? lastRunOf(runs) : null;
     const hostRun = lastReportOf(base.view);
@@ -445,10 +475,13 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       address: base.address,
       artifact,
       releaseVersion: release?.version ?? null,
+      releaseUncertain: running.uncertain,
       deployedAt,
-      cards: lookupPending ? { status: 'unknown', reason: 'Looking up the release record' }
+      cards: running.uncertain ? { status: 'unknown', reason: 'Running release uncertain' }
+        : lookupPending ? { status: 'unknown', reason: 'Looking up the release record' }
         : cardsFor(artifact !== null || release !== null, release, sources.releases !== null || status !== null || lookup?.status === 'ready'),
-      newer: status?.newerRelease ? { version: status.newerRelease.version, cardKeys: status.cardsSinceLastDeploy } : null,
+      newer: !running.uncertain && status?.newerRelease
+        ? { version: status.newerRelease.version, cardKeys: status.cardsSinceLastDeploy } : null,
       health: healthFor(status, base, sources.health),
       lastRun,
       awaitingApproval: approvalFor(base, runs, sources),

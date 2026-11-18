@@ -80,7 +80,14 @@ records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
 The batch panel lists pending cards that have not joined a formed or running
-batch. A run without a finish event counts as running only while its batch is
+batch.
+An operator gate infrastructure retry records a durable request for the card's current
+review attempt and returns its request id immediately. The next pilot tick checks the
+park and review again, then moves and enqueues under the tick lock. The state read
+reports pending, applied, and refused retry requests with any refusal reason. Clicks
+during a pending request return its id; a refused request may be submitted again after
+its cause is fixed.
+A run without a finish event counts as running only while its batch is
 in the running phase; after interruption, the panel uses `phaseAtUtc` to show
 the elapsed run time. Detached flights include their batch, detach time, and
 lease deadline in the state response and panel. The project's durable flight
@@ -1548,6 +1555,11 @@ only what ran; the log owns the arithmetic.
     totals survive both review rounds and epochs.
   - The core run carries its accumulated tokens on its live row. Its earlier
     runs are counted but not priced a second time.
+- **Legacy OpenAI usage.** Current rows and `earlierRuns` retain
+  `inputIncludesCached` and `usageNormalization` provenance. Cost reads apply
+  the ledger's OpenAI cached-input rule to older rows with no provenance when
+  input is at least the positive cache-read count. This keeps card and project
+  pipeline costs aligned with ledger receipts without rewriting stored rows.
 - **Decision model.** `StepModelUsage` is built from the same one-shot or CLI
   receipt the token ledger records. `DecisionModelContext` carries it to the
   decision row and to `decidedByModel` on the bus decision message.
@@ -3610,8 +3622,12 @@ every gate path:
 - `GateFailureTriagePolicy` classifies a gate log whose reason carries the
   invalid-definition text as `product` with kind `definition`, before any
   environment marker. The failing items are the `path [code]` pairs. Routing
-  starts the one fix round with the issues and the rule above, never attaches
-  the card to a shared cause, and never spends the environment replay budget.
+  starts at most two automatic fix rounds per card and preparation fingerprint,
+  even when each round produces a new delivery SHA. The prompt carries the
+  reported issue codes, paths, lines, and messages without advice for a
+  different rule. A repeated failure then parks the card with that issue line.
+  Definition failures never attach the card to a shared cause or spend the
+  environment replay budget.
 - Review checks the file first. Right after the completion gate,
   `ProjectDefinitionGate` reads `project.yml` at the exact subject SHA through
   git and validates it, including the existence of every referenced file. An
@@ -3796,6 +3812,12 @@ pins one compose service to the release artifact digest before pulling and
 starting it. It resolves secret names under the claimed job lease, sends step
 log messages to the deployment log, and records each step
 result. A failed deployment queues the previous healthy artifact for rollback.
+The status projection keeps the last successful release as the lifecycle
+baseline, while `releaseUncertain` marks a later failed deploy or rollback
+whose host state a newer successful host report has not confirmed. Consumers
+must not label the baseline or failed rollback target as the running release
+while this flag is set. A refused rollback returns its specific server reason;
+the operator can redeploy a known release or fix forward.
 The deploy host needs OpenSSH and access to the artifact store; its SSH target
 needs Python 3, and container targets also need Docker Compose. The
 [deploy host API contract](../contracts/deploy-host-api.md) defines the claim,

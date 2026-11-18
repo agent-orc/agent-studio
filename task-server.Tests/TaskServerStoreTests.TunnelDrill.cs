@@ -18,7 +18,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Tunnel_drill_server_restart_beyond_expiry_re_adopts_exact_current_coding_attempt_once()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DrillStart);
         var evidence = new List<string>();
         var first = Store(temp.Path, clock);
@@ -74,7 +74,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Tunnel_drill_superseded_coding_generation_cannot_change_authority_and_replacement_gets_a_new_fence()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DrillStart);
         var evidence = new List<string>();
         var first = Store(temp.Path, clock);

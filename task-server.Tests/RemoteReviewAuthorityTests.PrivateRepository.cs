@@ -17,7 +17,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Private_repository_is_refused_before_claim_without_a_scoped_read_credential()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, plan: PrivatePlan());
@@ -35,7 +35,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Private_repository_is_claimed_by_the_host_holding_its_read_credential()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 13, 9, 0, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -60,7 +60,7 @@ public sealed partial class RemoteReviewAuthorityTests
         // AGT-3077: a line in the credentials file is not a working token. An
         // expired or revoked token advertises an unavailable proof, and a proof
         // that stopped being refreshed goes stale; neither may claim.
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 13, 9, 0, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -85,7 +85,7 @@ public sealed partial class RemoteReviewAuthorityTests
         // AGT-3077 x AGT-3069: website cards are coded and reviewed on the only
         // host holding the read key. An idle review host without a proven key
         // skips the private review, so yielding to it would strand the review.
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 13, 9, 0, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -110,7 +110,7 @@ public sealed partial class RemoteReviewAuthorityTests
     {
         // AGT-3408: every attempt shares its subject's sealed plan, so a retry
         // kept the "public" of the failed attempt after the operator fixed it.
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, plan: PrivatePlan() with { PrivateRepository = false });
@@ -134,7 +134,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task A_retry_of_a_repository_GitHub_reports_private_is_never_planned_public()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, plan: PrivatePlan() with { PrivateRepository = false });
@@ -156,7 +156,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task A_new_subject_of_a_repository_GitHub_reports_private_is_planned_private()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         store.ReportedRepositoryPrivate = url => url == RepositoryUrl;
@@ -169,7 +169,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task A_retry_without_any_current_visibility_keeps_the_sealed_one()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 13, 9, 0, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();

@@ -238,6 +238,29 @@ test.describe('Project Deploy area (mocked)', () => {
     expect(calls).toEqual(['stop', 'card', 'host-removal']);
   });
 
+  test('failed Production deployment leaves its running release uncertain', async ({ page }) => {
+    const environments = deployEnvironmentsFixture();
+    const production = environments.environments[1];
+    production.deployedArtifact = ARTIFACT_B;
+    production.health = 'failed';
+    production.history.unshift({ at: '2026-10-19T11:59:00Z', status: 'failed', artifact: ARTIFACT_B,
+      previousArtifact: ARTIFACT_A, evidence: 'health-http-failed' });
+    const statuses = deployStatusFixture();
+    statuses[1].releaseUncertain = true;
+    const failed = { ...deployDeploymentsFixture()[0], id: 'failed-production', environmentId: 'production',
+      releaseId: deployReleasesFixture()[1].id, state: 'failed', trigger: 'deploy',
+      createdAtUtc: '2026-10-19T11:58:00Z', finishedAtUtc: '2026-10-19T11:59:00Z' };
+    statuses[1].currentDeployment = failed;
+    await openDeploy(page, fullMocks({ environments, status: statuses,
+      deployments: [failed, ...deployDeploymentsFixture()] }));
+    const card = page.getByRole('article', { name: 'Production' });
+    await expect(card.getByTestId('deploy-environment-release')).toHaveText('Running release uncertain. A failed release may be running.');
+    await expect(card.getByTestId('deploy-environment-age')).toHaveText('Unknown');
+    await setTheme(page, 'light');
+    await capture(page, 'production-running-release-uncertain-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'production-running-release-uncertain-dark');
+  });
   test('URL project without checkout shows one Deploy state and stops checkout-dependent reads', async ({ page }) => {
     let reads = 0;
     page.on('request', request => {

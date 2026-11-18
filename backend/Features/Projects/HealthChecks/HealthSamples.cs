@@ -12,13 +12,14 @@ public sealed record HealthSample(DateTimeOffset At, bool Ok, int? LatencyMs, in
     public const string ProbeFailed = "probe-failed";
     /// <summary>The target does not exist yet, for example a managed database before its first deploy (AGT-3878).</summary>
     public const string NotApplicable = "not-applicable";
+    public const string NotObserved = "not-observed";
 
     /// <summary>
     /// False for results that say nothing about the target's availability. They are shown on the
     /// check but neither stored in the series nor counted toward an incident.
     /// </summary>
     [JsonIgnore]
-    public bool MeasuresAvailability => Error is not (AddressBlocked or ProbeFailed or NotApplicable);
+    public bool MeasuresAvailability => Error is not (AddressBlocked or ProbeFailed or NotApplicable or NotObserved);
 }
 
 /// <summary>One hour of samples after raw retention has passed.</summary>
