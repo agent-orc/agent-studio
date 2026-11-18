@@ -125,12 +125,19 @@ class FakeDeployData {
   pipeline(): Observable<DeployPanel<unknown>> { return this.pipelinePanel; }
   health(): Observable<DeployPanel<unknown>> { return this.healthPanel; }
   releaseGate(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`gate:${project}`); return this.releaseGatePanel; }
+  readonly secretPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
+  readonly secretRequests: string[] = [];
+  secretReadiness(project: string, releaseId?: string | null): Observable<DeployPanel<unknown>> {
+    this.secretRequests.push(releaseId ? `${project}:${releaseId}` : project); return this.secretPanel;
+  }
   deploymentLog(_project: string, id: string): Observable<DeployPanel<unknown>> {
     this.requests.push(`log:${id}`);
     return new BehaviorSubject<DeployPanel<unknown>>({ status: 'ready', value: deploymentLogFixture(id) });
   }
-  act(_project: string, id: string, action: string): Observable<unknown> {
+  readonly actOptions: unknown[] = [];
+  act(_project: string, id: string, action: string, _reason?: string, options?: unknown): Observable<unknown> {
     this.actions.push(`${action}:${id}`);
+    this.actOptions.push(options);
     return this.actionResult;
   }
   readonly deployActionsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
@@ -694,6 +701,48 @@ describe('ProjectDeployAreaComponent', () => {
     await click('deploy-run-approve');
     expect(window.confirm).toHaveBeenCalledWith('Approve deploying release 2026.10.19.2 (1 card) to Production?');
     expect(data.actions).toEqual(['approve:run-c-production']);
+  });
+
+  it('lists missing Production secrets on the card and the drawer, binds from there, and confirms the approval with the names (F14)', async () => {
+    data.serveEverything();
+    data.secretPanel.next({ status: 'ready', value: { project: 'Website', releaseId: null, environments: [
+      { environmentId: 'stage', environmentName: 'Stage', kind: 'stage', releaseId: RELEASE_3.id, requiresApproval: false, ready: true, missing: [] },
+      { environmentId: 'production', environmentName: 'Production', kind: 'production', releaseId: RELEASE_3.id,
+        requiresApproval: true, ready: false,
+        missing: [{ name: 'DATABASE_URL', reference: 'secret://Website/production/DATABASE_URL', reason: 'not-bound', bindable: true }] },
+    ] } });
+    await settle();
+    expect(byTestId('deploy-secret-gaps-stage')).toBeNull();
+    expect(text('deploy-secret-gaps-production')).toContain('DATABASE_URL');
+    expect(text('deploy-secret-gaps-production')).toContain('not bound to this environment');
+
+    await click('deploy-environment-review-approval');
+    expect(data.secretRequests).toContain(`Website:${RELEASE_3.id}`);
+    expect(text('deploy-run-drawer')).toContain('DATABASE_URL');
+    await click('deploy-run-approve');
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('1 secret binding is missing: DATABASE_URL.'));
+    expect(data.actions).toEqual(['approve:run-c-production']);
+    expect(data.actOptions).toEqual([{ confirmMissingSecrets: true }]);
+
+    fixture.componentInstance.closeRun();
+    await settle();
+    await click('deploy-secret-bind-production');
+    expect(fixture.componentInstance.view()).toBe('secrets');
+    expect(fixture.componentInstance.secrets.environment()).toBe('production');
+  });
+
+  it('sends no approval when the approver declines the missing-secret confirmation (F14)', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => false));
+    data.serveEverything();
+    data.secretPanel.next({ status: 'ready', value: { project: 'Website', releaseId: RELEASE_3.id, environments: [
+      { environmentId: 'production', environmentName: 'Production', kind: 'production', releaseId: RELEASE_3.id,
+        requiresApproval: true, ready: false,
+        missing: [{ name: 'DATABASE_URL', reference: 'secret://Website/production/DATABASE_URL', reason: 'not-bound', bindable: true }] },
+    ] } });
+    await settle();
+    await click('deploy-environment-review-approval');
+    await click('deploy-run-approve');
+    expect(data.actions).toEqual([]);
   });
 
   it('asks a local session without sign-in to create the owner, then approves the Production run', async () => {

@@ -36,6 +36,7 @@ export class ProjectDeployOverviewComponent {
   readonly actions = input<readonly DeployActionOption[]>([]);
   readonly actionState = input<DeployActionState>({ busy: null, error: null });
   readonly startAction = output<DeployActionOption>();
+  readonly openSecrets = output<string>();
   /** project.yml changed; the owner reloads the Deploy sources. */
   readonly definitionChanged = output<void>();
 

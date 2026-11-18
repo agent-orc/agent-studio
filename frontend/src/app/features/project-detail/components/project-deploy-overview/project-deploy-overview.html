@@ -13,7 +13,8 @@
         <div class="deploy-overview__grid">
           @for (card of cards(); track card.id) {
             <app-deploy-environment-card [environment]="card" [now]="now()" [actions]="actions()" [actionState]="actionState()"
-              (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" (startAction)="startAction.emit($event)" />
+              (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" (startAction)="startAction.emit($event)"
+              (openSecrets)="openSecrets.emit($event)" />
           }
           @for (environment of declared(); track environment.name) {
             <article class="deploy-overview__declared" [attr.aria-labelledby]="'deploy-declared-' + environment.name"
