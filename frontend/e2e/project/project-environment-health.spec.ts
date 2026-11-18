@@ -118,3 +118,41 @@ test('Environment view lists application health across the workspace', async ({ 
     await overview.screenshot({ path: path.join(results, `environment-health-overview-1440-${theme}.png`) });
   }
 });
+
+test('Production without telemetry reads not observed in Operations and Environment', async ({ page }) => {
+  await mockHealth(page);
+  const missing = environments(projectName).map(item => item.environmentId === 'production'
+    ? { ...item, status: 'not-observed', currentIncident: null, checks: [
+        check({}), check({ id: 'telemetry-5xx-rate', kind: 'telemetry', target: '5xx-rate',
+          status: 'not-observed', lastSample: sample(true, { status: null, error: 'not-observed' }),
+          uptime24h: null, uptime7d: null, uptime30d: null }),
+      ] }
+    : item);
+  await page.route('**/api/projects/*/environments/health', route => route.fulfill({ json: {
+    project: projectName, capturedAt: '2026-10-19T08:00:00Z', probeOrigin: 'control-plane', environments: missing,
+  } }));
+  await page.route('**/api/environment/health', route => route.fulfill({ json: {
+    capturedAt: '2026-10-19T08:00:00Z', probeOrigin: 'control-plane', environments: missing,
+  } }));
+  const slug = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  await page.goto(`/#/projects/${slug}/deploy`);
+  await page.getByTestId('deploy-tab-operations').click();
+  const production = page.getByTestId('environment-health-production');
+  await expect(production.getByTestId('environment-health-status')).toContainText('Not observed');
+  await expect(production.getByTestId('environment-health-check-telemetry-5xx-rate'))
+    .toContainText('Not observed');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await production.screenshot({ path: path.join(results, `production-telemetry-not-observed-${theme}.png`) });
+  }
+  await page.goto('/');
+  await expect(page.getByTestId('studio-titlebar-theme')).toBeVisible();
+  const inline = page.getByTestId('studio-titlebar-environment');
+  if (await inline.isVisible()) await inline.click();
+  else {
+    await page.getByRole('button', { name: 'More navigation' }).click();
+    await page.getByRole('menuitem', { name: 'Environment' }).click();
+  }
+  await expect(page.getByTestId('health-overview-' + projectName + '-production'))
+    .toContainText('Not observed');
+});

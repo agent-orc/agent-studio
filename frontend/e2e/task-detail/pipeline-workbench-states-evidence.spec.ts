@@ -220,6 +220,18 @@ async function installRoutes(page: Page, state: string, pipelineBody: () => unkn
   await page.route('**/api/**', (route) => {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => {});
   });
+  await page.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      snapshotVersion: 1, workspaceId: '', timeZone: 'Europe/Berlin', weekStart: 1,
+      generatedAt: new Date().toISOString(), calendar: {}, clis: [], cost: null,
+      runs: [], slots: [], sources: {},
+    }) }),
+  );
+  await page.route('**/api/v1/studio/auth/status', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+    }) }),
+  );
   await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200, contentType: 'application/json',
@@ -239,6 +251,11 @@ async function installRoutes(page: Page, state: string, pipelineBody: () => unkn
   );
   await page.route('**/api/cli/usage**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }),
+  );
+  await page.route('**/api/projects/*/workbenches**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      projectName: PROJECT, includesHistory: true, count: 0, items: [],
+    }) }),
   );
   await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: { [PROJECT]: { projectName: PROJECT, mode: 'auto', activeJobId: JOB_ID, activeExecution: null, queuedJobIds: [] } } }) }),
@@ -340,12 +357,17 @@ test.describe('Pipeline workbench state evidence', () => {
     await expect(page.locator('[data-testid="overview-pipeline-phase"][data-phase="aspect"] [data-testid="overview-pipeline-phase-concern"]')).toBeVisible();
     // The failed open-items guard explains exactly why it escalated in its
     // details dialog instead of leaving the operator with only a red cross.
-    await page.locator('[data-step-id="pre-reissue-open-items"]')
-      .getByTestId('overview-pipeline-step-details').click();
+    const detailsTrigger = page.locator('[data-step-id="pre-reissue-open-items"]')
+      .getByTestId('overview-pipeline-step-details');
+    await detailsTrigger.click();
     const detail = page.getByTestId('overview-pipeline-step-concerns-detail');
     await expect(detail).toContainText('Escalation reason');
     await expect(detail).toContainText('browser evidence is missing');
-    await page.getByTestId('overview-pipeline-step-details-dialog').getByRole('button', { name: 'Close' }).click();
+    if (RESULTS_DIR) await page.screenshot({ path: path.join(RESULTS_DIR, 'pipeline-step-dialog-before-escape.png') });
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('overview-pipeline-step-details-dialog')).toBeHidden();
+    await expect(pipeline).toBeVisible();
+    await expect(detailsTrigger).toBeFocused();
     await shot(page, pipeline, 'pipeline-state-blocked--mocked.png');
   });
 

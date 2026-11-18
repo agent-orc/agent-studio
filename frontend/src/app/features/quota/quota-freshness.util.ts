@@ -1,4 +1,5 @@
 import type { QuotaSnapshot } from './models/quota.model';
+import { browserTimeZone, formatZonedWithUtc } from '../../services/usage-time.util';
 
 export function formatQuotaAge(ms: number): string {
   if (!Number.isFinite(ms)) return 'never';
@@ -25,10 +26,7 @@ export function quotaSnapshotIsStale(
 
 export function quotaProbeFailureLabel(snapshot: QuotaSnapshot): string | null {
   if (!snapshot.probeFailedAt) return null;
-  const failedMs = Date.parse(snapshot.probeFailedAt);
-  const time = Number.isFinite(failedMs)
-    ? new Date(failedMs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-    : 'unknown time';
+  const time = formatZonedWithUtc(snapshot.probeFailedAt, browserTimeZone()) ?? 'unknown time';
   const cli = snapshot.cliType.toLowerCase();
   const version = normalizedVersion(snapshot.cliVersion);
   return `probe failed ${time}, ${cli}${version ? ` ${version}` : ''}`;

@@ -33,7 +33,7 @@
       @for (item of events(); track $index) {
         <li class="dd__event" [attr.data-kind]="item.event.kind">
           <div class="dd__when dd__num">
-            <span>{{ item.event.at | date: 'MMM d, HH:mm' }}</span>
+            <span>{{ when(item.event.at) }}</span>
             @if (duration(item.event.durationMs); as d) { <span class="dd__dim">{{ d }}</span> }
           </div>
           <div class="dd__what" data-testid="card-token-drilldown-event-what">

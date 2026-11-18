@@ -581,8 +581,15 @@ public sealed class DeployService
             var releases = tenant is null ? snapshot.Releases : snapshot.Records.Values
                 .Where(record => record.Tenants.Any(item => item.Name == tenant))
                 .Select(record => record.Release).ToArray();
+            var confirmedHostReports = tenant is null
+                ? snapshot.View.Environments.Select(view => (view.Declaration.Id,
+                        Report: view.History.FirstOrDefault(row => row.Status is "healthy" or "rolled-back")))
+                    .Where(item => item.Report is not null)
+                    .ToDictionary(item => item.Id, item => item.Report!.At, StringComparer.Ordinal)
+                : null;
             return EnvironmentStatusProjection.Project(selected, releases,
-                snapshot.Deployments(project).Where(item => item.Tenant == tenant).ToArray(), hostHealth)
+                snapshot.Deployments(project).Where(item => item.Tenant == tenant).ToArray(), hostHealth,
+                confirmedHostReports)
                 .Select(item => item with { Tenant = tenant })
                 .Concat(tenant is null ? previews : []).ToArray();
         }

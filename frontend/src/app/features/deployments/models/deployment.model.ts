@@ -48,5 +48,6 @@ export interface EnvironmentStatus {
   newerRelease: Release | null;
   cardsSinceLastDeploy: string[];
   health: 'healthy' | 'unhealthy' | 'unknown';
+  releaseUncertain?: boolean;
   tenant?: string | null;
 }

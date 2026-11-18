@@ -5,6 +5,45 @@ namespace AgentStudio.Telemetry;
 
 public sealed partial class TelemetryStore
 {
+    public IReadOnlyList<TraceSummaryResponse> QueryTraces(TelemetryEnvironmentKey key, long from, long to, int limit)
+    {
+        using var connection = Open(DatabasePath(key), create: false);
+        if (connection is null) return [];
+        using var command = Command(connection, null, """
+            SELECT trace_id, MIN(start_time), MAX(end_time), MAX(failed),
+              COALESCE(MAX(CASE WHEN parent_span_id IS NULL THEN name END), MIN(name)), COUNT(*)
+            FROM spans WHERE start_time >= $from AND start_time < $to
+            GROUP BY trace_id HAVING MAX(failed) = 1 OR MAX(end_time) - MIN(start_time) >= 500000000
+            ORDER BY MAX(failed) DESC, MAX(end_time) - MIN(start_time) DESC LIMIT $limit
+            """, "$from", "$to", "$limit");
+        Bind(command, from, to, Math.Clamp(limit, 1, 500));
+        var result = new List<TraceSummaryResponse>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            result.Add(new(reader.GetString(0), TelemetryAdmissionPolicy.FromUnixNanos(reader.GetInt64(1)),
+                (reader.GetInt64(2) - reader.GetInt64(1)) / 1_000_000d, reader.GetInt64(3) != 0,
+                reader.GetString(4), reader.GetInt32(5)));
+        return result;
+    }
+
+    public IReadOnlyList<SpanResponse> QueryTrace(TelemetryEnvironmentKey key, string traceId)
+    {
+        using var connection = Open(DatabasePath(key), create: false);
+        if (connection is null) return [];
+        using var command = Command(connection, null, """
+            SELECT span_id, parent_span_id, name, kind, start_time, end_time, failed, attributes
+            FROM spans WHERE trace_id = $trace ORDER BY start_time, span_id LIMIT 1000
+            """, "$trace");
+        Bind(command, traceId);
+        var result = new List<SpanResponse>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            result.Add(new(reader.GetString(0), NullableString(reader, 1), reader.GetString(2), reader.GetString(3),
+                TelemetryAdmissionPolicy.FromUnixNanos(reader.GetInt64(4)),
+                (reader.GetInt64(5) - reader.GetInt64(4)) / 1_000_000d, reader.GetInt64(6) != 0,
+                TelemetryAttributes.ParseJson(reader.GetString(7)).Values));
+        return result;
+    }
     public IReadOnlyList<MetricNameResponse> MetricNames(TelemetryEnvironmentKey key)
     {
         using var connection = Open(DatabasePath(key), create: false);
