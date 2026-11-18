@@ -3,6 +3,7 @@ import type { ProjectEnvironments } from '../../../models/project-overview.model
 import type { RunHostState } from '../../../models/run-host.model';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../services/project-pipeline-definition.service';
+import type { RollbackTarget } from './rollback-offer.model';
 
 // BD-1 wire contract served by AGT-3201 under /api/projects/{project}/deploy
 // (backend/Features/Deploy/DeployContract.cs). States, triggers and health
@@ -137,6 +138,8 @@ export interface EnvironmentStatus {
   releaseUncertain?: boolean;
   intervention?: { deploymentId: string; failedStep: string; expiresAtUtc: string | null;
     decision: string | null; decidedBy: string | null } | null;
+  /** F13: the release a rollback runs now; absent on servers before it. */
+  rollbackTarget?: RollbackTarget | null;
 }
 
 export interface DeploymentLogLine {

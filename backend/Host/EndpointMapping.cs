@@ -155,7 +155,8 @@ public static class EndpointMapping
         app.MapEnvironmentHealthEndpoints();
         app.MapHostedVolumeBackupEndpoints();
         app.MapManagedDatabaseEndpoints();
-        app.MapTelemetryEndpoints();
+        if (app.Configuration.GetValue<bool?>("Telemetry:Enabled") != false)
+            app.MapTelemetryEndpoints();
         app.MapProjectCycleTimeEndpoints();
         app.MapTestRunEndpoints();
         app.MapProjectGraphEndpoints();

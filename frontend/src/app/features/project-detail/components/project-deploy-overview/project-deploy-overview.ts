@@ -3,6 +3,7 @@ import { EmptyStateComponent } from '../../../../components/empty-state/empty-st
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { DeployEnvironmentCardComponent } from '../deploy-environment-card/deploy-environment-card';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
 import { ProjectDeployStepsFormComponent } from '../project-deploy-steps-form/project-deploy-steps-form';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
 import {
@@ -39,6 +40,11 @@ export class ProjectDeployOverviewComponent {
   readonly actions = input<readonly DeployActionOption[]>([]);
   readonly actionState = input<DeployActionState>({ busy: null, error: null });
   readonly startAction = output<DeployActionOption>();
+  readonly rollbackOffers = input<readonly RollbackOffer[]>([]);
+  /** The environment whose rollback request is on its way. */
+  readonly rollbackBusy = input<string | null>(null);
+  readonly rollback = output<string>();
+  readonly offers = computed(() => new Map(this.rollbackOffers().map(offer => [offer.environmentId, offer])));
   readonly openSecrets = output<string>();
   /** project.yml changed; the owner reloads the Deploy sources. */
   readonly definitionChanged = output<void>();

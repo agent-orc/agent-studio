@@ -193,3 +193,33 @@ export function pipelineDefinitionFixture(): PipelineDefinitionResponse {
     },
   };
 }
+
+/**
+ * F13, the playthrough story: Production runs Release 3; Release 2 crash-looped
+ * there while its deploy-time health step passed, so the rollback target is
+ * Release 1 and Release 2 is skipped. `incidentOnly` leaves Release 2 as the
+ * only older release, marked with its incident.
+ */
+export function productionRollbackFixture(incidentOnly = false): {
+  environments: ProjectEnvironments; statuses: EnvironmentStatus[]; deployments: Deployment[];
+} {
+  const productionRun = run('run-c-production-done', RELEASE_3.id, 'production', 'succeeded', 'deploy',
+    { created: '2026-10-19T11:49:00Z', started: '2026-10-19T11:50:00Z', finished: '2026-10-19T11:52:00Z' },
+    [['approval', 'succeeded', '2026-10-19T11:49:00Z', '2026-10-19T11:50:00Z'],
+      ['publish-static', 'succeeded', '2026-10-19T11:50:00Z', '2026-10-19T11:52:00Z'], ['health', 'succeeded', '2026-10-19T11:52:00Z', '2026-10-19T11:52:00Z']],
+    { requestedBy: 'release-gate', approvedBy: 'local.owner' });
+  const environments = deployEnvironmentsFixture();
+  environments.environments[1] = { ...environments.environments[1], deployedArtifact: ARTIFACT_C };
+  environments.promotions = environments.promotions.filter(item => item.status !== 'pending');
+  const deployments = [productionRun, ...deployDeploymentsFixture().filter(item => item.id !== 'run-c-production')];
+  const statuses = deployStatusFixture();
+  statuses[1] = {
+    ...statuses[1], currentRelease: RELEASE_3, currentDeployment: productionRun, newerRelease: null, cardsSinceLastDeploy: [],
+    rollbackTarget: incidentOnly
+      ? { release: RELEASE_2, deployedAtUtc: '2026-10-19T09:10:00Z', runtimeHealth: 'incident',
+        incident: { source: 'crash-loop', startedAtUtc: '2026-10-19T09:20:00Z', detail: 'the host reported crash-loop' }, skippedVersions: [] }
+      : { release: RELEASE_1, deployedAtUtc: '2026-10-18T22:10:00Z', runtimeHealth: 'healthy', incident: null,
+        skippedVersions: [RELEASE_2.version] },
+  };
+  return { environments, statuses, deployments };
+}

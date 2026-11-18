@@ -13,7 +13,9 @@
         <div class="deploy-overview__grid">
           @for (card of cards(); track card.id) {
             <app-deploy-environment-card [environment]="card" [now]="now()" [busy]="busy()" [actions]="actions()" [actionState]="actionState()"
+              [rollbackOffer]="offers().get(card.id) ?? null" [rollbackBusy]="rollbackBusy() === card.id"
               (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" (startAction)="startAction.emit($event)"
+              (rollback)="rollback.emit($event)"
               (stop)="stop.emit($event)" (remove)="remove.emit($event)" (openSecrets)="openSecrets.emit($event)" />
           }
           @for (environment of declared(); track environment.name) {

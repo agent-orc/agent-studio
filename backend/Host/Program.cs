@@ -731,8 +731,12 @@ builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookVerifier>();
 builder.Services.AddSingleton<AgentStudio.Security.IUserDisplayNames>(sp => sp.GetRequiredService<AccessSecurityStore>());
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
-builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
-    AgentStudio.Projects.StoreOperationsTelemetryReader>();
+if (builder.Configuration.GetValue<bool?>("Telemetry:Enabled") == false)
+    builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
+        AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+else
+    builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
+        AgentStudio.Projects.StoreOperationsTelemetryReader>();
 builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
@@ -1002,7 +1006,7 @@ builder.Services.AddSingleton<CliUsageParserRegistry>();
 builder.Services.AddSingleton<BusAggregationCache>();
 builder.Services.AddTokenUsage();
 // IP-15: OTLP intake and the built-in metrics and logs store per project environment.
-builder.Services.AddTelemetryIntake();
+builder.Services.AddTelemetryIntake(builder.Configuration.GetValue<bool?>("Telemetry:Enabled") != false);
 // Central step-call dispatch: the concrete Claude runner is wrapped by the
 // PromptLoggingCliOneShot decorator so every one-shot step prompt (aspects,
 // code-review-grade, orchestrator-decision, drift, ...) is captured raw into

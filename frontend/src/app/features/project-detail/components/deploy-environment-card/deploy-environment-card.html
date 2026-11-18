@@ -57,6 +57,9 @@
       Open run
     </button>
   }
+  @if (rollbackOffer(); as offer) {
+    <app-rollback-offer [offer]="offer" [now]="now()" [busy]="rollbackBusy()" (rollback)="rollback.emit($event)" />
+  }
   <div class="env-card__footer">
     <app-deploy-actions [options]="ownActions()" [environmentNames]="names()" [state]="actionState()"
       [groupLabel]="'Deploy actions for ' + environment().name" (startAction)="startAction.emit($event)" />

@@ -19,6 +19,8 @@ import {
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
 
 export interface DeployRunActionState {
   busy: DeployRunAction | null;
@@ -33,7 +35,7 @@ const ACTION_LABEL: Record<DeployRunAction, string> = {
 @Component({
   selector: 'app-deploy-run-drawer',
   standalone: true,
-  imports: [DatePipe, SidesheetComponent, StatusIndicatorComponent, DeploySecretGapsComponent],
+  imports: [DatePipe, SidesheetComponent, StatusIndicatorComponent, RollbackOfferComponent, DeploySecretGapsComponent],
   templateUrl: './deploy-run-drawer.html',
   styleUrl: './deploy-run-drawer.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -51,6 +53,11 @@ export class DeployRunDrawerComponent {
   readonly skip = output<string>();
   readonly skipReason = signal('');
   readonly closeRequest = output<void>();
+  /** F13: the rollback of the run's environment, offered while the run's release is current there. */
+  readonly rollbackOffer = input<RollbackOffer | null>(null);
+  readonly rollbackBusy = input(false);
+  readonly now = input<number>(Date.now());
+  readonly rollback = output<string>();
 
   readonly title = computed(() => `${triggerLabel(this.run().trigger)} to ${this.run().environmentName}`);
   readonly subtitle = computed(() => this.run().releaseVersion ? `Release ${this.run().releaseVersion}` : this.run().releaseId);

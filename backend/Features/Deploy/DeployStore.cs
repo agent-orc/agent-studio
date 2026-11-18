@@ -77,6 +77,23 @@ public sealed class DeployStore
         File.Move(WriteFlushed(path, deployments), path, true);
     }
 
+    /// <summary>The runtime health ledger: one record per release and environment (F13).</summary>
+    public IReadOnlyList<ReleaseRuntimeHealthRecord> ReadRuntimeHealth(string project)
+    {
+        var path = Path.Combine(ProjectRoot(project), "release-runtime-health.json");
+        return File.Exists(path)
+            ? JsonSerializer.Deserialize<List<ReleaseRuntimeHealthRecord>>(File.ReadAllText(path), _json) ?? []
+            : [];
+    }
+
+    public void SaveRuntimeHealth(string project, IReadOnlyList<ReleaseRuntimeHealthRecord> records)
+    {
+        var root = ProjectRoot(project);
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "release-runtime-health.json");
+        File.Move(WriteFlushed(path, records), path, true);
+    }
+
     /// <summary>Edited release note text per release and card key; a release file itself stays write-once.</summary>
     public IReadOnlyDictionary<string, string> ReadReleaseNoteEdits(string project, string releaseId)
         => ReadAllReleaseNoteEdits(project).GetValueOrDefault(releaseId) ?? [];

@@ -1533,6 +1533,77 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Rollback_SkipsAReleaseThatHadAProductionIncidentWhileRunning()
+    {
+        var (_, environments, store) = Build();
+        var healthStore = new HealthCheckStore(_configuration!);
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null, health: healthStore);
+        var r1 = CreateRelease(deploy, Artifact('a'), Head());
+        DeployThroughProduction(deploy, environments, r1, Owner);
+        var r2 = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, r2, Owner);
+        // r2 passed the deploy-time health step, then failed its health check while it ran.
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        healthStore.Save("demo", Incident("production", _clock.GetUtcNow(), "HTTP 502"));
+        Assert.Equal(r1.Id, deploy.Status("demo")!.Single(item => item.Environment.Id == "production").RollbackTarget?.Release.Id);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        healthStore.Save("demo", new ProjectHealthState());
+        var r3 = CreateRelease(deploy, Artifact('c'), Commit("third"));
+        DeployThroughProduction(deploy, environments, r3, Owner);
+
+        var target = deploy.Status("demo")!.Single(item => item.Environment.Id == "production").RollbackTarget!;
+        Assert.Equal(r1.Id, target.Release.Id);
+        Assert.Equal([r2.Version], target.SkippedVersions);
+        Assert.Equal(ReleaseRuntimeHealthPolicy.Unknown, target.RuntimeHealth);
+        // The F14 secret preflight checks the release the rollback runs, not the skipped one.
+        Assert.Equal(r1.Id, deploy.SecretDemandForEnvironment("demo", "production", rollback: true)?.ReleaseId);
+        var rollback = deploy.Rollback("demo", "production", approve: true, Owner);
+        Assert.Equal((DeploymentStates.Queued, r1.Id), (rollback.Value!.State, rollback.Value.ReleaseId));
+        Assert.Equal(Artifact('a'), environments.Claim("prod-host")!.Artifact);
+    }
+
+    [Fact]
+    public void Rollback_ToTheOnlyOlderRelease_WithAnIncident_NeedsExplicitAcceptance()
+    {
+        var (_, environments, store) = Build();
+        var healthStore = new HealthCheckStore(_configuration!);
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null, health: healthStore);
+        var r1 = CreateRelease(deploy, Artifact('a'), Head());
+        DeployThroughProduction(deploy, environments, r1, Owner);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        healthStore.Save("demo", Incident("production", _clock.GetUtcNow(), "connection refused"));
+        Assert.NotNull(deploy.Status("demo"));
+        healthStore.Save("demo", new ProjectHealthState());
+        var r2 = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, r2, Owner);
+
+        var target = deploy.Status("demo")!.Single(item => item.Environment.Id == "production").RollbackTarget!;
+        Assert.Equal((r1.Id, ReleaseRuntimeHealthPolicy.Incident), (target.Release.Id, target.RuntimeHealth));
+        Assert.Contains("connection refused", target.Incident?.Detail);
+        var refused = deploy.Rollback("demo", "production", approve: true, Owner);
+        Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
+        Assert.Contains(r1.Version, refused.Error);
+        // The older route no longer rolls back to it silently either.
+        Assert.Equal(DeployOutcomeKind.Conflict, deploy.RollbackEnvironment("demo", "production", Owner).Kind);
+        Assert.Null(environments.Claim("prod-host"));
+
+        var accepted = deploy.Rollback("demo", "production", approve: true, Owner, acceptIncidentTarget: true);
+        Assert.Equal((DeploymentStates.Queued, r1.Id), (accepted.Value!.State, accepted.Value.ReleaseId));
+    }
+
+    private static ProjectHealthState Incident(string environmentId, DateTimeOffset startedAt, string error)
+    {
+        var state = new ProjectHealthState();
+        state.Checks[HealthCheckStore.Key(environmentId, "http")] = new HealthCheckState
+        {
+            OpenIncident = new HealthIncident("incident-1", environmentId, "http", startedAt, error, 3),
+        };
+        return state;
+    }
+
+    [Fact]
     public void Redeploy_AndRollbackToThePreviousRelease()
     {
         var (deploy, environments, _) = Build();

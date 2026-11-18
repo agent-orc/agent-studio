@@ -23,7 +23,10 @@ import {
   deployStatusFixture,
   deploymentLogFixture,
   pipelineDefinitionFixture,
+  productionRollbackFixture,
+  RELEASE_1,
 } from '../../testing/deploy-fixtures';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 
 class FakeDeployData {
   readonly environmentsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
@@ -156,6 +159,22 @@ class FakeDeployData {
     this.starts.push(option);
     return this.startResult;
   }
+  readonly rollbacks: string[] = [];
+  rollbackResult = new Subject<unknown>();
+  rollback(_project: string, environmentId: string, body: { approve: boolean; acceptIncidentTarget: boolean }): Observable<unknown> {
+    this.rollbacks.push(`${environmentId}:approve=${body.approve}:accept=${body.acceptIncidentTarget}`);
+    return this.rollbackResult;
+  }
+
+  serveRollback(incidentOnly = false): void {
+    const scenario = productionRollbackFixture(incidentOnly);
+    this.environmentsPanel.next({ status: 'ready', value: scenario.environments });
+    this.statusPanel.next({ status: 'ready', value: scenario.statuses });
+    this.releasesPanel.next({ status: 'ready', value: deployReleasesFixture() });
+    this.deploymentsPanel.next({ status: 'ready', value: scenario.deployments });
+    this.pipelinePanel.next({ status: 'ready', value: pipelineDefinitionFixture() });
+  }
+
   stopEnvironment(_project: string, id: string): Observable<void> { this.actions.push(`stop:${id}`); return of(void 0); }
   confirmRunTargetRemoval(_project: string, id: string, hostId: string): Observable<void> {
     this.actions.push(`remove:${id}:${hostId}`);
@@ -1013,4 +1032,69 @@ describe('ProjectDeployAreaComponent', () => {
     expect(host().querySelector('app-project-environment-overview')).not.toBeNull();
     expect(host().textContent).toContain('Runbooks and their history by environment.');
   });
+
+  describe('rollback (F13)', () => {
+    const offerIn = (scope: string) => host().querySelector(
+      `[data-testid="${scope}"] [data-testid="rollback-offer-button"]`) as HTMLButtonElement | null;
+
+    it('offers the rollback on the Production card with target, age and runtime health, and asks before it sends', async () => {
+      data.serveRollback();
+      await settle();
+      const confirm = vi.spyOn(TestBed.inject(ConfirmDialogService), 'confirm').mockResolvedValue(false);
+      expect(host().querySelector('[data-testid="deploy-environment-production"] [data-testid="rollback-offer-target"]')?.textContent?.trim())
+        .toBe(`Release ${RELEASE_1.version}`);
+      expect(text('deploy-environment-production')).toContain('Ran without incident');
+      expect(text('deploy-environment-production')).toContain('Skips Release 2026.10.19.1: incident while running.');
+
+      offerIn('deploy-environment-production')!.click();
+      await settle();
+      expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+        title: `Roll back Production to Release ${RELEASE_1.version}?`,
+        items: expect.arrayContaining(['Current: Release 2026.10.19.2']),
+      }));
+      expect(data.rollbacks).toEqual([]);
+
+      confirm.mockResolvedValue(true);
+      offerIn('deploy-environment-production')!.click();
+      await settle();
+      expect(data.rollbacks).toEqual(['production:approve=true:accept=false']);
+      expect(window.confirm).not.toHaveBeenCalled();
+      data.runsById.set('run-rollback', { ...productionRollbackFixture().deployments[0], id: 'run-rollback',
+        releaseId: RELEASE_1.id, trigger: 'rollback', state: 'queued', finishedAtUtc: null });
+      data.rollbackResult.next({ id: 'run-rollback' });
+      await settle();
+      expect(byTestId('deploy-run-drawer')).not.toBeNull();
+    });
+
+    it('sends the incident acceptance only for a target that had an incident, and shows a refusal', async () => {
+      data.serveRollback(true);
+      await settle();
+      vi.spyOn(TestBed.inject(ConfirmDialogService), 'confirm').mockResolvedValue(true);
+      expect(text('deploy-environment-production')).toContain('Had an incident while running');
+      offerIn('deploy-environment-production')!.click();
+      await settle();
+      expect(data.rollbacks).toEqual(['production:approve=true:accept=true']);
+      data.rollbackResult.error(new HttpErrorResponse({ status: 403, error: { error: 'Production approval requires Owner or Maintainer.' } }));
+      await settle();
+      expect(text('deploy-rollback-error')).toBe(
+        'Production: Production approval requires Owner or Maintainer. Redeploy a known release or fix forward.');
+    });
+
+    it('offers the same rollback in the run drawer of the current release only', async () => {
+      data.serveRollback();
+      await settle();
+      vi.spyOn(TestBed.inject(ConfirmDialogService), 'confirm').mockResolvedValue(true);
+      fixture.componentInstance.openRun('run-c-production-done');
+      await settle();
+      expect(text('deploy-run-rollback')).toContain(`Release ${RELEASE_1.version}`);
+      offerIn('deploy-run-rollback')!.click();
+      await settle();
+      expect(data.rollbacks).toEqual(['production:approve=true:accept=false']);
+
+      fixture.componentInstance.openRun('run-a-stage');
+      await settle();
+      expect(byTestId('deploy-run-rollback')).toBeNull();
+    });
+  });
 });
+

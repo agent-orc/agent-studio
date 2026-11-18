@@ -13,6 +13,8 @@ import {
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { DeployActionsComponent } from '../deploy-actions/deploy-actions';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
@@ -25,7 +27,8 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent, PendingButtonDirective, DeployActionsComponent, DeploySecretGapsComponent],
+  imports: [DatePipe, StatusIndicatorComponent, RollbackOfferComponent, PendingButtonDirective, DeployActionsComponent,
+    DeploySecretGapsComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -36,6 +39,10 @@ export class DeployEnvironmentCardComponent {
   readonly busy = input(false);
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  /** F13: the environment's rollback target, when it has one. */
+  readonly rollbackOffer = input<RollbackOffer | null>(null);
+  readonly rollbackBusy = input(false);
+  readonly rollback = output<string>();
   readonly stop = output<string>();
   readonly remove = output<string>();
   /** Deploy and redeploy options of this environment, as the server's lifecycle decided them. */

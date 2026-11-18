@@ -26,7 +26,7 @@ export interface ProjectOperations {
   project: string; since: string; until: string; environments: EnvironmentOperations[]; dora: DoraSummary;
 }
 export interface OperationsLogLine { at: string; level: string; message: string; releaseId: string | null; traceId?: string | null }
-export interface OperationsLogResult { telemetryAvailable: boolean; lines: OperationsLogLine[] }
+export interface OperationsLogResult { telemetryAvailable: boolean; lines: OperationsLogLine[]; nextCursor?: string | null }
 export interface OperationsTrace { traceId: string; startedAt: string; durationMs: number; failed: boolean; name: string; spanCount: number }
 export interface OperationsSpan { spanId: string; parentSpanId: string | null; name: string; kind: string;
   startedAt: string; durationMs: number; failed: boolean; attributes: Record<string, string> }
