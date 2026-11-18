@@ -40,7 +40,8 @@ public sealed class TemplateOperationsTelemetryTests : IDisposable
         // Top endpoints keep only route paths; the template names unknown paths "unmatched".
         Assert.Equal(new[] { ("/", 3L), ("/health", 3L) },
             metrics.TopEndpoints.Select(item => (item.Path, item.Requests)).OrderBy(item => item.Path, StringComparer.Ordinal));
-        Assert.True(metrics.CpuCores > 0);
+        // The capture ran a few minutes into the 22:00 hour; a full-hour divisor read near zero.
+        Assert.InRange(metrics.CpuCores!.Value, 0.0001, 4);
         Assert.True(metrics.MemoryBytes > 1024 * 1024);
         var sample = Assert.Single(metrics.Samples);
         Assert.Equal(new DateTimeOffset(2026, 11, 17, 22, 0, 0, TimeSpan.Zero), sample.At);
@@ -53,6 +54,49 @@ public sealed class TemplateOperationsTelemetryTests : IDisposable
         Assert.Null(metrics.DiskBytes);
         Assert.Empty(metrics.DailyUsage);
     }
+
+    [Fact]
+    public void Cpu_turns_the_cumulative_counter_into_cores_per_covered_hour()
+    {
+        // Review of AGT-3921: process.cpu.time is cumulative. Summing its exported totals
+        // or dividing the running hour by a full hour would misreport the cores used.
+        var options = new TelemetryOptions { StoreRoot = Path.Combine(_root, "cpu") };
+        var store = new TelemetryStore(options, NullLogger<TelemetryStore>.Instance);
+        var key = new TelemetryEnvironmentKey("shop", "stage");
+        var hour = new DateTimeOffset(2026, 11, 17, 21, 0, 0, TimeSpan.Zero);
+        var start = Nanos(hour.AddMinutes(-1));
+        var restart = Nanos(hour.AddHours(1).AddMinutes(5));
+        MetricSample Counter(string state, DateTimeOffset at, long startNanos, double total)
+            => new("process.cpu.time", "s", MetricKind.Sum, MetricTemporality.Cumulative,
+                TelemetryAttributes.From([new("process.cpu.state", state)]), Nanos(at), startNanos, total, 1, null, null, true);
+        MetricSample Gauge(DateTimeOffset at, double total)
+            => new("process.cpu.time", "s", MetricKind.Gauge, MetricTemporality.Unspecified,
+                TelemetryAttributes.From([new("collector", "legacy")]), Nanos(at), 0, total, 1, null, null);
+        var samples = new List<MetricSample>();
+        // Every five minutes for the full 21:00 hour: user 0.5 core, system 0.25 core.
+        for (var minute = 0; minute <= 60; minute += 5)
+        {
+            var at = hour.AddMinutes(minute);
+            samples.Add(Counter("user", at, start, 30 + 0.5 * minute * 60));
+            samples.Add(Counter("system", at, start, 15 + 0.25 * minute * 60));
+            samples.Add(Gauge(at, 1_000_000 + minute * 60));
+        }
+        // The process restarted at 22:05 and has used one core since; the counter starts over.
+        foreach (var minute in new[] { 6, 10, 15, 20 })
+            samples.Add(Counter("user", hour.AddHours(1).AddMinutes(minute), restart, (minute - 5) * 60));
+        store.Write(key, samples, [], hour);
+        var now = hour.AddHours(1).AddMinutes(20);
+
+        var metrics = new StoreOperationsTelemetryReader(store, options).ReadMetrics("shop", "stage", now.AddDays(-1), now)!;
+
+        // 21:00 holds 45 s from before the first export and 11 deltas of 225 s; the 22:00 export
+        // (225 s) and 900 s since the restart land in the running 22:00 hour, 20 minutes so far.
+        Assert.Equal([(hour, 2520 / 3600d), (hour.AddHours(1), (225 + 900) / 1200d)],
+            metrics.Samples.Select(sample => (sample.At, Math.Round(sample.CpuCores!.Value, 6))));
+        Assert.Equal((225 + 900) / 1200d, metrics.CpuCores!.Value, 6);
+    }
+
+    private static long Nanos(DateTimeOffset at) => at.ToUnixTimeMilliseconds() * 1_000_000;
 
     [Fact]
     public async Task Log_search_filters_by_level_text_and_release()
