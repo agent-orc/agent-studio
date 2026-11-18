@@ -47,11 +47,22 @@
     <div class="deploy-area__main">
       @switch (view()) {
         @case ('overview') {
-          <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()"
+          <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()" [busy]="environmentActionBusy()"
             [projectName]="projectName()" [definition]="pipelineDefinition()"
             [rollbackOffers]="rollback.offers()" [rollbackBusy]="rollback.state().environmentId"
             (openRun)="openRun($event)" (openTools)="show('tools')" (rollback)="rollback.request($event)"
-            (definitionChanged)="refresh()" (openSecrets)="secrets.environment.set($event); show('secrets')" />
+            (definitionChanged)="refresh()" (stop)="stopEnvironment($event)" (remove)="removeEnvironment($event)"
+            (openSecrets)="secrets.environment.set($event); show('secrets')" />
+          @if (environmentActionMessage(); as message) { <p role="status" data-testid="deploy-environment-action-message">{{ message }}</p> }
+          @if (environmentActionError(); as error) { <p role="alert" data-testid="deploy-environment-action-error">{{ error }}</p> }
+          @for (removal of pendingRemovals(); track removal.hostId + ':' + removal.environmentId) {
+            <section class="deploy-section" data-testid="deploy-pending-removal">
+              <h3>{{ removal.environmentId }} removal pending on {{ removal.hostId }}</h3>
+              <p>The declaration is gone. The app stays on the host until you confirm removal.</p>
+              <button type="button" [appPendingButton]="environmentActionBusy()" pendingLabel="Removing…"
+                (click)="confirmRemoval(removal.environmentId, removal.hostId)">Confirm host removal</button>
+            </section>
+          }
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
             (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
@@ -59,7 +70,7 @@
           <p class="deploy-area__tools-link">Find promotion, rollback and deploy commands in
             <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">deployment tools</button>.</p>
         }
-        @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [projectName]="projectName()" [environments]="cards()" [now]="now()" [highlightedReleaseId]="highlightedReleaseId()"
+        @case ('releases') { <app-project-deploy-releases (released)="refresh()" [panel]="releasePanel()" [projectName]="projectName()" [environments]="cards()" [now]="now()" [highlightedReleaseId]="highlightedReleaseId()"
           [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" (openSecrets)="secrets.environment.set($event); show('secrets')" /> }
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading…</p> } }
         @case ('flow') { @defer { <app-flow-health-page [projectName]="projectName()" (openDetail)="openFlowDetail($event)" /> } @placeholder { <p>Loading flow health…</p> } }

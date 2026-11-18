@@ -151,6 +151,10 @@ def review_dockerfile(base, commit, plan, release_id, built_at):
     # Without these the copied agent host reported only its assembly version,
     # "0.9.5+sha.unknown", and Execution Hosts called an old build current (AGT-3689).
     return (f"FROM {base}\n"
+            "USER root\n"
+            "RUN npm install --global @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.305 "
+            "&& codex --version | grep -F 0.166.0 && claude --version | grep -F 2.1.305\n"
+            "USER agent\n"
             "COPY publish/ /opt/agent-host/\n"
             f"ENV RUNNER_RELEASE_ID={release_id} RUNNER_RELEASE_COMMIT={commit} "
             f"RUNNER_RELEASE_BUILT_AT={built_at}\n"
@@ -365,7 +369,7 @@ def main(request):
             fail("review base image must be pinned")
         built_at = review_built_at(rest[0] if rest else "")
         release_id = review_release_id(expected_commit, built_at)
-        recipe = ("review-copy-v2:FROM base;COPY publish /opt/agent-host;"
+        recipe = ("review-copy-v3:FROM base;pin codex 0.166.0 claude 2.1.305;COPY publish /opt/agent-host;"
                   "ENV release identity;labels revision and plan")
         plan = hashlib.sha256(
             f"{recipe}\n{base}\n{agent_sha}\n{expected_commit}\n{release_id}\n{built_at}\n".encode()).hexdigest()

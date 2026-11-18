@@ -23,6 +23,8 @@ environment: {}
 # line below the marker, and replace the project id, deploy host id (app-vm),
 # compose files, service, and URLs with your own. Compose files stay below /srv.
 # The container listens on port 3000 and answers /health.
+# The runbooks run deploy/runbooks/*.sh after you install them on the deploy
+# host; see docs/deployments/README.md. Each verifies the http health check.
 # --- schema 2 deployment ---
 # project:
 #   id: container-service
@@ -59,3 +61,10 @@ environment: {}
 #     healthUrl: https://example.com/health
 #     healthTimeoutSeconds: 120
 #     environments: [production]
+# runbooks:
+#   - name: restart
+#     steps: [restart]
+#     verify: health:http
+#   - name: disk-cleanup
+#     steps: [disk-cleanup]
+#     verify: health:http

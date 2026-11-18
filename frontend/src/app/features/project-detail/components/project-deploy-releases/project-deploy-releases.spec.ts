@@ -1,11 +1,12 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { vi } from 'vitest';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
 import { ProjectDeployReleasesComponent, verdictTone } from './project-deploy-releases';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
 import { QualityStudioService } from '../../../../services/quality-studio.service';
-import { buildEnvironmentCards, type DeployPanel, type Release } from '../../state/deploy-area.model';
+import { buildEnvironmentCards, type DeployPanel, type IntegrationReleaseStatus, type Release } from '../../state/deploy-area.model';
 import { DEPLOY_FIXTURE_NOW, deployReleasesFixture, deploySourcesFixture } from '../../testing/deploy-fixtures';
 
 describe('ProjectDeployReleasesComponent', () => {
@@ -22,12 +23,29 @@ describe('ProjectDeployReleasesComponent', () => {
     await fixture.whenStable();
   }
 
+  let data: {
+    releaseNotes: () => unknown;
+    secretReadiness: () => unknown;
+    integrationRelease: ReturnType<typeof vi.fn>;
+    createIntegrationRelease: ReturnType<typeof vi.fn>;
+  };
+  const status = (value: Partial<IntegrationReleaseStatus>): IntegrationReleaseStatus => ({
+    project: 'Web Site', state: 'waiting-for-gate', message: '', nextStep: null, commit: 'e'.repeat(40),
+    releaseId: null, canCreate: false, ...value,
+  });
+
   beforeEach(async () => {
+    data = {
+      releaseNotes: () => of({ status: 'unavailable' }),
+      secretReadiness: () => of({ status: 'unavailable' }),
+      integrationRelease: vi.fn(() => of({ status: 'unavailable' })),
+      createIntegrationRelease: vi.fn(),
+    };
     await TestBed.configureTestingModule({
       imports: [ProjectDeployReleasesComponent],
       providers: [provideZonelessChangeDetection(),
         { provide: QualityStudioService, useValue: { openRange: () => undefined } },
-        { provide: ProjectDeployDataService, useValue: { releaseNotes: () => of({ status: 'unavailable' }), secretReadiness: () => of({ status: 'unavailable' }) } }],
+        { provide: ProjectDeployDataService, useValue: data }],
     }).compileComponents();
     fixture = TestBed.createComponent(ProjectDeployReleasesComponent);
   });
@@ -130,5 +148,59 @@ describe('ProjectDeployReleasesComponent', () => {
     byTestId('deploy-release-open-quality')!.click();
     expect(open).toHaveBeenCalledWith('Web Site', 'repo', '0'.repeat(40), first.commitSha);
     expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('names what creates the next release instead of promising a build', async () => {
+    data.integrationRelease.mockReturnValue(of({ status: 'ready', value: status({
+      message: 'The tip eeeeeeee of main has no green gate yet.',
+      nextStep: 'Studio creates the release as soon as the gate on this commit passes.',
+    }) }));
+    await render({ status: 'ready', value: [] });
+
+    expect(data.integrationRelease).toHaveBeenCalledWith('Web Site');
+    expect(byTestId('deploy-next-release')?.dataset['state']).toBe('waiting-for-gate');
+    expect(byTestId('deploy-next-release-message')?.textContent).toContain('has no green gate yet');
+    expect(byTestId('deploy-next-release-step')?.textContent).toContain('as soon as the gate on this commit passes');
+    expect(byTestId('deploy-next-release-create')).toBeNull();
+    expect(byTestId('deploy-releases-empty')?.textContent).not.toContain('next green build');
+  });
+
+  it('shows the reason and next step of a blocked release and retries it as one action', async () => {
+    data.integrationRelease.mockReturnValue(of({ status: 'ready', value: status({
+      state: 'blocked', canCreate: true, message: 'Commit eeeeeeee has no site.', nextStep: 'Commit the static bundle under site.',
+    }) }));
+    data.createIntegrationRelease.mockReturnValue(of(status({
+      state: 'released', message: 'Release 2026.11.16.1 is the tip eeeeeeee of main; Staging is queued.', releaseId: 'r1',
+    })));
+    await render({ status: 'ready', value: [] });
+    let released = 0;
+    fixture.componentInstance.released.subscribe(() => released++);
+
+    expect(byTestId('deploy-next-release-state')?.dataset['tone']).toBe('warning');
+    expect(byTestId('deploy-next-release-step')?.textContent).toContain('Commit the static bundle');
+    byTestId('deploy-next-release-create')!.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(data.createIntegrationRelease).toHaveBeenCalledWith('Web Site');
+    expect(byTestId('deploy-next-release')?.dataset['state']).toBe('released');
+    expect(byTestId('deploy-next-release-message')?.textContent).toContain('Staging is queued');
+    expect(byTestId('deploy-next-release-create')).toBeNull();
+    expect(released).toBe(1);
+  });
+
+  it('keeps the action and shows the server refusal when creation fails', async () => {
+    data.integrationRelease.mockReturnValue(of({ status: 'ready', value: status({ state: 'ready', canCreate: true,
+      message: 'The tip eeeeeeee of main passed its gate and has no release yet.' }) }));
+    data.createIntegrationRelease.mockReturnValue(throwError(() => new HttpErrorResponse({
+      status: 403, error: { error: 'environment-scope-denied' } })));
+    await render({ status: 'ready', value: [] });
+
+    byTestId('deploy-next-release-create')!.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(byTestId('deploy-next-release-error')?.textContent).toContain('environment-scope-denied');
+    expect(byTestId('deploy-next-release-create')).not.toBeNull();
   });
 });

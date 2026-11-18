@@ -31,8 +31,58 @@ public sealed class RunbookHostExecutorTests
                 ["db-secret"],
                 Path.Combine(root, "scripts"), secrets, CancellationToken.None);
             Assert.False(result.Success);
-            Assert.Equal([new RunbookHostStepResult(0, true), new RunbookHostStepResult(1, false)], result.Steps);
+            Assert.Equal([(0, true), (1, false)], result.Steps.Select(step => (step.Index, step.Success)));
+            Assert.Equal("Exit code 7.", result.Steps[1].Output);
             Assert.Equal($"info:{secret}:{secret}:production", File.ReadAllText(marker));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task Returns_the_masked_bounded_output_tail_of_each_step()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "runbook-output-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        var secrets = Path.Combine(root, "secrets");
+        Directory.CreateDirectory(scripts);
+        Directory.CreateDirectory(secrets);
+        var secret = "fixture-" + Guid.NewGuid().ToString("N");
+        File.WriteAllText(Path.Combine(secrets, "db-secret"), secret);
+        File.WriteAllText(Path.Combine(scripts, "free-disk.sh"),
+            // stdout only: stderr is a second pipe, so its lines may land anywhere in the tail.
+            "echo \"Removed 3 images, freed 1.2 GB with $DATABASE_URL\"\n"
+            + "i=0; while [ $i -lt 450 ]; do echo \"line $i\"; i=$((i+1)); done\n"
+            + "head -c 5000 /dev/zero | tr '\\0' 'y'; echo\n");
+        try
+        {
+            var result = await RunbookHostExecutor.ExecuteAsync("demo", "stage", "8081", ["free-disk", "restart"],
+                new Dictionary<string, string>(), new Dictionary<string, string> { ["DATABASE_URL"] = "db-secret" }, [],
+                Path.Combine(root, "scripts"), secrets, CancellationToken.None);
+
+            Assert.False(result.Success);
+            var output = result.Steps[0].Output!.Split('\n');
+            Assert.True(result.Steps[0].Success);
+            Assert.DoesNotContain(secret, result.Steps[0].Output);
+            Assert.Equal(RunbookHostExecutor.StepOutput.MaxLines + 1, output.Length);
+            Assert.Equal("(252 earlier lines omitted)", output[0]);
+            Assert.Equal("line 449", output[^2]);
+            Assert.Equal(RunbookHostExecutor.StepOutput.MaxLineLength + 1, output[^1].Length);
+            Assert.False(result.Steps[1].Success);
+            Assert.Equal($"Script {Path.Combine(root, "scripts", "demo", "restart.sh")} is not installed on this host.",
+                result.Steps[1].Output);
+
+            File.WriteAllText(Path.Combine(scripts, "free-disk.sh"),
+                "echo \"Removed 3 images, freed 1.2 GB\"\necho \"connecting with $DATABASE_URL\" >&2\n");
+            var brief = await RunbookHostExecutor.ExecuteAsync("demo", "stage", "8081", ["free-disk"],
+                new Dictionary<string, string>(), new Dictionary<string, string> { ["DATABASE_URL"] = "db-secret" }, [],
+                Path.Combine(root, "scripts"), secrets, CancellationToken.None);
+            var lines = brief.Steps[0].Output!.Split('\n');
+            Assert.Contains("Removed 3 images, freed 1.2 GB", lines);
+            Assert.Contains("connecting with [masked]", lines);
         }
         finally
         {

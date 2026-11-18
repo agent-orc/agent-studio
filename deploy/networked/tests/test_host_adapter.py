@@ -159,8 +159,14 @@ class HostAdapterTests(unittest.TestCase):
                 original_add(stream, *args, **kwargs)
                 raise OSError("interrupted archive build")
 
+            def source_fixture(repo, commit, target):
+                import shutil
+                shutil.copytree(ROOT.parent / "agent-host", target / "deploy/agent-host")
+                (target / "scripts").mkdir()
+                shutil.copy2(ROOT.parents[1] / "scripts/upgrade-agent-runner-deploy.sh", target / "scripts/upgrade-agent-runner-deploy.sh")
+
             config = {"artifactDirectory": folder, "repository": "/unused"}
-            with patch.object(adapter, "exact_source"), patch.object(adapter, "run", side_effect=publish):
+            with patch.object(adapter, "exact_source", side_effect=source_fixture), patch.object(adapter, "run", side_effect=publish):
                 with patch.object(tarfile.TarFile, "add", interrupted):
                     with self.assertRaisesRegex(OSError, "interrupted archive build"):
                         adapter.build(config, "build-agent-host", commit)
@@ -178,6 +184,8 @@ class HostAdapterTests(unittest.TestCase):
             self.assertEqual(checksum.read_text().strip(), result["sha256"])
             with tarfile.open(release) as stream:
                 self.assertEqual(stream.extractfile("agent-host").read(), b"release contents")
+                self.assertIn("update-clis", stream.extractfile("deploy/agent-host/agent-runner-deploy").read().decode())
+                self.assertIn("visudo", stream.extractfile("scripts/upgrade-agent-runner-deploy.sh").read().decode())
 
             release.write_bytes(b"changed after completion")
             with self.assertRaisesRegex(adapter.AdapterError, "no matching checksum"):
@@ -324,6 +332,16 @@ class HostAdapterTests(unittest.TestCase):
                     remote.main(request)
             self.assertEqual(remote.env_read(env)["REVIEW_IMAGE_REF"], "old")
 
+    def test_review_cli_pins_match_server_targets_and_exact_sudo_rule(self):
+        repository = ROOT.parents[1]
+        targets = json.loads((repository / "task-server/appsettings.json").read_text())["TaskServer"]
+        codex, claude = targets["CodexCliTargetVersion"], targets["ClaudeCliTargetVersion"]
+        recipe = remote.review_dockerfile("old-base@sha256:" + "a" * 64, "b" * 40, "plan", "release", "now")
+        self.assertIn(f"@openai/codex@{codex}", recipe)
+        self.assertIn(f"@anthropic-ai/claude-code@{claude}", recipe)
+        sudoers = (repository / "deploy/agent-host/sudoers.d/agent-runner").read_text()
+        self.assertIn(f"update-clis {codex} {claude}", sudoers)
+
     def test_review_build_stamps_the_release_identity_into_the_image(self):
         commit = "3d61e8b0c4ab" + "0" * 28
         agent_sha = "b" * 64
@@ -353,6 +371,10 @@ class HostAdapterTests(unittest.TestCase):
         self.assertIn(f"RUNNER_RELEASE_COMMIT={commit}", seen["dockerfile"])
         self.assertIn("RUNNER_RELEASE_BUILT_AT=2026-11-09T10:12:03Z", seen["dockerfile"])
         self.assertIn(f"org.agent-studio.review-plan={result['planDigest']}", seen["dockerfile"])
+        self.assertIn("npm install --global @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.305", seen["dockerfile"])
+        self.assertIn("USER root\nRUN npm install", seen["dockerfile"])
+        self.assertIn("USER agent\nCOPY", seen["dockerfile"])
+
 
 
 class QuietPointTests(unittest.TestCase):

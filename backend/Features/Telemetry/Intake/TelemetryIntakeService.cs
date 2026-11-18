@@ -144,7 +144,7 @@ public sealed class TelemetryIntakeService
             return Error(encoding, 413, 8, ex.Message);
         }
 
-        switch (_queue.TryEnqueue(batch))
+        switch (await _queue.TryEnqueueAsync(batch, cancellationToken))
         {
             case TelemetryEnqueueResult.Busy:
                 return Busy(encoding);

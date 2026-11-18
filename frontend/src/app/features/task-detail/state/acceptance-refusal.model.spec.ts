@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import type { TaskInfo } from '../../../models/task.model';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { of } from 'rxjs';
+import type { CliExecution, TaskInfo } from '../../../models/task.model';
+import { TaskService } from '../../../services/task.service';
+import { AcceptanceReadinessStore } from '../../acceptance-readiness';
 import type { TaskIntegrationStatus } from '../../git';
 import {
   AcceptanceRefusalStore,
@@ -8,6 +15,7 @@ import {
   acceptanceRefusalOverridable,
   acceptanceRefusalTooltip,
   contentVerdictHold,
+  injectAcceptanceRefusalTooltip,
   serverAcceptanceRefusal,
 } from './acceptance-refusal.model';
 import { readinessItem } from '../../acceptance-readiness/testing/acceptance-readiness.fixtures';
@@ -298,7 +306,9 @@ describe('content refusal next steps (AGT-3873)', () => {
   });
 
   it('keeps one pending override request per card until that card takes it', () => {
-    const store = new AcceptanceRefusalStore();
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(),
+      provideHttpClientTesting(), { provide: TaskService, useValue: {} }] });
+    const store = TestBed.inject(AcceptanceRefusalStore);
     store.requestOverride('wp::AGT-1');
     expect(store.takeOverrideRequest('wp::AGT-2')).toBe(false);
     expect(store.overrideRequest()).toBe('wp::AGT-1');
@@ -307,5 +317,87 @@ describe('content refusal next steps (AGT-3873)', () => {
     store.requestOverride('wp::AGT-1');
     store.clear('wp::AGT-1');
     expect(store.overrideRequest()).toBeNull();
+  });
+});
+
+describe('AcceptanceRefusalStore drops a refusal that no longer describes the card (F2)', () => {
+  const CONTENT_GAP = { status: 409, error: { code: 'completion-content-gap',
+    error: 'Completion refused: requirement-fit verdict was concerns.' } };
+  const run = (startedAt: string) => ({ startedAt } as CliExecution);
+  const job = (extra: Partial<TaskInfo> = {}) => card({ status: 'integrated' }, { id: 'AGT-1', watchPath: '/wp',
+    execution: run('2026-11-16T09:00:00Z'), ...extra });
+  const tasks = { continueJob: vi.fn(() => of({})), refresh: vi.fn() };
+  let refusals: AcceptanceRefusalStore;
+  let readiness: AcceptanceReadinessStore;
+  let http: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(),
+      provideHttpClientTesting(), { provide: TaskService, useValue: tasks }] });
+    refusals = TestBed.inject(AcceptanceRefusalStore);
+    readiness = TestBed.inject(AcceptanceReadinessStore);
+    http = TestBed.inject(HttpTestingController);
+  });
+  afterEach(() => {
+    http.verify();
+    TestBed.resetTestingModule();
+  });
+
+  async function checkAnswers(info: TaskInfo, item: ReturnType<typeof readinessItem>): Promise<void> {
+    const done = readiness.checkCard(info);
+    http.expectOne('/api/tasks/acceptance-readiness')
+      .flush({ checkedAtUtc: '2026-11-16T10:00:00Z', counts: {}, items: [item] });
+    await done;
+  }
+
+  const shown = (info: TaskInfo) => acceptanceRefusalFor(info, refusals.forCard(info), false, readiness.itemFor(info));
+  const concerns = readinessItem('AGT-1', 'review-concerns', { taskKey: 'wp::AGT-1' });
+  const ready = readinessItem('AGT-1', 'ready', { taskKey: 'wp::AGT-1' });
+
+  it('renders no refusal after the round is sent and the card is back in Human Review as ready', async () => {
+    const card = signal(job());
+    const tooltip = TestBed.runInInjectionContext(() => injectAcceptanceRefusalTooltip(card));
+    await checkAnswers(card(), concerns);
+    refusals.record(serverAcceptanceRefusal(card(), CONTENT_GAP));
+    expect(shown(card())).toMatchObject({ source: 'server', action: 'review-again' });
+
+    readiness.openRound(card(), 'detail');
+    expect(await readiness.sendRound('Close the gap.', 'refs/heads/runner/r1/AGT-1')).toBe(true);
+    expect(refusals.forCard(card())).toBeNull();
+
+    card.set(job({ execution: run('2026-11-16T11:00:00Z') }));
+    await checkAnswers(card(), ready);
+    expect(shown(card())).toBeNull();
+    expect(tooltip()).toBeNull();
+  });
+
+  it('drops the refusal once the owner requests a content review again', () => {
+    refusals.record(serverAcceptanceRefusal(job(), CONTENT_GAP));
+    readiness.markAddressed(job());
+    expect(refusals.forCard(job())).toBeNull();
+    expect(shown(job())).toBeNull();
+  });
+
+  it('drops the refusal for a ready check asked after it, never for a ready answer that predates it', async () => {
+    await checkAnswers(job(), ready);
+    refusals.record(serverAcceptanceRefusal(job(), CONTENT_GAP));
+    expect(shown(job())).toMatchObject({ source: 'server', reason: 'Acceptance refused: requirement-fit verdict was concerns.' });
+
+    await checkAnswers(job(), concerns);
+    expect(refusals.forCard(job())).not.toBeNull();
+    await checkAnswers(job(), ready);
+    expect(refusals.forCard(job())).toBeNull();
+  });
+
+  it('drops the refusal when a new delivery arrives', () => {
+    refusals.record(serverAcceptanceRefusal(job(), CONTENT_GAP));
+    expect(refusals.forCard(job())).not.toBeNull();
+    expect(refusals.forCard(job({ execution: run('2026-11-16T12:00:00Z') }))).toBeNull();
+  });
+
+  it('keeps a refusal recorded after the round for the next refused click', () => {
+    readiness.markAddressed(job());
+    refusals.record(serverAcceptanceRefusal(job(), CONTENT_GAP));
+    expect(refusals.forCard(job())?.code).toBe('completion-content-gap');
   });
 });

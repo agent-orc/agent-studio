@@ -690,6 +690,39 @@ public sealed partial class TaskServerStore
                     RecoveryHistory = []
                 });
             }
+            // Project persisted drift into the existing host-health surface. This is
+            // advisory and does not change execution admission or capability facts.
+            await using (var driftCommand = Command(connection, """
+                SELECT cli_name, first_detected_at, target_version FROM studio_host_cli_drift
+                 WHERE host_id = $host AND first_detected_at < $cutoff;
+                """, ("$host", runner.HostId), ("$cutoff", Iso(UtcNow.AddHours(-1)))))
+            await using (var driftReader = await driftCommand.ExecuteReaderAsync(ct))
+            {
+                while (await driftReader.ReadAsync(ct))
+                {
+                    var key = CapabilityProtocol.CliExecution(driftReader.GetString(0));
+                    var index = capabilities.FindIndex(item => item.Key == key);
+                    if (index < 0) continue;
+                    var capability = capabilities[index];
+                    var target = driftReader.GetString(0) == "codex"
+                        ? _options.CodexCliTargetVersion : _options.ClaudeCliTargetVersion;
+                    if (driftReader.GetString(2) != target
+                        || !InstalledCliVersionPolicy.IsBelow(capability.Version, target)) continue;
+                    var reason = $"{runner.Name} ({runner.HostId}): {driftReader.GetString(0)} {capability.Version} " +
+                        $"has stayed below target {target} for more than one hour. Run on this host: {CliUpgradeCommand}.";
+                    capabilities.Add(capability with
+                    {
+                        Key = $"host-upgrade:cli:{driftReader.GetString(0)}",
+                        Category = "host-upgrade",
+                        HealthState = CapabilityHealthStates.Suspect,
+                        Reason = reason,
+                        Detail = $"Advisory version drift. {reason}",
+                        FirstFailureAt = Parse(driftReader.GetString(1)),
+                        AffectedClaims = [],
+                        RecoveryHistory = [],
+                    });
+                }
+            }
             HostTelemetrySnapshotDto? telemetry = null;
             await using (var telemetryCommand = Command(connection, """
                 SELECT payload_json FROM runner_telemetry_latest WHERE runner_id = $runner;

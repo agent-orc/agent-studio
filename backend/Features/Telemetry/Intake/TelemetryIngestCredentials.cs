@@ -1,12 +1,13 @@
 using AgentStudio.Projects;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
+using System.Text;
 
 namespace AgentStudio.Telemetry;
 
 /// <summary>
-/// Where ingest tokens live. The card asks for the secret provider (AGT-3222)
-/// when present; it is not in this codebase yet, so the access store keeps the
-/// hashed token. A secret-provider implementation replaces this registration.
+/// Where ingest tokens live. The access store keeps their hashes separately
+/// from application secret values held by the secret provider.
 /// </summary>
 public interface ITelemetryIngestCredentials
 {
@@ -52,14 +53,54 @@ public sealed class DeclaredTelemetryEnvironments(ProjectEnvironmentService envi
 public interface ITelemetryValueMasker
 {
     string Mask(string value);
+
+    Task<Func<string, string>> ForEnvironmentAsync(TelemetryEnvironmentKey environment, CancellationToken cancellationToken)
+        => Task.FromResult<Func<string, string>>(Mask);
 }
 
 /// <summary>
-/// Masks credential-shaped text with the product redactor (bearer and
-/// authorization headers, named secrets, Studio tokens). Values held by the
-/// secret provider (AGT-3222) are added once that provider exists.
+/// Masks credential-shaped text and active provider values in the scope of
+/// each telemetry environment. Reads fresh values for every staged batch;
+/// a resolved-value cache cannot provide this guarantee.
 /// </summary>
-public sealed class CredentialTelemetryValueMasker : ITelemetryValueMasker
+public sealed class CredentialTelemetryValueMasker(ISecretStore? store = null) : ITelemetryValueMasker
 {
     public string Mask(string value) => CredentialRedactor.Redact(value);
+
+    public async Task<Func<string, string>> ForEnvironmentAsync(TelemetryEnvironmentKey environment, CancellationToken cancellationToken)
+    {
+        if (store is null) return Mask;
+        var scopes = SecretScope.ForEnvironment(environment.Project, environment.Environment).InheritanceChain();
+        var listing = await store.ListAsync(cancellationToken);
+        if (listing.Unreadable.Any(item => item.Scope is null
+            || !SecretScope.TryParse(item.Scope, out var scope) || scopes.Contains(scope)))
+            throw new InvalidDataException("Telemetry cannot verify all secret values in this environment.");
+
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var record in listing.Records.Where(item => scopes.Contains(item.ParsedScope)))
+        {
+            foreach (var version in record.Versions.Where(item => item.Active))
+            {
+                var bytes = await store.ReadValueAsync(record.ParsedScope, record.Name, version.Version, cancellationToken);
+                try
+                {
+                    var value = Encoding.UTF8.GetString(bytes);
+                    if (value.Length > 0) values.Add(value);
+                    foreach (var line in value.Split(["\r\n", "\n"], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                        if (line.Length >= SecretValueScrubber.MinimumMaskedLength) values.Add(line);
+                    if (value.Length >= SecretValueScrubber.MinimumMaskedLength)
+                        values.Add(Convert.ToBase64String(bytes));
+                }
+                finally { Array.Clear(bytes); }
+            }
+        }
+        var ordered = values.OrderByDescending(value => value.Length).ToArray();
+        return value =>
+        {
+            var masked = value;
+            foreach (var secret in ordered)
+                masked = masked.Replace(secret, "[REDACTED_CREDENTIAL]", StringComparison.Ordinal);
+            return CredentialRedactor.Redact(masked);
+        };
+    }
 }
