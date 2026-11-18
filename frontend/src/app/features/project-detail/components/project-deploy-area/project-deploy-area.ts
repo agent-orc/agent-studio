@@ -178,6 +178,7 @@ export class ProjectDeployAreaComponent {
     return fetched ? buildDeployRuns([fetched], environmentNames(this.sources()), this.knownReleases()) : [];
   });
   readonly cards = computed(() => buildEnvironmentCards(this.sources()));
+  readonly pipelineDefinition = computed(() => ready(this.pipelinePanel()));
   readonly inFlight = computed(() => deployInFlight([...this.runs(), ...this.statusRuns()], ready(this.environmentPanel())));
   /** The overview waits for the AGT-3176 environments, or for AGT-3201 status when those failed. */
   readonly overviewPanel = computed<DeployPanel<unknown>>(() => {

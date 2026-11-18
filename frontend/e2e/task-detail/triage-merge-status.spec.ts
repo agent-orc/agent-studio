@@ -320,8 +320,11 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
         fs.mkdirSync(RESULTS_DIR, { recursive: true });
         await gap.screenshot({ path: path.join(RESULTS_DIR, `brief-gap-${theme}-${width}.png`) });
       }
-      await page.getByTestId('studio-triage-action-mark-done').click();
-      await expect(page.getByText('Acceptance needs a decision')).toBeVisible();
+      await page.locator('[data-testid="studio-triage-action-mark-done"]:visible, [data-testid="studio-mobile-triage-action-mark-done"]:visible').click();
+      const refusalBanner = page.getByTestId('task-move-refusal');
+      await expect(refusalBanner).toContainText('Acceptance refused: delivered against brief v1, current v2');
+      await expect(refusalBanner.getByTestId('task-move-refusal-override')).toBeVisible();
+      await expect(refusalBanner.getByTestId('task-move-refusal-review')).toBeVisible();
       // A refused optimistic move reopens detail through the core-first API.
       // This fixture supplies the full-detail route, so reopen the same card.
       await openJob(page);
@@ -392,7 +395,7 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     await expect(page.getByTestId('acceptance-secondary-gaps')).toContainText('No brief version was recorded for this delivery or its content verdict.');
     await expect(page.getByTestId('stale-brief-acceptance')).toHaveCount(0);
     await expect(page.getByTestId('delivery-claim-panel')).not.toContainText('changed brief');
-    await expect(page.getByTestId('acceptance-refusal-reason')).toContainText(reason);
+    await expect(page.getByTestId('studio-triage-panel').getByTestId('acceptance-refusal-reason')).toContainText(reason);
     for (const theme of ['dark', 'light'] as const) {
       await setTheme(page, theme);
       await dismissDevErrorDialog(page);

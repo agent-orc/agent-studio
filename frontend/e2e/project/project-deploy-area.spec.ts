@@ -1127,6 +1127,45 @@ test.describe('Project Deploy area (mocked)', () => {
     await setTheme(page, 'light');
     await capture(page, 'deploy-history-empty-light');
   });
+
+  test('shows project.yml environments without deploy steps and offers the deploy-step form (F5)', async ({ page }) => {
+    const environment = (name: string, order: number, isProtected: boolean) => ({
+      path: `environments[${order}]`, name, order, protected: isProtected, automatic: !isProtected,
+      approval: isProtected ? ['Owner', 'Maintainer'] : [], requires: isProtected ? 'staging' : null, steps: [], variables: [],
+    });
+    await openDeploy(page, {
+      environments: { project: PROJECT, environments: [], promotions: [], failureCards: [] },
+      status: [], releases: [], deployments: [],
+      pipelineDefinition: {
+        project: PROJECT, path: '.agent-studio/project.yml', exists: true, schemaVersion: 2, valid: true, issues: [],
+        definitionSha256: 'a'.repeat(64), migrationAvailable: false, deployStepsAvailable: true,
+        diagram: {
+          schemaVersion: 2, gate: { source: 'commands', build: ['npm run build'], test: ['npm test'], testSuites: [] },
+          artifacts: [], environmentsDefaulted: false, lifecycleDefaulted: false,
+          environments: [environment('staging', 0, false), environment('production', 1, true)],
+        },
+      },
+    });
+
+    await expect(page.getByTestId('deploy-environments-empty')).toHaveCount(0);
+    await expect(page.getByTestId('deploy-environment-declared-staging')).toContainText('No deploy step yet');
+    await expect(page.getByTestId('deploy-environment-declared-production')).toContainText('protected');
+    await expect(page.getByTestId('deploy-environments')).not.toContainText('docs/deployments/environments');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `deploy-overview-declared-no-steps-1440-${theme}`);
+    }
+    await page.getByTestId('deploy-add-deploy-step').click();
+    const form = page.getByTestId('deploy-steps-form');
+    await expect(form.getByTestId('deploy-steps-env-staging')).toBeVisible();
+    await expect(form.getByTestId('deploy-steps-env-production')).toBeVisible();
+    await form.getByTestId('deploy-steps-type-container').check();
+    await expect(form.getByTestId('deploy-steps-env-staging').getByTestId('deploy-steps-compose')).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `deploy-overview-deploy-step-form-1440-${theme}`);
+    }
+  });
 });
 
 test('Project Secrets shows approval for a custom-id Production environment and keeps values write-only', async ({ page }) => {
