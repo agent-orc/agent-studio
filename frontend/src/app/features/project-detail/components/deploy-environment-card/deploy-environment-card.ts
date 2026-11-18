@@ -61,6 +61,10 @@ export class DeployEnvironmentCardComponent {
     if (health.status === 'no-checks') return { tone: 'neutral', label: 'No checks' };
     return { tone: healthStateTone(health.state), label: HEALTH_LABEL[health.state] };
   });
+  readonly healthProblem = computed(() => {
+    const health = this.environment().health;
+    return health.status === 'reported' ? health.problem ?? null : null;
+  });
   readonly lastRunLabel = computed(() => {
     const run = this.environment().lastRun;
     return run ? `${triggerLabel(run.trigger)} ${RUN_STATE_LABEL[run.state].toLowerCase()}` : null;
