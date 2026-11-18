@@ -16,8 +16,43 @@ public sealed class ModelQualificationTests
             Model("gpt-5.6-sol", "medium", "high", "xhigh"),
             Model("gpt-5.6-terra", "medium"),
             Model("gpt-5.6-luna", "medium"),
+            Model("gpt-6.2-sol", "low", "medium", "high", "xhigh", "max", "ultra"),
+            Model("gpt-6.2-astra", "low", "medium", "high", "xhigh", "max", "ultra"),
         ],
     };
+
+    [Theory]
+    [InlineData(ModelIds.Gpt62Sol, "low")]
+    [InlineData(ModelIds.Gpt62Sol, "medium")]
+    [InlineData(ModelIds.Gpt62Sol, "high")]
+    [InlineData(ModelIds.Gpt62Sol, "xhigh")]
+    [InlineData(ModelIds.Gpt62Sol, "max")]
+    [InlineData(ModelIds.Gpt62Sol, "ultra")]
+    [InlineData(ModelIds.Gpt62Astra, "low")]
+    [InlineData(ModelIds.Gpt62Astra, "ultra")]
+    public void Gpt62ExplicitPin_WinsQualificationAtItsLevel(string model, string level)
+    {
+        var task = Task("gpt62-design", TaskTypes.Feature, modelExplicit: true, thinkingExplicit: true) with
+        { Model = model, ThinkingLevel = level };
+
+        var result = Service(economyMode: true).Qualify(task, "Build an interactive deployment view.", Catalogue, []);
+
+        Assert.Equal(model, result.SelectedModel);
+        Assert.Equal(level, result.SelectedThinkingLevel);
+        Assert.Equal("task-override", result.SelectionSource);
+    }
+
+    [Fact]
+    public void Gpt62IsNeverAPolicyRecommendation()
+    {
+        foreach (var type in new[] { TaskTypes.Feature, TaskTypes.Bug })
+        {
+            var task = Task("gpt62-policy-" + type, type, modelExplicit: false, thinkingExplicit: false);
+            var result = Service(economyMode: false).Qualify(task, "Add a bounded settings panel.", Catalogue, []);
+            Assert.DoesNotContain("gpt-6.2", result.RecommendedModel ?? "");
+            Assert.DoesNotContain("gpt-6.2", result.SelectedModel ?? "");
+        }
+    }
 
     [Fact]
     public void NewFeatureWithoutExplicitSelectionGetsPolicyTier()

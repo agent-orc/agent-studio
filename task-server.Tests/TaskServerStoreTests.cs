@@ -488,6 +488,35 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         Assert.Contains(history!.Audit, row => row.Action == "follow-up.superseded");
     }
 
+    [Theory]
+    [InlineData(CodexCliRelease.Gpt62Sol, "low")]
+    [InlineData(CodexCliRelease.Gpt62Sol, "xhigh")]
+    [InlineData(CodexCliRelease.Gpt62Sol, "max")]
+    [InlineData(CodexCliRelease.Gpt62Sol, "ultra")]
+    [InlineData(CodexCliRelease.Gpt62Astra, "high")]
+    [InlineData(CodexCliRelease.Gpt62Astra, "ultra")]
+    public async Task Gpt62Continuation_KeepsExplicitModelAndEffort(string model, string level)
+    {
+        using var temp = _fixture.CreateDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        var receipt = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "gpt62-continue", task.Version,
+                "Continue the design comparison", model, "codex", level, "continue", "operator"),
+            "operator", default);
+        var intent = await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId, "gpt62-continue", default);
+        Assert.NotNull(intent);
+        Assert.True(receipt.ExplicitSelection);
+        Assert.Equal(model, intent.Model);
+        Assert.Equal("codex", intent.CliType);
+        Assert.Equal(level, intent.ThinkingLevel);
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        Assert.Equal(intent, await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "gpt62-continue", default));
+    }
+
     [Fact]
     public async Task Continuation_rounds_are_ordered_idempotent_and_bound_to_one_run()
     {
@@ -2716,7 +2745,9 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
     [Theory]
     [InlineData(CodexCliRelease.Gpt61Sol)]
     [InlineData(CodexCliRelease.Gpt61Terra)]
-    public async Task Gpt61_claim_below_cli_floor_reports_version_instead_of_account(string model)
+    [InlineData(CodexCliRelease.Gpt62Sol)]
+    [InlineData(CodexCliRelease.Gpt62Astra)]
+    public async Task Version_gated_codex_claim_below_cli_floor_reports_version_instead_of_account(string model)
     {
         using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
@@ -2740,6 +2771,34 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         Assert.Contains($"This CLI version does not offer {model}", refusal.Message);
         Assert.Contains("codex-cli 0.155.0 requires 0.166.0", refusal.Message);
         Assert.DoesNotContain("login", refusal.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(CodexCliRelease.Gpt62Sol)]
+    [InlineData(CodexCliRelease.Gpt62Astra)]
+    public async Task Gpt62_pin_is_claimed_by_a_host_at_the_cli_floor_that_accepted_it(string model)
+    {
+        using var temp = _fixture.CreateDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest(model, 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
+            [
+                new(CapabilityProtocol.CliExecution("codex"), "cli-execution", Version: CodexCliRelease.Gpt62MinimumVersion),
+                new(CapabilityProtocol.ModelAcceptance("codex", model), "model-acceptance", "ready",
+                    CredentialGeneration: "login-1", CredentialObservedAt: clock.GetUtcNow().UtcDateTime, ProbeSequence: 1),
+            ]), "runner-a", default);
+
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal(task.TaskId, claim.Task?.TaskId);
     }
 
     [Fact]
