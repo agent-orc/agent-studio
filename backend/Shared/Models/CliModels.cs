@@ -178,6 +178,7 @@ public static class ModelIds
     public const string ClaudeSonnet55 = "claude-sonnet-5-5";
     public const string ClaudeSonnet46 = "claude-sonnet-4-6";
     public const string ClaudeSonnet45 = "claude-sonnet-4-5";
+    public const string ClaudeHaiku55 = "claude-haiku-5-5";
     public const string ClaudeHaiku45 = "claude-haiku-4-5";
     /// <summary>Current default Codex/OpenAI model. codex-cli 0.143 on a
     /// ChatGPT account rejects the older <c>gpt-5-codex</c> with a 400
@@ -352,6 +353,10 @@ public static class ModelMetadataRegistry
         Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus45)),
         Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeSonnet46)),
         Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeSonnet45)),
+        Claude(ModelIds.ClaudeHaiku55, "Claude Haiku 5.5", context: 1_000_000,
+            aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeHaiku55),
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+            defaultThinkingLevel: "medium", minimumCliVersion: "2.1.293"),
         Claude(ModelIds.ClaudeHaiku45, "Claude Haiku 4.5", context: 200_000,
             aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeHaiku45)),
         // gpt-5.5 is the current Codex/OpenAI default. codex-cli 0.143 on a
@@ -611,7 +616,7 @@ public static class ModelMetadataRegistry
         var canonical = trimmed is null ? null : NormalizeId(trimmed);
         // Preserve historic alias storage for existing models. New generation
         // spellings must become the exact ids accepted by their CLIs.
-        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.ClaudeSonnet55 or ModelIds.Gpt6Sol or ModelIds.Gpt61Sol or ModelIds.Gpt6Luna
+        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.ClaudeSonnet55 or ModelIds.ClaudeHaiku55 or ModelIds.Gpt6Sol or ModelIds.Gpt61Sol or ModelIds.Gpt6Luna
             ? canonical
             : trimmed;
         if (string.IsNullOrWhiteSpace(cliType)) return normalized;

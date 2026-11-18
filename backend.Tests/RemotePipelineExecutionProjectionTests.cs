@@ -61,14 +61,16 @@ public sealed class RemotePipelineExecutionProjectionTests
             Assert.Equal(PipelineStepStatus.Passed, grade.Status);
             Assert.Equal("review_2", grade.ExecutionAttemptId);
             Assert.Equal("Review completed.", grade.VerdictSummary);
-            Assert.Equal("codex", grade.ReviewCli);
-            Assert.Equal("gpt-6", grade.Model);
+            Assert.Null(grade.ReviewCli);
+            Assert.Null(grade.Model);
+            Assert.Equal(StepCostBasis.Deterministic, grade.CostBasis);
             Assert.Equal(60_000, grade.DurationMs);
             var codeReviewGrade = Step(result.Execution!, PipelineCatalogue.CodeReviewGradeStepId);
             Assert.Equal(PipelineStepStatus.Passed, codeReviewGrade.Status);
             Assert.Equal("review_2", codeReviewGrade.ExecutionAttemptId);
-            Assert.Equal("codex", codeReviewGrade.ReviewCli);
-            Assert.Equal("gpt-6", codeReviewGrade.Model);
+            Assert.Null(codeReviewGrade.ReviewCli);
+            Assert.Null(codeReviewGrade.Model);
+            Assert.Equal(StepCostBasis.Deterministic, codeReviewGrade.CostBasis);
             Assert.Equal("This Remote Review did not run build or test commands.",
                 Step(result.Execution!, PipelineCatalogue.BuildTestGateStepId).Reason);
             Assert.Equal(100, new PipelineCostCalculator(TokenTestServices.Pricing())

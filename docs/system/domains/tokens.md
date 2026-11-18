@@ -67,3 +67,32 @@ for recording and attribution rules.
 | Project | `TokenAggregationService.cs`, `ITokenAggregator.cs`, token endpoints and cache stores |
 
 Paths in this table are relative to `backend/Features/Tokens/`. The earlier bus-backed shims and their parity-only tests were removed in AGT-3037. The golden characterization now covers the production composition directly. See [the token aggregation concept](../../concepts/token-aggregation.md) for the stage contract and [the token pricing domain](token-pricing.md) for catalog policy.
+
+## Review and economy audit (AGT-3952)
+
+Review receipt participants preserve the original pipeline step after
+`:step:` and before `:usage:`. The receipt reader, review statistics, analysis
+classification, and pipeline step totals retain that identity for every
+aspect and for paid local grading calls. Remote host grading is deterministic
+policy code: its pipeline evidence explicitly records `deterministic` cost
+basis with no model, rather than borrowing the last aspect's model. Remote
+review usage falls back to distinct assistant message usage when an interrupted
+Claude command has no terminal result; a terminal result supersedes that fallback.
+
+The production project pipeline-cost view consumes the same reconciled facts
+as card analysis, including historical bus usage, workspace enrichment, and
+project-only calls. Each fact is filtered and bucketed by its own timestamp.
+Compare equal project scopes and equal day windows. Unattributed workspace
+calls remain outside project totals.
+
+A legacy receipt's dimensionless `totalTokens` is not evidence of uncached
+input. The reader retains known input, output, cache-read, and cache-write
+counters and never converts a dimensionless remainder into paid input.
+Incomplete dimension data produces partial receipt coverage. This read-time
+policy does not rewrite stored receipts or guess a cache split from cost.
+
+Auto-tag and the Result summary/assessment route default to Claude Haiku 5.5
+at low reasoning. Explicit project step overrides remain authoritative.
+Summary receipts record the selected reasoning level even when the provider
+omits it. Usage counters belong to durable receipts; diagnostic log messages
+record source and execution identity without copying provider usage payloads.

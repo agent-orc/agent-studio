@@ -21,6 +21,7 @@ namespace AgentStudio.Pipeline;
 public sealed class ProjectPipelineCostService
 {
     private readonly ITokenPricing _pricing;
+    private readonly TokenAnalysisService? _analysis;
     public const int DefaultDays = 30;
     public const int MaxDays = 180;
 
@@ -34,9 +35,10 @@ public sealed class ProjectPipelineCostService
     public ProjectPipelineCostService(ITokenPricing pricing,
         TaskScannerService scanner,
         PipelineExecutionLog log,
-        ProjectTokenReceiptReader receipts)
+        ProjectTokenReceiptReader receipts, TokenAnalysisService? analysis = null)
     {
         _pricing = pricing;
+        _analysis = analysis;
         _scanner = scanner;
         _log = log;
         _receipts = receipts;
@@ -57,6 +59,16 @@ public sealed class ProjectPipelineCostService
             && DateTime.UtcNow - hit.At < CacheTtl)
         {
             return hit.Value;
+        }
+
+        if (_analysis is not null)
+        {
+            var now = (nowUtc ?? DateTime.UtcNow).ToUniversalTime();
+            var facts = _analysis.ProjectCostItems(projectName, watchPath, now);
+            var canonical = BuildFromAnalysis(_pricing, projectName, facts.Items, d, now)
+                with { Freshness = facts.Freshness };
+            if (nowUtc is null) _cache[cacheKey] = (DateTime.UtcNow, canonical);
+            return canonical;
         }
 
         var records = new List<PipelineExecutionRecord>();
@@ -192,7 +204,7 @@ public sealed class ProjectPipelineCostService
                     contributed = true;
                 }
             }
-            if (contributed) contributingTasks.Add(rec.JobId);
+            if (contributed && !string.IsNullOrWhiteSpace(rec.JobId)) contributingTasks.Add(rec.JobId);
         }
 
         var dayCosts = dayList.Select(day =>
@@ -290,17 +302,13 @@ public sealed class ProjectPipelineCostService
             if ((long)usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheCreationTokens <= 0)
                 continue;
 
-            var kind = TokenParticipants.IsOrchestrator(entry.ParticipantId)
-                ? StepKind.Orchestrator
-                : TokenParticipants.IsSupporting(entry.ParticipantId)
-                    ? StepKind.Aspect
-                    : StepKind.Core;
-            var stepId = kind switch
+            var kind = TokenParticipants.ReconciliationFamily(entry.ParticipantId) ?? StepKind.Core;
+            var stepId = ReviewStatisticsFold.StepId(entry.ParticipantId) ?? (kind switch
             {
                 StepKind.Orchestrator => "task-receipt-orchestrator",
                 StepKind.Aspect => "task-receipt-supporting",
                 _ => PipelineCatalogue.CoreAgentRunStepId,
-            };
+            });
             records.Add(new PipelineExecutionRecord
             {
                 PipelineId = ReceiptPipelineId,
@@ -535,6 +543,39 @@ public sealed class ProjectPipelineCostService
                     })
                 .ToList(),
         };
+
+    internal static ProjectPipelineCostTimeline BuildFromAnalysis(ITokenPricing pricing, string project,
+        IReadOnlyList<(string JobId, TokenAnalysisItem Item)> items, int days, DateTime now)
+    {
+        var records = items.Where(row => row.Item.At <= now).Select(row =>
+        {
+            var item = row.Item;
+            var kind = item.Kind switch
+            {
+                TokenUsageKinds.Coding or TokenUsageKinds.FixRound => StepKind.Core,
+                TokenUsageKinds.ReviewAspect or TokenUsageKinds.DeepReview => StepKind.Aspect,
+                TokenUsageKinds.ReviewGrade or TokenUsageKinds.OrchestratorDecision => StepKind.Orchestrator,
+                TokenUsageKinds.Enrichment => StepKind.Analysis,
+                TokenUsageKinds.Gate => StepKind.Tool,
+                _ => StepKind.Module,
+            };
+            return new PipelineExecutionRecord
+            {
+                PipelineId = item.Source == TokenAnalysisFold.SourceLedger ? ReceiptPipelineId : "pipeline",
+                JobId = row.JobId, Project = project, StartedAt = item.At, CompletedAt = item.At,
+                Steps = [new PipelineStepExecution
+                {
+                    StepId = item.Label, Kind = kind, Model = item.ModelId,
+                    ThinkingLevel = item.Level, StartedAt = item.At, CompletedAt = item.At,
+                    Status = PipelineStepStatus.Passed,
+                    InputTokens = item.Input, OutputTokens = item.Output,
+                    CacheReadTokens = item.CacheRead, CacheCreationTokens = item.CacheWrite,
+                    InputIncludesCached = false, CostBasis = item.CostBasis,
+                }],
+            };
+        }).ToList();
+        return BuildFromRecords(pricing, project, records, days, now);
+    }
 
     public static int ResolveDays(int requested) =>
         requested <= 0 ? DefaultDays : Math.Min(requested, MaxDays);

@@ -22,6 +22,7 @@ public static class TokenUsageServiceCollectionExtensions
         services.AddSingleton<TokenPricingDriftMonitor>();
 
         // Project: aggregation facade, response caches, and report services.
+        services.AddSingleton<TokenEndpointReads>();
         services.AddSingleton<TokenSummaryCacheStore>();
         services.AddSingleton<WorkspaceTokensCacheStore>();
         services.AddSingleton<ITokenAggregator, TokenAggregationService>();

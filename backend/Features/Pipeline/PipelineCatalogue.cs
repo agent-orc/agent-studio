@@ -306,7 +306,7 @@ public static class PipelineCatalogue
 
     /// <summary>
     /// Catalogue entry for <see cref="SummaryAssessmentStepId"/>. Defaults to
-    /// Claude Opus 5.5 at low reasoning; a project override replaces either.
+    /// Claude Haiku 5.5 at low reasoning; a project override replaces either.
     /// </summary>
     public static PipelineStep SummaryAssessmentStep => new()
     {
@@ -315,7 +315,7 @@ public static class PipelineCatalogue
         Kind = StepKind.Orchestrator,
         RunMode = StepRunMode.Sequential,
         DependsOn = [CoreAgentRunStepId],
-        Model = ModelIds.ClaudeOpus55,
+        Model = ModelIds.ClaudeHaiku55,
         CliType = CliTypes.Claude,
         PromptTemplate = "summary-protocol.md",
         Idempotent = true,

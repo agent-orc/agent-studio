@@ -12,7 +12,8 @@ public sealed record TokenPriceCalculationItem(
     DateTime? RecordedAt = null,
     string? Label = null,
     decimal? RecordedCostUsd = null,
-    bool? RecordedModelPriced = null);
+    bool? RecordedModelPriced = null,
+    long? PromptTokens = null);
 
 public sealed record TokenPriceCalculationResult(
     string Model,
@@ -51,18 +52,20 @@ public static class TokenPricingEndpoints
         // Diagnostic: every model id active in recorded workspace usage with
         // at least one call lacking a historical price.
         app.MapGet("/api/token-pricing/unpriced-models",
-            (HttpContext context, TaskScannerService scanner, ITokenAggregator tokens,
-                AgentStudio.Registry.ProjectRegistry registry) =>
+            async (HttpContext context, TaskScannerService scanner, ITokenAggregator tokens,
+                AgentStudio.Registry.ProjectRegistry registry, TokenEndpointReads reads, CancellationToken ct) =>
             {
                 var projects = scanner.GetWatchPaths()
                     .Where(project => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
                                       || ProjectAccessAuthorization.Allows(human.User, project.Name, registry))
                     .Select(e => (e.Name, e.Path))
                     .ToList();
-                var aggregate = tokens.WorkspaceAggregate(projects);
-                return Results.Ok(new UnpricedModelsResponse(
-                    SelectUnpricedModels(aggregate),
-                    DateTime.UtcNow.ToString("o")));
+                // The scope is part of the key so permission-filtered results are never shared across scopes.
+                var key = "unpriced:" + string.Join("\n", projects.OrderBy(p => p.Name, StringComparer.Ordinal)
+                    .Select(p => p.Name + "|" + p.Path));
+                return await reads.ReadAsync(key, () => Task.Run<object>(() =>
+                    new UnpricedModelsResponse(SelectUnpricedModels(tokens.WorkspaceAggregate(projects)),
+                        DateTime.UtcNow.ToString("o"))), ct);
             });
     }
 
@@ -79,8 +82,11 @@ public static class TokenPricingEndpoints
                 Math.Max(0, item.OutputTokens),
                 Math.Max(0, item.CacheReadTokens),
                 Math.Max(0, item.CacheWriteTokens),
-                pricing.Estimate(item.Model, item.InputTokens, item.OutputTokens,
-                    item.CacheReadTokens, item.CacheWriteTokens, at),
+                item.PromptTokens is { } promptTokens
+                    ? pricing.EstimateRequest(item.Model, item.InputTokens, item.OutputTokens,
+                        item.CacheReadTokens, item.CacheWriteTokens, Math.Max(0, promptTokens), at)
+                    : pricing.Estimate(item.Model, item.InputTokens, item.OutputTokens,
+                        item.CacheReadTokens, item.CacheWriteTokens, at),
                 item.RecordedCostUsd, item.RecordedModelPriced);
         }).ToList();
     }

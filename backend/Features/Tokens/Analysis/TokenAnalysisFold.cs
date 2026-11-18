@@ -35,7 +35,8 @@ public sealed record TokenAnalysisItem(
     bool Priced,
     long? DurationMs,
     string? Result,
-    string Source)
+    string Source,
+    string? CostBasis = null)
 {
     public long Total => Input + Output + CacheRead + CacheWrite;
 }
@@ -322,9 +323,7 @@ public static class TokenAnalysisFold
     };
 
     private static StepKind? LedgerFamily(string? participantId)
-        => TokenParticipants.IsOrchestrator(participantId) ? StepKind.Orchestrator
-            : TokenParticipants.IsSupporting(participantId) ? StepKind.Aspect
-            : null;
+        => TokenParticipants.ReconciliationFamily(participantId);
 
     private static ProjectPipelineCostService.ReceiptMatch Key(
         string jobId, StepKind family, string? model, long input, long output, long cacheRead, long cacheWrite)
@@ -353,7 +352,7 @@ public static class TokenAnalysisFold
             input, output, cacheRead, cacheWrite, null, cost, priced,
             run.DurationMs > 0 ? run.DurationMs : null,
             string.IsNullOrWhiteSpace(run.Verdict) ? run.Status.ToString().ToLowerInvariant() : run.Verdict,
-            source);
+            source, run.CostBasis);
     }
 
     private static TokenAnalysisItem LedgerItem(

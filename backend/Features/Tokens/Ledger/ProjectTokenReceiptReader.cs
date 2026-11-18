@@ -86,11 +86,9 @@ public sealed class ProjectTokenReceiptReader
 
                 collapsed = collapsed.Add(receipt.Collapsed);
                 summaries[receipt.JobId!] = normalized;
-                if (normalized.TotalTokens > 0 && normalized.Entries.Count == 0)
-                {
-                    failed++;
-                    continue;
-                }
+                var measured = normalized.Entries.Sum(call => call.InputTokens + call.OutputTokens
+                    + call.CacheReadTokens + call.CacheCreationTokens);
+                if (normalized.TotalTokens > measured) failed++;
                 entries.AddRange(ToEntries(receipt.JobId!, normalized));
             }
         }
@@ -183,10 +181,10 @@ public sealed class ProjectTokenReceiptReader
         var entryCacheRead = entries.Sum(call => call.CacheReadTokens);
         var entryCacheCreation = entries.Sum(call => call.CacheCreationTokens);
 
-        var componentTotal = summary.InputTokens + summary.OutputTokens
-            + summary.CacheReadTokens + summary.CacheCreationTokens;
-        var unallocatedTotal = Math.Max(0, summary.TotalTokens - componentTotal);
-        var residualInput = Math.Max(0, summary.InputTokens - entryInput) + unallocatedTotal;
+        // A dimensionless total cannot establish uncached input. Older receipts
+        // may already contain that total in per-call cache counters. Preserve
+        // only measured dimensions; Read exposes any uncovered remainder as partial.
+        var residualInput = Math.Max(0, summary.InputTokens - entryInput);
         var residualOutput = Math.Max(0, summary.OutputTokens - entryOutput);
         var residualCacheRead = Math.Max(0, summary.CacheReadTokens - entryCacheRead);
         var residualCacheCreation = Math.Max(0, summary.CacheCreationTokens - entryCacheCreation);
@@ -254,7 +252,7 @@ public sealed class ProjectTokenReceiptReader
             {
                 Ts = call.Ts,
                 Kind = OrchestratorLogKinds.Observation,
-                Topic = "task-token-receipt",
+                Topic = ReviewStatisticsFold.StepId(call.ParticipantId) ?? "task-token-receipt",
                 Summary = "Token usage recovered from the durable task receipt.",
                 JobId = jobId,
                 ParticipantId = string.IsNullOrWhiteSpace(call.ParticipantId)

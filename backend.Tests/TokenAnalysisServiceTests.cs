@@ -104,7 +104,29 @@ public sealed class TokenAnalysisServiceTests : IDisposable
     public void Days_are_bounded(int? requested, int expected)
         => Assert.Equal(expected, TokenAnalysisService.ResolveDays(requested));
 
-    private (TokenAnalysisService Service, AgentMessageBusBridge Bridge) Build()
+    [Fact]
+    public async Task Pipeline_cost_and_analysis_include_the_same_card_and_project_only_calls()
+    {
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var folder = WriteTask("job-1", "AGT-1", TaskStates.HumanReview, now.AddHours(-3));
+        WritePipelineLog(folder, now.AddHours(-3));
+        ProjectPipelineCostService pipeline = null!;
+        var (service, bridge) = Build(value => pipeline = value);
+        await bridge.EmitTokenUsageAsync(null, "job-1", "support:adhoc", "auto-tag",
+            new OrchestratorTokenUsage { Model = "claude-haiku-5-5", InputTokens = 70 },
+            now.AddHours(-2), attributedProject: Project);
+        await bridge.EmitTokenUsageAsync(null, null, "support:adhoc", "title-generation",
+            new OrchestratorTokenUsage { Model = "claude-haiku-5-5", InputTokens = 30 },
+            now.AddHours(-1), attributedProject: Project);
+        var analysis = service.Analyze([new TokenAnalysisProjectSource(null, Project, _watchPath)], 7);
+        var costs = pipeline.Build(Project, _watchPath, 7, now);
+        Assert.Equal(analysis.Cards.Sum(card => card.TotalTokens) + analysis.Remainders.Sum(row => row.TotalTokens), costs.TotalTokens);
+        Assert.Equal(analysis.Cards.Sum(card => card.CostUsd) + analysis.Remainders.Sum(row => row.CostUsd), costs.TotalCostUsd);
+        Assert.Equal(1_550, costs.TotalTokens);
+        Assert.Equal(1, costs.TaskCount);
+    }
+
+    private (TokenAnalysisService Service, AgentMessageBusBridge Bridge) Build(Action<ProjectPipelineCostService>? pipelineReady = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -118,10 +140,11 @@ public sealed class TokenAnalysisServiceTests : IDisposable
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var pricing = TokenTestServices.Pricing();
-        var service = new TokenAnalysisService(pricing, scanner,
-            new PipelineExecutionLog(pricing, NullLogger<PipelineExecutionLog>.Instance),
-            new ProjectTokenLedger(store, config, new ProjectTokenReceiptReader()),
-            store, config, _clock);
+        var log = new PipelineExecutionLog(pricing, NullLogger<PipelineExecutionLog>.Instance);
+        var receipts = new ProjectTokenReceiptReader();
+        var service = new TokenAnalysisService(pricing, scanner, log,
+            new ProjectTokenLedger(store, config, receipts), store, config, _clock);
+        pipelineReady?.Invoke(new ProjectPipelineCostService(pricing, scanner, log, receipts, service));
         return (service, new AgentMessageBusBridge(store, config, NullLogger<AgentMessageBusBridge>.Instance));
     }
 

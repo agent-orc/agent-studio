@@ -558,7 +558,7 @@ public sealed class SummaryGenerationService
     /// <summary>
     /// Resolves the <c>post-summary-assessment</c> step through the shared
     /// pipeline resolver: step override, project orchestrator model, then the
-    /// catalogue default (Claude Opus 5.5, low), the same chain the project
+    /// catalogue default (Claude Haiku 5.5, low), the same chain the project
     /// pipeline settings display. The shared <c>ClaudeCli:SummaryModel</c> key
     /// (titles, prompt enhancement) no longer applies here. A model inherited
     /// from the project level that the chosen CLI cannot run falls back to the
@@ -658,7 +658,8 @@ public sealed class SummaryGenerationService
                 result = result with { Ok = false, Error = validationError };
 
             AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, result.Model, result.Usage,
-                result.DurationMs, ok: result.Ok, project: info.ProjectName, jobId: info.Id);
+                result.DurationMs, ok: result.Ok, project: info.ProjectName, jobId: info.Id,
+                thinkingLevel: selection.ThinkingLevel, cliType: selection.Cli);
             evidence.Add($"Attempt {attempt}: {(result.Ok ? "passed" : result.Error ?? "generation failed")}");
             usage = Accumulate(usage, result.Usage);
             step = StepModelUsage.From(usage, result.Model, selection.ThinkingLevel, selection.ModelSource).ApplyTo(step with
@@ -717,8 +718,13 @@ public sealed class SummaryGenerationService
             sw.Stop();
             var endedAt = DateTime.UtcNow;
             var effectiveModel = string.IsNullOrWhiteSpace(r.EffectiveModel) ? model : r.EffectiveModel!;
-            if (!r.Ok) return SummaryModelResult.Failure(effectiveModel, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds) with { Usage = r.Usage };
-            return SummaryModelResult.Success(effectiveModel, r.Usage, r.ParsedText.Trim(), startedAt, endedAt,
+            var effectiveUsage = r.Usage is null ? null : r.Usage with
+            {
+                ThinkingLevel = r.Usage.ThinkingLevel ?? r.EffectiveThinkingLevel ?? selection.ThinkingLevel,
+                CliType = r.Usage.CliType ?? r.EffectiveCliType ?? selection.Cli,
+            };
+            if (!r.Ok) return SummaryModelResult.Failure(effectiveModel, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds) with { Usage = effectiveUsage };
+            return SummaryModelResult.Success(effectiveModel, effectiveUsage, r.ParsedText.Trim(), startedAt, endedAt,
                 (long)r.Duration.TotalMilliseconds);
         }
 
