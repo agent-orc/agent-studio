@@ -3,7 +3,7 @@
     <div>
       <app-status-indicator tone="neutral" label="Incident record" [compact]="true" testId="health-incident-status" />
       <h1>{{ detail().info.title }}</h1>
-      <p>{{ detail().info.projectName }} · {{ detail().info.taskKey }}</p>
+      <p>{{ detail().info.projectName }}</p>
     </div>
     <nav class="health-incident__actions" aria-label="Incident actions">
       @if (operations(); as href) { <a [href]="href" class="health-incident__action health-incident__action--primary" data-testid="incident-open-operations">Open Operations</a> }
@@ -12,6 +12,6 @@
     </nav>
   </header>
   <section class="health-incident__record" aria-label="Incident evidence">
-    <cac-markdown [source]="detail().promptMarkdown ?? ''" />
+    <cac-markdown [source]="evidence()" />
   </section>
 </article>

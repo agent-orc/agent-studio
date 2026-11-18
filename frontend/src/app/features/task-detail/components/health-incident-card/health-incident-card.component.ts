@@ -12,6 +12,15 @@ export function incidentActionHref(markdown: string, action: IncidentAction): st
   return match?.[1]?.startsWith('#/projects/') ? match[1] : null;
 }
 
+/** The header owns navigation; keep the evidence section focused on incident facts. */
+export function incidentEvidenceMarkdown(markdown: string): string {
+  const actions: IncidentAction[] = ['Open Operations', 'Roll back', 'Run runbook'];
+  return markdown.split('\n').filter(line => !actions.some(action => {
+    const href = incidentActionHref(line, action);
+    return href !== null && line.trim() === `- [${action}](${href})`;
+  })).join('\n');
+}
+
 @Component({
   selector: 'app-health-incident-card',
   standalone: true,
@@ -25,4 +34,5 @@ export class HealthIncidentCardComponent {
   readonly operations = computed(() => incidentActionHref(this.detail().promptMarkdown ?? '', 'Open Operations'));
   readonly rollback = computed(() => incidentActionHref(this.detail().promptMarkdown ?? '', 'Roll back'));
   readonly runbook = computed(() => incidentActionHref(this.detail().promptMarkdown ?? '', 'Run runbook'));
+  readonly evidence = computed(() => incidentEvidenceMarkdown(this.detail().promptMarkdown ?? ''));
 }

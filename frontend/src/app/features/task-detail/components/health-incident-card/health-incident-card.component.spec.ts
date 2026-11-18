@@ -2,7 +2,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it } from 'vitest';
 import type { TaskDetail } from '../../../../models/task.model';
-import { HealthIncidentCardComponent, incidentActionHref } from './health-incident-card.component';
+import { HealthIncidentCardComponent, incidentActionHref, incidentEvidenceMarkdown } from './health-incident-card.component';
 
 const markdown = `# Health incident: Stage
 
@@ -35,9 +35,11 @@ describe('HealthIncidentCardComponent', () => {
     expect(host.querySelector('[data-testid="overview-agent"]')).toBeNull();
     expect(host.querySelector('[data-testid="overview-pipeline"]')).toBeNull();
     expect(host.querySelector('[data-testid="delivery-claim-panel"]')).toBeNull();
+    expect(host.textContent?.match(/Open Operations/g)).toHaveLength(1);
   });
 
   it('does not turn unrelated markdown links into incident actions', () => {
     expect(incidentActionHref('- [Open Operations](https://external.example)', 'Open Operations')).toBeNull();
+    expect(incidentEvidenceMarkdown('- [Open Operations](https://external.example)')).toContain('https://external.example');
   });
 });

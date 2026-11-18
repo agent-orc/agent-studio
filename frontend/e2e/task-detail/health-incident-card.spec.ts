@@ -7,6 +7,16 @@ import { setTheme } from '../helpers/theme';
 const results = process.env.JOB_RESULTS_DIR ?? path.resolve('test-results');
 
 test('health incident opens as an operations record at desktop and phone widths', async ({ page }) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  // The isolated project has no optional Quality Studio connection or host health route.
+  await page.route('**/healthz', route => route.fulfill({ status: 200, body: 'ok' }));
+  await page.route('**/api/integrations/quality-studio/status?*', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ state: 'not-connected', configured: false, owner: false, repositoryId: null }),
+  }));
   const watch = (await api<{ name: string; path: string }[]>('/api/watch-paths?includeFixtures=true'))[0];
   expect(watch).toBeTruthy();
   const projectSlug = watch.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -55,9 +65,16 @@ Control plane health checks failed.
     await page.setViewportSize({ width: 390, height: 844 });
     await setTheme(page, 'light');
     await expect(page.getByTestId('incident-open-operations')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    for (const action of ['incident-open-operations', 'incident-roll-back', 'incident-run-runbook']) {
+      const box = await page.getByTestId(action).boundingBox();
+      expect(box?.height).toBeGreaterThanOrEqual(44);
+    }
     await page.screenshot({ path: path.join(results, 'health-incident-390-light.png'), fullPage: true });
     await page.getByText('Last crash or error log lines').scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(results, 'health-incident-390-evidence-light.png') });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: path.join(results, 'health-incident-390-dark.png'), fullPage: true });
     await page.getByTestId('incident-open-operations').click();
     await expect(page.getByTestId('deploy-tab-operations')).toHaveAttribute('aria-current', 'page');
     await page.goto(taskUrl);
@@ -67,6 +84,8 @@ Control plane health checks failed.
     await page.goto(taskUrl);
     await page.getByTestId('incident-run-runbook').click();
     await expect(page.getByTestId('deploy-tab-runbooks')).toHaveAttribute('aria-current', 'page');
+    expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
   } finally {
     await fetch(`${BACKEND}/api/tasks/${encodeURIComponent(id)}?watchPath=${encodeURIComponent(watch.path)}`,
       { method: 'DELETE' }).catch(() => {});
