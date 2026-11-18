@@ -62,6 +62,9 @@ public sealed partial class TelemetryStore
         return Path.Combine(Root, Uri.EscapeDataString(key.Project.ToLowerInvariant()), key.Environment + ".sqlite");
     }
 
+    /// <summary>True once the environment has received telemetry, so its database exists.</summary>
+    public bool HasStore(TelemetryEnvironmentKey key) => File.Exists(DatabasePath(key));
+
     /// <summary>Environments that have a database, for the retention sweep.</summary>
     public IReadOnlyList<TelemetryEnvironmentKey> KnownEnvironments()
     {

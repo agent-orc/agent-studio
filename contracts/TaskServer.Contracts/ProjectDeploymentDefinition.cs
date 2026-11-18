@@ -15,7 +15,14 @@ public sealed record ProjectArtifactDefinition(string Name, string Type, string?
 /// One ordered deployment environment. A protected environment accepts a deploy,
 /// redeploy, or rollback only after an Owner or Maintainer approval.
 /// </summary>
-public sealed record ProjectEnvironmentDefinition(string Name, bool Protected);
+public sealed record ProjectEnvironmentDefinition(string Name, bool Protected)
+{
+    /// <summary>
+    /// Studio connects the workload to its OTLP intake (M5): a container deploy
+    /// receives the endpoint, the protocol and an ingest token scoped to this environment.
+    /// </summary>
+    public bool Telemetry { get; init; }
+}
 
 public sealed record ProjectLifecyclePhase(string Phase, bool Automatic, IReadOnlyList<string> Approval, string? Requires);
 
@@ -107,7 +114,7 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
-    public static readonly IReadOnlyList<string> EnvironmentKeys = ["name", "protected"];
+    public static readonly IReadOnlyList<string> EnvironmentKeys = ["name", "protected", "telemetry"];
     public static readonly IReadOnlyList<string> LifecyclePhaseKeys = ["phase", "automatic", "approval", "requires"];
     public static readonly IReadOnlyList<string> ApprovalRoles = ["Owner", "Maintainer"];
     public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments", "tenants", "tenantTags", "channels"];
@@ -324,8 +331,8 @@ public static partial class ProjectDefinitionReader
 
     /// <summary>
     /// Environments are either the inline shorthand <c>[staging, production]</c>
-    /// or a list of maps with <c>name</c> and <c>protected</c>. The shorthand
-    /// protects production.
+    /// or a list of maps with <c>name</c>, <c>protected</c> and <c>telemetry</c>.
+    /// The shorthand protects production and leaves telemetry off.
     /// </summary>
     private static IReadOnlyList<ProjectEnvironmentDefinition> Environments(
         IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues)
@@ -354,7 +361,14 @@ public static partial class ProjectDefinitionReader
                 var isProtected = protectedText is null
                     ? name == "production"
                     : bool.TryParse(protectedText, out var parsed) && parsed;
-                return new ProjectEnvironmentDefinition(name, isProtected);
+                var telemetryText = Get(item, "telemetry");
+                if (telemetryText is not null && !bool.TryParse(telemetryText, out _))
+                    issues.Add(new($"environments[{index}].telemetry", "environment-telemetry-invalid",
+                        "telemetry must be true or false."));
+                return new ProjectEnvironmentDefinition(name, isProtected)
+                {
+                    Telemetry = telemetryText is not null && bool.TryParse(telemetryText, out var telemetry) && telemetry,
+                };
             }).ToArray();
     }
 

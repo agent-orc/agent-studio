@@ -570,6 +570,67 @@ test.describe('Project Deploy area (mocked)', () => {
     await backups.screenshot({ path: path.join(results, 'operations-backups-write-only-target-light--mocked.png') });
   });
 
+  test('Telemetry tab creates an ingest token shown once, shows last use and revokes in both themes', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    // Fake credential-shaped values are built at runtime.
+    const secret = ['otl', 'stage-new', Math.random().toString(36).slice(2)].join('.');
+    const created: unknown[] = [];
+    const revoked: string[] = [];
+    const token = (overrides: Record<string, unknown>) => ({
+      id: 'stage-deploy', name: 'Studio deploy', project: PROJECT, environment: 'stage', signals: ['metrics', 'logs'],
+      createdAt: '2026-10-18T08:00:00Z', createdBy: 'studio:deploy', expiresAt: null,
+      lastUsedAt: '2026-10-20T09:55:00Z', revokedAt: null, ...overrides,
+    });
+    let tokens = [token({})];
+    await page.route(`**/api/projects/${PROJECT}/environments/*/telemetry/tokens**`, route => {
+      const request = route.request();
+      if (request.method() === 'POST') {
+        created.push(request.postDataJSON());
+        const added = token({ id: 'stage-new', name: 'shop-api', createdBy: 'owner', lastUsedAt: null, createdAt: '2026-10-20T10:00:00Z' });
+        tokens = [...tokens, added];
+        return answer(route, { token: added, secret, otlpEndpoint: 'https://studio.example/api/telemetry/otlp',
+          otlpHeaders: `Authorization=Bearer ${secret}` });
+      }
+      if (request.method() === 'DELETE') {
+        const id = request.url().split('/').at(-1)!;
+        revoked.push(id);
+        tokens = tokens.map(item => item.id === id ? { ...item, revokedAt: '2026-10-20T10:05:00Z' } : item);
+        return route.fulfill({ status: 204, body: '' });
+      }
+      return answer(route, request.url().includes('/environments/stage/') ? tokens : []);
+    });
+    await page.getByTestId('deploy-tab-telemetry').click();
+    const panel = page.getByTestId('project-telemetry-tokens');
+    await expect(panel.getByTestId('telemetry-tokens-environment')).toHaveValue('stage');
+    const managed = panel.getByTestId('telemetry-token-stage-deploy');
+    await expect(managed.getByTestId('telemetry-token-managed')).toHaveText('Managed by deploys');
+    await expect(managed.getByTestId('telemetry-token-last-seen')).toContainText('Oct 20, 2026');
+
+    await panel.getByTestId('telemetry-token-name').fill('shop-api');
+    await panel.getByTestId('telemetry-token-logs').uncheck();
+    await panel.getByTestId('telemetry-token-create').click();
+    await expect(panel.getByTestId('telemetry-token-settings')).toContainText(`OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${secret}`);
+    await expect(panel.getByTestId('telemetry-token-settings')).toContainText('OTEL_EXPORTER_OTLP_ENDPOINT=https://studio.example/api/telemetry/otlp');
+    expect(created).toEqual([{ name: 'shop-api', signals: ['metrics'], expiresAt: null }]);
+    await expect(panel.getByTestId('telemetry-token-stage-new').getByTestId('telemetry-token-last-seen')).toHaveText('Never');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      fs.mkdirSync(results, { recursive: true });
+      await panel.screenshot({ path: path.join(results, `telemetry-tokens-created-${theme}--mocked.png`) });
+    }
+    await panel.getByTestId('telemetry-token-dismiss').click();
+    await expect(panel.getByTestId('telemetry-token-created')).toHaveCount(0);
+    await expect(panel).not.toContainText(secret);
+
+    await managed.getByTestId('telemetry-token-revoke').click();
+    await managed.getByTestId('telemetry-token-confirm-revoke').click();
+    await expect(managed).toHaveAttribute('data-state', 'revoked');
+    expect(revoked).toEqual(['stage-deploy']);
+    await panel.getByTestId('telemetry-tokens-environment').selectOption('production');
+    await expect(panel.getByTestId('telemetry-tokens-empty')).toContainText('No ingest tokens for production yet.');
+    await panel.screenshot({ path: path.join(results, 'telemetry-tokens-production-dark--mocked.png') });
+  });
+
   test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {
     await openDeploy(page, fullMocks());
     const release = deployReleasesFixture()[0];
@@ -588,7 +649,7 @@ test.describe('Project Deploy area (mocked)', () => {
     await page.route(`**${DEPLOY}/operations/logs?*`, route => answer(route, { telemetryAvailable: false, lines: [] }));
     await page.getByTestId('deploy-tab-operations').click();
     const operations = page.getByTestId('project-operations');
-    await expect(operations).toContainText('Telemetry is not available yet');
+    await expect(operations).toContainText('No telemetry has reached Studio for this environment yet');
     await expect(operations.getByTestId('operations-dora')).toContainText('0.5 per week');
     await expect(page.getByTestId('hosted-data-panel')).toContainText('No persistent volumes declared.');
     await operations.getByTestId('operations-search-logs').click();

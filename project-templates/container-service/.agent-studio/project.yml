@@ -1,4 +1,4 @@
-schemaVersion: 1
+schemaVersion: 2
 stack: [node]
 toolVersions: {}
 commands:
@@ -14,5 +14,51 @@ testSuites:
     expectedDurationSeconds: 30
     command: npm test
 cachePaths: [node_modules]
-capabilities: [git, child-process]
+capabilities: [git, child-process, loopback-network]
 environment: {}
+# Rename the id to your project's identifier.
+project:
+  id: container-service
+artifacts:
+  - name: service
+    type: container
+    path: .
+    dockerfile: Dockerfile
+# Studio sets OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL and
+# OTEL_EXPORTER_OTLP_HEADERS with an ingest token for environments with
+# telemetry: true, so their metrics and logs reach Operations.
+environments:
+  - name: staging
+    protected: false
+    telemetry: true
+  - name: production
+    protected: true
+    telemetry: true
+# Replace app-host with the id of your deploy host and the health URLs with the
+# addresses your proxy serves; see docs/deployments/README.md.
+deploy:
+  - step: container
+    artifact: service
+    target: app-host
+    composeFile: /srv/apps/service/staging/compose.yml
+    service: app
+    healthUrl: https://staging.service.example.com/health
+    healthTimeoutSeconds: 120
+    environments: [staging]
+  - step: container
+    artifact: service
+    target: app-host
+    composeFile: /srv/apps/service/production/compose.yml
+    service: app
+    healthUrl: https://service.example.com/health
+    healthTimeoutSeconds: 120
+    environments: [production]
+variables:
+  - name: LOG_LEVEL
+    value: info
+# Each step names a script the operator installs on the deploy host; see docs/runbooks/README.md.
+runbooks:
+  - name: restart
+    steps: [restart-service]
+  - name: collect-diagnostics
+    steps: [collect-diagnostics]

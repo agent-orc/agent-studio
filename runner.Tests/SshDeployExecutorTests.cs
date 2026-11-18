@@ -183,6 +183,66 @@ public sealed class SshDeployExecutorTests
         finally { File.Delete(capture); }
     }
     [Fact]
+    public async Task Remote_compose_passes_studio_telemetry_variables_into_the_service()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var capture = Path.Combine(Path.GetTempPath(), "remote-compose-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var script = (string)typeof(SshDeployExecutor).GetField("RemoteScript", BindingFlags.NonPublic | BindingFlags.Static)!
+                .GetRawConstantValue()!;
+            // The fake records the override file while it still exists.
+            var fake = "import subprocess, json\n" +
+                "capture = " + JsonSerializer.Serialize(capture) + "\n" +
+                "def fake_run(args, **kwargs):\n" +
+                "    with open(args[5]) as override, open(capture, 'a') as out:\n" +
+                "        out.write(json.dumps({'override': override.read()}) + '\\n')\n" +
+                "    return subprocess.CompletedProcess(args, 0)\n" +
+                "subprocess.run = fake_run\n";
+            var start = new ProcessStartInfo("python3")
+            { RedirectStandardInput = true, RedirectStandardError = true, UseShellExecute = false };
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add(fake + script);
+            using var process = Process.Start(start)!;
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                action = "compose", file = "/srv/apps/demo/compose.yml", service = "demo",
+                image = "image@sha256:" + new string('a', 64),
+                variables = new { OTEL_EXPORTER_OTLP_ENDPOINT = "https://studio.test/api/telemetry/otlp", MESSAGE = "hello" },
+                inject = new[] { "OTEL_EXPORTER_OTLP_ENDPOINT" },
+            }));
+            process.StandardInput.Close();
+            var error = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.True(process.ExitCode == 0, error);
+            using var first = JsonDocument.Parse(File.ReadLines(capture).First());
+            Assert.Equal("services:\n  \"demo\":\n    image: \"image@sha256:" + new string('a', 64) + "\"\n"
+                + "    environment:\n      - \"OTEL_EXPORTER_OTLP_ENDPOINT\"\n",
+                first.RootElement.GetProperty("override").GetString());
+        }
+        finally { File.Delete(capture); }
+    }
+
+    [Fact]
+    public async Task Container_step_names_only_studio_telemetry_variables_for_injection()
+    {
+        string? input = null;
+        var executor = new SshDeployExecutor((_, _, stdin, _) =>
+        {
+            input = stdin;
+            return Task.FromResult(new ProcessResult(0, "", ""));
+        });
+        var step = Step("container") with { ComposeFile = "/srv/apps/web/compose.yml", Service = "web" };
+
+        await executor.ExecuteAsync("web-vm", step, "image@sha256:" + new string('a', 64), "/unused",
+            new Dictionary<string, string> { ["MESSAGE"] = "hello", ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf" },
+            _ => Task.CompletedTask, CancellationToken.None);
+
+        using var payload = JsonDocument.Parse(input!);
+        Assert.Equal(["OTEL_EXPORTER_OTLP_PROTOCOL"], payload.RootElement.GetProperty("inject").EnumerateArray().Select(item => item.GetString()));
+    }
+
+    [Fact]
     public async Task Container_values_travel_on_stdin_and_commands_require_a_known_host()
     {
         var calls = new List<(string File, IReadOnlyList<string> Args, string? Input)>();

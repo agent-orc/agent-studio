@@ -1,0 +1,13 @@
+# Copy this file to the composeFile path of each environment on the deploy host,
+# for example /srv/apps/service/staging/compose.yml. The deploy replaces the image
+# with the released one and adds the OTEL_* variables Studio sets for telemetry.
+services:
+  app:
+    image: studio-container-service
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Optional: comma-separated name=url pairs the /health check probes.
+      HEALTH_DEPENDENCIES: ${HEALTH_DEPENDENCIES:-}

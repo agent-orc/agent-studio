@@ -12,6 +12,7 @@ public static class TelemetryServiceCollectionExtensions
         services.AddSingleton<ITelemetryEnvironmentDirectory, DeclaredTelemetryEnvironments>();
         services.AddSingleton<ITelemetryValueMasker, CredentialTelemetryValueMasker>();
         services.AddSingleton<TelemetryIntakeService>();
+        services.AddSingleton<DeployTelemetryCredentials>();
         services.AddSingleton<TelemetryWriter>();
         services.AddHostedService(sp => sp.GetRequiredService<TelemetryWriter>());
         return services;

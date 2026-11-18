@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ProjectOperationsComponent } from './project-operations';
-import type { ProjectOperations } from './project-operations.model';
+import { ratio, type ProjectOperations } from './project-operations.model';
 
 const snapshot: ProjectOperations = {
   project: 'demo', since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
@@ -30,7 +30,7 @@ describe('ProjectOperationsComponent', () => {
     TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     const host = fixture.nativeElement as HTMLElement;
-    expect(host.textContent).toContain('Telemetry is not available yet');
+    expect(host.textContent).toContain('No telemetry has reached Studio for this environment yet');
     expect(host.textContent).toContain('rollback · succeeded');
     expect(host.querySelector<HTMLElement>('[data-testid="operations-marker-state"]')?.dataset['tone']).toBe('success');
     expect(host.textContent).toContain('0.5 per week');
@@ -157,5 +157,11 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentInstance.openRelease.subscribe(id => releases.push(id));
     host.querySelector<SVGGElement>('.trend__marker-link')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(releases).toEqual(['rel-1']);
+  });
+
+  it('shows used CPU and memory when the intake reports no reservation', () => {
+    expect(ratio(0.25, null, ' cores')).toBe('0.3 cores');
+    expect(ratio(null, 2, ' cores')).toBe('No data');
+    expect(ratio(1, 2, ' cores')).toBe('1 cores / 2 cores');
   });
 });

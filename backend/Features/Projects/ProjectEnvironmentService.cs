@@ -29,6 +29,12 @@ public sealed record EnvironmentDeclaration(
 
     public ManagedDatabaseEnvironmentPolicy EffectiveDatabasePolicy => DatabasePolicy ?? ManagedDatabaseEnvironmentPolicy.For(Kind);
     public bool? Protected { get; init; }
+
+    /// <summary>
+    /// Container deploys receive the Studio OTLP endpoint and an ingest token
+    /// scoped to this environment (M5); see <see cref="DeployTelemetryPolicy"/>.
+    /// </summary>
+    public bool Telemetry { get; init; }
     public bool? Automatic { get; init; }
     public string? Requires { get; init; }
 
@@ -84,6 +90,9 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
 
     /// <summary>The approved managed databases; the run zone provisions or upgrades them only through a deploy job.</summary>
     public IReadOnlyList<ProjectDatabaseDefinition> Databases { get; init; } = [];
+
+    /// <summary>Set when the declaration enables telemetry; the claim adds the endpoint (M5).</summary>
+    public DeployJobTelemetry? Telemetry { get; init; }
     public IReadOnlyList<DeployStepResult> StepResults { get; init; } = [];
     /// <summary>Preview jobs share the normal claim, lease and report queue.</summary>
     public string Kind { get; init; } = "standard";
@@ -335,7 +344,9 @@ public sealed partial class ProjectEnvironmentService
             {
                 SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
                 Protected = environment.Protected, Automatic = phase.Automatic, Requires = phase.Requires,
+                Telemetry = environment.Telemetry,
             };
+            DeployTelemetryPolicy.RequireNoDeclaredVariables(declaration);
             output.Add(new(id, declaration, null));
         }
         foreach (var file in files)
@@ -373,16 +384,20 @@ public sealed partial class ProjectEnvironmentService
                 {
                     Variables = variables, Artifacts = definition.Artifacts, Protected = environment.Protected,
                     Automatic = phase.Automatic, Requires = phase.Requires,
+                    Telemetry = legacy.Telemetry || environment.Telemetry,
                 } });
                 continue;
             }
-            output.Add(file with { Declaration = legacy with
+            var migrated = legacy with
             {
                 Template = "ssh-v2",
                 SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
                 Protected = environment.Protected,
                 Automatic = phase.Automatic, Requires = phase.Requires,
-            } });
+                Telemetry = legacy.Telemetry || environment.Telemetry,
+            };
+            DeployTelemetryPolicy.RequireNoDeclaredVariables(migrated);
+            output.Add(file with { Declaration = migrated });
         }
         return InLifecycleOrder(WithDatabases(output, definition.Databases));
     }
@@ -613,6 +628,9 @@ public sealed partial class ProjectEnvironmentService
             : orderValue.ValueKind == JsonValueKind.Number && orderValue.TryGetInt32(out var parsedOrder)
                 && parsedOrder is >= 0 and <= 1000
                 ? parsedOrder : throw new JsonException("order must be a whole number from 0 to 1000.");
+        var telemetry = !value.TryGetProperty("telemetry", out var telemetryValue) ? false
+            : telemetryValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? telemetryValue.GetBoolean()
+            : throw new JsonException("telemetry must be a boolean.");
         return new(id, Required("name"), kind, host, Required("address"), template,
             destination, healthUrl, approval, secrets, containerPort,
             HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
@@ -621,6 +639,7 @@ public sealed partial class ProjectEnvironmentService
             edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null)
         {
             TenantTargets = targets, Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)), Order = order,
+            Telemetry = telemetry,
             DatabasePolicy = edgeHosted ? ManagedDatabaseEnvironmentPolicy.Parse(value, kind, Path.GetFileName(file))
                 : value.TryGetProperty("managedDatabases", out _)
                     ? throw new JsonException("managedDatabases applies only to environments hosted in the run zone (destination \"edge\").")
@@ -1638,6 +1657,8 @@ public sealed partial class ProjectEnvironmentService
                 Hosting = deployed.Hosting ?? current.Hosting,
                 SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
                 Databases = deployed.Databases,
+                // The release the rollback returns to decided whether its workload sends telemetry.
+                Telemetry = deployed.Telemetry is not null,
             }
             : current;
 
@@ -1765,7 +1786,8 @@ public sealed partial class ProjectEnvironmentService
             GuidedFailure: declaration.GuidedFailure, RetryStep: retryStep, RetryOfJobId: retryOfJobId,
             Hosting: declaration.Hosting, EnvironmentKind: declaration.Kind)
         { Tenant = tenant, Data = declaration.Data, SshSteps = OnHost(declaration.SshSteps, declaration.TargetHostId),
-            Variables = declaration.Variables, Artifacts = declaration.Artifacts, Databases = declaration.Databases };
+            Variables = declaration.Variables, Artifacts = declaration.Artifacts, Databases = declaration.Databases,
+            Telemetry = DeployTelemetryPolicy.For(declaration) };
         state.Jobs.Add(job);
         return job;
     }

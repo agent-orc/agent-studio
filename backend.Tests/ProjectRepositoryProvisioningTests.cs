@@ -52,6 +52,28 @@ public sealed class ProjectRepositoryProvisioningTests
     }
 
     [Fact]
+    public void Container_template_declares_schema_two_telemetry_environments_runbooks_and_the_otel_sdk()
+    {
+        var source = ProjectRepositoryTemplates.ReadFiles("container-service", TemplateRoot);
+        var yaml = source[".agent-studio/project.yml"];
+        var parsed = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(parsed.IsValid, string.Join(Environment.NewLine, parsed.Issues.Select(issue => issue.Message)));
+        Assert.Equal(2, parsed.Definition!.SchemaVersion);
+        var deployment = parsed.Definition.Deployment!;
+        Assert.Equal([("staging", true), ("production", true)], deployment.Environments.Select(item => (item.Name, item.Telemetry)));
+        Assert.Equal(["restart", "collect-diagnostics"], deployment.Runbooks.Select(item => item.Name));
+
+        // The declarations Studio derives from the file give every container deploy its telemetry.
+        var declarations = AgentStudio.Projects.ProjectEnvironmentService.ApplyDefinition([], yaml);
+        Assert.All(declarations, file => Assert.NotNull(AgentStudio.Projects.DeployTelemetryPolicy.For(file.Declaration!)));
+
+        Assert.Contains("@opentelemetry/sdk-node", source["package.json"]);
+        Assert.Contains("--import", source["Dockerfile"]);
+        Assert.Contains("docs/runbooks/README.md", source.Keys);
+        Assert.DoesNotContain(source.Keys, key => key.StartsWith("node_modules/", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Creates_repository_with_main_and_develop_from_template()
     {
         var handler = new FakeGitHubHandler();

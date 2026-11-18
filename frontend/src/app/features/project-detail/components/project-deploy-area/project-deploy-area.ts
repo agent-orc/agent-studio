@@ -14,6 +14,7 @@ import { OperationsCardLookupService } from '../../state/operations-card-lookup.
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 import { ManagedDatabasesPanelComponent } from '../managed-databases-panel/managed-databases-panel';
 import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-page/project-secrets-page.component';
+import { ProjectTelemetryTokensComponent } from '../project-telemetry-tokens/project-telemetry-tokens';
 import { FlowHealthPageComponent, type FlowDetailTarget } from '../../../flow-health';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
@@ -42,7 +43,7 @@ import {
   type ReleaseGateStatus,
 } from '../../state/deploy-area.model';
 
-export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
+export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'telemetry' | 'secrets' | 'tools';
 
 const IDLE: DeployRunActionState = { busy: null, error: null };
 
@@ -54,7 +55,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent, LocalOwnerDialogComponent,
+    ProjectTelemetryTokensComponent, FlowHealthPageComponent, LocalOwnerDialogComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',

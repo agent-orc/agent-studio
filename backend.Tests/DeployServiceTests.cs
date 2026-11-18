@@ -10,6 +10,7 @@ using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -2922,6 +2923,143 @@ public sealed class DeployServiceTests : IDisposable
                 beta = new { destination = betaPort, healthUrl = $"https://beta-{environment}.example/health" },
             });
             File.WriteAllText(path, declaration.ToJsonString());
+        }
+    }
+
+    private const string TelemetryEnvironments =
+        "environments:\n  - name: staging\n    telemetry: true\n  - name: production\n    protected: true\n    telemetry: true\n";
+
+    [Fact]
+    public async Task Telemetry_environment_claim_mints_a_scoped_ingest_token_the_deploy_host_may_resolve()
+    {
+        var (deploy, environments, _) = Build();
+        WriteProjectYml(TelemetryEnvironments);
+        var release = CreateRelease(deploy, Artifact('a'), Commit("telemetry"));
+        var stage = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.Equal(new DeployJobTelemetry(DeployTelemetryVocabulary.SecretName, "http/protobuf"), stage.Telemetry);
+        Assert.DoesNotContain(DeployTelemetryVocabulary.SecretName, stage.SecretRefs);
+        // The persisted telemetry matches the release snapshot, so the claimed job stays verifiable.
+        Assert.NotNull(environments.FindClaimedJobVerification("demo", stage.Id, stage.LeaseToken!, requireVerifiedRelease: true).Job);
+
+        var config = new ConfigurationBuilder().AddConfiguration(_configuration!)
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek") })
+            .Build();
+        var provider = new AgentStudio.Secrets.SecretProvider(new AgentStudio.Secrets.BuiltInSecretStore(config,
+                new AgentStudio.Secrets.ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+            new AgentStudio.Secrets.SecretAuditLog(config), new AgentStudio.Secrets.SecretValueScrubber(_clock), _clock,
+            NullLogger<AgentStudio.Secrets.SecretProvider>.Instance);
+        var bindings = new AgentStudio.Secrets.ProjectSecretBindings(config, provider, environments, _clock);
+        var tokens = new FakeIngestTokens(_clock);
+        var telemetry = new AgentStudio.Telemetry.DeployTelemetryCredentials(tokens, bindings, provider,
+            new AgentStudio.Telemetry.TelemetryOptions(), _clock, NullLogger<AgentStudio.Telemetry.DeployTelemetryCredentials>.Instance);
+
+        var result = await ProjectOperatorDashboardEndpoints.CompleteClaimAsync(stage, _ => { }, bindings, CancellationToken.None,
+            (job, ct) => telemetry.PrepareClaimAsync(job, "https://studio.test/api/telemetry/otlp", ct));
+        var returned = Assert.IsType<Microsoft.AspNetCore.Http.HttpResults.Ok<DeployJob>>(result).Value!;
+
+        Assert.Empty(returned.MissingSecretRefs!);
+        Assert.Equal("secret://demo/stage/" + DeployTelemetryVocabulary.SecretName,
+            returned.SecretBindings![DeployTelemetryVocabulary.SecretName]);
+        Assert.Equal("https://studio.test/api/telemetry/otlp", returned.Telemetry!.Endpoint);
+        Assert.Equal($"deployment.environment.name=stage,agent_studio.release.id={Uri.EscapeDataString(release.Id)}",
+            returned.Telemetry.ResourceAttributes);
+        var minted = Assert.Single(tokens.Tokens);
+        Assert.Equal(("demo", "stage", AgentStudio.Telemetry.DeployTelemetryCredentials.CreatedBy), (minted.Project, minted.Environment, minted.CreatedBy));
+        Assert.Equal(AgentStudio.Security.TelemetrySignals.All, minted.Signals);
+
+        // The deploy host resolves the token under its lease, and only for this job's environment.
+        var leases = new AgentStudio.Secrets.SecretWorkloadLeases(environments, null!, _scanner!, bindings,
+            new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance));
+        var lease = leases.FindClaimedDeployJob("demo", stage.Id, stage.LeaseToken!)!;
+        Assert.Contains(DeployTelemetryVocabulary.SecretName, lease.SecretRefs);
+        Assert.Equal("secret://demo/stage/" + DeployTelemetryVocabulary.SecretName, lease.SecretBindings![DeployTelemetryVocabulary.SecretName]);
+        var issued = await provider.GetForWorkloadAsync(
+            AgentStudio.Secrets.SecretReference.Parse(lease.SecretBindings[DeployTelemetryVocabulary.SecretName]),
+            new AgentStudio.Secrets.SecretWorkload(AgentStudio.Secrets.SecretWorkload.DeployJob, "stage-host", "demo", "stage",
+                lease.SecretRefs, lease.SecretBindings), "deploy:stage");
+        Assert.Equal(tokens.Secrets[minted.Id], issued.Value);
+
+        // A second claim keeps the token; revoking it mints a new one and keeps only that one live.
+        await telemetry.EnsureAsync("demo", "stage", CancellationToken.None);
+        Assert.Single(tokens.Tokens);
+        tokens.Revoke("demo", "stage", minted.Id);
+        await telemetry.EnsureAsync("demo", "stage", CancellationToken.None);
+        Assert.Equal(2, tokens.Tokens.Count);
+        Assert.Single(tokens.Tokens, item => item.RevokedAt is null);
+    }
+
+    [Fact]
+    public void Automatic_rollback_returns_to_the_telemetry_of_the_release_it_restores()
+    {
+        var (deploy, environments, _) = Build();
+        WriteProjectYml(TelemetryEnvironments);
+        CreateRelease(deploy, Artifact('a'), Commit("with-telemetry"));
+        var healthy = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.True(environments.Report("demo", healthy.Id, ReportJob(healthy, healthy: true), requireVerifiedRelease: true));
+        deploy.SyncAfterHostCall("demo");
+
+        WriteSshProjectYml();
+        CreateRelease(deploy, Artifact('b'), Commit("without-telemetry"));
+        var failed = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.Null(failed.Telemetry);
+        var advancing = new ProjectEnvironmentService(_configuration!, _scanner!, _git!, _settings!,
+            new AdvancingTimeProvider(_clock, TimeSpan.FromSeconds(1)),
+            new ReleaseArtifactRegistry(_configuration!), new DeployStore(_configuration!));
+        Assert.True(advancing.Report("demo", failed.Id, ReportJob(failed, healthy: false), requireVerifiedRelease: true));
+
+        var rollback = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.True(rollback.IsRollback);
+        Assert.Equal(healthy.Telemetry, rollback.Telemetry);
+    }
+
+    [Fact]
+    public void Telemetry_environment_refuses_a_declared_otlp_variable()
+    {
+        var (_, environments, _) = Build();
+        WriteProjectYml(TelemetryEnvironments + "variables:\n  - name: OTEL_EXPORTER_OTLP_ENDPOINT\n    value: https://elsewhere.example\n");
+        var files = environments.DeclarationFiles("demo")!;
+        Assert.All(files, file => Assert.Contains("OTEL_EXPORTER_OTLP_ENDPOINT", file.Error));
+    }
+
+    [Fact]
+    public void Environment_without_telemetry_queues_jobs_without_it()
+    {
+        var (deploy, environments, _) = Build();
+        WriteSshProjectYml();
+        CreateRelease(deploy, Artifact('a'), Commit("no-telemetry"));
+        Assert.Null(environments.Claim("stage-host")!.Telemetry);
+    }
+
+    private sealed class FakeIngestTokens(TimeProvider clock) : AgentStudio.Telemetry.ITelemetryIngestCredentials
+    {
+        public List<TelemetryIngestToken> Tokens { get; } = [];
+        public Dictionary<string, string> Secrets { get; } = [];
+
+        public TelemetryIngestPrincipal? Authenticate(string? bearer) => null;
+
+        public (TelemetryIngestToken Token, string Secret) Create(string project, string environment, string? name,
+            IReadOnlyList<string>? signals, DateTime? expiresAt, string? createdBy)
+        {
+            var token = new TelemetryIngestToken
+            {
+                Id = Guid.NewGuid().ToString("N"), Name = name ?? "otlp", Project = project, Environment = environment,
+                Signals = [.. signals ?? []], SecretHash = "hash", CreatedAt = clock.GetUtcNow().UtcDateTime, CreatedBy = createdBy,
+            };
+            Tokens.Add(token);
+            // Built at runtime: no credential-shaped literal in source.
+            Secrets[token.Id] = string.Join(".", "otl", token.Id, Guid.NewGuid().ToString("N"));
+            return (token, Secrets[token.Id]);
+        }
+
+        public IReadOnlyList<TelemetryIngestToken> List(string project, string environment)
+            => Tokens.Where(item => item.Project == project && item.Environment == environment).ToArray();
+
+        public bool Revoke(string project, string environment, string tokenId)
+        {
+            var index = Tokens.FindIndex(item => item.Id == tokenId);
+            if (index < 0) return false;
+            Tokens[index] = Tokens[index] with { RevokedAt = clock.GetUtcNow().UtcDateTime };
+            return true;
         }
     }
 

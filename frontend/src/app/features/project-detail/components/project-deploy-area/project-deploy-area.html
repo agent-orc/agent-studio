@@ -13,6 +13,7 @@
     <button type="button" data-testid="deploy-tab-secrets" [attr.aria-current]="view() === 'secrets' ? 'page' : null" (click)="show('secrets')">Secrets</button>
     <button type="button" data-testid="deploy-tab-runbooks" [attr.aria-current]="view() === 'runbooks' ? 'page' : null" (click)="show('runbooks')">Runbooks</button>
     <button type="button" data-testid="deploy-tab-operations" [attr.aria-current]="view() === 'operations' ? 'page' : null" (click)="show('operations')">Operations</button>
+    <button type="button" data-testid="deploy-tab-telemetry" [attr.aria-current]="view() === 'telemetry' ? 'page' : null" (click)="show('telemetry')">Telemetry</button>
   </nav>
   @if (checkoutMissing()) {
     <section class="deploy-section" role="status" data-testid="deploy-checkout-missing">
@@ -60,6 +61,7 @@
           @defer (on idle) { <app-hosted-data-panel [projectName]="projectName()" /> }
           @placeholder { <p>Loading hosted data…</p> }
         }
+        @case ('telemetry') { @defer { <app-project-telemetry-tokens [projectName]="projectName()" /> } @placeholder { <p>Loading telemetry tokens…</p> } }
         @case ('secrets') { @defer { <app-project-secrets-page [projectName]="projectName()" /> } }
         @case ('history') {
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"

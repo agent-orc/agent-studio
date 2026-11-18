@@ -339,6 +339,9 @@
                   "description": "P1 Staging deploys automatically after integration and cannot be protected.",
                   "const": false,
                   "default": false
+                },
+                "telemetry": {
+                  "$ref": "#/$defs/environmentTelemetry"
                 }
               }
             },
@@ -355,6 +358,9 @@
                 "protected": {
                   "const": true,
                   "default": true
+                },
+                "telemetry": {
+                  "$ref": "#/$defs/environmentTelemetry"
                 }
               }
             }
@@ -1184,6 +1190,11 @@
       "description": "Repository-relative artifact path with the remotePath segment alphabet; '.' alone is the repository root.",
       "type": "string",
       "pattern": "^(?:\\.|(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*)*)$"
+    },
+    "environmentTelemetry": {
+      "description": "Connect container deploys of this environment to the Studio OTLP intake: the deploy sets OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL and OTEL_EXPORTER_OTLP_HEADERS with an ingest token scoped to the environment.",
+      "type": "boolean",
+      "default": false
     },
     "environmentScope": {
       "description": "Environments the entry applies to; omitted means every environment.",

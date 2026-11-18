@@ -28,10 +28,3 @@ public sealed record OperationsLogQuery(string Project, string EnvironmentId, Da
     DateTimeOffset Until, string? Level, string? ReleaseId, string? Text, int Limit);
 
 public sealed record OperationsLogLine(DateTimeOffset At, string Level, string Message, string? ReleaseId);
-
-/// <summary>Temporary adapter until the OTLP intake store implements <see cref="IOperationsTelemetryReader"/>.</summary>
-public sealed class UnavailableOperationsTelemetryReader : IOperationsTelemetryReader
-{
-    public OperationsMetrics? ReadMetrics(string project, string environmentId, DateTimeOffset since, DateTimeOffset until) => null;
-    public IReadOnlyList<OperationsLogLine>? SearchLogs(OperationsLogQuery query) => null;
-}
