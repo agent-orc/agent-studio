@@ -658,7 +658,7 @@ public sealed class SummaryGenerationService
                 result = result with { Ok = false, Error = validationError };
 
             AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, result.Model, result.Usage,
-                result.DurationMs, ok: result.Ok, project: info.ProjectName, jobId: info.Id);
+                result.DurationMs, ok: result.Ok, cliType: result.EffectiveCliType ?? selection.Cli, project: info.ProjectName, jobId: info.Id);
             evidence.Add($"Attempt {attempt}: {(result.Ok ? "passed" : result.Error ?? "generation failed")}");
             usage = Accumulate(usage, result.Usage);
             step = StepModelUsage.From(usage, result.Model, selection.ThinkingLevel, selection.ModelSource).ApplyTo(step with
@@ -717,9 +717,10 @@ public sealed class SummaryGenerationService
             sw.Stop();
             var endedAt = DateTime.UtcNow;
             var effectiveModel = string.IsNullOrWhiteSpace(r.EffectiveModel) ? model : r.EffectiveModel!;
-            if (!r.Ok) return SummaryModelResult.Failure(effectiveModel, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds) with { Usage = r.Usage };
+            if (!r.Ok) return SummaryModelResult.Failure(effectiveModel, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds)
+                with { Usage = r.Usage, EffectiveCliType = r.EffectiveCliType ?? r.Usage?.CliType ?? selection.Cli };
             return SummaryModelResult.Success(effectiveModel, r.Usage, r.ParsedText.Trim(), startedAt, endedAt,
-                (long)r.Duration.TotalMilliseconds);
+                (long)r.Duration.TotalMilliseconds) with { EffectiveCliType = r.EffectiveCliType ?? r.Usage?.CliType ?? selection.Cli };
         }
 
         if (!string.Equals(selection.Cli, CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
@@ -1033,6 +1034,7 @@ public sealed class SummaryGenerationService
     {
         /// <summary>Raw JSON of the trailing assessment block, peeled off the prose.</summary>
         public string? AssessmentJson { get; init; }
+        public string? EffectiveCliType { get; init; }
 
         public static SummaryModelResult Success(
             string model,

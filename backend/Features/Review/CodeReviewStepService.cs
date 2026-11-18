@@ -133,7 +133,7 @@ public sealed class CodeReviewStepService
         AdHocClaudeInvoker.Record(_usage,
             request.Mode == CodeReviewMode.Grade ? "post-code-review-grade" : UsageSource,
             request.Model, callUsage,
-            sw.ElapsedMilliseconds, ok, project: request.Project, jobId: request.JobId,
+            sw.ElapsedMilliseconds, ok, cliType: callUsage?.CliType ?? request.CliType, project: request.Project, jobId: request.JobId,
             thinkingLevel: request.ThinkingLevel,
             participantId: string.IsNullOrWhiteSpace(request.ReviewAttemptId) ? null
                 : $"support:review-attempt:{request.ReviewAttemptId}:step:post-code-review-grade");

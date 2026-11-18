@@ -9,7 +9,10 @@
     "!/api",
     "!/api/**",
     "!/hubs",
-    "!/hubs/**"
+    "!/hubs/**",
+    "!/healthz",
+    "!/healthz/**",
+    "!/readyz"
   ],
   "assetGroups": [
     {

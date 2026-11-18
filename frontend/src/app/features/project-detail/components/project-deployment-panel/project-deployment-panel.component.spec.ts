@@ -34,7 +34,7 @@ describe('ProjectDeploymentPanelComponent', () => {
     http
       .expectOne('/api/projects/Demo%20Project/deployment/summary')
       .flush({
-        project: 'Demo Project', available: true, reason: null,
+        project: 'Demo Project', available: true, reason: null, stableBaseline: true,
         source: 'logs/stable-restarts.jsonl', pendingCount: 2,
         defaultEvidenceRun: { id: 'TR-green', commit: 'bbbbbbbb', branch: 'develop', scope: { level: 'project', testSet: 'all' }, completedAt: '2026-07-11T08:00:00Z', distanceToHead: 2, headDirection: 'head-ahead' },
         pendingCommits: [{ sha: 'cccccccc', shortSha: 'cccccccc', subject: 'Pending', authorDateUtc: '2026-07-11T10:00:00Z' }],
@@ -162,10 +162,36 @@ describe('ProjectDeploymentPanelComponent', () => {
     http.expectOne('/api/projects/Other/deployment/summary').flush({
       project: 'Other', available: false, reason: 'Latest deploy-stable revision range does not belong to this project repository.',
       source: 'logs/stable-restarts.jsonl', lastDeployment: null, history: [], pendingCount: null, pendingCommits: [], targets: [],
-      defaultEvidenceRun: null,
+      defaultEvidenceRun: null, stableBaseline: true,
     });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-unavailable"]').textContent)
       .toContain('does not belong to this project repository');
+  });
+
+  it('leaves Studio\'s stable baseline out and points a schema 2 project to Deploy', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDeploymentPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDeploymentPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Shop');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Shop/environments')
+      .flush({ project: 'Shop', environments: [], promotions: [], failureCards: [] });
+    http.expectOne('/api/watch-paths').flush([]);
+    http.expectOne('/api/projects/Shop/deployment/summary').flush({
+      project: 'Shop', available: false, reason: 'The deploy-stable baseline is Studio\'s own deployment history.',
+      source: 'logs/stable-restarts.jsonl', lastDeployment: null, history: [], pendingCount: null, pendingCommits: [], targets: [],
+      defaultEvidenceRun: null, stableBaseline: false, pipelineDeploySteps: 2,
+    });
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).not.toContain('stable-restarts.jsonl');
+    expect(text).not.toContain('Stable baseline');
+    expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-no-targets"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-pipeline-steps"]').textContent)
+      .toContain('2 deploy steps in project.yml');
   });
 });

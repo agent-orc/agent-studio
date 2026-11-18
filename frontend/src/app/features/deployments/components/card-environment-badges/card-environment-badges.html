@@ -1,7 +1,7 @@
 @if (badges().length) {
   <div class="card-environments" aria-label="Card deployment environments" data-testid="card-environments">
     @for (badge of badges(); track badge.environmentId) {
-      <app-status-indicator [tone]="tone(badge.state)" [label]="text(badge)" [detail]="detail(badge)" [compact]="true"
+      <app-status-indicator [tone]="tone(badge.state)" [label]="text(badge)" [detail]="detail(badge)" [compact]="true" [wrap]="true"
                             [testId]="'card-environment-' + badge.kind" />
     }
   </div>

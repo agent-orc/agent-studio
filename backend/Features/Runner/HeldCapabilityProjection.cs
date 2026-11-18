@@ -12,14 +12,19 @@ public static class HeldCapabilityProjection
 {
     public static IReadOnlyList<Contract.HeldCapabilityDto> Merge(
         IReadOnlyList<Contract.HeldCapabilityDto> holds,
-        IEnumerable<ReviewUnclaimableObservation> refusals)
+        IEnumerable<ReviewUnclaimableObservation> refusals,
+        IReadOnlySet<string> registeredCapabilities,
+        IReadOnlySet<string> pendingAttemptIds)
     {
         var byKey = holds.ToDictionary(hold => hold.Key, StringComparer.Ordinal);
         var waiting = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
-        foreach (var refusal in refusals.Where(item => item.NamesCapabilities))
+        foreach (var refusal in refusals.Where(item => item.NamesCapabilities
+                     && pendingAttemptIds.Contains(item.AttemptId)))
         {
             foreach (var key in refusal.MissingCapabilities.Distinct(StringComparer.Ordinal))
             {
+                if (!byKey.ContainsKey(key) && registeredCapabilities.Contains(key))
+                    continue;
                 if (!waiting.TryGetValue(key, out var tasks))
                     waiting[key] = tasks = new SortedSet<string>(StringComparer.Ordinal);
                 tasks.Add(refusal.TaskKey);

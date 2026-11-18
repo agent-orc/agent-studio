@@ -47,6 +47,10 @@ public static class DeployEndpoints
             deploy.Notes(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
 
+        project.MapPut("/releases/{releaseId}/notes/{cardKey}", (HttpContext context, string projectName,
+            string releaseId, string cardKey, ReleaseNoteEditRequest request, DeployService deploy) =>
+            Respond(deploy.EditNote(projectName, releaseId, cardKey, request, Actor(context, projectName))));
+
         project.MapGet("/cards", (string projectName, DeployService deploy) =>
             deploy.Cards(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 

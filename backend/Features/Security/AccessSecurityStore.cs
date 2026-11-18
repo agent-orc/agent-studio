@@ -1091,6 +1091,33 @@ public sealed partial class AccessSecurityStore
         }
     }
 
+    /// <summary>
+    /// A run host (runner.deploy) sends no claim heartbeat: its deploy claims,
+    /// reports and run-target polls are its contact. A poll stamps
+    /// <see cref="RunnerServiceIdentity.LastSeenAt"/> on the background flush
+    /// tick; a claimed job or a report is saved at once.
+    /// </summary>
+    public RunnerServiceIdentity? RecordDeployHostContact(string runnerId, DeployHostContact contact)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var runner = state.Runners.FirstOrDefault(x => x.Id == runnerId);
+            if (runner is null) return null;
+            var now = Now;
+            var updated = runner with
+            {
+                LastSeenAt = now,
+                LastClaimAt = contact == DeployHostContact.Claim ? now : runner.LastClaimAt,
+                LastReportAt = contact == DeployHostContact.Report ? now : runner.LastReportAt,
+            };
+            state.Runners[state.Runners.IndexOf(runner)] = updated;
+            if (contact == DeployHostContact.Poll) _lastSeenDirty = true;
+            else SaveLocked(state);
+            return updated;
+        }
+    }
+
     public RunnerServiceIdentity RequestRunnerDrain(string runnerId, bool retireAfterDrain)
     {
         lock (_gate)
