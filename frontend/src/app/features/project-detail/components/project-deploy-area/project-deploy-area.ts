@@ -19,7 +19,7 @@ import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-pa
 import { FlowHealthPageComponent, type FlowDetailTarget } from '../../../flow-health';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
-import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../services/project-deploy-data.service';
+import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
 import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
 import { LocalOwnerSessionService } from '../../../../services/local-owner-session.service';
 import { LocalOwnerDialogComponent } from '../../../../components/local-owner-dialog/local-owner-dialog';
@@ -43,6 +43,9 @@ import {
   type ArtifactReleaseLookup,
   type ReleaseGateStatus,
 } from '../../state/deploy-area.model';
+import {
+  DEPLOY_LIVE_REFRESH_MS, deployInFlight, deployNotices, deployRunConfirmation, intoPanel, isProductionRun, pageItems,
+} from '../../state/deploy-area-reads';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
 
@@ -75,6 +78,7 @@ export class ProjectDeployAreaComponent {
   private artifactReads = new Subscription();
   private mutations = new Subscription();
   private cardReads = new Subscription();
+  private liveReads = new Subscription();
   private readGeneration = 0;
   private releaseGeneration = 0;
   private logGeneration = 0;
@@ -133,7 +137,7 @@ export class ProjectDeployAreaComponent {
         this.releaseOffset.set(panel.value.offset);
         this.releaseTotal.set(panel.value.total);
       }
-      this.releasePanel.set(this.items(panel));
+      this.releasePanel.set(pageItems(panel));
     }));
   }
 
@@ -176,6 +180,7 @@ export class ProjectDeployAreaComponent {
     return fetched ? buildDeployRuns([fetched], environmentNames(this.sources()), this.knownReleases()) : [];
   });
   readonly cards = computed(() => buildEnvironmentCards(this.sources()));
+  readonly inFlight = computed(() => deployInFlight([...this.runs(), ...this.statusRuns()], ready(this.environmentPanel())));
   /** The overview waits for the AGT-3176 environments, or for AGT-3201 status when those failed. */
   readonly overviewPanel = computed<DeployPanel<unknown>>(() => {
     const environments = this.environmentPanel();
@@ -184,16 +189,12 @@ export class ProjectDeployAreaComponent {
   readonly environmentOptions = computed(() => this.cards().map(card => ({ id: card.id, name: card.name })));
   readonly selectedRun = computed(() => [...this.runs(), ...this.historyRuns(), ...this.statusRuns(), ...this.fetchedRuns()]
     .find(run => run.id === this.selectedRunId()) ?? null);
-  readonly notices = computed(() => {
-    const notice = (name: string, panel: DeployPanel<unknown>) => panel.status === 'error' ? [`${name}: ${panel.message}`] : [];
-    return [
-      ...notice('Environments', this.environmentPanel()),
-      ...notice('Environment status', this.statusPanel()), ...notice('Releases', this.releasePanel()),
-      ...notice('Deploy runs', this.deploymentPanel()), ...notice('Health', this.healthPanel()),
-      ...[...this.artifactReleases().values()].flatMap(panel => notice('Release lookup', panel)),
-      ...(this.fetchedRun() ? notice('Deploy run', this.fetchedRun()!) : []),
-    ];
-  });
+  readonly notices = computed(() => deployNotices([
+    ['Environments', this.environmentPanel()], ['Environment status', this.statusPanel()], ['Releases', this.releasePanel()],
+    ['Deploy runs', this.deploymentPanel()], ['Health', this.healthPanel()],
+    ...[...this.artifactReleases().values()].map(panel => ['Release lookup', panel] as const),
+    ...(this.fetchedRun() ? [['Deploy run', this.fetchedRun()!] as const] : []),
+  ]));
   constructor() {
     effect(() => this.view.set(linkedDeployView() ?? this.initialView()));
     effect(onCleanup => {
@@ -201,18 +202,19 @@ export class ProjectDeployAreaComponent {
       const missingCheckout = this.checkoutMissing();
       if (!missingCheckout) untracked(() => this.load(project, true));
       onCleanup(() => {
-        this.subscriptions.unsubscribe();
-        this.runReads.unsubscribe();
-        this.releaseReads.unsubscribe();
-        this.logReads.unsubscribe();
-        this.cardReads.unsubscribe();
-        this.runFetch.unsubscribe();
-        this.artifactReads.unsubscribe();
+        for (const reads of [this.subscriptions, this.runReads, this.releaseReads, this.logReads, this.cardReads, this.liveReads,
+          this.runFetch, this.artifactReads]) reads.unsubscribe();
         this.artifactReads = new Subscription();
         this.mutations.unsubscribe();
         this.mutations = new Subscription();
         this.mutationAction = null;
       });
+    });
+    effect(onCleanup => {
+      const project = this.projectName();
+      if (!this.inFlight() || this.checkoutMissing()) return;
+      const timer = setInterval(() => { if (!this.mutationAction) this.refreshLive(project); }, DEPLOY_LIVE_REFRESH_MS);
+      onCleanup(() => clearInterval(timer));
     });
     // A new target on the same project only opens its release page; the other sources stay loaded.
     effect(() => {
@@ -281,16 +283,13 @@ export class ProjectDeployAreaComponent {
     if (!runId || this.mutationAction) return;
     const run = this.selectedRun();
     if (!run) return;
-    const production = ready(this.statusPanel())?.some(item => item.environment.id === run.environmentId && item.environment.kind === 'production')
-      || ready(this.environmentPanel())?.environments.some(item => item.declaration.id === run.environmentId && item.declaration.kind === 'production')
-      || run.environmentName.toLowerCase() === 'production';
+    const production = isProductionRun(run, ready(this.statusPanel()), ready(this.environmentPanel()));
     if ((action === 'cancel' && run.state === 'running') || action === 'abort' ||
       (production && (action === 'approve' || action === 'reject'))) {
       // The server lets only a signed-in Owner or Maintainer decide production; ask for the account first.
       if (production && this.localOwner.missing() && (action === 'approve' || action === 'reject'))
         return this.localOwner.run('Production approval needs the owner account.', () => this.act(action, reason));
-      const verb = action === 'cancel' || action === 'abort' ? 'Abort' : action === 'approve' ? 'Approve' : 'Reject';
-      if (!window.confirm(`${verb} ${run.environmentName} run ${run.id}?`)) return;
+      if (!window.confirm(deployRunConfirmation(action, run, this.knownReleases()))) return;
     }
     const project = this.projectName();
     this.mutationAction = action;
@@ -301,21 +300,31 @@ export class ProjectDeployAreaComponent {
       next: () => {
         this.mutationAction = null;
         this.actionState.set(IDLE);
-        this.reloadRuns(project, true);
-        this.refetchRun(runId);
+        this.refreshLive(project);
         if (this.selectedRunId() === runId) this.loadLog(runId);
       },
       error: (error: unknown) => {
         this.mutationAction = null;
         this.actionState.set(this.selectedRunId() === runId
           ? { busy: null, error: serverMessage(error) ?? 'The deploy service did not accept the request.' } : IDLE);
-        this.reloadRuns(project, true);
-        this.refetchRun(runId);
+        this.refreshLive(project);
       },
     }));
   }
 
+  /** F17: an action or a host report changes the cards too: environments, health, status, and runs are read again. */
+  private refreshLive(projectName: string): void {
+    this.liveReads.unsubscribe();
+    this.liveReads = new Subscription();
+    this.liveReads.add(this.data.environments(projectName).subscribe(intoPanel(this.environmentPanel, true)));
+    this.liveReads.add(this.data.health(projectName).subscribe(intoPanel(this.healthPanel, true)));
+    this.reloadRuns(projectName, true);
+    const runId = this.selectedRunId();
+    if (runId) this.refetchRun(runId);
+  }
+
   private load(projectName: string, resetSelection: boolean): void {
+    this.liveReads.unsubscribe();
     this.subscriptions.unsubscribe();
     this.subscriptions = new Subscription();
     this.now.set(this.clock());
@@ -355,11 +364,11 @@ export class ProjectDeployAreaComponent {
     this.runReads = new Subscription();
     const generation = ++this.readGeneration;
     this.runReads.add(this.data.statuses(projectName).subscribe(panel => {
-      if (generation === this.readGeneration) this.into(this.statusPanel, keepShown)(panel);
+      if (generation === this.readGeneration) intoPanel(this.statusPanel, keepShown)(panel);
     }));
     this.runReads.add(this.data.deploymentPage(projectName, 0).subscribe(panel => {
       if (generation !== this.readGeneration) return;
-      this.into(this.deploymentPanel, keepShown)(this.items(panel));
+      intoPanel(this.deploymentPanel, keepShown)(pageItems(panel));
     }));
     this.runReads.add(this.data.deploymentPage(projectName, this.historyOffset(), this.historyFilter(), this.now()).subscribe(panel => {
       if (generation !== this.readGeneration) return;
@@ -367,7 +376,7 @@ export class ProjectDeployAreaComponent {
         this.historyDeployments.set(panel.value.items);
         this.historyTotal.set(panel.value.total);
       }
-      this.into(this.historyPanel, keepShown)(this.items(panel));
+      intoPanel(this.historyPanel, keepShown)(pageItems(panel));
     }));
   }
 
@@ -394,19 +403,8 @@ export class ProjectDeployAreaComponent {
     this.releaseReads.add(this.data.releasePage(projectName, this.releaseOffset()).subscribe(panel => {
       if (generation !== this.releaseGeneration) return;
       if (panel.status === 'ready') this.releaseTotal.set(panel.value.total);
-      this.into(this.releasePanel, keepShown)(this.items(panel));
+      intoPanel(this.releasePanel, keepShown)(pageItems(panel));
     }));
-  }
-
-  private items<T>(panel: DeployPanel<DeployPage<T>>): DeployPanel<T[]> {
-    return panel.status === 'ready' ? { status: 'ready', value: panel.value.items } : panel;
-  }
-
-  /** With `keepShown`, ready data stays on screen until the reload answers. */
-  private into<T>(target: WritableSignal<DeployPanel<T>>, keepShown: boolean): (panel: DeployPanel<T>) => void {
-    return panel => {
-      if (!keepShown || panel.status !== 'loading' || target().status !== 'ready') target.set(panel);
-    };
   }
 
   /** Resolves each host artifact once per project; answers for another project are dropped. */

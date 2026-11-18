@@ -174,8 +174,33 @@ public sealed class WorkbenchLifecycleServiceTests : IDisposable
 
         Assert.False(document.Workbench.Documentation!.Eligible);
         Assert.Contains("AGT-3", document.Workbench.Documentation.BlockedReason);
+        Assert.Contains("AGT-3", document.Workbench.LinkedTaskKeys);
+        Assert.Contains(document.Workbench.Documentation.References,
+            reference => reference.Key == "AGT-3" && !reference.Terminal);
         Assert.Equal(1, list.Cards.Single(card => card.Key == "AGT-3").ImplementationIndex);
         Assert.Equal((2, 1), (list.ImplementationSlices, list.CompletedSlices));
+    }
+
+    [Fact]
+    public void Catalogue_LinksAnUnkeyedLedgerMemberByItsJobId()
+    {
+        WriteConceptWorkbench("delivery", sliceCount: 1);
+        var entry = "docs/workbenches/delivery/index.html";
+        var concept = WriteTask("AGT-1", TaskStates.Completed, dossier: new { path = entry });
+        var slice = WriteTask("AGT-3", TaskStates.Ready);
+        var taskPath = Path.Combine(slice, "task.json");
+        var task = JsonNode.Parse(File.ReadAllText(taskPath))!.AsObject();
+        task.Remove("key");
+        File.WriteAllText(taskPath, task.ToJsonString());
+        Directory.CreateDirectory(Path.Combine(concept, ".metadata"));
+        File.WriteAllText(Path.Combine(concept, ".metadata", "spawned-tasks.jsonl"),
+            JsonSerializer.Serialize(new { reason = $"concept-promotion:{entry}:0", targetJobId = "agt-3" }) + "\n");
+
+        var document = ServicesWithCards().Catalogue.Read("Project", "delivery")!.Workbench;
+
+        Assert.Contains("agt-3", document.LinkedTaskKeys);
+        Assert.Contains(document.Documentation!.References,
+            reference => reference.Key == "agt-3" && !reference.Terminal);
     }
 
     [Fact]

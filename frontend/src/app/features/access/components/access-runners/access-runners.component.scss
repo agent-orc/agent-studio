@@ -24,3 +24,5 @@
 .runners__editor td { background: var(--studio-surface-muted); }
 .runners__editor .access-row { margin-top: var(--studio-spacing-2); }
 td .access-hint { margin-top: var(--studio-spacing-1); }
+// F4: the run host commands wrap instead of widening the panel.
+pre.access-secret { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

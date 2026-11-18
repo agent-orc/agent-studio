@@ -4,7 +4,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { Observable } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
 import type { WatchPathEntry } from '../../../models/task.model';
-import { SecretsService, type SecretMetadata, type SecretScopeKey } from '../secrets.service';
+import { SecretsService, environmentLabel, type SecretEnvironment, type SecretMetadata, type SecretScopeKey } from '../secrets.service';
 import { SecretBackendSettingsComponent } from '../secret-backend-settings/secret-backend-settings.component';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 
@@ -32,7 +32,8 @@ export class SecretsPanelComponent {
   readonly fixedEnvironment = input<string | null>(null);
   readonly project = signal('');
   readonly environment = signal('');
-  readonly environmentOptions = signal<readonly string[]>([]);
+  readonly environmentOptions = signal<readonly SecretEnvironment[]>([]);
+  readonly label = environmentLabel;
   readonly newName = signal('');
   readonly newValue = signal('');
   readonly rotating = signal<string | null>(null);
@@ -75,7 +76,7 @@ export class SecretsPanelComponent {
       this.environmentOptions.set([]);
       if (!project) return;
       const subscription = this.service.environments(project).subscribe(options =>
-        this.environmentOptions.set(options.map(item => item.id)));
+        this.environmentOptions.set(options));
       onCleanup(() => subscription.unsubscribe());
     });
     effect(() => {

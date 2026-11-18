@@ -230,7 +230,8 @@ public sealed class TaskIntegrationStatusService
                     fullSuite = PublishedGateEvidenceBackfill.PassedReceipts(source.FolderPath)
                         .Any(receipt => string.Equals(receipt.Sha, gate.TreeSha, StringComparison.OrdinalIgnoreCase)
                             && string.Equals(receipt.TestLevel, TestExecutionLevels.Full, StringComparison.OrdinalIgnoreCase));
-                publications.Add(new(gate.TreeSha, parent, gate.Describe(), fullSuite));
+                publications.Add(new(gate.TreeSha, parent, gate.Describe(), fullSuite,
+                    gate.RecordedAtUtc));
             }
             // A fresh integration whose diff has no applicable gate records that
             // policy decision on its card instead of publishing a passed gate.
@@ -288,9 +289,11 @@ public sealed class TaskIntegrationStatusService
             }
             IntegrationPublicationGatePolicy.Publication? mappedBatchGate = null;
             var uncountedBatches = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var manifest in batches.ListManifests()
+            var batchManifests = batches.ListManifests()
                 .Where(item => string.Equals(item.Scope.Project, job.ProjectName, StringComparison.Ordinal)
-                    && IntegrationVerificationProjection.SameBranch(item.Scope.IntegrationBranch, branch)))
+                    && IntegrationVerificationProjection.SameBranch(item.Scope.IntegrationBranch, branch))
+                .ToArray();
+            foreach (var manifest in batchManifests)
             {
                 var publication = batches.ReadPublication(manifest.BatchId);
                 if (publication is null || !laterBySha.ContainsKey(publication.TestedCandidateSha)) continue;
@@ -328,7 +331,9 @@ public sealed class TaskIntegrationStatusService
                 if (crossesMappedTree) baseSha = verification.Sha!;
                 var batchGate = new IntegrationPublicationGatePolicy.Publication(
                     publication.TestedCandidateSha, baseSha,
-                    $"batch gate {manifest.BatchId} run {publication.BatchRunId}");
+                    $"batch gate {manifest.BatchId} run {publication.BatchRunId}",
+                    CoversPriorPublications: true,
+                    PassedAtUtc: verdict!.CompletedAtUtc);
                 publications.Add(batchGate);
                 if (crossesMappedTree) mappedBatchGate = batchGate;
             }
@@ -374,6 +379,20 @@ public sealed class TaskIntegrationStatusService
                 var owner = sourceCard is null
                     ? _git.GetCommitAuthor(root, hole) is { } author ? $"Commit author: {author}. " : string.Empty
                     : $"Card: {sourceCard.TaskKey} ({sourceCard.Title}). ";
+                var pendingGate = batchManifests
+                    .SelectMany(manifest => batches.ListRuns(manifest.BatchId)
+                        .Select(run => (Manifest: manifest, Run: run,
+                            Verdict: batches.ReadVerdict(manifest.BatchId, run.BatchRunId))))
+                    .Where(item => item.Verdict is null
+                        && ReviewSubjectStore.IsValidResultSha(item.Run.CandidateSha)
+                        && _git.TryIsAncestor(root, hole, item.Run.CandidateSha) == true)
+                    .OrderByDescending(item => item.Run.StartedAtUtc)
+                    .FirstOrDefault();
+                var nextStep = pendingGate.Run is not null
+                    ? $"Acceptance waits for the running gate of {pendingGate.Run.CandidateSha} "
+                        + $"(batch {pendingGate.Manifest.BatchId}, run {pendingGate.Run.BatchRunId}), whose tested tree contains this publication."
+                    : $"No later covering gate is running. An Owner or operator can review this exact publication and record "
+                        + $"POST /api/projects/{job.ProjectName}/operator-candidate-verifications for {hole}.";
                 return status with { Verification = UnverifiedAcceptance(tip,
                     $"The later publication {hole} has no recorded verification on the first-parent integration line. "
                     + $"First uncovered commit after verified tree {Short(verification.Sha!)} up to {Short(tip!)}: {named}; "
@@ -381,7 +400,8 @@ public sealed class TaskIntegrationStatusService
                     + (batchDetails ? $"; {baseAnswer}; {batchAnswer}" : string.Empty) + ". "
                     + (batchDetails
                         ? "A passed gate on the published tree or a full-suite batch base verdict with its evidence would cover it."
-                        : "Ask the project owner to review this commit and record its integration verification.")) with
+                        : "Ask the project owner to review this commit and record its integration verification.")
+                    + $" {nextStep}") with
                 {
                     UncoveredPublication = named,
                 } };
@@ -391,7 +411,10 @@ public sealed class TaskIntegrationStatusService
             if (decision.CoveringPublication is { } covering)
                 return status with { Verification = verification with
                 {
-                    Reason = $"{verification.Reason} {covering.Gate} passed a full suite on later first-parent "
+                    Evidence = IntegrationVerificationEvidence.PublishedGate,
+                    GateVerdict = nameof(BuildTestGateVerdict.Ok),
+                    Reason = $"{verification.Reason} This publication is covered by the passed gate of {covering.TreeSha} at "
+                        + $"{covering.PassedAtUtc:O}. {covering.Gate} passed a full suite on later first-parent "
                         + $"publication {covering.TreeSha}, covering earlier publications through "
                         + $"{Short(verification.Sha!)}.{neutralEvidence}",
                     GateNeutralCommits = neutralCommits.Order(StringComparer.OrdinalIgnoreCase).ToArray(),

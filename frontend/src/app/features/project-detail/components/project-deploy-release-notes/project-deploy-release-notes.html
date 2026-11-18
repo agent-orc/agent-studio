@@ -7,11 +7,29 @@
     @case ('ready') {
       @if (notes(); as notes) {
         <p>{{ notes.preview ? 'Staging preview' : 'Production release' }}</p>
-        @if (notes.notes.length) {
-          <ul>@for (note of notes.notes; track note.cardKey) {
-            <li><strong>{{ note.cardKey }}</strong> · {{ note.text }}</li>
+        @if (productNotes().length) {
+          <ul>@for (note of productNotes(); track note.cardKey) {
+            <li [attr.data-testid]="'deploy-release-note-' + note.cardKey">
+              @if (editing() === note.cardKey) {
+                <label class="release-notes__label" [for]="'release-note-' + note.cardKey">Note for {{ note.cardKey }}</label>
+                <textarea class="release-notes__input" [id]="'release-note-' + note.cardKey" rows="2" maxlength="500"
+                  [value]="draft()" (input)="draft.set($any($event.target).value)" data-testid="deploy-release-note-input"></textarea>
+                <div class="release-notes__actions">
+                  <button type="button" class="studio-button studio-button--primary" [disabled]="saving()" (click)="save(note.cardKey)" data-testid="deploy-release-note-save">Save note</button>
+                  <button type="button" class="studio-button studio-button--secondary" [disabled]="saving()" (click)="editing.set(null)">Cancel</button>
+                </div>
+              } @else {
+                <strong>{{ note.cardKey }}</strong> · {{ note.text }}
+                @if (!note.edited) { <span class="release-notes__muted">(card title)</span> }
+                <button type="button" class="studio-button studio-button--ghost" (click)="edit(note.cardKey, note.text)" data-testid="deploy-release-note-edit">Edit</button>
+              }
+            </li>
           }</ul>
-        } @else { <p>No linked card changes.</p> }
+        } @else { <p>No linked product changes.</p> }
+        @if (maintenanceNotes().length) {
+          <p class="release-notes__muted" data-testid="deploy-release-notes-maintenance">Maintenance, left out of the notes: {{ maintenanceKeys() }}</p>
+        }
+        @if (saveError(); as error) { <p role="alert" data-testid="deploy-release-note-error">{{ error }}</p> }
       }
     }
   }

@@ -59,6 +59,7 @@
                 [attr.data-state]="v.state" [attr.data-usage-trigger]="'cli:' + cli.cliId.toLowerCase()"
                 [attr.aria-label]="usageName(cli)" [title]="usageTooltip(cli)">
           <strong>{{ v.name }} </strong>
+          @if (v.fable.reported) { <span>Fable {{ v.fable.value }} </span> }
           @if (v.weekly.reported) { <span>WK {{ v.weekly.value }} </span> }
           @if (v.session.reported) { <span class="statusbar__usage-session">Session {{ v.session.value }} </span> }
           @if (v.state === 'stale') { <span class="statusbar__age">{{ age(cli.fetchedAt) }}</span> }

@@ -261,7 +261,18 @@ public sealed partial class TaskServerStore
             foreach (var circuit in circuits)
             {
                 if (circuit.CanaryRunnerId == runnerId && circuit.CanaryInstanceId == instanceId
-                    && circuit.CanaryUntil > UtcNow) continue;
+                    && circuit.CanaryUntil > UtcNow)
+                {
+                    // AGT-3948: the owner reserves again right before its real
+                    // request, after the status command spent part of the
+                    // window. Extend it so that request's success can still
+                    // release the hold; the start stays the original reservation.
+                    await ExecuteAsync(connection, """
+                        UPDATE provider_health_circuits SET canary_until = $until
+                         WHERE cohort_key = $cohort;
+                        """, ct, transaction, ("$until", Iso(UtcNow.AddSeconds(45))), ("$cohort", circuit.Key));
+                    continue;
+                }
                 await ExecuteAsync(connection, """
                     UPDATE provider_health_circuits
                        SET canary_runner_id = $runner, canary_instance_id = $instance,
