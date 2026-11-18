@@ -34,6 +34,7 @@ export class ProjectDeployOverviewComponent {
   readonly definition = input<PipelineDefinitionResponse | null>(null);
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  readonly openSecrets = output<string>();
   /** project.yml changed; the owner reloads the Deploy sources. */
   readonly definitionChanged = output<void>();
 

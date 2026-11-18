@@ -39,7 +39,8 @@
           <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()" [busy]="environmentActionBusy()"
             [projectName]="projectName()" [definition]="pipelineDefinition()"
             (openRun)="openRun($event)" (openTools)="show('tools')" (definitionChanged)="refresh()"
-            (stop)="stopEnvironment($event)" (remove)="removeEnvironment($event)" />
+            (stop)="stopEnvironment($event)" (remove)="removeEnvironment($event)"
+            (openSecrets)="secrets.environment.set($event); show('secrets')" />
           @if (environmentActionMessage(); as message) { <p role="status" data-testid="deploy-environment-action-message">{{ message }}</p> }
           @if (environmentActionError(); as error) { <p role="alert" data-testid="deploy-environment-action-error">{{ error }}</p> }
           @for (removal of pendingRemovals(); track removal.hostId + ':' + removal.environmentId) {
@@ -58,7 +59,7 @@
             <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">deployment tools</button>.</p>
         }
         @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [projectName]="projectName()" [environments]="cards()" [now]="now()" [highlightedReleaseId]="highlightedReleaseId()"
-          [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" /> }
+          [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" (openSecrets)="secrets.environment.set($event); show('secrets')" /> }
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading…</p> } }
         @case ('flow') { @defer { <app-flow-health-page [projectName]="projectName()" (openDetail)="openFlowDetail($event)" /> } @placeholder { <p>Loading flow health…</p> } }
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" (openFlowHealth)="show('flow')" /> }
@@ -72,7 +73,7 @@
           @defer (on idle) { <app-hosted-data-panel [projectName]="projectName()" /> }
           @placeholder { <p>Loading hosted data…</p> }
         }
-        @case ('secrets') { @defer { <app-project-secrets-page [projectName]="projectName()" /> } }
+        @case ('secrets') { @defer { <app-project-secrets-page [projectName]="projectName()" [initialEnvironment]="secrets.environment()" /> } }
         @case ('history') {
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
@@ -86,8 +87,8 @@
       }
     </div>
     @if (selectedRun(); as run) {
-      @defer { <app-deploy-run-drawer class="deploy-area__drawer" [run]="run" [log]="logPanel()" [action]="actionState()"
-        (act)="act($event)" (skip)="act('skip', $event)" (closeRequest)="closeRun()" /> }
+      @defer { <app-deploy-run-drawer class="deploy-area__drawer" [run]="run" [log]="logPanel()" [action]="actionState()" [secrets]="secrets.run()"
+        (act)="act($event)" (openSecrets)="secrets.environment.set($event); show('secrets')" (skip)="act('skip', $event)" (closeRequest)="closeRun()" /> }
       @placeholder { <p>Loading run details…</p> }
     } @else if (fetchedRun()?.status === 'loading') { <p class="deploy-muted" role="status" data-testid="deploy-run-fetching">Loading run details…</p> }
   </div>

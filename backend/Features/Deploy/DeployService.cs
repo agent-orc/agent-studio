@@ -443,6 +443,109 @@ public sealed class DeployService
         }
     }
 
+    /// <summary>
+    /// F14: the secret names a deploy of the release carries into each lifecycle
+    /// environment, the same names the host job lists in <c>SecretRefs</c>.
+    /// Without a release id the newest release answers, because it is the one
+    /// the next run deploys; an environment the release has no snapshot of
+    /// answers from its current declaration. Null for an unknown project or release.
+    /// </summary>
+    public IReadOnlyList<EnvironmentSecretDemand>? SecretDemand(string project, string? releaseId)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            if (snapshot is null) return null;
+            ReleaseRecord? record = null;
+            if (releaseId is not null && !snapshot.Records.TryGetValue(releaseId, out record)) return null;
+            if (releaseId is null && snapshot.Releases.LastOrDefault() is { } newest) record = snapshot.Records[newest.Id];
+            var current = _environments.Declarations(project) ?? [];
+            return snapshot.Environments.Select(environment => Demand(project, record, environment, current, null))
+                .Where(item => item is not null).Select(item => item!).ToArray();
+        }
+    }
+
+    /// <summary>The secret names the run's job carries, for the approval preflight (F14).</summary>
+    public EnvironmentSecretDemand? SecretDemandForRun(string project, string deploymentId)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            var run = snapshot?.Runs.FirstOrDefault(item => item.Id == deploymentId);
+            if (run is null || !snapshot!.Records.TryGetValue(run.ReleaseId, out var record)) return null;
+            var environment = snapshot.Environments.FirstOrDefault(item => item.Id == run.EnvironmentId);
+            return environment is null ? null
+                : Demand(project, record, environment, _environments.Declarations(project) ?? [], run.Tenant);
+        }
+    }
+
+    /// <summary>The secret names a deploy of one release into one environment carries (F14).</summary>
+    public EnvironmentSecretDemand? SecretDemandFor(string project, string releaseId, string environmentId,
+        string? tenant = null)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            if (snapshot is null || !snapshot.Records.TryGetValue(releaseId, out var record)) return null;
+            var environment = snapshot.Environments.FirstOrDefault(item => item.Id == environmentId);
+            return environment is null ? null
+                : Demand(project, record, environment, _environments.Declarations(project) ?? [], tenant);
+        }
+    }
+
+    /// <summary>The secret names a redeploy or rollback of the environment would carry (F14).</summary>
+    public EnvironmentSecretDemand? SecretDemandForEnvironment(string project, string environmentId, bool rollback,
+        string? tenant = null)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            var environment = snapshot?.Environments.FirstOrDefault(item => item.Id == environmentId);
+            if (environment is null) return null;
+            var runs = snapshot!.Deployments(project).Where(item => item.EnvironmentId == environmentId
+                && item.Tenant == tenant).ToArray();
+            var release = rollback
+                ? EnvironmentStatusProjection.PreviousRelease(runs, snapshot.ReleaseById)
+                : EnvironmentStatusProjection.CurrentRelease(runs, snapshot.ReleaseById);
+            return release is null ? null : Demand(project, snapshot.Records[release.Id], environment,
+                _environments.Declarations(project) ?? [], tenant);
+        }
+    }
+
+    /// <summary>The waiting Production run an AGT-3176 promotion approval would approve, if any.</summary>
+    public string? PendingPromotionRunId(string project, string artifact)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            var promotion = snapshot?.View.Promotions.LastOrDefault(item => item.Artifact == artifact && item.Status == "pending");
+            if (promotion is null) return null;
+            return snapshot!.Runs.LastOrDefault(item => item.EnvironmentId == promotion.ProductionId
+                && item.State == DeploymentStates.AwaitingApproval && item.Trigger == DeploymentTriggers.Deploy
+                && snapshot.Records.TryGetValue(item.ReleaseId, out var record)
+                && record.Release.ArtifactDigests.Contains(artifact, StringComparer.Ordinal))?.Id;
+        }
+    }
+
+    private static EnvironmentSecretDemand? Demand(string project, ReleaseRecord? record, DeployEnvironment environment,
+        IReadOnlyList<EnvironmentDeclaration> current, string? tenant)
+    {
+        var snapshotTarget = record?.Environments.FirstOrDefault(item => item.Id == environment.Id);
+        var target = snapshotTarget ?? current.FirstOrDefault(item => item.Id == environment.Id);
+        if (target is null) return null;
+        IReadOnlyList<string> names;
+        try { names = HostedDataBinding.DeclaredSecretNames(project, target.Id, target.SecretRefs, target.Data); }
+        catch (JsonException) { names = target.SecretRefs; }
+        if (snapshotTarget is not null)
+        {
+            // The same environment name QueueJob resolves the release variables for.
+            var (_, secrets) = ResolveVariables(record!, target.Kind == "stage" ? EnvironmentKinds.Staging : target.Kind, tenant);
+            names = names.Concat(secrets.Values).Distinct(StringComparer.Ordinal).ToArray();
+        }
+        var declared = current.FirstOrDefault(item => item.Id == environment.Id)?.SecretRefs ?? [];
+        return new(environment, target.Kind, snapshotTarget is null ? null : record!.Release.Id, names, declared);
+    }
+
     public IReadOnlyList<Deployment>? Deployments(string project, string? environmentId, string? tenant = null)
     {
         lock (_gate)
@@ -822,7 +925,7 @@ public sealed class DeployService
     }
 
     public DeployOutcome<Deployment> RequestDeployment(string project, string releaseId, DeploymentRequest request,
-        DeployActor actor)
+        DeployActor actor, IReadOnlyList<string>? confirmedMissingSecrets = null)
     {
         lock (_gate)
         {
@@ -834,17 +937,19 @@ public sealed class DeployService
             if (environment is null)
                 return DeployOutcome<Deployment>.NotFound($"Unknown environment '{request.EnvironmentId}'.");
             return Start(project, snapshot, record, environment, DeployIntent.Deploy, request.Approve, actor,
-                request.Tenant, request.GuidedFailure);
+                request.Tenant, request.GuidedFailure, confirmedMissingSecrets);
         }
     }
 
     public DeployOutcome<Deployment> Redeploy(string project, string environmentId, bool approve, DeployActor actor,
-        string? tenant = null, bool? guidedFailure = null)
-        => StartForEnvironment(project, environmentId, DeployIntent.Redeploy, approve, actor, tenant, guidedFailure);
+        string? tenant = null, bool? guidedFailure = null, IReadOnlyList<string>? confirmedMissingSecrets = null)
+        => StartForEnvironment(project, environmentId, DeployIntent.Redeploy, approve, actor, tenant, guidedFailure,
+            confirmedMissingSecrets);
 
     public DeployOutcome<Deployment> Rollback(string project, string environmentId, bool approve, DeployActor actor,
-        string? tenant = null, bool? guidedFailure = null)
-        => StartForEnvironment(project, environmentId, DeployIntent.Rollback, approve, actor, tenant, guidedFailure);
+        string? tenant = null, bool? guidedFailure = null, IReadOnlyList<string>? confirmedMissingSecrets = null)
+        => StartForEnvironment(project, environmentId, DeployIntent.Rollback, approve, actor, tenant, guidedFailure,
+            confirmedMissingSecrets);
 
     /// <summary>
     /// Approves a waiting run. The lifecycle decides again, because another
@@ -854,7 +959,7 @@ public sealed class DeployService
     /// Queuing the run closes the waiting runs it makes invalid.
     /// </summary>
     public DeployOutcome<Deployment> Approve(string project, string deploymentId, DeployActor actor,
-        bool? guidedFailure = null)
+        bool? guidedFailure = null, IReadOnlyList<string>? confirmedMissingSecrets = null)
     {
         lock (_gate)
         {
@@ -887,15 +992,16 @@ public sealed class DeployService
             var runs = snapshot.Runs.Select(item => item.Id == run.Id ? approved : item).ToList();
             var log = new List<DeploymentLogEntry>
             {
-                new(run.Id, DeployStepNames.Approval, now, run.Tenant is null
-                    ? $"Approved by {actor.Id}." : $"Tenant {run.Tenant} approved by {actor.Id}."),
+                new(run.Id, DeployStepNames.Approval, now, (run.Tenant is null
+                    ? $"Approved by {actor.Id}." : $"Tenant {run.Tenant} approved by {actor.Id}.")
+                    + MissingSecretsNote(confirmedMissingSecrets)),
                 new(run.Id, run.DeployStep, now, $"Queued for deploy host {job.HostId}."),
             };
             if (HostChange(record, environment.Id, job) is { } moved) log.Add(new(run.Id, run.DeployStep, now, moved));
             var audit = new List<DeployAuditEntry>
             {
                 new(now, actor.Id, "deployment-approved", release.Id, run.Id, run.EnvironmentId,
-                    $"Release {release.Version} approved for {environment.Name}."),
+                    $"Release {release.Version} approved for {environment.Name}." + MissingSecretsNote(confirmedMissingSecrets)),
             };
             Supersede(project, snapshot, runs, approved, intent, release, actor, log, audit, now);
             Persist(project, runs, log, audit);
@@ -1004,7 +1110,8 @@ public sealed class DeployService
     /// artifact. Only an artifact from before releases existed keeps the
     /// direct promotion decision, and only while production is idle.
     /// </summary>
-    public DeployOutcome<Deployment?> DecidePromotion(string project, string artifact, bool approve, DeployActor actor)
+    public DeployOutcome<Deployment?> DecidePromotion(string project, string artifact, bool approve, DeployActor actor,
+        IReadOnlyList<string>? confirmedMissingSecrets = null)
     {
         lock (_gate)
         {
@@ -1018,7 +1125,8 @@ public sealed class DeployService
                 && record.Release.ArtifactDigests.Contains(artifact, StringComparer.Ordinal));
             if (run is not null)
             {
-                var decided = approve ? Approve(project, run.Id, actor) : Reject(project, run.Id, actor);
+                var decided = approve ? Approve(project, run.Id, actor, confirmedMissingSecrets: confirmedMissingSecrets)
+                    : Reject(project, run.Id, actor);
                 return new(decided.Kind, decided.Value, decided.Error);
             }
             if (snapshot.Releases.Any(item => item.ArtifactDigests.Contains(artifact, StringComparer.Ordinal)))
@@ -1074,7 +1182,8 @@ public sealed class DeployService
     }
 
     private DeployOutcome<Deployment> StartForEnvironment(string project, string environmentId, DeployIntent intent,
-        bool approve, DeployActor actor, string? tenant, bool? guidedFailure = null)
+        bool approve, DeployActor actor, string? tenant, bool? guidedFailure = null,
+        IReadOnlyList<string>? confirmedMissingSecrets = null)
     {
         lock (_gate)
         {
@@ -1092,13 +1201,13 @@ public sealed class DeployService
                     ? $"{environment.Name} has no previous release to roll back to."
                     : $"{environment.Name} has no successfully deployed release.");
             return Start(project, snapshot, snapshot.Records[release.Id], environment, intent, approve, actor,
-                tenant, guidedFailure);
+                tenant, guidedFailure, confirmedMissingSecrets);
         }
     }
 
     private DeployOutcome<Deployment> Start(string project, Snapshot snapshot, ReleaseRecord record,
         DeployEnvironment environment, DeployIntent intent, bool approve, DeployActor actor,
-        string? tenant = null, bool? guidedFailure = null)
+        string? tenant = null, bool? guidedFailure = null, IReadOnlyList<string>? confirmedMissingSecrets = null)
     {
         var release = record.Release;
         if (tenant is not null && !record.Tenants.Any(item => item.Name == tenant
@@ -1138,7 +1247,8 @@ public sealed class DeployService
                     ? $"Requested by {actor.Id}. Waiting for approval by {StandardLifecyclePolicy.ApprovalRoles}."
                     : $"Requested by {actor.Id} for tenant {tenant}. Waiting for approval by {StandardLifecyclePolicy.ApprovalRoles}."));
         else if (decision.ApprovedBy is not null)
-            log.Add(new(run.Id, DeployStepNames.Approval, now, $"Approved by {decision.ApprovedBy}."));
+            log.Add(new(run.Id, DeployStepNames.Approval, now,
+                $"Approved by {decision.ApprovedBy}." + MissingSecretsNote(confirmedMissingSecrets)));
         if (job is not null)
             log.Add(new(run.Id, run.DeployStep, now,
                 tenant is null
@@ -1284,6 +1394,11 @@ public sealed class DeployService
             rollback: trigger == DeploymentTriggers.Rollback, tenant: tenant, releaseId: release.Id,
             variables: values, secretVariableRefs: secrets);
     }
+
+    /// <summary>F14: an approval the approver confirmed despite missing secret bindings says so in log and audit.</summary>
+    private static string MissingSecretsNote(IReadOnlyList<string>? missing) => missing is { Count: > 0 }
+        ? $" Confirmed with {missing.Count} missing secret binding(s): {string.Join(", ", missing)}."
+        : "";
 
     private static (IReadOnlyDictionary<string, string> Values, IReadOnlyDictionary<string, string> Secrets)
         ResolveVariables(ReleaseRecord record, string environment, string? tenant)

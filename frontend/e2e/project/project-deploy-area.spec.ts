@@ -111,6 +111,9 @@ async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false)
   await page.route(`**/api/projects/${PROJECT}/environments/health`, route => answer(route, deploy.health ?? {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
+  await page.route(`**${DEPLOY}/secret-readiness**`, route => answer(route, {
+    project: PROJECT, releaseId: null, environments: [],
+  }));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
   // A predicate, not a glob: the artifact query value contains "/", which a glob "*" does not match.
   await page.route(url => url.pathname === `${DEPLOY}/releases/page`, route => {

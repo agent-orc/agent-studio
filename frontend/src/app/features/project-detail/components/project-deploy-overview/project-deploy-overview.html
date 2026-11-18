@@ -14,7 +14,7 @@
           @for (card of cards(); track card.id) {
             <app-deploy-environment-card [environment]="card" [now]="now()" [busy]="busy()"
               (openRun)="openRun.emit($event)" (openTools)="openTools.emit()"
-              (stop)="stop.emit($event)" (remove)="remove.emit($event)" />
+              (stop)="stop.emit($event)" (remove)="remove.emit($event)" (openSecrets)="openSecrets.emit($event)" />
           }
           @for (environment of declared(); track environment.name) {
             <article class="deploy-overview__declared" [attr.aria-labelledby]="'deploy-declared-' + environment.name"

@@ -11,6 +11,7 @@ import {
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
 
 function ago(age: string | null): string | null {
@@ -21,7 +22,7 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent, PendingButtonDirective],
+  imports: [DatePipe, StatusIndicatorComponent, PendingButtonDirective, DeploySecretGapsComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -34,6 +35,8 @@ export class DeployEnvironmentCardComponent {
   readonly openTools = output<void>();
   readonly stop = output<string>();
   readonly remove = output<string>();
+  /** F14: open the binding panel on this environment. */
+  readonly openSecrets = output<string>();
 
   readonly headingId = computed(() => `deploy-environment-${this.environment().id}-title`);
   readonly release = computed(() => {
