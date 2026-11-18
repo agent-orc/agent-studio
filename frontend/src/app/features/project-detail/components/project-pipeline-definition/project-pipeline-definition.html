@@ -12,6 +12,12 @@
               pendingLabel="Preparing preview"
               (click)="previewMigration()">Preview schema 2 migration</button>
     }
+    @if (definition()?.deployStepsAvailable && !addingSteps()) {
+      <button type="button"
+              class="pipeline__button"
+              data-testid="pipeline-add-deploy-steps"
+              (click)="addingSteps.set(true)">Add deploy steps</button>
+    }
   </header>
 
   @if (loading()) {
@@ -44,6 +50,11 @@
         }
       </ul>
     }
+  }
+
+  @if (addingSteps() && definition()?.deployStepsAvailable) {
+    <app-project-deploy-steps-form [projectName]="projectName()" [environmentNames]="environmentNames()"
+      (written)="stepsWritten($event)" (cancelled)="addingSteps.set(false)" />
   }
 
   @if (migration(); as preview) {

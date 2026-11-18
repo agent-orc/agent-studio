@@ -37,7 +37,9 @@
       @switch (view()) {
         @case ('overview') {
           <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()"
-            (openRun)="openRun($event)" (openTools)="show('tools')" (openSecrets)="secrets.environment.set($event); show('secrets')" />
+            [projectName]="projectName()" [definition]="pipelineDefinition()"
+            (openRun)="openRun($event)" (openTools)="show('tools')" (definitionChanged)="refresh()"
+            (openSecrets)="secrets.environment.set($event); show('secrets')" />
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
             (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
