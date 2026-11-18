@@ -106,10 +106,12 @@ function mount(opts: {
     providers: [
       provideZonelessChangeDetection(),
       { provide: TaskService, useValue: taskStub },
-      { provide: BatchGateService, useValue: opts.batchGate ?? {
-        retryInfrastructureGate: vi.fn(() => of({ retried: true })),
+      { provide: BatchGateService, useValue: {
+        retryInfrastructureGate: vi.fn(() => of({ requestId: 'retry-1', taskKey: 'AGT-1994', requestedAtUtc: '2026-11-10T10:00:00Z', status: 'pending' })),
         getSettings: vi.fn(() => of(batchSettings)),
         putSettings: vi.fn(() => of(batchSettings)),
+        state: () => signal(null), watch: () => vi.fn(),
+        ...opts.batchGate,
       } },
       { provide: HttpClient, useValue: { post: opts.retryReview ?? vi.fn(() => of({ status: 'review-started' })) } },
       { provide: TaskTimelinePollService, useValue: timelineStub },
@@ -163,7 +165,7 @@ describe('EscalationSummaryComponent', () => {
       reason: '[gate-infrastructure] The verification gate could not run.',
     } as TaskDetail['info']['parkedBlocker'];
     const gate = {
-      retryInfrastructureGate: vi.fn(() => of({ retried: true })),
+      retryInfrastructureGate: vi.fn(() => of({ requestId: 'retry-1', taskKey: 'AGT-1994', requestedAtUtc: '2026-11-10T10:00:00Z', status: 'pending' })),
       getSettings: vi.fn(() => of(batchSettings)),
       putSettings: vi.fn(() => of(batchSettings)),
     };
@@ -174,6 +176,11 @@ describe('EscalationSummaryComponent', () => {
     expect(element.querySelector('[data-testid="escalation-action-accept-escalated"]')).toBeNull();
     (element.querySelector('[data-testid="escalation-action-retry-gate"]') as HTMLButtonElement).click();
     expect(gate.retryInfrastructureGate).toHaveBeenCalledWith('Demo', 'AGT-1994');
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="gate-infrastructure-retry-status"]')?.textContent)
+      .toContain('waits for the batch gate');
+    expect((element.querySelector('[data-testid="escalation-action-retry-gate"]') as HTMLButtonElement).disabled)
+      .toBe(true);
     (element.querySelector('[data-testid="escalation-action-disable-batch"]') as HTMLButtonElement).click();
     expect(gate.putSettings).toHaveBeenCalledWith('Demo', expect.objectContaining({ enabled: false }));
   });

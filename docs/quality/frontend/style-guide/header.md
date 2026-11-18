@@ -66,8 +66,9 @@ menu. `studio-tab-actions` owns these controls (`ccc0039eb`, AGT-2819).
 The acceptance refusal (`app-acceptance-refusal`, AGT-3704) renders only for a
 Human Review Accept that is held by its integration verdict or was refused by
 the server. It shows the reason as a compact warning indicator and exactly one
-action: Retry integration for a failed integration, otherwise Accept with
-override, which asks for a written reason. It is omitted during the bounded
+action: Retry integration for a failed integration, Send a round when the
+admission answer forbids an override, otherwise Accept with override, which
+asks for a written reason. It is omitted during the bounded
 Git wait (the primary's skeleton is that progress) and when the attempt-gap
 notice owns the refusal. The reason truncates first at narrow widths; its
 tooltip keeps the full sentence. The primary action can be Run now

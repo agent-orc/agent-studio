@@ -64,7 +64,7 @@
           @if (gateInfrastructure()) {
             <button type="button" class="escalation__action escalation__action--primary"
               data-testid="escalation-action-retry-gate"
-              [disabled]="mutationsBlocked() || gate.action() !== null"
+              [disabled]="mutationsBlocked() || gate.action() !== null || gate.pending()"
               [appPendingButton]="gate.action() === 'retry'" pendingLabel="Retrying gate…"
               (click)="gate.retry()">Retry gate</button>
             <button type="button" class="escalation__action escalation__action--secondary"
@@ -94,6 +94,7 @@
           }
         </div>
         @if (gate.message(); as message) { <p role="status" data-testid="gate-infrastructure-outcome">{{ message }}</p> }
+        <app-gate-infrastructure-retry-status [info]="detail().info" [requested]="gate.requested()" />
         @if (gate.error(); as message) { <p role="alert" data-testid="gate-infrastructure-error">{{ message }}</p> }
         @if (reviewRetryMessage(); as message) { <p role="status" data-testid="review-retry-message">{{ message }}</p> }
       </div>

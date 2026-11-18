@@ -16,6 +16,10 @@ public static class TelemetryAdmissionPolicy
     public static OtlpDecodeResult<TelemetryLogRecord> AdmitLogs(OtlpDecodeResult<TelemetryLogRecord> decoded, DateTimeOffset now, TelemetryOptions options)
         => Admit(decoded, item => item.TimeUnixNano, now - options.LogRetention, now + options.MaxFutureSkew);
 
+    public static OtlpDecodeResult<TelemetrySpanRecord> AdmitSpans(OtlpDecodeResult<TelemetrySpanRecord> decoded, DateTimeOffset now, TelemetryOptions options)
+        => Admit(Admit(decoded, item => item.StartUnixNano, now - options.LogRetention, now + options.MaxFutureSkew),
+            item => item.EndUnixNano, now - options.LogRetention, now + options.MaxFutureSkew);
+
     public static long UnixNanos(DateTimeOffset value) => (value.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks) * 100;
 
     public static DateTimeOffset FromUnixNanos(long value) => DateTimeOffset.UnixEpoch.AddTicks(value / 100);

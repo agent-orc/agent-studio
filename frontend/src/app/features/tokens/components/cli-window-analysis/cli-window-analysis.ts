@@ -126,7 +126,7 @@ export class CliWindowAnalysisComponent {
     if (!/week|7\s*d/i.test(window.label) || !window.resetAt) return null;
     const end = Date.parse(window.resetAt);
     if (!Number.isFinite(end)) return null;
-    return `${this.formatUtc(window.observedStartAt ?? new Date(end - 7 * 86_400_000).toISOString())} to ${this.formatUtc(window.resetAt)}`;
+    return `Provider week: ${window.observedStartAt ? 'start' : 'estimated start'} ${this.formatUtc(window.observedStartAt ?? new Date(end - 7 * 86_400_000).toISOString())}; reset ${this.formatUtc(window.resetAt)}.`;
   }
   formatTokens(value: number): string {
     if (value < 1_000) return value.toLocaleString('en-US');

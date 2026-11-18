@@ -6,6 +6,12 @@
 .studio {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  // Keep shell tracks stable when a projected or keyboard-entry child enters
+  // the grid. The skip links stay first in DOM order for keyboard navigation.
+  > .studio-titlebar { grid-row: 1; }
+  > app-workspace-quota-banner { grid-row: 2; }
+  > .studio-body { grid-row: 3; }
+  > .studio-statusbar { grid-row: 4; }
   // Single-column track, but explicit minmax(0, 1fr) so the column does
   // NOT grow to the intrinsic min-content of its children. Without
   // this, the implicit `auto` single-column expanded to the

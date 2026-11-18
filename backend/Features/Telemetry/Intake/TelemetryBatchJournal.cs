@@ -38,7 +38,9 @@ internal sealed class TelemetryBatchJournal
             Logs = batch.Logs.Select(item => item with
                 { Body = _masker.Mask(item.Body), SeverityText = _masker.Mask(item.SeverityText),
                     EventName = item.EventName is null ? null : _masker.Mask(item.EventName),
-                    Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray()
+                    Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray(),
+            Spans = batch.Spans.Select(item => item with
+                { Name = _masker.Mask(item.Name), Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray()
         };
         staged = staged with { StageId = $"{++_nextOrder:D20}-{Guid.NewGuid():N}" };
         var path = PathFor(staged.StageId);
@@ -87,7 +89,12 @@ internal sealed class TelemetryBatchJournal
                 item.Value, item.Count, item.Min, item.Max, item.IsMonotonic)).ToList(),
             wire.Logs.Select(item => new TelemetryLogRecord(item.TimeUnixNano, item.SeverityNumber,
                 item.SeverityText, item.Body, TelemetryAttributes.ParseJson(item.Attributes), item.TraceId,
-                item.SpanId, item.EventName)).ToList(), wire.EstimatedBytes, wire.StoredBytes, id);
+            item.SpanId, item.EventName)).ToList(), wire.EstimatedBytes, wire.StoredBytes, id)
+        {
+            Spans = (wire.Spans ?? []).Select(item => new TelemetrySpanRecord(item.TraceId, item.SpanId,
+                item.ParentSpanId, item.Name, item.Kind, item.StartUnixNano, item.EndUnixNano, item.Failed,
+                TelemetryAttributes.ParseJson(item.Attributes))).ToList()
+        };
     }
 
     private static BatchWire ToWire(TelemetryIngestBatch batch)
@@ -97,15 +104,19 @@ internal sealed class TelemetryBatchJournal
                 item.Min, item.Max, item.IsMonotonic)).ToArray(),
             batch.Logs.Select(item => new LogWire(item.TimeUnixNano, item.SeverityNumber, item.SeverityText,
                 item.Body, item.Attributes.Json, item.TraceId, item.SpanId, item.EventName)).ToArray(),
-            batch.EstimatedBytes, batch.StoredBytes);
+            batch.EstimatedBytes, batch.StoredBytes,
+            batch.Spans.Select(item => new SpanWire(item.TraceId, item.SpanId, item.ParentSpanId,
+                item.Name, item.Kind, item.StartUnixNano, item.EndUnixNano, item.Failed, item.Attributes.Json)).ToArray());
 
     private string PathFor(string id) => Path.Combine(_root, id + ".json");
 
     private sealed record BatchWire(TelemetryEnvironmentKey Environment, MetricWire[] Metrics, LogWire[] Logs,
-        long EstimatedBytes, long StoredBytes);
+        long EstimatedBytes, long StoredBytes, SpanWire[]? Spans);
     private sealed record MetricWire(string Name, string Unit, MetricKind Kind, MetricTemporality Temporality,
         string Attributes, long TimeUnixNano, long StartTimeUnixNano, double Value, double Count,
         double? Min, double? Max, bool IsMonotonic);
     private sealed record LogWire(long TimeUnixNano, int SeverityNumber, string SeverityText, string Body,
         string Attributes, string? TraceId, string? SpanId, string? EventName);
+    private sealed record SpanWire(string TraceId, string SpanId, string? ParentSpanId, string Name, string Kind,
+        long StartUnixNano, long EndUnixNano, bool Failed, string Attributes);
 }

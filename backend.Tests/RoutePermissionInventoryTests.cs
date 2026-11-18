@@ -267,6 +267,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/bus/{project}/messages", IamPermissions.ProjectRead)]
     [InlineData("POST", "/api/telemetry/otlp/v1/metrics", IamPermissions.Anonymous)]
     [InlineData("POST", "/api/telemetry/otlp/v1/logs", IamPermissions.Anonymous)]
+    [InlineData("POST", "/api/telemetry/otlp/v1/traces", IamPermissions.Anonymous)]
     [InlineData("GET", "/api/projects/{projectName}/environments/{environmentId}/telemetry/logs", IamPermissions.ProjectRead)]
     [InlineData("GET", "/api/projects/{projectName}/environments/{environmentId}/telemetry/tokens", IamPermissions.ProjectRead)]
     [InlineData("POST", "/api/projects/{projectName}/environments/{environmentId}/telemetry/tokens", IamPermissions.ProjectSettingsWrite)]

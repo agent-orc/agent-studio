@@ -725,7 +725,7 @@ builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
-    AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+    AgentStudio.Projects.StoreOperationsTelemetryReader>();
 builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
@@ -745,6 +745,7 @@ builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
 builder.Services.AddSingleton(_ => new HealthCheckConnector());
 builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
 builder.Services.AddSingleton<HealthCheckStore>();
+builder.Services.AddSingleton<TelemetryAlertReader>();
 builder.Services.AddSingleton<HealthAlerts>();
 builder.Services.AddSingleton<IHealthIncidentContext, HealthIncidentContextReader>();
 builder.Services.AddSingleton<EnvironmentHealthService>();
@@ -1518,6 +1519,7 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPro
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGateHostFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)

@@ -156,6 +156,14 @@ CLI execution tests.
 - Codex Spark quota windows are independent windows. Keep their labels and burn
   percentages separate from the standard 5-hour and weekly windows; never fold
   a Spark-only snapshot into the main-window admission signal.
+- The Claude and Codex account pages show a provider week per subscription.
+  The displayed start and reset come from the selected quota snapshot, and
+  captured receipts are restricted to that interval. Footer weekly percentages
+  link to those pages. Other weekly scopes name their own boundaries: workspace
+  cost follows its configured calendar, admission quota resets Monday 00:00 UTC,
+  and quota forecasts mark a seven-day start as estimated when history supplies
+  only the reset instant. Captured token totals and provider percentages use
+  different units and can differ even inside the same interval.
 - Review-decision and supporting aspect calls default to Codex with the
   gpt-mini compatibility family's current member (`gpt-5.6-luna`, resolved through
   `ModelFamilyResolver.Resolve(ModelFamilies.GptMini)` rather than a pinned
