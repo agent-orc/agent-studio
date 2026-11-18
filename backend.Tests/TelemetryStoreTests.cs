@@ -1,5 +1,6 @@
 using AgentStudio.Telemetry;
 using AgentStudio.Projects;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -17,7 +18,7 @@ public sealed class TelemetryStoreTests : IDisposable
         var at = _clock.GetUtcNow();
         const string traceId = "11111111111111111111111111111111";
         var log = new TelemetryLogRecord(Nanos(at), 17, "ERROR", "Dependency timeout",
-            Attributes([("release.id", "rel-1")]), traceId, null, null);
+            Attributes([(DeployTelemetryVocabulary.ReleaseAttribute, "rel-1")]), traceId, null, null);
         store.Write(_stage, [], [log], at);
         var reader = new StoreOperationsTelemetryReader(store, new TelemetryOptions { StoreRoot = _root });
         var page = reader.SearchLogs(new("Shop", "stage", at.AddMinutes(-1), at.AddMinutes(1),

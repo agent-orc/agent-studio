@@ -13,6 +13,7 @@ public static class TelemetryServiceCollectionExtensions
         services.AddSingleton<ITelemetryValueMasker>(sp =>
             new CredentialTelemetryValueMasker(sp.GetRequiredService<AgentStudio.Secrets.ISecretStore>()));
         services.AddSingleton<TelemetryIntakeService>();
+        services.AddSingleton<DeployTelemetryCredentials>();
         services.AddSingleton<TelemetryWriter>();
         if (enabled) services.AddHostedService(sp => sp.GetRequiredService<TelemetryWriter>());
         return services;

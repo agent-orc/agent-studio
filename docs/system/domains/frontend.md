@@ -209,6 +209,11 @@ only aggregate usage without personal identifiers and requires secret masking
 before stored log lines are returned. The metric mapping and histogram
 quantile fallback are documented in
 [app telemetry intake](../../operations/setup/app-telemetry-intake.md).
+The Deploy area's Telemetry tab
+(`ProjectTelemetryTokensComponent`, `?view=telemetry`) lists the ingest tokens of
+one environment with signals, last use, expiry and state, creates a token whose
+endpoint, protocol and headers it shows once, labels the deploy-managed token,
+and revokes a token after a confirming click.
 
 ## Workspace deployment dashboard
 
