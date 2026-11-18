@@ -17,6 +17,14 @@ test('health incident opens as an operations record at desktop and phone widths'
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ state: 'not-connected', configured: false, owner: false, repositoryId: null }),
   }));
+  const operationsRequests: URL[] = [];
+  // The synthetic card has no deployed environment. Keep the destination's log
+  // search available so this spec can verify the incident window it opens.
+  await page.route(/\/api\/projects\/[^/]+\/deploy\/operations\/logs(?:\?|$)/, route => {
+    operationsRequests.push(new URL(route.request().url()));
+    return route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ telemetryAvailable: false, lines: [] }) });
+  });
   const watch = (await api<{ name: string; path: string }[]>('/api/watch-paths?includeFixtures=true'))[0];
   expect(watch).toBeTruthy();
   const projectSlug = watch.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -71,12 +79,14 @@ Control plane health checks failed.
       expect(box?.height).toBeGreaterThanOrEqual(44);
     }
     await page.screenshot({ path: path.join(results, 'health-incident-390-light.png'), fullPage: true });
-    await page.getByText('Last crash or error log lines').scrollIntoViewIfNeeded();
+    await page.getByText('process crashed').scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(results, 'health-incident-390-evidence-light.png') });
     await setTheme(page, 'dark');
     await page.screenshot({ path: path.join(results, 'health-incident-390-dark.png'), fullPage: true });
     await page.getByTestId('incident-open-operations').click();
     await expect(page.getByTestId('deploy-tab-operations')).toHaveAttribute('aria-current', 'page');
+    await expect.poll(() => operationsRequests.some(request => request.searchParams.get('environmentId') === 'stage'
+      && request.searchParams.get('since') === '2026-10-19T08:00:00.000Z')).toBe(true);
     await page.goto(taskUrl);
     await page.getByTestId('incident-roll-back').click();
     await expect(page).toHaveURL(/view=tools&environmentId=stage/);
