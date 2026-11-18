@@ -17,6 +17,8 @@ cleanup() { rm -rf -- "$fixture_root"; }
 trap cleanup EXIT
 mkdir -p "$fixture_root/bin" "$cli_root_fixture/releases/previous/node_modules/.bin"
 ln -sfnT "$cli_root_fixture/releases/previous" "$cli_root_fixture/current"
+ln -sfnT "$cli_root_fixture/current/node_modules/.bin/codex" "$codex_link_fixture"
+ln -sfnT "$cli_root_fixture/current/node_modules/.bin/claude" "$claude_link_fixture"
 
 sed \
   -e "s#^readonly service_user=.*#readonly service_user=\"$(id -un)\"#" \
@@ -24,8 +26,7 @@ sed \
   -e "s#^readonly cli_releases_root=.*#readonly cli_releases_root=\"$cli_root_fixture/releases\"#" \
   -e "s#^readonly cli_current_link=.*#readonly cli_current_link=\"$cli_root_fixture/current\"#" \
   -e "s#^readonly npm_binary=.*#readonly npm_binary=\"$fake_npm\"#" \
-  -e "s#^readonly codex_launcher=.*#readonly codex_launcher=\"$codex_link_fixture\"#" \
-  -e "s#^readonly claude_launcher=.*#readonly claude_launcher=\"$claude_link_fixture\"#" \
+  -e "s#^readonly -a cli_launcher_dirs=.*#readonly -a cli_launcher_dirs=(\"$fixture_root/bin\")#" \
   -e 's/install -d -o root -g root -m 0755/install -d -m 0755/' \
   -e 's/^  chown -R root:root "$staging_root"/  :/' \
   "$helper_path" >"$patched_helper"
@@ -51,6 +52,9 @@ done
 EOF
 chmod 0755 "$fake_npm"
 
+grep -Fq "cli_launcher_dirs=(\"$fixture_root/bin\")" "$patched_helper" \
+  || { echo 'fixture did not redirect the CLI launcher directories' >&2; exit 1; }
+
 # shellcheck source=/dev/null
 source "$patched_helper"
 assert_review_restart_is_safe() { :; }
@@ -75,6 +79,7 @@ grep -Fxq 'codex login status' "$probe_log"
 grep -Fxq 'claude auth status' "$probe_log"
 grep -Fxq 'codex debug models' "$probe_log"
 grep -Fxq 'claude models' "$probe_log"
+[[ "$(readlink "$codex_link_fixture")" == "$cli_current_link/node_modules/.bin/codex" ]]
 
 touch "$fail_probe"
 set +e

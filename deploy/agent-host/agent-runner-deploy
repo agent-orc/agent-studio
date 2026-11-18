@@ -32,17 +32,19 @@ readonly -a release_units=(agent-runner.service agent-runner-review.service)
 readonly review_unit="agent-runner-review.service"
 readonly -a review_env_files=(/etc/agent-runner/runner-review.env /etc/agent-runner/review.env)
 readonly default_review_state_dir="/var/lib/agent-runner-review/state"
-agent_host_binary="$current_link/agent-host"
-[[ -x "$agent_host_binary" ]] || agent_host_binary="$compatibility_link/agent-host"
+readonly agent_host_binary="$current_link/agent-host"
+readonly legacy_agent_host_binary="$compatibility_link/agent-host"
 readonly cli_root="/opt/agent-cli"
 readonly cli_releases_root="$cli_root/releases"
 readonly cli_current_link="$cli_root/current"
 readonly npm_binary="/usr/bin/npm"
 # Adopt every installed launcher, including npm's Debian /usr/bin layout.
 # Refuse regular files rather than overwriting an operator-owned wrapper.
+readonly -a cli_launcher_dirs=(/usr/local/bin /usr/bin)
 cli_launchers() {
-  local name="$1" path found=0
-  for path in "/usr/local/bin/$name" "/usr/bin/$name"; do
+  local name="$1" dir path found=0
+  for dir in "${cli_launcher_dirs[@]}"; do
+    path="$dir/$name"
     if [[ -e "$path" || -L "$path" ]]; then
       [[ -L "$path" ]] || die "CLI launcher must be a symbolic link: $path"
       printf '%s\n' "$path"
@@ -162,6 +164,16 @@ validate_review_state_dir() {
     printf 'agent-runner-deploy: invalid effective RUNNER_STATE_DIR: %q\n' "$value" >&2
     return 1
   }
+}
+
+# Hosts installed before the /opt/agent-host layout only carry agent-host
+# under the compatibility path; the CLI step must still drain them.
+installed_agent_host_binary() {
+  if [[ -x "$agent_host_binary" ]]; then
+    printf '%s\n' "$agent_host_binary"
+  else
+    printf '%s\n' "$legacy_agent_host_binary"
+  fi
 }
 
 # Refuses a restart that would discard running review gate work. A review
@@ -494,7 +506,7 @@ update_clis() {
   probe_staged_cli "$staging_root" claude auth status
   probe_staged_cli "$staging_root" codex debug models
   probe_staged_cli "$staging_root" claude models
-  assert_review_restart_is_safe "$agent_host_binary"
+  assert_review_restart_is_safe "$(installed_agent_host_binary)"
   previous_review_main_pid="$(unit_main_pid "$review_unit")" \
     || die "could not query the review unit MainPID before CLI activation"
 
