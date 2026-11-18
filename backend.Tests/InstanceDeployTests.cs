@@ -165,8 +165,14 @@ public sealed class InstanceDeployTests : IDisposable
         var (_, secret) = security.CreateDeployReporterToken("deploy-scripts", null, "owner");
         var (revoked, revokedSecret) = security.CreateDeployReporterToken("old", null, "owner");
         security.RevokeDeployReporterToken(revoked.Id);
-        var builder = WebApplication.CreateBuilder();
+        // Own content root and the Test environment: the ad-hoc host neither
+        // reads nor watches the configuration in the shared test output folder.
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            EnvironmentName = "Test", ContentRootPath = Directory.CreateDirectory(Path.Combine(_root, "host")).FullName,
+        });
         builder.WebHost.UseTestServer();
+        builder.Logging.ClearProviders();
         builder.Services.AddSingleton(instance);
         builder.Services.AddSingleton(security);
         await using var app = builder.Build();
