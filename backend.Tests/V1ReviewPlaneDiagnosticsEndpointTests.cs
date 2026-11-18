@@ -356,6 +356,55 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests
             snapshot => snapshot.RunnerId == RunnerId);
 
     [Fact]
+    public async Task Reprobe_route_delivers_once_on_each_ok_claim_and_preserves_non_ok_claims()
+    {
+        var factory = Ready();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var registry = factory.Services.GetRequiredService<V1ReviewExecutorRegistry>();
+        var key = Contract.CapabilityProtocol.ProviderAuthentication("codex");
+        registry.Register(RunnerId, new Contract.RegisterRunnerRequest(RunnerId, "review-host", Instance,
+            "test", Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.ReviewExecutor, Contract.ReviewCapabilities.BaselineComparison,
+                Contract.ReviewCapabilities.DependencyPreparation, Contract.ReviewCapabilities.GitMaterialization,
+                Contract.ReviewCapabilities.SemanticReview, key]));
+        var route = $"/api/v1/management/remote-hosts/{RunnerId}/capabilities/reprobe";
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await http.PostAsJsonAsync(route, new Contract.CapabilityReprobeRequest("provider-auth:missing"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted,
+            (await http.PostAsJsonAsync(route, new Contract.CapabilityReprobeRequest(key))).StatusCode);
+
+        Ready(RunnerId);
+        var invalid = await http.PostAsJsonAsync($"/api/v1/runners/{RunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(RunnerId, "wrong-instance", 120, 1));
+        Assert.NotEqual(HttpStatusCode.OK, invalid.StatusCode);
+        Assert.Equal([key], (await ClaimAsync(http)).ReprobeCapabilities);
+        Assert.Null((await ClaimAsync(http)).ReprobeCapabilities);
+
+        var codingId = RunnerId + "-coding";
+        registry.Register(codingId, new Contract.RegisterRunnerRequest(codingId, "coding-host", "coding:1",
+            "test", Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.CodingExecutor, key]));
+        Ready();
+        Assert.Equal(HttpStatusCode.Accepted,
+            (await http.PostAsJsonAsync($"/api/v1/management/remote-hosts/{codingId}/capabilities/reprobe",
+                new Contract.CapabilityReprobeRequest(key))).StatusCode);
+        var codingRequest = new RunnerClaimRequest(codingId, codingId, "coding-host", 1, "codex",
+            CapabilityInstanceId: "coding:1");
+        Ready(codingId);
+        var first = await http.PostAsJsonAsync("/api/runner/claim", codingRequest);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var firstClaim = (await first.Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal([key], firstClaim.GetProperty("reprobeCapabilities").EnumerateArray()
+            .Select(item => item.GetString()));
+        var second = await http.PostAsJsonAsync("/api/runner/claim", codingRequest);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var secondClaim = (await second.Content.ReadFromJsonAsync<JsonElement>());
+        Assert.True(!secondClaim.TryGetProperty("reprobeCapabilities", out var requests)
+            || requests.ValueKind == JsonValueKind.Null);
+    }
+
+    [Fact]
     public async Task Capability_failure_is_recorded_idempotently_and_drains_the_executor_on_the_second_report()
     {
         var factory = Ready();
