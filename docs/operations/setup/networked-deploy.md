@@ -43,6 +43,15 @@ The coding SSH account must own the helper's incoming directory and have its
 documented sudo grant for `agent-runner-deploy`; other SSH accounts need write
 access to the configured environment and release paths and permission to run
 their Docker or Compose commands.
+Existing systemd hosts need the current privileged helper and exact sudoers
+rule before runner promotion or CLI activation. The agent-host archive includes
+`deploy/agent-host/` and `scripts/upgrade-agent-runner-deploy.sh`. From a reviewed,
+root-protected copy, the operator runs
+`bash scripts/upgrade-agent-runner-deploy.sh --apply` once per host. Onboarding
+also refreshes these assets. This bootstrap uses operator privileges rather than
+extending the service account's sudo authority. See the German
+[CLI rollout and rollback runbook](../cli-rollout.md).
+
 An interrupted release extraction leaves no completed gate or review release;
 the next attempt rebuilds it. An incomplete coding incoming directory is
 cleared on retry after the transferred archive digest is checked.
@@ -83,7 +92,11 @@ value, matching the previous effective configuration. The automated switch
 requires a gate SSH host and absolute worker path. The engine Compose file reads the digest
 pinned `ORCHESTRATOR_ENGINE_IMAGE_REF`. The review Compose file must read
 `REVIEW_IMAGE_REF` for every service named in `reviewServices`. Its pinned
-`reviewBaseImage` must contain the coding CLIs and runner runtime. The adapter
+`reviewBaseImage` must contain the runner runtime, Node/npm, the review tools,
+and an `agent` runtime user. The repository-owned `review_dockerfile()` in
+`deploy/networked/remote_host.py` installs Codex 0.166.0 and Claude 2.1.305 as
+root, verifies the versions, then returns to `agent`. These pins participate in
+the build-plan digest; an old base cannot silently retain old CLIs. The adapter
 copies the checked agent-host publish output into the review image, records a
 plan digest from the base image, release SHA, commit, and release identity, and
 verifies that digest on the running containers. The image sets
