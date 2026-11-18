@@ -4,6 +4,7 @@ import { forkJoin } from 'rxjs';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { historyRunStateTone } from '../../state/deploy-status-tone';
+import { PrincipalNamePipe } from '../../../../pipes/principal-name.pipe';
 
 interface RunbookDefinition { name: string; steps: string[]; environments: string[] }
 interface RunbookStep { name: string; state: string; logRef: string }
@@ -16,7 +17,7 @@ interface RunbookLog { lines: { step: string; message: string }[] }
 @Component({
   selector: 'app-project-runbooks',
   standalone: true,
-  imports: [DisclosureMarkerComponent, StatusIndicatorComponent],
+  imports: [PrincipalNamePipe, DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './project-runbooks.html',
   styleUrl: './project-runbooks.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -41,14 +41,14 @@
   @if (newer(); as newer) { <p class="env-card__muted env-card__newer" data-testid="deploy-environment-newer">{{ newer }}</p> }
   @if (environment().awaitingApproval; as approval) {
     <p class="env-card__note" data-testid="deploy-environment-approval">
-      Awaiting approval: {{ approval.subject }}@if (approval.requestedBy) { <span class="env-card__muted">, requested by {{ approval.requestedBy }}</span> }
+      Awaiting approval: {{ approval.subject }}@if (approval.requestedBy) { <span class="env-card__muted">, requested by {{ approval.requestedBy | principalName }}</span> }
     </p>
   }
   @if (environment().intervention; as intervention) {
     <button type="button" class="env-card__note" data-testid="deploy-environment-intervention"
             (click)="openRun.emit(intervention.deploymentId)">
       @if (intervention.decision) {
-        {{ intervention.failedStep }}: {{ intervention.decision }} by {{ intervention.decidedBy ?? 'system' }}.
+        {{ intervention.failedStep }}: {{ intervention.decision }} by {{ (intervention.decidedBy | principalName) ?? 'system' }}.
       } @else {
         {{ intervention.failedStep }} failed. Waiting for intervention
         @if (intervention.expiresAtUtc) { until <time [attr.datetime]="intervention.expiresAtUtc">{{ intervention.expiresAtUtc | date:'medium' }}</time> }.

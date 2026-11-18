@@ -4,6 +4,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it } from 'vitest';
 import { ProjectRunbooksComponent } from './project-runbooks';
+import { ClientService } from '../../../../services/client.service';
 
 describe('ProjectRunbooksComponent', () => {
   it('shows environment-scoped runbooks and approval history', async () => {
@@ -31,6 +32,29 @@ describe('ProjectRunbooksComponent', () => {
     expect(state?.dataset['tone']).toBe('info');
     expect(state?.textContent?.trim()).toBe('awaiting-approval');
     expect(text).not.toContain('stage-only');
+  });
+
+  it('names who requested and approved a run by display name', async () => {
+    await TestBed.configureTestingModule({ imports: [ProjectRunbooksComponent], providers: [
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+    ] }).compileComponents();
+    TestBed.inject(ClientService).humanNames.set({ usr_ecaff70110: 'Ada Owner', usr_0b1d2c3e4f: 'Sam Maintainer' });
+    const fixture = TestBed.createComponent(ProjectRunbooksComponent);
+    fixture.componentRef.setInput('projectName', 'runbooks');
+    fixture.componentRef.setInput('environmentId', 'production');
+    fixture.componentRef.setInput('environmentKind', 'production');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/runbooks/deploy/runbooks').flush([]);
+    http.expectOne(request => request.url === '/api/projects/runbooks/deploy/runbooks/runs').flush([
+      { id: 'run-1', name: 'backup', state: 'succeeded', requestedBy: 'usr_0b1d2c3e4f', approvedBy: 'usr_ecaff70110', steps: [] },
+    ]);
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(text).toContain('requested by Sam Maintainer');
+    expect(text).toContain('approved by Ada Owner');
+    expect(text).not.toContain('usr_');
   });
 
   it('posts a run request and approval, then refreshes the environment history', async () => {
