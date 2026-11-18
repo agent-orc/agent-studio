@@ -3,6 +3,9 @@
     <p class="run-drawer__outcome">
       <app-status-indicator [tone]="runTone(run().state)" [label]="stateLabel[run().state]" testId="deploy-run-outcome" />
     </p>
+    @if (run().state === 'awaiting-approval' || run().state === 'queued') {
+      <app-deploy-secret-gaps [readiness]="secrets()" (bind)="openSecrets.emit($event)" />
+    }
     @if (actions().length) {
       <div class="run-drawer__actions" role="group" aria-label="Run actions">
         @for (item of actions(); track item.kind) {

@@ -12,6 +12,7 @@ import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
 import type { RollbackOffer } from '../../state/rollback-offer.model';
+import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
 
 function ago(age: string | null): string | null {
@@ -22,7 +23,7 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent, RollbackOfferComponent],
+  imports: [DatePipe, StatusIndicatorComponent, RollbackOfferComponent, DeploySecretGapsComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -36,6 +37,8 @@ export class DeployEnvironmentCardComponent {
   readonly rollbackOffer = input<RollbackOffer | null>(null);
   readonly rollbackBusy = input(false);
   readonly rollback = output<string>();
+  /** F14: open the binding panel on this environment. */
+  readonly openSecrets = output<string>();
 
   readonly headingId = computed(() => `deploy-environment-${this.environment().id}-title`);
   readonly release = computed(() => {

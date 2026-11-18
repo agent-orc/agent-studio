@@ -37,6 +37,7 @@ export class ProjectDeployOverviewComponent {
   readonly rollbackBusy = input<string | null>(null);
   readonly rollback = output<string>();
   readonly offers = computed(() => new Map(this.rollbackOffers().map(offer => [offer.environmentId, offer])));
+  readonly openSecrets = output<string>();
   /** project.yml changed; the owner reloads the Deploy sources. */
   readonly definitionChanged = output<void>();
 

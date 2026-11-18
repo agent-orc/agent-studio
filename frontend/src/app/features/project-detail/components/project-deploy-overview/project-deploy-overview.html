@@ -14,7 +14,8 @@
           @for (card of cards(); track card.id) {
             <app-deploy-environment-card [environment]="card" [now]="now()"
               [rollbackOffer]="offers().get(card.id) ?? null" [rollbackBusy]="rollbackBusy() === card.id"
-              (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" (rollback)="rollback.emit($event)" />
+              (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" (rollback)="rollback.emit($event)"
+              (openSecrets)="openSecrets.emit($event)" />
           }
           @for (environment of declared(); track environment.name) {
             <article class="deploy-overview__declared" [attr.aria-labelledby]="'deploy-declared-' + environment.name"

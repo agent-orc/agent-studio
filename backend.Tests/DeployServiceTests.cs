@@ -9,6 +9,7 @@ using AgentStudio.Deploy;
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
+using AgentStudio.Secrets;
 using AgentStudio.Security;
 using AgentStudio.TestSupport;
 using AgentStudio.Tasks;
@@ -16,6 +17,7 @@ using AgentStudio.Registry;
 using AgentStudio.Runner;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -1346,6 +1348,8 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(r1.Id, target.Release.Id);
         Assert.Equal([r2.Version], target.SkippedVersions);
         Assert.Equal(ReleaseRuntimeHealthPolicy.Unknown, target.RuntimeHealth);
+        // The F14 secret preflight checks the release the rollback runs, not the skipped one.
+        Assert.Equal(r1.Id, deploy.SecretDemandForEnvironment("demo", "production", rollback: true)?.ReleaseId);
         var rollback = deploy.Rollback("demo", "production", approve: true, Owner);
         Assert.Equal((DeploymentStates.Queued, r1.Id), (rollback.Value!.State, rollback.Value.ReleaseId));
         Assert.Equal(Artifact('a'), environments.Claim("prod-host")!.Artifact);
@@ -2602,8 +2606,21 @@ public sealed class DeployServiceTests : IDisposable
         using var refusedPromotion = await agent.PostAsJsonAsync("/api/projects/demo/environments/promotions/approve",
             new PromotionDecisionRequest(Artifact('a')));
         Assert.Equal(HttpStatusCode.Forbidden, refusedPromotion.StatusCode);
-        using var approved = await client.PostAsJsonAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve",
+        // F14: the approval names the unbound DATABASE_URL and is refused until the approver confirms it.
+        using var unbound = await client.PostAsJsonAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve",
             new DeploymentApprovalRequest(GuidedFailure: true));
+        Assert.Equal(HttpStatusCode.Conflict, unbound.StatusCode);
+        using (var gap = JsonDocument.Parse(await unbound.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal(DeploySecretReadiness.MissingReason, gap.RootElement.GetProperty("reason").GetString());
+            Assert.Equal("DATABASE_URL", gap.RootElement.GetProperty("missing")[0].GetProperty("name").GetString());
+        }
+        Assert.Equal(DeploymentStates.AwaitingApproval, service.DeploymentById("demo", production.Id)!.State);
+        using (var readiness = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/secret-readiness")))
+            Assert.Contains(readiness.RootElement.GetProperty("environments").EnumerateArray(), item =>
+                item.GetProperty("environmentId").GetString() == "production" && !item.GetProperty("ready").GetBoolean());
+        using var approved = await client.PostAsJsonAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve",
+            new DeploymentApprovalRequest(GuidedFailure: true, ConfirmMissingSecrets: true));
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
         Assert.Equal(auth.User!.Id, service.DeploymentById("demo", production.Id)!.ApprovedBy);
         var productionJob = hosts.Claim("prod-host")!;
@@ -2814,13 +2831,120 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(HttpStatusCode.Conflict, wrong.StatusCode);
         Assert.Equal("pending", Assert.Single(hosts.Read("demo")!.Promotions).Status);
 
-        using var decision = await client.PostAsJsonAsync(route, new PromotionDecisionRequest(artifact));
+        if (action == "approve")
+        {
+            // F14: Production declares DATABASE_URL and nothing binds it.
+            using var unbound = await client.PostAsJsonAsync(route, new PromotionDecisionRequest(artifact));
+            Assert.Equal(HttpStatusCode.Conflict, unbound.StatusCode);
+            Assert.Contains("DATABASE_URL", await unbound.Content.ReadAsStringAsync());
+            Assert.Equal("pending", Assert.Single(hosts.Read("demo")!.Promotions).Status);
+        }
+        using var decision = await client.PostAsJsonAsync(route,
+            new PromotionDecisionRequest(artifact, ConfirmMissingSecrets: true));
         Assert.Equal(HttpStatusCode.OK, decision.StatusCode);
         Assert.Equal(action == "approve" ? "production-queued" : "rejected",
             Assert.Single(hosts.Read("demo")!.Promotions).Status);
         var production = hosts.Claim("prod-host");
         if (action == "approve") Assert.Equal(artifact, production!.Artifact);
         else Assert.Null(production);
+    }
+
+    [Fact]
+    public async Task Secret_readiness_lists_unbound_secrets_per_environment_before_a_run_is_queued()
+    {
+        // F14: the gap was only found when a host claimed the job.
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        var (bindings, provider) = SecretBindings(environments);
+        var readiness = new DeploySecretReadiness(deploy, bindings);
+
+        var before = (await readiness.ReadAsync("demo", release.Id))!;
+        Assert.True(before.Environments.Single(item => item.EnvironmentId == "stage").Ready);
+        var production = before.Environments.Single(item => item.EnvironmentId == "production");
+        Assert.False(production.Ready);
+        Assert.True(production.RequiresApproval);
+        Assert.Equal(release.Id, production.ReleaseId);
+        var missing = Assert.Single(production.Missing);
+        Assert.Equal(("DATABASE_URL", "not-bound", true), (missing.Name, missing.Reason, missing.Bindable));
+        Assert.Equal("secret://demo/production/DATABASE_URL", missing.Reference);
+        // Without a release id the newest release answers, as on the environment cards.
+        Assert.Equal(production.Missing, (await readiness.ReadAsync("demo", null))!.Environments
+            .Single(item => item.EnvironmentId == "production").Missing);
+        Assert.Null(await readiness.ReadAsync("demo", "missing"));
+
+        bindings.Bind("demo", "production", "DATABASE_URL", missing.Reference, "human:owner", "owner");
+        var stored = Assert.Single((await readiness.ReadAsync("demo", release.Id))!.Environments
+            .Single(item => item.EnvironmentId == "production").Missing);
+        Assert.Equal(("not-found", false), (stored.Reason, stored.Bindable));
+        await provider.PutAsync(SecretScope.ForEnvironment("demo", "production"), "DATABASE_URL",
+            "runtime-" + Guid.NewGuid().ToString("N"), SecretActor.Human("owner"));
+        Assert.All((await readiness.ReadAsync("demo", release.Id))!.Environments, item => Assert.True(item.Ready));
+    }
+
+    [Fact]
+    public async Task Production_approval_with_missing_secret_bindings_is_refused_with_names_unless_confirmed()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        var (bindings, _) = SecretBindings(environments);
+        var readiness = new DeploySecretReadiness(deploy, bindings);
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = deploy.Deployments("demo", "production")!.Single(item =>
+            item.ReleaseId == release.Id && item.State == DeploymentStates.AwaitingApproval);
+        var demand = deploy.SecretDemandForRun("demo", waiting.Id);
+        Assert.Equal(["DATABASE_URL"], demand!.Names);
+
+        var calls = 0;
+        IResult Approve(IReadOnlyList<string> missing)
+        {
+            calls++;
+            var outcome = deploy.Approve("demo", waiting.Id, Owner, confirmedMissingSecrets: missing);
+            Assert.Equal(DeployOutcomeKind.Ok, outcome.Kind);
+            return Results.Ok();
+        }
+
+        var refused = await DeployEndpoints.WithSecretPreflight(readiness, "demo", demand, confirmed: false, Approve,
+            CancellationToken.None);
+        Assert.Equal(StatusCodes.Status409Conflict, Assert.IsAssignableFrom<IStatusCodeHttpResult>(refused).StatusCode);
+        var body = JsonSerializer.Serialize(Assert.IsAssignableFrom<IValueHttpResult>(refused).Value);
+        Assert.Contains(DeploySecretReadiness.MissingReason, body);
+        Assert.Contains("DATABASE_URL", body);
+        Assert.Equal(0, calls);
+        Assert.Equal(DeploymentStates.AwaitingApproval, deploy.DeploymentById("demo", waiting.Id)!.State);
+
+        var confirmed = await DeployEndpoints.WithSecretPreflight(readiness, "demo", demand, confirmed: true, Approve,
+            CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, Assert.IsAssignableFrom<IStatusCodeHttpResult>(confirmed).StatusCode);
+        Assert.Equal(1, calls);
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "deployment-approved"
+            && entry.Detail.Contains("missing secret binding(s): DATABASE_URL", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Secret_preflight_lets_a_bound_production_approval_and_a_stage_run_through()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        var (bindings, provider) = SecretBindings(environments);
+        var readiness = new DeploySecretReadiness(deploy, bindings);
+        Assert.Empty(await readiness.ApprovalGapAsync("demo", deploy.SecretDemandFor("demo", release.Id, "stage")));
+        bindings.Bind("demo", "production", "DATABASE_URL", "secret://demo/DATABASE_URL", "human:owner", "owner");
+        await provider.PutAsync(SecretScope.ForProject("demo"), "DATABASE_URL", "runtime-" + Guid.NewGuid().ToString("N"),
+            SecretActor.Human("owner"));
+        Assert.Empty(await readiness.ApprovalGapAsync("demo", deploy.SecretDemandFor("demo", release.Id, "production")));
+    }
+
+    private (ProjectSecretBindings Bindings, SecretProvider Provider) SecretBindings(ProjectEnvironmentService environments)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek"),
+        }).Build();
+        var provider = new SecretProvider(
+            new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+            new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock, NullLogger<SecretProvider>.Instance);
+        return (new ProjectSecretBindings(config, provider, environments, _clock), provider);
     }
 
     private void DeployThroughProduction(DeployService deploy, ProjectEnvironmentService environments,

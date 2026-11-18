@@ -168,9 +168,16 @@ public static class ProjectOperatorDashboardEndpoints
 
         // The access boundary admits scoped human Approvers; DeployService
         // decides each production approval again in the standard lifecycle.
-        app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
-            HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
-            DeployEndpoints.QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: true, deploy)))
+        app.MapPost("/api/projects/{projectName}/environments/promotions/approve", async (
+            HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy,
+            DeploySecretReadiness readiness, CancellationToken ct) =>
+            await DeployEndpoints.WithSecretPreflight(readiness, projectName,
+                DeployEndpoints.Actor(context, projectName).IsApprover
+                    && deploy.PendingPromotionRunId(projectName, request.Artifact) is { } runId
+                    ? deploy.SecretDemandForRun(projectName, runId) : null,
+                request.ConfirmMissingSecrets,
+                missing => DeployEndpoints.QuotaRefusable(() => DecidePromotion(context, projectName, request,
+                    approve: true, deploy, missing)), ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/promotions/reject", (
@@ -473,11 +480,11 @@ public static class ProjectOperatorDashboardEndpoints
     };
 
     private static IResult DecidePromotion(HttpContext context, string project, PromotionDecisionRequest request,
-        bool approve, DeployService deploy)
+        bool approve, DeployService deploy, IReadOnlyList<string>? confirmedMissingSecrets = null)
     {
         var actor = DeployEndpoints.Actor(context, project);
         if (!actor.IsApprover) return ApprovalRequired();
-        return deploy.DecidePromotion(project, request.Artifact, approve, actor) switch
+        return deploy.DecidePromotion(project, request.Artifact, approve, actor, confirmedMissingSecrets) switch
         {
             { Kind: DeployOutcomeKind.Ok } => Results.Ok(),
             { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "Promotion is not pending." }),

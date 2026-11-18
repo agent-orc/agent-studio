@@ -44,6 +44,7 @@ import {
 import {
   DEPLOY_LIVE_REFRESH_MS, deployInFlight, deployNotices, deployRunConfirmation, intoPanel, isProductionRun, pageItems,
 } from '../../state/deploy-area-reads';
+import { DeployAreaSecrets, missingSecretsPrompt } from './deploy-area-secrets';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
 
@@ -123,6 +124,7 @@ export class ProjectDeployAreaComponent {
   readonly actionState = signal<DeployRunActionState>(IDLE);
   readonly selectedRunId = signal<string | null>(null);
   readonly highlightedReleaseId = signal<string | null>(null);
+  readonly secrets = new DeployAreaSecrets(this.data, this); // F14: secret gaps for the cards and the run drawer
   openRelease(id: string): void {
     this.highlightedReleaseId.set(id);
     this.show('releases');
@@ -177,7 +179,7 @@ export class ProjectDeployAreaComponent {
     const fetched = panel ? ready(panel) : null;
     return fetched ? buildDeployRuns([fetched], environmentNames(this.sources()), this.knownReleases()) : [];
   });
-  readonly cards = computed(() => buildEnvironmentCards(this.sources()));
+  readonly cards = computed(() => buildEnvironmentCards(this.sources()).map(card => ({ ...card, secrets: this.secrets.forEnvironment(card.id) })));
   readonly pipelineDefinition = computed(() => ready(this.pipelinePanel()));
   readonly inFlight = computed(() => deployInFlight([...this.runs(), ...this.statusRuns()], ready(this.environmentPanel())));
   /** The overview waits for the AGT-3176 environments, or for AGT-3201 status when those failed. */
@@ -188,8 +190,7 @@ export class ProjectDeployAreaComponent {
   readonly environmentOptions = computed(() => this.cards().map(card => ({ id: card.id, name: card.name })));
   readonly selectedRun = computed(() => [...this.runs(), ...this.historyRuns(), ...this.statusRuns(), ...this.fetchedRuns()]
     .find(run => run.id === this.selectedRunId()) ?? null);
-  /** F13: one confirmed lifecycle rollback behind every entry point. */
-  readonly rollback = inject(DeployRollbackFlow).attach(this);
+  readonly rollback = inject(DeployRollbackFlow).attach(this); // F13: one confirmed lifecycle rollback behind every entry point
   readonly notices = computed(() => deployNotices([
     ['Environments', this.environmentPanel()], ['Environment status', this.statusPanel()], ['Releases', this.releasePanel()],
     ['Deploy runs', this.deploymentPanel()], ['Health', this.healthPanel()],
@@ -286,18 +287,18 @@ export class ProjectDeployAreaComponent {
     if (!run) return;
     const production = isProductionRun(run, ready(this.statusPanel()), ready(this.environmentPanel()));
     if ((action === 'cancel' && run.state === 'running') || action === 'abort' ||
-      (production && (action === 'approve' || action === 'reject'))) {
+      (production && (action === 'approve' || action === 'reject')) || this.secrets.approvalGap(action).length) {
       // The server lets only a signed-in Owner or Maintainer decide production; ask for the account first.
       if (production && this.localOwner.missing() && (action === 'approve' || action === 'reject'))
         return this.localOwner.run('Production approval needs the owner account.', () => this.act(action, reason));
-      if (!window.confirm(deployRunConfirmation(action, run, this.knownReleases()))) return;
+      if (!window.confirm(`${deployRunConfirmation(action, run, this.knownReleases())}${missingSecretsPrompt(this.secrets.approvalGap(action))}`)) return;
     }
     const project = this.projectName();
     this.mutationAction = action;
     this.runReads.unsubscribe();
     this.readGeneration++;
     this.actionState.set({ busy: action, error: null });
-    this.mutations.add(this.data.act(project, runId, action, reason).subscribe({
+    this.mutations.add(this.data.act(project, runId, action, reason, { confirmMissingSecrets: this.secrets.approvalGap(action).length > 0 }).subscribe({
       next: () => {
         this.mutationAction = null;
         this.actionState.set(IDLE);
@@ -341,8 +342,7 @@ export class ProjectDeployAreaComponent {
       this.releaseOffset.set(0);
       this.releaseTotal.set(0);
       this.artifactReleases.set(new Map());
-      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel,
-        this.releaseGatePanel] as const)
+      for (const target of [this.environmentPanel, this.statusPanel, this.releasePanel, this.deploymentPanel, this.historyPanel, this.releaseGatePanel] as const)
         (target as WritableSignal<DeployPanel<unknown>>).set({ status: 'loading' });
     } else {
       // Refresh retries failed lookups; resolved release records do not change.
@@ -356,6 +356,7 @@ export class ProjectDeployAreaComponent {
     this.subscriptions.add(this.data.health(projectName).subscribe(panel => this.healthPanel.set(panel)));
     this.subscriptions.add(this.data.releaseGate(projectName).subscribe(panel => this.releaseGatePanel.set(panel)));
     this.reloadRuns(projectName, false);
+    this.secrets.load(projectName, resetSelection);
   }
 
   /** Status and runs change together after an approval, rejection, or cancellation. */

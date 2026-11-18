@@ -120,6 +120,10 @@ async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false)
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
+  // F14: every environment has its secrets bound unless a test says otherwise; the catch-all `[]` is no answer here.
+  await page.route(url => url.pathname === `${DEPLOY}/secret-readiness`, route => answer(route, {
+    project: PROJECT, releaseId: new URL(route.request().url()).searchParams.get('releaseId'), environments: [],
+  }));
   // A predicate, not a glob: the artifact query value contains "/", which a glob "*" does not match.
   await page.route(url => url.pathname === `${DEPLOY}/releases/page`, route => {
     if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
