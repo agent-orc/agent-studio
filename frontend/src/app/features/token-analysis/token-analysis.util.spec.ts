@@ -167,6 +167,19 @@ describe('token analysis aggregations', () => {
     expect(distribution(cards, 'model').map(r => r.label)).toEqual(['GPT-5.6 Sol', 'Claude Sonnet 5']);
   });
 
+  it('keeps a reasoning level priced subtotal when another model is unpriced', () => {
+    const mixed = [card('mixed', [
+      slice({ model: 'Claude Sonnet 5', level: 'high', costUsd: 40 }),
+      slice({ model: 'gpt-6.2-nova', level: 'high', costUsd: 0, priced: false }),
+    ])];
+    expect(distribution(mixed, 'level')[0]).toMatchObject({
+      label: 'high', costUsd: 40, hasPricedCost: true, costComplete: false,
+    });
+    expect(distribution(mixed, 'model').find(row => row.label === 'gpt-6.2-nova')).toMatchObject({
+      costUsd: 0, hasPricedCost: false, costComplete: false,
+    });
+  });
+
   it('splits the token mix so the five parts sum to the total', () => {
     const mix = tokenMix(cards.flatMap(c => c.slices));
     expect(mix).toMatchObject({ cachedInput: 3000, uncachedInput: 1840, output: 234, reasoning: 50 });

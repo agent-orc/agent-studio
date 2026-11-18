@@ -18,7 +18,7 @@
         [attr.data-status]="role.status"
         [attr.aria-current]="selected() === role.id ? 'true' : null" data-testid="remote-host-role-row"
         (click)="selectedChange.emit(role.id)">
-        <span data-testid="remote-host-role-label">{{ role.serviceRole === 'coding' ? 'Coding' : role.serviceRole === 'review' ? 'Review' : 'Runner' }} · <span data-testid="remote-host-role-name">{{ role.name }}</span></span>
+        <span data-testid="remote-host-role-label">{{ roleLabel(role) }} · <span data-testid="remote-host-role-name">{{ role.name }}</span></span>
         <app-status-indicator [tone]="statusTone(role.status)" [label]="statusLabel(role.status)" [compact]="true" />
         @if (heldLabel(role); as held) {
           <span class="host-list__held" data-testid="remote-host-role-held" [attr.title]="heldTitle(role)">{{ held }}</span>

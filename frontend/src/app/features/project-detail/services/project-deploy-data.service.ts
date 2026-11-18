@@ -36,7 +36,8 @@ export interface ReleaseNotes {
   releaseId: string;
   version: string;
   preview: boolean;
-  notes: { cardKey: string; text: string }[];
+  /** `maintenance` marks chore cards; `edited` says a person wrote the text (F18). */
+  notes: { cardKey: string; text: string; maintenance?: boolean; edited?: boolean }[];
 }
 
 /**
@@ -88,6 +89,12 @@ export class ProjectDeployDataService {
   releaseNotes(projectName: string, releaseId: string): Observable<DeployPanel<ReleaseNotes>> {
     return panel(this.http.get<ReleaseNotes>(`${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/notes`),
       'Release notes could not be loaded.', true);
+  }
+
+  /** Rewrites one card's note in product language; empty text restores the card title. */
+  editReleaseNote(projectName: string, releaseId: string, cardKey: string, text: string): Observable<ReleaseNotes> {
+    return this.http.put<ReleaseNotes>(
+      `${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/notes/${encodeURIComponent(cardKey)}`, { text });
   }
 
   releasePage(projectName: string, offset: number): Observable<DeployPanel<DeployPage<Release>>> {

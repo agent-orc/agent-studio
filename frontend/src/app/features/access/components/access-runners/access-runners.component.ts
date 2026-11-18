@@ -2,7 +2,9 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import {
   ALL_RUNNER_PROJECTS,
   formatAccessTime,
+  runHostCommand,
   type EnrolledRunner,
+  type EnrollmentKind,
   type RunnerEnrollment,
 } from '../../models/access.model';
 import { ACCESS_CLOCK } from '../../services/access-clock';
@@ -24,7 +26,8 @@ export interface RunnerExpiry {
  * Runner enrollment codes and enrolled runners (AGT-3186). Runners and the
  * engine authenticate with their enrollment credentials and Runner scopes,
  * not with role bindings. SM-9 binds every runner to an explicit project set
- * and gives each new credential a 30-day lifetime.
+ * and gives each new credential a 30-day lifetime. A run host (F4) holds
+ * only runner.deploy and is bound to the projects it deploys.
  */
 @Component({
   selector: 'app-access-runners',
@@ -38,8 +41,10 @@ export class AccessRunnersComponent {
   readonly access = inject(AccessService);
   private readonly now = inject(ACCESS_CLOCK);
   readonly name = signal('');
-  readonly kind = signal<'runner' | 'orchestrator'>('runner');
+  readonly kind = signal<EnrollmentKind>('runner');
   readonly code = signal<string | null>(null);
+  /** Set with a run host code: the host commands that enroll it and start its deploy service (F4). */
+  readonly hostCommand = signal<string | null>(null);
   /** Projects of the next enrollment code; none chosen binds none. */
   readonly selected = signal<readonly string[]>([]);
   /** The runner whose projects are being edited, and the draft of its project set. */
@@ -51,18 +56,25 @@ export class AccessRunnersComponent {
   async create(): Promise<void> {
     const name = this.name().trim();
     if (!name || this.access.busy()) return;
-    const created = this.kind() === 'orchestrator'
+    const kind = this.kind();
+    const created = kind === 'orchestrator'
       ? await this.access.createEnrollment(name, 'orchestrator')
-      : await this.access.createEnrollment(name, 'runner', this.selected());
+      : await this.access.createEnrollment(name, kind, this.selected());
     if (created) {
       this.code.set(created.enrollmentCode);
+      this.hostCommand.set(kind === 'deploy' ? runHostCommand(location.origin, created.enrollmentCode) : null);
       this.name.set('');
       this.selected.set([]);
     }
   }
 
+  done(): void {
+    this.code.set(null);
+    this.hostCommand.set(null);
+  }
+
   setKind(value: string): void {
-    this.kind.set(value === 'orchestrator' ? 'orchestrator' : 'runner');
+    this.kind.set(value === 'orchestrator' || value === 'deploy' ? value : 'runner');
   }
 
   /** Enrollment state on the shared indicator: an open code waits, a used one succeeded. */

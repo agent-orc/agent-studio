@@ -1,0 +1,33 @@
+<section class="run-host" data-testid="run-host-enrollment" aria-labelledby="run-host-title">
+  <h3 id="run-host-title">Enroll a run host</h3>
+  <p class="run-host__hint">A run host claims deploy jobs for the projects you choose. Its credential holds only <code>runner.deploy</code>: it cannot code, review, or read other projects.</p>
+  @if (access.error(); as message) { <p class="run-host__error" role="alert" data-testid="run-host-error">{{ message }}</p> }
+  @if (command(); as command) {
+    <div class="run-host__issued" role="status" data-testid="run-host-issued">
+      <p>Run these commands on the run host within 15 minutes; the code works once. Enrollment prints the runner id (<code>runner_…</code>). The deploy service claims with it, and each environment this host serves names it as its <code>targetHostId</code>.</p>
+      <pre class="run-host__command" data-testid="run-host-command">{{ command }}</pre>
+      <p class="run-host__hint">The host appears in this list after its first claim.</p>
+      <div class="run-host__actions"><button type="button" class="button button--primary" data-testid="run-host-done" (click)="done.emit()">Done</button></div>
+    </div>
+  } @else {
+    <label class="run-host__field">Run host name
+      <input data-testid="run-host-name" [value]="name()" (input)="name.set($any($event.target).value)" />
+    </label>
+    <fieldset class="run-host__projects" data-testid="run-host-projects">
+      <legend>Projects this run host may deploy</legend>
+      @for (project of access.projects(); track project.id) {
+        <label class="run-host__choice">
+          <input type="checkbox" [attr.data-testid]="'run-host-project-' + project.id"
+            [checked]="selected().includes(project.id)" (change)="toggle(project.id)" />
+          {{ project.displayName }}
+        </label>
+      } @empty {
+        <p class="run-host__hint">No project is available to bind.</p>
+      }
+    </fieldset>
+    <div class="run-host__actions">
+      <button type="button" class="button button--primary" data-testid="run-host-create"
+        [disabled]="!name().trim() || !selected().length || access.busy()" (click)="create()">Create enrollment code</button>
+    </div>
+  }
+</section>

@@ -9,6 +9,7 @@ import {
 } from '../../state/deploy-area.model';
 import { environmentHealthDisplay, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
@@ -48,6 +49,8 @@ export class DeployEnvironmentCardComponent {
     return `Release ${newer.version} is ready with ${count} ${count === 1 ? 'card' : 'cards'}`;
   });
   readonly runTone = runStateTone;
+  readonly hostTone = runHostStateTone;
+  readonly hostLabel = runHostStateLabel;
   readonly health = computed(() => environmentHealthDisplay(this.environment().health));
   readonly lastRunLabel = computed(() => {
     const run = this.environment().lastRun;

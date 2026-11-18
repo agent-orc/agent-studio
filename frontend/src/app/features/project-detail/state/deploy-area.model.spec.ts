@@ -188,6 +188,7 @@ describe('deploy area model', () => {
         newer: null, health: { status: 'reported', state: 'healthy' },
         lastRun: { deploymentId: 'run-c-stage-redeploy', trigger: 'redeploy', state: 'cancelled', at: '2026-10-19T11:55:00Z' },
         awaitingApproval: null,
+        host: { id: 'web-vm', name: 'web-vm', state: null, lastSeenAt: null },
       });
       expect(production).toMatchObject({
         releaseVersion: '2026.10.18.1', deployedAt: '2026-10-18T22:10:00Z', cards: { status: 'known', keys: ['WEB-29', 'WEB-30'] },
@@ -195,6 +196,20 @@ describe('deploy area model', () => {
         lastRun: { deploymentId: 'run-c-production', trigger: 'deploy', state: 'awaiting-approval', at: '2026-10-19T11:49:00Z' },
         awaitingApproval: { deploymentId: 'run-c-production', subject: 'Release 2026.10.19.2', requestedBy: 'local.dev' },
       });
+    });
+
+    it('names the run host of each environment and whether it is reachable', () => {
+      const sources = deploySourcesFixture();
+      sources.environments = {
+        ...sources.environments!,
+        runHosts: [{ id: 'web-vm', name: 'run-host-1', state: 'unreachable', projects: ['Website'],
+          lastSeenAt: '2026-10-19T11:00:00Z', lastClaimAt: '2026-10-19T10:59:00Z', lastReportAt: null }],
+      };
+
+      const [staging, production] = buildEnvironmentCards(sources);
+
+      expect(staging.host).toEqual({ id: 'web-vm', name: 'run-host-1', state: 'unreachable', lastSeenAt: '2026-10-19T11:00:00Z' });
+      expect(production.host?.state).toBe('unreachable');
     });
 
     it('falls back to the AGT-3176 environment state without the deploy service', () => {

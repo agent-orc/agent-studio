@@ -104,6 +104,27 @@ public sealed class TaskRoutingPublicationRaceTests : IDisposable
         Assert.Equal("medium", claim.ThinkingLevel);
     }
 
+    [Theory]
+    [InlineData("low")]
+    [InlineData("medium")]
+    [InlineData("high")]
+    [InlineData("xhigh")]
+    [InlineData("max")]
+    public void Fable52ThinkingLevelWrite_PersistsExplicitLevel(string level)
+    {
+        var fixture = CreateFixture("""
+            {"id":"routing","title":"Routing","state":"2-ready","order":10,
+             "cliType":"claude","model":"claude-fable-5-2","modelExplicit":true}
+            """);
+        Assert.True(Mutations(fixture).SetJobThinkingLevel("routing", level, fixture.WatchPath));
+        using var persisted = JsonDocument.Parse(File.ReadAllText(fixture.TaskPath));
+        Assert.Equal(level, persisted.RootElement.GetProperty("thinkingLevel").GetString());
+        var claim = Assert.Single(fixture.Scanner.GetLiveSnapshotWithReferenceIndex().Live);
+        Assert.Equal(level, claim.ThinkingLevel);
+        Assert.True(claim.ThinkingLevelExplicit);
+        Assert.Equal(ModelIds.ClaudeFable52, claim.Model);
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best effort */ }
