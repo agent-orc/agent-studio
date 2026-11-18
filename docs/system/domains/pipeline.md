@@ -693,12 +693,20 @@ its failing test names. The members the existing path would send to per-card
 suites are gated once more together as a child batch on the cohort's code
 (`sameCodeRerunOfRunId` names the red run; trigger
 `flaky-suspect-regate:<batch>`). A green re-gate publishes them and no
-per-card suite starts. A second red on the same code, or any other result,
-takes the existing per-card path; that re-gate records no proven-red finding.
-The mark is written once before the re-gate, so a restart or an isolation
-retry never re-gates the same red again. The batch state shows
-`flakySuspect` (red run, failing tests, `active`, and the re-gate's outcome
-`passed`, `reproduced` or `inconclusive` with its minutes) on the red batch.
+per-card suite starts. A re-gate the gate host could not run is recorded
+`requeued`: the red batch pauses and its members return to the batch pool,
+as any host-held flight does. A second red on the same code (`reproduced`), a
+green re-gate whose publication did not land (`unpublished`, with the reason),
+or any other result (`inconclusive`) takes the existing per-card path; that
+re-gate records no proven-red finding. The mark is written once before the
+re-gate, so a restart or an isolation retry never re-gates the same red again.
+When the red batch leaves isolation before the re-gate recorded a verdict
+(claim lost, cancellation, process death), the `isolation interrupted`
+recovery records the re-gate `interrupted` and sends the members per-card.
+The batch state shows `flakySuspect` (red run, failing tests, `active`, and
+the re-gate's outcome with its minutes and reason) on the red batch. A
+reproduced or interrupted mark is no longer active, so the failed-test
+ranking stops counting its run as a flaky suspect run.
 
 Assembly sorts a replay that is not a conflict into three outcomes
 (`BatchGatePolicy.ReplayDisposition`): a mapped success is admitted; a member
