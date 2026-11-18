@@ -212,6 +212,7 @@ describe('ExecutionAssignmentCardComponent', () => {
 
 function flushRunnerInfrastructureFailures(http: HttpTestingController): void {
   for (const request of http.match('/api/v1/management/runner-infrastructure-failures')) request.flush([]);
+  for (const request of http.match('/api/deploy/run-hosts')) request.flush([]);
   for (const request of http.match('/api/host/filesystems')) request.flush(
     { error: 'host disk telemetry unavailable in component unit test' },
     { status: 503, statusText: 'Service Unavailable' },
