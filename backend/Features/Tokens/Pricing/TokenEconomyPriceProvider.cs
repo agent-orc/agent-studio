@@ -21,10 +21,30 @@ public sealed class TokenEconomyPriceProvider : ITokenPriceProvider
     private static EconomyPricing.ModelPriceCatalog CreateCatalog()
     {
         var published = EconomyPricing.ModelPriceCatalog.Default;
-        // Local dated seed until the pinned TokenEconomy includes TE-82
-        // (0.3.7 to 0.3.9 carry no GPT-6.2 listing). A published entry wins.
+        // Local dated seeds until the pinned TokenEconomy includes TE-82
+        // (0.3.7 to 0.3.9 carry no Fable 5.2 or GPT-6.2 listing). A published
+        // entry wins. Fable 5.2: standard API rates; fast mode is $16 input /
+        // $80 output per MTok.
         var seeds = new[]
             {
+                new EconomyPricing.ModelListing
+                {
+                    ModelId = "claude-fable-5-2",
+                    DisplayName = "Claude Fable 5.2",
+                    Vendor = "anthropic",
+                    Aliases = ["claude-fable-5.2"],
+                    ReleaseDate = new DateOnly(2026, 11, 9),
+                    ReleaseDateSource = "https://platform.claude.com/docs/en/models/fable-5-2/overview",
+                    History = [new EconomyPricing.ModelPrice
+                    {
+                        InputPerMTok = 8m, CacheReadPerMTok = 0.20m,
+                        OutputPerMTok = 40m, CacheWritePerMTok = 10m,
+                        Currency = "USD", ValidFrom = new DateTime(2026, 11, 9, 0, 0, 0, DateTimeKind.Utc),
+                        Source = "https://platform.claude.com/docs/en/about-claude/pricing",
+                        VerifiedOn = new DateOnly(2026, 11, 17),
+                        Note = "Standard API, 5-minute cache writes. Fast mode: $16 input / $80 output per MTok. 1M context, 128K output.",
+                    }],
+                },
                 Gpt62Listing("gpt-6.2-sol", "GPT-6.2 Sol", 2m, 0.10m, 2.50m, 10m,
                     "Long context (>272K input): $4 input, $0.20 cached input, $5 cache write, $15 output per MTok."),
                 Gpt62Listing("gpt-6.2-astra", "GPT-6.2 Astra", 8m, 0.40m, 10m, 40m,

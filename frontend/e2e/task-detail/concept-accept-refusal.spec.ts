@@ -317,6 +317,9 @@ test.describe('Concept and held Accept in Human review (AGT-3704)', () => {
     await action.click();
     const submit = page.getByTestId('acceptance-refusal-submit');
     await expect(submit).toBeDisabled();
+    await expect(page.getByTestId('acceptance-refusal-form')).toContainText('at least 8 characters');
+    await page.getByTestId('acceptance-refusal-override-reason').fill(' short ');
+    await expect(submit).toBeDisabled();
     await page.getByTestId('acceptance-refusal-override-reason')
       .fill('Reviewed by the owner; the batch gate is down and the change is docs only.');
     await expect(submit).toBeEnabled();

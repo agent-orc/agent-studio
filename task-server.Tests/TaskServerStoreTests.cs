@@ -517,6 +517,34 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
             project.ProjectId, task.TaskId, "gpt62-continue", default));
     }
 
+    [Theory]
+    [InlineData("low")]
+    [InlineData("medium")]
+    [InlineData("high")]
+    [InlineData("xhigh")]
+    [InlineData("max")]
+    public async Task Fable52Continuation_KeepsExplicitModelAndEffort(string level)
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        var receipt = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "fable-continue", task.Version,
+                "Continue the deployment view", "claude-fable-5-2", "claude", level, "continue", "operator"),
+            "operator", default);
+        var intent = await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId, "fable-continue", default);
+        Assert.NotNull(intent);
+        Assert.True(receipt.ExplicitSelection);
+        Assert.Equal("claude-fable-5-2", intent.Model);
+        Assert.Equal("claude", intent.CliType);
+        Assert.Equal(level, intent.ThinkingLevel);
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var durable = await restarted.GetContinuationIntentAsync(project.ProjectId, task.TaskId, "fable-continue", default);
+        Assert.Equal(intent, durable);
+    }
+
     [Fact]
     public async Task Continuation_rounds_are_ordered_idempotent_and_bound_to_one_run()
     {

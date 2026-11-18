@@ -30,6 +30,9 @@ const backendDocuments = [
   '/api',
   '/hubs/board',
   '/hubs',
+  '/healthz',
+  '/healthz/deep',
+  '/readyz',
 ];
 
 for (const url of backendDocuments) {

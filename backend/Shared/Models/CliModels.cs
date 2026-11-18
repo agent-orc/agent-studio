@@ -169,6 +169,7 @@ public static class ModelIds
 {
     public const string ClaudeOpus55 = "claude-opus-5-5";
     public const string ClaudeOpus5 = "claude-opus-5";
+    public const string ClaudeFable52 = "claude-fable-5-2";
     public const string ClaudeFable51 = "claude-fable-5-1";
     public const string ClaudeOpus48 = "claude-opus-4-8";
     public const string ClaudeOpus47 = "claude-opus-4-7";
@@ -324,7 +325,8 @@ public sealed record ModelMetadata(
     string[]? Aliases = null,
     string[]? ThinkingLevels = null,
     string? DefaultThinkingLevel = null,
-    string? MinimumCliVersion = null);
+    string? MinimumCliVersion = null,
+    long? MaximumOutputTokens = null);
 
 /// <summary>
 /// Single server-side source of truth for known model metadata: catalog labels,
@@ -344,6 +346,10 @@ public static class ModelMetadataRegistry
         Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", isDefault: true, context: 1_000_000,
             aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus5),
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
+        Claude(ModelIds.ClaudeFable52, "Claude Fable 5.2", context: 1_000_000,
+            aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeFable52),
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "medium")
+            with { MaximumOutputTokens = 128_000 },
         Claude(ModelIds.ClaudeFable51, "Claude Fable 5.1", context: 200_000,
             aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeFable51),
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),

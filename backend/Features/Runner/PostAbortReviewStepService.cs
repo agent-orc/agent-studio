@@ -128,7 +128,7 @@ public sealed class PostAbortReviewStepService
         }
 
         AdHocClaudeInvoker.Record(_usage, UsageSource, request.Model, callUsage,
-            sw.ElapsedMilliseconds, ok, project: request.Project, jobId: request.JobId);
+            sw.ElapsedMilliseconds, ok, cliType: callUsage?.CliType ?? request.CliType, project: request.Project, jobId: request.JobId);
 
         var verdict = PostAbortReviewVerdictParsing.Parse(rawResponse);
         var action = PostAbortReviewDecider.Decide(verdict, request.RerunBudgetRemaining);

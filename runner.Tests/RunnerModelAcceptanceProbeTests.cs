@@ -8,6 +8,22 @@ namespace AgentRunner.Tests;
 public sealed class RunnerModelAcceptanceProbeTests
 {
     [Fact]
+    public async Task Fable52_ConfiguredRouteGetsItsOwnHostAcceptanceEvidence()
+    {
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((provider, model, _) =>
+        {
+            Assert.Equal("claude", provider);
+            Assert.Equal("claude-fable-5-2", model);
+            return Task.FromResult(new ProcessResult(0, "OK", ""));
+        }, _ => "host-login");
+        await probe.RefreshAsync([("claude", "claude-fable-5-2")], CancellationToken.None);
+        var evidence = Assert.Single(probe.Snapshot("claude", ["claude-fable-5-2"]));
+        Assert.Equal("ready", evidence.Status);
+        Assert.Equal("model-acceptance:claude:claude-fable-5-2", evidence.Key);
+    }
+
+    [Fact]
     public async Task Host_flight_contention_is_retried_on_the_next_refresh()
     {
         var busy = true;

@@ -6,6 +6,27 @@ namespace AgentStudio.Tests;
 
 public class ClaudeModelDiscoveryTests
 {
+    [Fact]
+    public void Fable52_DiscoveryKeepsTheProviderLadderAndDefault()
+    {
+        var parsed = ClaudeModelDiscovery.ParsePickerSnapshot("Select Model\n> Claude Fable 5.2 (selected)");
+        var model = Assert.Single(ClaudeModelDiscovery.Reconcile(parsed, "2.1.305"), m => m.Id == ModelIds.ClaudeFable52);
+        Assert.True(model.Available);
+        Assert.Equal(["low", "medium", "high", "xhigh", "max"], model.ThinkingLevels);
+        Assert.Equal("medium", model.DefaultThinkingLevel);
+        Assert.Equal(1_000_000, ModelMetadataRegistry.ContextWindowFor(model.Id));
+        Assert.Equal(128_000, ModelMetadataRegistry.Find(model.Id)!.MaximumOutputTokens);
+        foreach (var level in model.ThinkingLevels)
+        {
+            Assert.Equal(level, ModelMetadataRegistry.NormalizeThinkingLevel(CliTypes.Claude, model.Id, level));
+            var arguments = new List<string>();
+            ClaudeOneShot.AddThinkingArguments(arguments, model.Id, level);
+            Assert.Equal(["--effort", level], arguments);
+        }
+        Assert.Equal("medium", ModelMetadataRegistry.NormalizeThinkingLevel(CliTypes.Claude, model.Id, "invalid"));
+        Assert.True(AgentStudio.TaskServer.Contracts.ExecutionModelIdentity.Equivalent(model.Id, "claude-fable-5.2"));
+    }
+
     private const string ClaudeCode2126xPicker = """
     Select modelSwitch betwen Claude models.Your pickbecomesthedefaultfornewsessions.Forother/previousmodelnames,specifywith--model.
     1.Default(recommended)Opus5with1Mcontext·Bestforeveryday,complextasks2.Opus(1Mcontext)Opus5with1Mcontext·Bestforeveryday,complextasks❯3.Fable✔Fable5.1·Mostcapableforyourhardestandlongest-runningtasks4.SonnetSonnet5·Efficientforroutinetasks5.HaikuHaiku4.5·Fastestforquickanswers●Higheffort(default)←/→toadjustEntertosetasdefault·stousethissessiononly·Esctocancel

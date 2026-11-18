@@ -132,7 +132,7 @@ public sealed class SoftReasoningHostedService : BackgroundService
                 var rawOutput = await InvokeCliAsync(cliBinary, model, prompt, TimeSpan.FromSeconds(120), ct);
                 sw.Stop();
                 var (output, callUsage) = AdHocClaudeInvoker.ParseOrFallback(rawOutput, model);
-                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SoftReasoning, model, callUsage, sw.ElapsedMilliseconds, ok: true, project: project, jobId: observation.CurrentJobId);
+                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SoftReasoning, model, callUsage, sw.ElapsedMilliseconds, ok: true, cliType: CliTypes.Claude, project: project, jobId: observation.CurrentJobId);
                 _callTimestamps.Enqueue(DateTime.UtcNow);
                 var advisories = SoftReasoningParsing.Parse(output, project, DateTime.UtcNow, observation.CurrentJobId);
                 foreach (var advisory in advisories)

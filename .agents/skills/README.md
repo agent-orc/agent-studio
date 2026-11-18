@@ -16,6 +16,7 @@ add `scripts/`, `references/`, and `tests/` siblings.
 | **Task API** | Create / move / triage tasks via HTTP. Required reading for any CLI work that touches the task queue. | [`task-api/`](task-api/SKILL.md) |
 | **Regenerate README** | Rewrite `README.md` from current product reality (after a load-bearing change). | [`regenerate-readme/`](regenerate-readme/SKILL.md) |
 | **Runtime log analysis** | Inspect backend / runner / CLI logs after an incident. | [`runtime-log-analysis/`](runtime-log-analysis/SKILL.md) |
+| **Visual design** | UI work whose acceptance is visual quality: dashboards and charts, structure and topology canvases, interactive 3D scenes, small games, landing pages. Direction first, desktop and phone screenshots in both themes, rubric critique, at least one iteration. | [`visual-design/`](visual-design/SKILL.md) |
 
 ## How to add a skill
 
@@ -39,3 +40,16 @@ Two paths:
   first turn and pick the relevant skills for the task.
 
 Both paths look at this same library; there is no per-CLI fork.
+
+Native discovery differs per CLI (checked on agent-runner-01, AGT-3957):
+
+- **Codex** (0.166.0) lists every `SKILL.md` under `<worktree>/.agents/skills/`
+  by name and description in every run; nothing extra is needed.
+- **Claude Code** (2.1.305) reads `<worktree>/.claude/skills/`, not
+  `.agents/skills/`. A skill that Claude Code must find natively gets a
+  relative symlink `.claude/skills/<slug> -> ../../.agents/skills/<slug>` and a
+  matching `!.claude/skills/<slug>` line in the root `.gitignore`. The
+  library stays the only copy. Today only `visual-design` is linked. A
+  Windows checkout without `core.symlinks` gets a plain file instead of the
+  link, so Claude Code on such a checkout does not see the skill; the
+  `AGENTS.md` pointers still lead to it.

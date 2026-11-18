@@ -96,5 +96,18 @@ public class AgentSkillFrontmatterTests
         Assert.Contains("task-api", slugs);
         Assert.Contains("regenerate-readme", slugs);
         Assert.Contains("runtime-log-analysis", slugs);
+        Assert.Contains("visual-design", slugs);
+    }
+
+    [Theory]
+    [MemberData(nameof(SkillFolders))]
+    public void EverySkill_HasARowInTheSkillsReadmeTable(string slug)
+    {
+        // The README table is how a direct CLI session discovers a skill, so a
+        // skill folder without its row is invisible to agents that start there.
+        var readme = File.ReadAllText(Path.Combine(SkillsRoot(), "README.md"));
+        Assert.True(
+            Regex.IsMatch(readme, $@"(?m)^\|.*\]\({Regex.Escape(slug)}/SKILL\.md\)\s*\|\s*$"),
+            $"Skill '{slug}' has no row in .agents/skills/README.md linking ({slug}/SKILL.md).");
     }
 }

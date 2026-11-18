@@ -14,7 +14,9 @@ async function installRoutes(page: Page) {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   } }));
   await page.route('**/api/v1/studio/board**', route => route.fulfill({ json: {
-    preparation: [], ready: [], progress: [], review: [], completed: [], archive: [],
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+    failedPickup: [], review: [], autoReview: [], humanReview: [], escalated: [],
+    completed: [], archive: [],
   } }));
   await page.route('**/api/v1/studio/runner/status', route => route.fulfill({ json: { projects: {} } }));
   await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: structuredClone(SNAPSHOT) }));
@@ -62,3 +64,20 @@ for (const theme of ['light', 'dark'] as const) {
     await page.screenshot({ path: join(shots, `usage-ledger-destination-${theme}.png`) });
   });
 }
+
+test('quota reset table names a UTC workspace once', async ({ page }) => {
+  test.setTimeout(90_000);
+  await installRoutes(page);
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: {
+    ...structuredClone(SNAPSHOT), timeZone: 'UTC',
+  } }));
+  await page.goto('/');
+  await dismissDevErrorDialog(page);
+  await expect(page.getByTestId('footer-usage-claude')).toBeVisible({ timeout: 30_000 });
+  await dismissDevErrorDialog(page);
+  await page.getByTestId('footer-usage-cost').click();
+  const table = page.getByTestId('usage-detail-windows-claude');
+  await expect(table.locator('thead th')).toHaveText(['Window', 'Used', 'Left', 'Resets (UTC)']);
+  await expect(table.getByTestId('usage-detail-reset-utc')).toHaveCount(0);
+  await expect(table.getByTestId('usage-detail-reset-local').first()).not.toContainText('UTC');
+});

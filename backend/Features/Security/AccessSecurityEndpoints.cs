@@ -382,11 +382,13 @@ public static class AccessSecurityEndpoints
                 return Results.NoContent();
             }));
 
-        auth.MapDelete("/runners/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+        auth.MapDelete("/runners/{id}", (string id, HttpContext context, AccessSecurityStore store,
+            AgentStudio.Runner.V1ReviewExecutorRegistry registry) =>
             Execute(() =>
             {
                 RequireOwner(context, store);
                 store.RevokeRunner(id);
+                registry.ClearReprobeRequests(id);
                 return Results.NoContent();
             }));
 
@@ -501,7 +503,7 @@ public static class AccessSecurityEndpoints
     {
         runner.Id, runner.Name, runner.CreatedAt, runner.RevokedAt,
         runner.DrainRequestedAt, runner.RetireRequestedAt, runner.RetiredAt,
-        runner.LastSeenAt, runner.LastClaimAt, runner.ActiveSlots, runner.AvailableSlots,
+        runner.LastSeenAt, runner.LastClaimAt, runner.LastReportAt, runner.ActiveSlots, runner.AvailableSlots,
         projects = runner.Projects ?? [RunnerProjectBinding.AllProjects],
         projectsNotice = runner.Projects is null ? RunnerProjectsNotice : null,
         credentials = runner.Credentials.Select(x => new

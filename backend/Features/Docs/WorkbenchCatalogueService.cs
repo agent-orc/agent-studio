@@ -193,8 +193,7 @@ public sealed class WorkbenchCatalogueService
                 var linked = item with
                 {
                     LinkedTaskKeys = members
-                        .Where(member => member.Task.Dossier is { Path.Length: > 0 })
-                        .Select(member => member.Task.Key)
+                        .Select(member => member.Task.Key ?? member.Task.Id)
                         .Where(key => !string.IsNullOrWhiteSpace(key))
                         .Select(key => key!)
                         .Distinct(StringComparer.OrdinalIgnoreCase)

@@ -785,7 +785,7 @@ public sealed class AspectRunnerService
                 return (string.Empty, false, null, durationMs, deferredReason);
             var parsed = AdHocClaudeInvoker.ParseOrFallback(rawResponse, model);
             AdHocClaudeInvoker.Record(_usage, $"aspect-{def.Id}", model, parsed.Usage,
-                durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId,
+                durationMs, ok: true, cliType: parsed.Usage?.CliType ?? ReviewDecisionOrchestrator.NormalizeReviewCliType(cliBinary), project: inputs.Project, jobId: inputs.JobId,
                 thinkingLevel: thinkingLevel,
                 participantId: string.IsNullOrWhiteSpace(inputs.ReviewAttemptId) ? null
                     : $"support:review-attempt:{inputs.ReviewAttemptId}:step:aspect-{def.Id}");
