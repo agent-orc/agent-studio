@@ -5,8 +5,9 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// F5 of the playthrough: each project template ships schema 1 and a commented
+/// F5 of the playthrough: the static-web template ships schema 1 and a commented
 /// schema 2 deployment section that, uncommented, is a valid deployable definition.
+/// The container-service template ships schema 2 itself (M5).
 /// </summary>
 public sealed class ProjectTemplateDeploymentSectionTests
 {
@@ -16,7 +17,6 @@ public sealed class ProjectTemplateDeploymentSectionTests
 
     [Theory]
     [InlineData("static-web", "static-site")]
-    [InlineData("container-service", "container")]
     public void Uncommented_section_is_valid_schema_two_with_both_environments(string template, string step)
     {
         var uncommented = Uncommented(template);
@@ -29,11 +29,23 @@ public sealed class ProjectTemplateDeploymentSectionTests
     }
 
     [Fact]
+    public void Container_template_is_schema_two_with_both_environments_and_container_steps()
+    {
+        var yaml = File.ReadAllText(Path.Combine(TemplateRoot, "container-service", ".agent-studio", "project.yml"));
+        var parsed = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(parsed.IsValid, string.Join("; ", parsed.Issues.Select(issue => $"{issue.Path}: {issue.Message}")));
+        Assert.Equal(2, parsed.Definition!.SchemaVersion);
+        Assert.All(parsed.Definition.Deployment!.Deploy, item => Assert.Equal("container", item.Step));
+        Assert.Equal(["stage", "production"],
+            ProjectEnvironmentService.ApplyDefinition([], yaml).Select(file => file.Declaration!.Id));
+    }
+
+    [Fact]
     public void Container_service_ships_a_script_for_every_runbook_step_and_documents_the_install()
     {
         // M4: runbook steps need operator-installed scripts, and the template shipped none.
-        var uncommented = Uncommented("container-service");
-        var runbooks = ProjectDefinitionReader.Parse(uncommented).Definition!.Deployment!.Runbooks;
+        var yaml = File.ReadAllText(Path.Combine(TemplateRoot, "container-service", ".agent-studio", "project.yml"));
+        var runbooks = ProjectDefinitionReader.Parse(yaml).Definition!.Deployment!.Runbooks;
         Assert.Equal(["restart", "disk-cleanup"], runbooks.Select(runbook => runbook.Name));
         var scripts = Path.Combine(TemplateRoot, "container-service", "deploy", "runbooks");
         foreach (var step in runbooks.SelectMany(runbook => runbook.Steps))
@@ -45,7 +57,7 @@ public sealed class ProjectTemplateDeploymentSectionTests
             syntax.WaitForExit();
             Assert.Equal(0, syntax.ExitCode);
         }
-        var environments = ProjectEnvironmentService.ApplyDefinition([], uncommented).Select(file => file.Declaration!).ToArray();
+        var environments = ProjectEnvironmentService.ApplyDefinition([], yaml).Select(file => file.Declaration!).ToArray();
         foreach (var runbook in runbooks)
         {
             var verification = ProjectRunbookVerification.Parse(runbook.Verify);

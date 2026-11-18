@@ -7,15 +7,15 @@ import { ProjectDeployPipelineComponent } from '../project-deploy-pipeline/proje
 import { ProjectDeployHistoryComponent } from '../project-deploy-history/project-deploy-history';
 import { DeployRunDrawerComponent, type DeployRunActionState } from '../deploy-run-drawer/deploy-run-drawer';
 import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project-pipeline-panel.component';
-import { EnvironmentHealthPanelComponent } from '../../../environment-health';
+import { EnvironmentHealthPanelComponent, type EnvironmentHealthResponse } from '../../../environment-health';
 import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 import { ManagedDatabasesPanelComponent } from '../managed-databases-panel/managed-databases-panel';
 import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-page/project-secrets-page.component';
+import { ProjectTelemetryTokensComponent } from '../project-telemetry-tokens/project-telemetry-tokens';
 import { FlowHealthPageComponent, type FlowDetailTarget } from '../../../flow-health';
-import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
 import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
 import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
@@ -48,7 +48,7 @@ import {
 } from '../../state/deploy-area-reads';
 import { DeployAreaSecrets, missingSecretsPrompt } from './deploy-area-secrets';
 
-export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
+export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'telemetry' | 'secrets' | 'tools';
 
 const IDLE: DeployRunActionState = { busy: null, error: null };
 
@@ -61,7 +61,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective, RollbackOfferComponent,
+    ProjectTelemetryTokensComponent, FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective, RollbackOfferComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',

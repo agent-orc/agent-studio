@@ -340,6 +340,9 @@
                   "const": false,
                   "default": false
                 },
+                "telemetry": {
+                  "$ref": "#/$defs/environmentTelemetry"
+                },
                 "healthChecksAllowPrivateNetwork": {
                   "description": "Lets the control plane's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses, for an environment hosted on a LAN or VPN. Loopback, link-local and cloud metadata addresses stay refused.",
                   "type": "boolean",
@@ -360,6 +363,9 @@
                 "protected": {
                   "const": true,
                   "default": true
+                },
+                "telemetry": {
+                  "$ref": "#/$defs/environmentTelemetry"
                 },
                 "healthChecksAllowPrivateNetwork": {
                   "description": "Lets the control plane's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses, for an environment hosted on a LAN or VPN. Loopback, link-local and cloud metadata addresses stay refused.",
@@ -1199,6 +1205,11 @@
       "description": "Repository-relative artifact path with the remotePath segment alphabet; '.' alone is the repository root.",
       "type": "string",
       "pattern": "^(?:\\.|(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*)*)$"
+    },
+    "environmentTelemetry": {
+      "description": "Connect container deploys of this environment to the Studio OTLP intake: the deploy sets OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL and OTEL_EXPORTER_OTLP_HEADERS with an ingest token scoped to the environment.",
+      "type": "boolean",
+      "default": false
     },
     "environmentScope": {
       "description": "Environments the entry applies to; omitted means every environment.",

@@ -1,4 +1,5 @@
 using System.Globalization;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Telemetry;
 
 namespace AgentStudio.Projects;
@@ -9,7 +10,9 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
     private static readonly IReadOnlyDictionary<string, string> NoAttributes = new Dictionary<string, string>();
     private static readonly string[] DurationNames = ["http.server.request.duration", "http.server.duration"];
     private static readonly string[] RequestNames = ["http.server.request.count", "http.server.requests"];
-    private static readonly string[] CpuNames = ["process.cpu.utilization", "container.cpu.utilization", "system.cpu.utilization", "process.cpu.time", "container.cpu.usage"];
+    private static readonly string[] CpuNames = ["process.cpu.utilization", "container.cpu.utilization", "system.cpu.utilization", "process.cpu.time", "container.cpu.time", "container.cpu.usage"];
+    /// <summary>Cumulative counters of CPU seconds; every other CPU name is a gauge in cores.</summary>
+    private static readonly string[] CpuTimeNames = ["process.cpu.time", "container.cpu.time"];
     private static readonly string[] MemoryNames = ["process.memory.usage", "container.memory.usage", "system.memory.usage"];
     private static readonly string[] DiskNames = ["system.filesystem.usage", "container.filesystem.usage"];
     private static readonly string[] NetworkNames = ["system.network.io", "container.network.io", "process.network.io"];
@@ -92,16 +95,17 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
             }
         }
 
-        AddGauge(First(names, CpuNames), (sample, value) => sample.Cpu = (sample.Cpu ?? 0) + value, CpuValue);
+        var cpuName = First(names, CpuNames);
+        if (cpuName is not null && CpuTimeNames.Contains(cpuName)) AddCpuTime(cpuName);
+        else AddGauge(cpuName, (sample, value) => sample.Cpu = (sample.Cpu ?? 0) + value);
         AddGauge(First(names, MemoryNames), (sample, value) => sample.Memory = (sample.Memory ?? 0) + value);
         AddGauge(First(names, DiskNames), (sample, value) => sample.Disk = (sample.Disk ?? 0) + value);
         AddGauge(First(names, NetworkNames), (sample, value) => sample.Network = (sample.Network ?? 0) + value);
 
-        void AddGauge(string? name, Action<Sample, double> add, Func<double, string, double>? convert = null)
+        void AddGauge(string? name, Action<Sample, double> add)
         {
             if (name is null) return;
-            var aggregation = name is "process.cpu.time" or "container.cpu.usage"
-                or "system.network.io" or "container.network.io" or "process.network.io"
+            var aggregation = name is "system.network.io" or "container.network.io" or "process.network.io"
                 ? MetricAggregation.Sum : MetricAggregation.Last;
             foreach (var series in Query(name, aggregation).Series)
             {
@@ -109,7 +113,30 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
                 if (name is "system.filesystem.usage" or "system.memory.usage"
                     && state is not null && state != "used") continue;
                 if (name == "system.cpu.utilization" && state == "idle") continue;
-                foreach (var point in series.Points) add(At(point.Time), (convert ?? ((value, _) => value))(point.Value, name));
+                foreach (var point in series.Points) add(At(point.Time), point.Value);
+            }
+        }
+
+        // A CPU time counter is cumulative. The store turns cumulative sums into per-point deltas when
+        // it writes them (resets included), so a bucket's sum is the CPU seconds spent inside it.
+        // Dividing by the wall time the bucket covers gives the average cores: a full step, or for the
+        // running bucket the time since it began, at least a minute because the first delta after the
+        // bucket started spans the export interval before it. Series that are not sums (a gauge carrying
+        // the running total) hold no deltas and are skipped; summing them would count the same seconds
+        // again with every export.
+        void AddCpuTime(string name)
+        {
+            var end = until.ToUnixTimeSeconds();
+            var minimum = MetricBucketPolicy.NativeSeconds(MetricResolution.Minute);
+            foreach (var series in Query(name, MetricAggregation.Sum).Series)
+            {
+                if (!string.Equals(series.Kind, nameof(MetricKind.Sum), StringComparison.Ordinal)) continue;
+                foreach (var point in series.Points)
+                {
+                    var covered = Math.Clamp(end - point.Time.ToUnixTimeSeconds(), minimum, plan.StepSeconds);
+                    var sample = At(point.Time);
+                    sample.Cpu = (sample.Cpu ?? 0) + point.Value / covered;
+                }
             }
         }
 
@@ -157,8 +184,10 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
             {
                 if (query.Level is not null && !string.Equals(TelemetrySeverity.Name(record.SeverityNumber),
                         TelemetrySeverity.Name(TelemetrySeverity.Parse(query.Level)!.Value), StringComparison.Ordinal)) continue;
-                var release = Attribute(record.Attributes, "service.version") ?? Attribute(record.Attributes, "release.id");
-                if (query.ReleaseId is not null && query.ReleaseId != release
+                var deployRelease = Attribute(record.Attributes, DeployTelemetryVocabulary.ReleaseAttribute);
+                var release = deployRelease ?? Attribute(record.Attributes, "service.version")
+                    ?? Attribute(record.Attributes, "release.id");
+                if (query.ReleaseId is not null && query.ReleaseId != release && query.ReleaseId != deployRelease
                     && query.ReleaseId != Attribute(record.Attributes, "release.id")) continue;
                 lines.Add(new(record.Time, TelemetrySeverity.Name(record.SeverityNumber), record.Body, release,
                     record.TraceId));
@@ -196,7 +225,6 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
         }
         return fallback;
     }
-    private static double CpuValue(double value, string name) => name.EndsWith(".time", StringComparison.Ordinal) || name.EndsWith(".usage", StringComparison.Ordinal) ? value / 3600 : value;
     private static long? ToLong(double? value) => value is null ? null : (long)Math.Round(value.Value);
 
     private sealed class Sample
