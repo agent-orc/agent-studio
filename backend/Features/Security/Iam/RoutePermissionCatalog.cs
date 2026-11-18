@@ -324,7 +324,7 @@ public static class RoutePermissionCatalog
         // project access; issuing or revoking an ingest token changes project
         // configuration and is reserved to a project administrator.
         Add("POST", IamPermissions.Anonymous,
-            "/api/telemetry/otlp/v1/metrics", "/api/telemetry/otlp/v1/logs");
+            "/api/telemetry/otlp/v1/metrics", "/api/telemetry/otlp/v1/logs", "/api/telemetry/otlp/v1/traces");
         Add("R", IamPermissions.ProjectRead, "/api/projects/{}/environments/{}/telemetry/**");
         Add("W", IamPermissions.ProjectSettingsWrite,
             "/api/projects/{}/environments/{}/telemetry/tokens",

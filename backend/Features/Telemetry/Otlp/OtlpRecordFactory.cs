@@ -30,6 +30,19 @@ internal sealed class OtlpLogFields
     public string? EventName { get; set; }
 }
 
+internal sealed class OtlpSpanFields
+{
+    public List<KeyValuePair<string, string>> Attributes { get; } = [];
+    public string? TraceId { get; set; }
+    public string? SpanId { get; set; }
+    public string? ParentSpanId { get; set; }
+    public string Name { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public long StartUnixNano { get; set; }
+    public long EndUnixNano { get; set; }
+    public bool Failed { get; set; }
+}
+
 /// <summary>The request is larger than the intake accepts; decoding stopped at the limit.</summary>
 public sealed class OtlpLimitException(string message) : Exception(message);
 
@@ -74,6 +87,7 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
 
     private readonly List<MetricSample> _metrics = [];
     private readonly List<TelemetryLogRecord> _logs = [];
+    private readonly List<TelemetrySpanRecord> _spans = [];
     private long _rejected;
     private string? _message;
     private long _records;
@@ -223,6 +237,28 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
     public OtlpDecodeResult<MetricSample> Metrics() => new(_metrics, _rejected, _message, _estimatedBytes, _storedBytes);
 
     public OtlpDecodeResult<TelemetryLogRecord> Logs() => new(_logs, _rejected, _message, _estimatedBytes, _storedBytes);
+
+    public void AddSpan(TelemetryAttributes scope, OtlpSpanFields span)
+    {
+        CountRecord();
+        if (span.TraceId is null || span.SpanId is null || span.StartUnixNano <= 0
+            || span.EndUnixNano < span.StartUnixNano)
+        {
+            Reject("Span has an invalid identifier or time range.");
+            return;
+        }
+        var attributes = Merge(scope, span.Attributes);
+        var name = OtlpAttributeBuilder.Truncate(span.Name, 255);
+        var kind = OtlpAttributeBuilder.Truncate(span.Kind, 32);
+        Account(RecordBytes + StringBytes(name) + StringBytes(kind) + StringBytes(span.TraceId)
+            + StringBytes(span.SpanId) + StringBytes(span.ParentSpanId) + OwnBytes(attributes, span.Attributes));
+        var record = new TelemetrySpanRecord(span.TraceId, span.SpanId, span.ParentSpanId, name,
+            kind, span.StartUnixNano, span.EndUnixNano, span.Failed, attributes);
+        Store(record.StoredBytes(attributes.JsonBytes));
+        _spans.Add(record);
+    }
+
+    public OtlpDecodeResult<TelemetrySpanRecord> Spans() => new(_spans, _rejected, _message, _estimatedBytes, _storedBytes);
 
     /// <summary>Lowercase hex of a trace or span id; all-zero and wrong-length ids are absent.</summary>
     public static string? Identifier(ReadOnlySpan<byte> bytes, int expectedLength)

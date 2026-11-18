@@ -89,11 +89,13 @@ monolith checkout, which owns integration worktrees and refs.
 When integration finds no usable checkout, or the integration branch is missing
 from it after a fetch, it records the failure code `server-checkout-missing`.
 The card then shows the checkout setup links instead of Continue (reissue),
-because another coding attempt cannot create the checkout. The card keeps that
-failure code even though a project without a checkout has no Git index. Once
-the checkout exists, the card offers Retry integration. It merges the same
-reviewed delivery again, without a new coding run or review. An Escalated card
-whose retry integrates returns to Human Review for acceptance.
+because another coding attempt cannot create the checkout or its missing
+integration base. When the base is missing, the remedy names its branch. The
+card keeps the failure code even though a project without a checkout has no Git
+index. Retry integration appears once the checkout and its selected integration
+base are available. It merges the same reviewed delivery again, without a new
+coding run or review. An Escalated card whose retry integrates returns to Human
+Review for acceptance.
 
 ## Fail-closed deployment check
 

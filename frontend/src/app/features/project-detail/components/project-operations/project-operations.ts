@@ -4,7 +4,7 @@ import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
 import { take } from 'rxjs';
-import { hostStateLabel, hostStateTone, metric, ratio, type OperationsLogResult, type ProjectOperations } from './project-operations.model';
+import { hostStateLabel, hostStateTone, metric, ratio, type OperationsLogResult, type OperationsTrace, type OperationsSpan, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
 import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
@@ -19,6 +19,7 @@ export class ProjectOperationsComponent {
   private readonly http = inject(HttpClient);
   private readGeneration = 0;
   private logGeneration = 0;
+  private traceGeneration = 0;
   readonly projectName = input.required<string>();
   readonly openRelease = output<string>();
   readonly openCard = output<string>();
@@ -34,6 +35,10 @@ export class ProjectOperationsComponent {
   readonly logs = signal<OperationsLogResult | null>(null);
   readonly searching = signal(false);
   readonly logError = signal<string | null>(null);
+  readonly traces = signal<OperationsTrace[] | null>(null);
+  readonly spans = signal<OperationsSpan[] | null>(null);
+  readonly selectedTraceId = signal<string | null>(null);
+  readonly traceError = signal<string | null>(null);
   readonly telemetryAvailable = computed(() => this.snapshot()?.environments.some(row => row.telemetryAvailable) ?? false);
   readonly metric = metric;
   readonly ratio = ratio;
@@ -46,9 +51,11 @@ export class ProjectOperationsComponent {
   load(project: string): void {
     const generation = ++this.readGeneration;
     ++this.logGeneration;
+    ++this.traceGeneration;
     this.snapshot.set(null); this.logs.set(null); this.error.set(null); this.release.set('');
     this.searching.set(false);
     this.loading.set(true);
+    this.traces.set(null); this.spans.set(null); this.selectedTraceId.set(null); this.traceError.set(null);
     this.http.get<ProjectOperations>(`/api/projects/${encodeURIComponent(project)}/deploy/operations`).pipe(take(1)).subscribe({
       next: value => {
         if (generation !== this.readGeneration) return;
@@ -65,9 +72,11 @@ export class ProjectOperationsComponent {
     if (filter() === value) return;
     filter.set(value);
     ++this.logGeneration;
+    ++this.traceGeneration;
     this.logs.set(null);
     this.logError.set(null);
     this.searching.set(false);
+    this.traces.set(null); this.spans.set(null); this.selectedTraceId.set(null);
   }
 
   search(): void {
@@ -92,5 +101,49 @@ export class ProjectOperationsComponent {
         if (generation === this.logGeneration) { this.logs.set(null); this.logError.set('Log search could not be completed.'); this.searching.set(false); }
       },
     });
+  }
+
+  searchTraces(): void {
+    const environment = this.selectedEnvironment();
+    if (!environment) return;
+    const generation = ++this.traceGeneration;
+    const params: Record<string, string> = {};
+    if (this.since()) params['from'] = new Date(this.since()).toISOString();
+    if (this.until()) params['to'] = new Date(this.until()).toISOString();
+    this.traces.set(null); this.traceError.set(null); this.spans.set(null); this.selectedTraceId.set(null);
+    this.http.get<OperationsTrace[]>(this.traceBase(environment) + '/traces', { params }).pipe(take(1)).subscribe({
+      next: traces => { if (generation === this.traceGeneration) this.traces.set(traces); },
+      error: () => { if (generation === this.traceGeneration) this.traceError.set('Trace search could not be completed.'); },
+    });
+  }
+
+  openTrace(traceId: string): void {
+    const environment = this.selectedEnvironment();
+    if (!environment) return;
+    const generation = ++this.traceGeneration;
+    this.selectedTraceId.set(traceId); this.spans.set(null); this.traceError.set(null);
+    this.http.get<OperationsSpan[]>(this.traceBase(environment) + '/traces/' + encodeURIComponent(traceId))
+      .pipe(take(1)).subscribe({
+        next: spans => { if (generation === this.traceGeneration) this.spans.set(spans); },
+        error: () => { if (generation === this.traceGeneration) this.traceError.set('Trace could not be loaded.'); },
+      });
+  }
+
+  spanOffset(span: OperationsSpan): number {
+    const rows = this.spans() ?? [];
+    const first = Math.min(...rows.map(row => Date.parse(row.startedAt)));
+    const total = Math.max(...rows.map(row => Date.parse(row.startedAt) + row.durationMs)) - first;
+    return total > 0 ? Math.max(0, (Date.parse(span.startedAt) - first) / total * 100) : 0;
+  }
+
+  spanWidth(span: OperationsSpan): number {
+    const rows = this.spans() ?? [];
+    const first = Math.min(...rows.map(row => Date.parse(row.startedAt)));
+    const total = Math.max(...rows.map(row => Date.parse(row.startedAt) + row.durationMs)) - first;
+    return total > 0 ? Math.max(0.5, span.durationMs / total * 100) : 100;
+  }
+
+  private traceBase(environment: string): string {
+    return `/api/projects/${encodeURIComponent(this.projectName())}/environments/${encodeURIComponent(environment)}/telemetry`;
   }
 }

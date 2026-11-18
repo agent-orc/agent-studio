@@ -374,6 +374,42 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'operations-older-release');
   });
 
+  test('Operations shows a slow trace waterfall and opens it from a log line', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    const traceId = '11111111111111111111111111111111';
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
+        telemetryAvailable: false, metrics: null, markers: [] }],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.route(`**${DEPLOY}/operations/logs**`, route => answer(route, { telemetryAvailable: true,
+      lines: [{ at: '2026-10-20T00:00:00Z', level: 'ERROR', message: 'Dependency timeout',
+        releaseId: null, traceId }] }));
+    await page.route(`**/environments/production/telemetry/traces`, route => answer(route, [
+      { traceId, startedAt: '2026-10-20T00:00:00Z', durationMs: 900, failed: true,
+        name: 'GET /checkout', spanCount: 2 },
+    ]));
+    await page.route(`**/environments/production/telemetry/traces/${traceId}`, route => answer(route, [
+      { spanId: '2222222222222222', parentSpanId: null, name: 'GET /checkout', kind: 'SERVER',
+        startedAt: '2026-10-20T00:00:00Z', durationMs: 900, failed: true, attributes: {} },
+      { spanId: '3333333333333333', parentSpanId: '2222222222222222', name: 'inventory HTTP', kind: 'CLIENT',
+        startedAt: '2026-10-20T00:00:00.100Z', durationMs: 780, failed: true, attributes: {} },
+    ]));
+    await page.getByTestId(`studio-explorer-project-operations-${PROJECT}`).click();
+    await page.getByTestId('operations-search-traces').click();
+    await expect(page.getByTestId('operations-traces')).toContainText('GET /checkout');
+    await page.getByTestId('operations-search-logs').click();
+    await page.getByTestId('operations-log-trace').click();
+    await expect(page.getByTestId('operations-span-waterfall')).toContainText('inventory HTTP');
+    fs.mkdirSync(results, { recursive: true });
+    await setTheme(page, 'light');
+    await page.getByTestId('project-operations').screenshot({ path: path.join(results, 'operations-trace-light--mocked.png') });
+    await setTheme(page, 'dark');
+    await page.getByTestId('project-operations').screenshot({ path: path.join(results, 'operations-trace-dark--mocked.png') });
+  });
+
   test('project Operations links to installation backups in Settings with backup and host CA warnings in both themes and at 390 px (AGT-3574, AGT-3736)', async ({ page }) => {
     await openDeploy(page, fullMocks());
     await page.route(`**${DEPLOY}/operations`, route => answer(route, {
