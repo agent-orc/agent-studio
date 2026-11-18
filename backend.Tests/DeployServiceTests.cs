@@ -2518,7 +2518,18 @@ public sealed class DeployServiceTests : IDisposable
         using var agent = factory.CreateClient();
         agent.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         using var refused = await agent.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
-        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        Assert.Contains("Sign in again to approve", await refused.Content.ReadAsStringAsync());
+        var sessionCookie = Assert.Single(bootstrap.Headers.GetValues("Set-Cookie"), cookie =>
+            cookie.StartsWith(AccessSecurityStore.InsecureSessionCookieName + "=", StringComparison.Ordinal)).Split(';')[0];
+        using var missingProof = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        using var missingProofRequest = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/projects/demo/deploy/deployments/{production.Id}/approve");
+        missingProofRequest.Headers.Add("X-Client-Id", "local-default");
+        missingProofRequest.Headers.Add("Cookie", sessionCookie);
+        using var proofRefusal = await missingProof.SendAsync(missingProofRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, proofRefusal.StatusCode);
+        Assert.Contains("Sign in again to approve", await proofRefusal.Content.ReadAsStringAsync());
         using var refusedPromotion = await agent.PostAsJsonAsync("/api/projects/demo/environments/promotions/approve",
             new PromotionDecisionRequest(Artifact('a')));
         Assert.Equal(HttpStatusCode.Forbidden, refusedPromotion.StatusCode);
