@@ -59,9 +59,40 @@ public sealed record ProjectTenantDefinition(string Name, IReadOnlyList<string> 
 public sealed record ProjectChannelDefinition(string Name, string Lifecycle, string? PrereleaseTag,
     string? BranchPattern, bool Default);
 
-/// <summary>Named host operations. The host resolves each name to an operator-installed script.</summary>
+/// <summary>
+/// Named host operations. The host resolves each name to an operator-installed script.
+/// <see cref="Verify"/> names what must pass after the scripts before the run succeeds:
+/// <c>health:&lt;check id&gt;</c> for an environment health check or <c>alert:&lt;rule id&gt;</c>
+/// for a telemetry alert rule that must not fire.
+/// </summary>
 public sealed record ProjectRunbookDefinition(string Name, IReadOnlyList<string> Steps,
-    IReadOnlyList<string> Environments);
+    IReadOnlyList<string> Environments)
+{
+    public string? Verify { get; init; }
+}
+
+/// <summary>The parsed <c>verify</c> value of a runbook.</summary>
+public sealed record ProjectRunbookVerification(string Kind, string Target)
+{
+    public const string HealthCheck = "health";
+    public const string AlertRule = "alert";
+    /// <summary>The step that carries the verification result after the scripts.</summary>
+    public const string StepName = "verification";
+
+    public static ProjectRunbookVerification? Parse(string? value)
+    {
+        var separator = value?.IndexOf(':') ?? -1;
+        if (separator <= 0) return null;
+        var kind = value![..separator];
+        var target = value[(separator + 1)..];
+        return kind is HealthCheck or AlertRule && target.Length is > 0 and <= 64
+            && target[0] is >= 'a' and <= 'z' or >= '0' and <= '9'
+            && target.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '_' or '-')
+            ? new(kind, target) : null;
+    }
+
+    public string Describe() => Kind == HealthCheck ? $"health check {Target}" : $"alert rule {Target}";
+}
 
 /// <summary>
 /// Deploy hosts registered for one project, per P1 environment. The backend
@@ -121,7 +152,7 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments", "tenants", "tenantTags", "channels"];
     public static readonly IReadOnlyList<string> TenantKeys = ["name", "tags", "environments"];
     public static readonly IReadOnlyList<string> ChannelKeys = ["name", "lifecycle", "versionRules", "prereleaseTag", "branchPattern", "default"];
-    public static readonly IReadOnlyList<string> RunbookKeys = ["name", "steps", "environments"];
+    public static readonly IReadOnlyList<string> RunbookKeys = ["name", "steps", "environments", "verify"];
     public static readonly IReadOnlyList<string> StepKinds =
         ["static-site", "container", "publish-static", "start-container", "run", "health", "approval"];
     public const int MaxHealthTimeoutSeconds = 900;
@@ -288,7 +319,7 @@ public static partial class ProjectDefinitionReader
             {
                 CheckMapKeys(item, ProjectDeploymentVocabulary.RunbookKeys, $"runbooks[{index}]", issues);
                 return new ProjectRunbookDefinition(Get(item, "name") ?? "", List(item, "steps"),
-                    List(item, "environments"));
+                    List(item, "environments")) { Verify = Get(item, "verify") };
             }).ToArray();
         var databases = ParseDatabases(lines, issues);
 
@@ -477,6 +508,12 @@ public static partial class ProjectDefinitionValidator
                 issues.Add(new($"{path}.steps", "runbook-step-reserved", "approval is reserved for the environment approval step."));
             if (runbook.Environments.Any(environment => !environments.Contains(environment)))
                 issues.Add(new($"{path}.environments", "runbook-environment-unknown", "Runbook environments must be declared."));
+            if (runbook.Verify is not null && ProjectRunbookVerification.Parse(runbook.Verify) is null)
+                issues.Add(new($"{path}.verify", "runbook-verify-invalid",
+                    "verify must be health:<health check id> or alert:<alert rule id>."));
+            if (runbook.Verify is not null && runbook.Steps.Contains(ProjectRunbookVerification.StepName, StringComparer.Ordinal))
+                issues.Add(new($"{path}.steps", "runbook-step-reserved",
+                    "verification is reserved for the verification step when verify is set."));
         }
         return issues;
     }

@@ -127,6 +127,24 @@ public sealed class ProjectDeploymentDefinitionTests
             issue => issue.Code == "runbook-step-reserved");
     }
 
+    [Fact]
+    public void Parses_a_runbook_verification_and_rejects_an_unknown_kind()
+    {
+        var yaml = Base + "\nrunbooks:\n  - name: restart\n    steps: [restart-container]\n    verify: health:ready\n";
+        var parsed = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(parsed.IsValid, string.Join("; ", parsed.Issues.Select(issue => issue.Message)));
+        var runbook = Assert.Single(parsed.Definition!.Deployment!.Runbooks);
+        Assert.Equal("health:ready", runbook.Verify);
+        Assert.Equal(new ProjectRunbookVerification("health", "ready"), ProjectRunbookVerification.Parse(runbook.Verify));
+        Assert.Equal(new ProjectRunbookVerification("alert", "5xx-rate"), ProjectRunbookVerification.Parse("alert:5xx-rate"));
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml.Replace("health:ready", "script:ready", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "runbook-verify-invalid");
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml.Replace("health:ready", "health:../x", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "runbook-verify-invalid");
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml.Replace("[restart-container]", "[verification]", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "runbook-step-reserved");
+    }
+
     [Theory]
     [InlineData("LD_PRELOAD")]
     [InlineData("LD_LIBRARY_PATH")]
