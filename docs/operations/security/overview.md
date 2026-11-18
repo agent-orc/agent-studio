@@ -110,10 +110,11 @@ that is already allowed to edit that project's checkout.
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
   has an 8-hour idle limit and a 7-day absolute limit by default. The cookie's
   maximum age is the absolute limit; the server enforces idle expiry on every
-  request. Browser mutations require the matching CSRF
-  header. Because SameSite does not separate sibling hosts of one site, every
-  unsafe request that carries a session cookie, and every sign-in, bootstrap,
-  or invitation acceptance, must also carry a matching `Origin` or
+  request. The readable CSRF cookie has the same maximum age, so a browser
+  restart preserves both proofs until the session expires. Browser mutations
+  require the matching CSRF header. Because SameSite does not separate sibling
+  hosts of one site, every unsafe request that carries a session cookie, and
+  every sign-in, bootstrap, or invitation acceptance, must also carry a matching `Origin` or
   `Sec-Fetch-Site: same-origin`. Event streams (`/hubs/*` and every WebSocket
   upgrade) that carry a session cookie are checked on every method: a present
   `Origin` must match, a present `Sec-Fetch-Site` must be `same-origin`, and

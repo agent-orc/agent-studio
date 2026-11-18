@@ -16,6 +16,12 @@ function item(type: string, overrides: Partial<OperatorAttentionItem> = {}): Ope
 }
 
 describe('operator attention model', () => {
+  it('puts an open environment incident first and opens its card', () => {
+    const incident = item('environment.incident-open', { title: 'alpha · Production incident' });
+    const groups = groupAttention([item('decision-card.opened'), incident]);
+    expect(groups[0].spec.key).toBe('incident');
+    expect(attentionTarget(incident, groups[0].spec)).toBe('card');
+  });
   it('maps every decision-event class of the stream and keeps unknown types visible', () => {
     expect(attentionClassOf('decision-card.opened')).toBe('decision');
     expect(attentionClassOf('escalation.opened')).toBe('escalation');
