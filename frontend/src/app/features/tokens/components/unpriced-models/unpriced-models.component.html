@@ -1,17 +1,19 @@
 @if (owner()) {
   <section class="unpriced-models" id="unpriced-models" data-testid="unpriced-models">
     <h3>Models without price data</h3>
+    @if (period(); as range) { <p>Current workspace week: {{ range }}</p> }
+    @else { <p>Current workspace week</p> }
     <button type="button" (click)="load()">Show unpriced models</button>
     @if (error()) { <p role="alert">Could not load unpriced models.</p> }
     @if (models(); as rows) {
       @if (rows.length) {
-        <table><caption>Active models without catalogue prices</caption>
-          <thead><tr><th scope="col">Model</th><th scope="col">Calls</th><th scope="col">Tokens</th></tr></thead>
+        <table><caption>Unpriced usage this week</caption>
+          <thead><tr><th scope="col">Model</th><th scope="col">Unpriced calls</th><th scope="col">Unpriced tokens</th></tr></thead>
           <tbody>@for (row of rows; track row.model) {
             <tr><th scope="row">{{ row.model }}</th><td>{{ row.calls | number }}</td><td>{{ row.totalTokens | number }}</td></tr>
           }</tbody>
         </table>
-      } @else { <p>No active unpriced models.</p> }
+      } @else { <p>No unpriced models this week.</p> }
     }
   </section>
 }

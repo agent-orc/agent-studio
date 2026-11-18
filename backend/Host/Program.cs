@@ -746,6 +746,7 @@ builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
 builder.Services.AddSingleton(_ => new HealthCheckConnector());
 builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
 builder.Services.AddSingleton<HealthCheckStore>();
+builder.Services.AddSingleton<IncidentActions>();
 builder.Services.AddSingleton<TelemetryAlertReader>();
 builder.Services.AddSingleton<HealthAlerts>();
 builder.Services.AddSingleton<EnvironmentHealthService>();
@@ -1521,6 +1522,9 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGat
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
+    sp.GetRequiredService<HealthCheckStore>(),
+    () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name)));
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
