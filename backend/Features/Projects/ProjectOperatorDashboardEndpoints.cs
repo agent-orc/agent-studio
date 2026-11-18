@@ -185,7 +185,7 @@ public static class ProjectOperatorDashboardEndpoints
             return DeployEndpoints.QuotaRefusable(() => deploy.RollbackEnvironment(projectName, environmentId, actor) switch
             {
                 { Kind: DeployOutcomeKind.Ok } => Results.Accepted(),
-                { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "No previous artifact is available." }),
+                { Kind: DeployOutcomeKind.NotFound } refused => Results.NotFound(new { error = refused.Error }),
                 { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                     statusCode: StatusCodes.Status403Forbidden),
                 var refused => Results.Conflict(new { error = refused.Error }),

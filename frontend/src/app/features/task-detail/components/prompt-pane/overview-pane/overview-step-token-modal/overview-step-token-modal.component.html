@@ -5,6 +5,7 @@
   role="dialog"
   widthTier="lg"
   testid="overview-step-token-modal"
+  [stackManagedExternally]="true"
   (closeRequest)="closeRequest.emit()"
   (backdropClick)="closeRequest.emit()">
   <div class="ov-token-modal" data-testid="overview-step-token-modal-body">

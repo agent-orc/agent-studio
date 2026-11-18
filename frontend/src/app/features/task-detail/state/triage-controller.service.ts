@@ -11,9 +11,9 @@ import { describeMoveRefusal } from '../../../models/lane-move-guard';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
-import { AcceptanceRefusalStore, acceptanceRefusalOverridable, acceptanceRefusalSentence, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { AcceptanceRefusalStore, acceptanceRefusalOverridable, acceptanceRefusalSentence, contentRefusalOverrideAllowed, serverAcceptanceRefusal } from './acceptance-refusal.model';
 import { AcceptanceRefusalActions } from './acceptance-refusal-actions.service';
-import { AcceptanceReadinessStore, acceptanceOverrideAllowed } from '../../acceptance-readiness';
+import { AcceptanceReadinessStore } from '../../acceptance-readiness';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import {
   archiveIntegrationVerdict,
@@ -695,7 +695,7 @@ export class TriageController {
  */
 function contentGapBanner(refusal: string): string {
   const reason = acceptanceRefusalSentence(refusal || 'Completion refused: the current brief has no passing content verdict.');
-  return acceptanceOverrideAllowed(refusal)
+  return contentRefusalOverrideAllowed(refusal)
     ? `${reason} Accept it with a written reason, review it again against the current brief, or send a round to close the gap under Acceptance next steps.`
     : `${reason} Send a round to close the gap under Acceptance next steps; an override cannot replace the missing report.`;
 }

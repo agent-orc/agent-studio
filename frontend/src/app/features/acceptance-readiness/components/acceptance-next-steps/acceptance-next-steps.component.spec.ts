@@ -104,10 +104,23 @@ describe('AcceptanceNextStepsComponent (AGT-3867)', () => {
   it('offers no override where the policy cannot admit one', async () => {
     const { host } = await mount(readinessItem('DEMO-19', 'blocked', {
       headline: 'Completion refused',
+      overrideAllowed: false,
       refusal: 'Completion refused: the required report is missing (results/report.md).',
     }));
     expect(testId(host, 'acceptance-next-steps-send-round')).not.toBeNull();
     expect(testId(host, 'accept-with-reason-open')).toBeNull();
+    expect(testId(host, 'acceptance-primary-next-step')?.textContent).not.toContain('override');
+  });
+
+  it('offers a round but no override for a batch-gate refusal', async () => {
+    const { host } = await mount(readinessItem('DEMO-19', 'integrated-unverified', {
+      stage: 'batch-gate', overrideAllowed: false, refusal: 'batch-gate-evidence-missing',
+    }), null);
+    expect(testId(host, 'acceptance-next-steps-send-round')).not.toBeNull();
+    expect(testId(host, 'accept-with-reason-open')).toBeNull();
+    expect(testId(host, 'acceptance-primary-next-step')?.textContent)
+      .toContain('Send a round to close the batch gate evidence gap');
+    expect(testId(host, 'acceptance-primary-next-step')?.textContent).not.toContain('override');
   });
 
   it('keeps the brief-change steps for a stale verdict, with the round when one is offered', async () => {

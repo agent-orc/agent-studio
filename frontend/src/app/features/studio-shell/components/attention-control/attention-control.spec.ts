@@ -88,6 +88,28 @@ describe('AttentionControlComponent', () => {
     expect(openReferenceOrNotify).toHaveBeenCalledWith('health-production-1', { focusDecision: false });
   });
 
+  it('shows review host drift in the status bar and opens the affected host', async () => {
+    const originalUrl = window.location.href;
+    const drift: OperatorAttentionItem = {
+      id: 'review-host.drift|review-1', type: 'review-host.drift', project: null, cardKey: null,
+      cards: ['AGT-1'], title: 'Review host differs from Stable',
+      reason: 'Review host first-run-review graded AGT-1 on another commit.',
+      observedAt: '2026-11-09T09:00:00Z', suggestedOperations: [],
+      evidence: [{ label: 'Review host', href: '/workspace/settings/environment?host=first-run-review' }],
+    };
+    const { fixture, http, overlays } = await setup('ok', 0, [drift]);
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="review-host-drift-cue"]')?.textContent)
+      .toContain('Review host');
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="studio-attention-trigger"]')!.click();
+    http.expectOne('/api/operator/attention').flush({ items: [drift], count: 1 });
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid="attention-row"]')?.textContent).toContain('AGT-1');
+    document.querySelector<HTMLButtonElement>('[data-testid="attention-row-action"]')!.click();
+    expect(overlays.open).toHaveBeenCalledWith('remote-hosts');
+    expect(window.location.hash).toBe('#/workspace/settings/environment?host=first-run-review');
+    history.replaceState(null, '', originalUrl);
+  });
+
   it('shows completion readiness for each review card and updates the ready count after a decision', async () => {
     const reviewItems = [items[0], { ...items[0], id: 'h2', cardKey: 'AGT-4', cards: ['AGT-4'] }];
     const { fixture, http } = await setup('ok', 0, reviewItems);

@@ -73,12 +73,13 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
 
         var factTime = _clock.GetUtcNow().UtcDateTime;
         var expected = new Dictionary<string, DateTime>(StringComparer.Ordinal);
-        // Deploy completion has its own quota-backed source, environment incidents
-        // read health state, and a running batch without a live gate needs a stale snapshot; this fixture registers
-        // only the task, watcher, batch, push, provider and retry sources.
+        // Deploy completion, environment incidents and review-host drift have
+        // their own sources. A running batch without a live gate needs a stale
+        // snapshot; this fixture registers the remaining sources.
         var seededTypes = OperatorDecisionTypes.All
             .Where(type => type != OperatorDecisionTypes.DeployCompleted
                 && type != OperatorDecisionTypes.EnvironmentIncidentOpen
+                && type != OperatorDecisionTypes.ReviewHostDrift
                 && type != OperatorDecisionTypes.BatchRunningWithoutGate)
             .ToArray();
         foreach (var type in seededTypes) expected[type] = factTime;

@@ -1794,6 +1794,10 @@ park for a person (`operator-decision`, `agent-needs-input`,
 `needs-human-input`, a decision request, or a pending decision card). A refused
 class also carries a prefilled round: the refusal, the concern, and the card's
 latest result ref (`ContinueRoundBasePolicy`, AGT-3483).
+The answer also carries `overrideAllowed`, derived from admission facts. It is
+false for a batch-gate refusal and for a missing required research report;
+neither can be admitted by a written operator override. Acceptance next steps
+and the task toolbar offer the round for those refusals.
 
 The Human Review lane groups its cards by class and filters by All, Ready, and
 Not ready; the lane count stays the sum of what it shows. Each card names its

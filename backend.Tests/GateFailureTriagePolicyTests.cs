@@ -201,6 +201,24 @@ public sealed class GateFailureTriagePolicyTests
             triage.ReasonLine);
     }
 
+    [Fact]
+    public void InvalidDefinitionWithSuiteIssue_QuotesCodeAndLineWithoutPrepareAdvice()
+    {
+        var reason = ProjectDefinitionIssueText.InvalidReason(
+            [new("testSuites[0].id", "suite-id-invalid", "Test suite ids are required and unique.", 14)]);
+        var log = "verdict=Fail exit=n/a durationMs=1 failureKind=Code\n"
+            + "reason=" + reason + "\n"
+            + "budget=none\n--- last-300-lines ---\n";
+
+        var triage = GateFailureTriagePolicy.Classify(log);
+        var prompt = GateFailureFixRoundPrompt.Build(
+            "SHOP-13", "refs/heads/shop-13", new string('a', 40), "develop",
+            "pre-main-test-gate", triage, null);
+
+        Assert.Contains("testSuites[0].id (line 14) [suite-id-invalid]", prompt);
+        Assert.DoesNotContain("commands.prepare is required", prompt);
+    }
+
     private static string WithHeaderLine(string log, string line)
     {
         var lines = log.Split('\n').ToList();

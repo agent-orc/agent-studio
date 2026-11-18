@@ -26,6 +26,11 @@ export class ServerCheckoutRemedyComponent {
   readonly mutationsBlocked = input(false);
   /** The backend found the checkout, so the same delivery can integrate now. */
   readonly checkoutReady = computed(() => serverCheckoutReady(this.info()));
+  readonly missingBaseRef = computed(() => {
+    const reason = this.info().integration?.failure?.reason ?? '';
+    const ref = /Integration worktree base '([^']+)' is unavailable after fetch/.exec(reason)?.[1];
+    return ref?.replace(/^refs\/(?:remotes|heads)\//, '') ?? null;
+  });
   readonly settingsHref = computed(() => `/#/projects/${studioProjectSlug(this.info().projectName)}/settings`);
   readonly retrying = signal(false);
   readonly outcome = signal<string | null>(null);

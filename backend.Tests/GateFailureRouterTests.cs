@@ -269,6 +269,42 @@ public sealed class GateFailureRouterTests : IDisposable
     }
 
     [Fact]
+    public async Task InvalidDefinition_SameFingerprintAcrossDeliveryShas_StopsAfterTwoFixRounds()
+    {
+        var started = 0;
+        var stack = Build((_, _, _) =>
+        {
+            started++;
+            return Task.CompletedTask;
+        });
+        var id = SeedRedGate(stack, "definition", "product.AGT-2722.log", TaskStates.AutoReview);
+        var card = Card(stack, id);
+        var folder = card.FolderPath;
+        var issue = new AgentStudio.TaskServer.Contracts.ProjectDefinitionIssue(
+            "testSuites[0].id", "suite-id-invalid", "Test suite ids are required and unique.", 14);
+        var reason = AgentStudio.TaskServer.Contracts.ProjectDefinitionIssueText.InvalidReason([issue]);
+        var log = "verdict=Fail exit=n/a durationMs=1 failureKind=Code\n"
+            + "reason=" + reason + "\n"
+            + "budget=none\n--- last-300-lines ---\n";
+        var status = stack.Integration.BuildLookup([card])[card.TaskKey];
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var sha = new string((char)('a' + attempt), 40);
+            ReviewSubjectStore.Write(folder, ReviewSubjectStore.Read(folder)! with { ResultSha = sha });
+            File.WriteAllText(Path.Combine(folder, "post-steps", $"pre-develop-build-gate-{attempt + 2}.log"), log);
+            var route = await stack.Router.RouteAsync(card, status);
+            if (attempt < 2)
+                Assert.Equal(GateFailureRouteAction.FixRound, route.Route.Action);
+            else
+            {
+                Assert.Equal(GateFailureRouteAction.ParkExhausted, route.Route.Action);
+                Assert.Contains("testSuites[0].id (line 14) [suite-id-invalid]", route.ParkReason);
+            }
+        }
+        Assert.Equal(2, started);
+    }
+
+    [Fact]
     public async Task FailedCauseCreation_LeavesCardUnparkedAndDoesNotSaveAReceipt()
     {
         var stack = Build(withoutInterventions: true);
@@ -541,7 +577,7 @@ public sealed class GateFailureRouterTests : IDisposable
             withoutInterventions ? null : interventions, fixRoundStarter: fixRoundStarter);
         var reconciler = new DeliveryChainReconciler(scanner, integration, transitions, configuration,
             reconcileLogger ?? NullLogger<DeliveryChainReconciler>.Instance, router);
-        return new Stack(scanner, mutations, timeline, pipeline, integration, interventions, counter, reconciler);
+        return new Stack(scanner, mutations, timeline, pipeline, integration, interventions, counter, router, reconciler);
     }
 
     private static object Commit(string sha) => new
@@ -591,6 +627,7 @@ public sealed class GateFailureRouterTests : IDisposable
         TaskIntegrationStatusService Integration,
         FailureInterventionService Interventions,
         InMemoryFingerprintCounter Counter,
+        GateFailureRouter Router,
         DeliveryChainReconciler Reconciler);
 
     private sealed class CollectingReconcileLogger(List<string> summaries)

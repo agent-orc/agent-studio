@@ -13,11 +13,9 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// AGT-3810 (playthrough AGT-3795): the Git state index never runs for a
-/// project without a server checkout, so the board card, the full detail and
-/// the Git detail resource read no integration verdict at all. The escalated
-/// card therefore lost the recorded <c>server-checkout-missing</c> code, the
-/// AGT-3673 remedy never rendered, and Continue (reissue) stayed the primary.
+/// A missing server checkout leaves the Git state index without a projection.
+/// Board, detail and Git-detail reads must retain the recorded
+/// <c>server-checkout-missing</c> code so the card can show its remedy.
 /// </summary>
 public sealed class ServerCheckoutFailureProjectionEndpointTests : IDisposable
 {
@@ -26,11 +24,15 @@ public sealed class ServerCheckoutFailureProjectionEndpointTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "server-checkout-projection-" + Guid.NewGuid().ToString("N"));
     private string Jobs => Path.Combine(_root, "jobs");
 
-    [Fact]
-    public async Task EscalatedCard_WithoutServerCheckout_CarriesTheRecordedFailureCodeOnEveryRead()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("missing")]
+    [InlineData("nongit")]
+    public async Task EscalatedCard_WithoutUsableServerCheckout_CarriesTheRecordedFailureCodeOnEveryRead(string? checkout)
     {
         SeedEscalatedCardWithCheckoutFailure();
-        await using var factory = Factory();
+        if (checkout == "nongit") Directory.CreateDirectory(Path.Combine(_root, checkout));
+        await using var factory = Factory(checkout);
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
@@ -52,7 +54,14 @@ public sealed class ServerCheckoutFailureProjectionEndpointTests : IDisposable
         using var gitBody = JsonDocument.Parse(await git.Content.ReadAsStringAsync());
         AssertCheckoutFailure(gitBody.RootElement.GetProperty("data").GetProperty("integration"));
 
-        // Board card, which seeds the open card's detail.
+        // Board list, which seeds the open card's detail.
+        using var board = await client.GetAsync($"/api/tasks?project={project.Id}");
+        board.EnsureSuccessStatusCode();
+        using var boardBody = JsonDocument.Parse(await board.Content.ReadAsStringAsync());
+        var boardCard = Assert.Single(boardBody.RootElement.EnumerateArray());
+        AssertCheckoutFailure(boardCard.GetProperty("integration"));
+
+        // The grouped board and persisted-board writer use the same projector.
         var card = factory.Services.GetRequiredService<TaskIndexCache>().GetDetailFacts(Id, Jobs).Info!;
         var projected = Assert.Single(factory.Services.GetRequiredService<BoardCardProjector>().Project([card]));
         Assert.Equal(AcceptedIntegrationFailureCodes.ServerCheckoutMissing, projected.Integration?.Failure?.Code);
@@ -115,8 +124,7 @@ public sealed class ServerCheckoutFailureProjectionEndpointTests : IDisposable
         }
     }
 
-    // The project names no RootPath or RepositoryPath: no server checkout.
-    private WebApplicationFactory<Program> Factory() =>
+    private WebApplicationFactory<Program> Factory(string? checkout) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
@@ -126,6 +134,7 @@ public sealed class ServerCheckoutFailureProjectionEndpointTests : IDisposable
                 ["ErrorHandling:IncludeExceptionDetails"] = "true",
                 ["WatchPaths:0:Name"] = "Tally Library",
                 ["WatchPaths:0:Path"] = Jobs,
+                ["WatchPaths:0:RepositoryPath"] = checkout is null ? null : Path.Combine(_root, checkout),
             }));
             builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
         });
