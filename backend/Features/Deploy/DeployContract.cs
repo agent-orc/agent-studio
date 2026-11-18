@@ -121,6 +121,8 @@ public sealed record EnvironmentStatus(
     public string? Tenant { get; init; }
     /// <summary>The release a rollback runs now, or null when the environment has none.</summary>
     public RollbackTarget? RollbackTarget { get; init; }
+    /// <summary>A failed run may have changed the host even though the last successful release remains the lifecycle baseline.</summary>
+    public bool ReleaseUncertain { get; init; }
 }
 
 /// <summary>

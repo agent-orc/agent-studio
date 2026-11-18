@@ -19,7 +19,7 @@
           <article class="deployment__environment" [attr.data-testid]="'environment-' + environment.declaration.id">
             <strong>{{ environment.declaration.name }}</strong>
             <small>{{ environment.declaration.kind }} · {{ environment.declaration.address }} · {{ environment.declaration.targetHostId }}</small>
-            <p>Version: <code>{{ environment.deployedArtifact || 'Not deployed' }}</code></p>
+            <p>{{ releaseLabel(environment) }}</p>
             <p>Health: <app-status-indicator [tone]="environmentHealthTone(environment.health)" [label]="environment.health" testId="environment-health-state" /></p>
             @if (environment.pendingArtifact) { <p>Queued: <code>{{ environment.pendingArtifact }}</code></p> }
             @if (offers().get(environment.declaration.id); as offer) {

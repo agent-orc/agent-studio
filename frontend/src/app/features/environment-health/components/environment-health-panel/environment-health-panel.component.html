@@ -24,7 +24,7 @@
         @if (environment.currentIncident; as incident) {
           <p class="environment-health__incident" role="status" data-testid="environment-health-incident">
             Incident since {{ incident.startedAt | date:'medium':'UTC' }} UTC · {{ incident.checkId }} · {{ incident.firstError }}
-            · {{ incident.failedProbes }} failed probes
+            · {{ incident.failedProbes }} {{ incident.checkId.startsWith('telemetry-') ? 'firing evaluations' : 'failed probes' }}
             @if (incident.cardId) { · card <code>{{ incident.cardId }}</code> }
           </p>
           @if (incidentAction(); as action) {

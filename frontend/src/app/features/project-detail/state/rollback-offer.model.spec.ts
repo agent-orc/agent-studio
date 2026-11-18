@@ -39,4 +39,18 @@ describe('rollback offers (F13)', () => {
     expect(dialog.requireTypedValues).toEqual([RELEASE_2.version]);
     expect(dialog.requireTypedPrompt).toContain(`Release ${RELEASE_2.version} had an incident while running`);
   });
+
+  it('does not name the lifecycle baseline as the running release while it is uncertain', () => {
+    const statuses = productionRollbackFixture().statuses;
+    statuses[1] = { ...statuses[1], releaseUncertain: true };
+    const [offer] = buildRollbackOffers(statuses);
+    expect(offer).toEqual(expect.objectContaining({ currentVersion: null, currentReleaseId: null, currentUncertain: true }));
+
+    const dialog = rollbackConfirmation(offer, DEPLOY_FIXTURE_NOW);
+    expect(dialog.message).toBe(`Production leaves an uncertain running release and runs Release ${RELEASE_1.version}.`
+      + ' Confirming approves the rollback as Owner or Maintainer.');
+    expect(dialog.items?.[0]).toBe('Current: running release uncertain. A failed release may be running.');
+    expect(dialog.cancelLabel).toBe('Keep the current state');
+    expect(JSON.stringify(dialog)).not.toContain(RELEASE_3.version);
+  });
 });

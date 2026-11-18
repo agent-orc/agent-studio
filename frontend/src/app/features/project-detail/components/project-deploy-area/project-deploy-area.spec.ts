@@ -810,7 +810,8 @@ describe('ProjectDeployAreaComponent', () => {
       expect(data.rollbacks).toEqual(['production:approve=true:accept=true']);
       data.rollbackResult.error(new HttpErrorResponse({ status: 403, error: { error: 'Production approval requires Owner or Maintainer.' } }));
       await settle();
-      expect(text('deploy-rollback-error')).toBe('Production: Production approval requires Owner or Maintainer.');
+      expect(text('deploy-rollback-error')).toBe(
+        'Production: Production approval requires Owner or Maintainer. Redeploy a known release or fix forward.');
     });
 
     it('offers the same rollback in the run drawer of the current release only', async () => {

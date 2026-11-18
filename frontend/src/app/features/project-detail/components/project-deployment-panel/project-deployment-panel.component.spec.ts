@@ -26,6 +26,10 @@ describe('ProjectDeploymentPanelComponent', () => {
         stageHealthyAt: '2026-10-16T12:00:00Z', status: 'pending', actor: null, expiresAt: '2026-10-17T12:00:00Z' }],
       failureCards: [],
     });
+    http.expectOne('/api/projects/Demo%20Project/deploy/status').flush([{
+      environment: { id: 'stage' }, currentRelease: { version: '2026.10.16.3', artifactDigests: ['sha256:' + 'a'.repeat(64)] },
+      currentDeployment: null, newerRelease: null, cardsSinceLastDeploy: [], health: 'healthy', releaseUncertain: false,
+    }]);
     http.expectOne('/api/watch-paths').flush([{ name: 'Demo Project', path: 'C:/projects/demo' }]);
     http
       .expectOne('/api/projects/Demo%20Project/deployment/summary')
@@ -57,11 +61,13 @@ describe('ProjectDeploymentPanelComponent', () => {
     expect(fixture.nativeElement.textContent).not.toContain('Run deployment');
     expect(fixture.nativeElement.textContent).toContain('Head is 2 commits ahead');
     expect(fixture.nativeElement.textContent).toContain('Promotion pending');
+    expect(fixture.nativeElement.textContent).toContain('Release 2026.10.16.3');
     fixture.nativeElement.querySelector('[data-testid="pending-promotion"] button').click();
     const approval = http.expectOne('/api/projects/Demo%20Project/environments/promotions/approve');
     expect(approval.request.body).toEqual({ artifact: 'app@sha256:' + 'a'.repeat(64) });
     approval.flush({});
     http.expectOne('/api/projects/Demo%20Project/environments').flush({ project: 'Demo Project', environments: [], promotions: [], failureCards: [] });
+    http.expectOne('/api/projects/Demo%20Project/deploy/status').flush([]);
 
     fixture.nativeElement.querySelector('[data-testid="deployment-visible-task"]').click();
     fixture.detectChanges();
@@ -96,6 +102,7 @@ describe('ProjectDeploymentPanelComponent', () => {
     const http = TestBed.inject(HttpTestingController);
     const scenario = productionRollbackFixture();
     http.expectOne('/api/projects/Website/environments').flush(scenario.environments);
+    http.expectOne('/api/projects/Website/deploy/status').flush(scenario.statuses);
     http.expectOne('/api/watch-paths').flush([]);
     http.expectOne('/api/projects/Website/deployment/summary').flush({ project: 'Website', available: false, reason: null,
       source: 'none', pendingCount: null, defaultEvidenceRun: null, pendingCommits: [], lastDeployment: null, history: [], targets: [] });
@@ -125,6 +132,7 @@ describe('ProjectDeploymentPanelComponent', () => {
     fixture.detectChanges();
     TestBed.inject(HttpTestingController).expectOne('/api/projects/Demo%20Project/environments')
       .flush({ project: 'Demo Project', environments: [], promotions: [], failureCards: [] });
+    TestBed.inject(HttpTestingController).expectOne('/api/projects/Demo%20Project/deploy/status').flush([]);
     const target = {
       id: 'docs', title: 'Docs', kind: 'template' as const, template: 'caddy-site', summary: 'Deploy docs.',
       runnable: true, source: 'deployment.json', command: 'bash scripts/deploy.sh --reload {{reload}}', targetHostId: 'web',
@@ -149,6 +157,7 @@ describe('ProjectDeploymentPanelComponent', () => {
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Other/environments')
       .flush({ project: 'Other', environments: [], promotions: [], failureCards: [] });
+    http.expectOne('/api/projects/Other/deploy/status').flush([]);
     http.expectOne('/api/watch-paths').flush([]);
     http.expectOne('/api/projects/Other/deployment/summary').flush({
       project: 'Other', available: false, reason: 'Latest deploy-stable revision range does not belong to this project repository.',

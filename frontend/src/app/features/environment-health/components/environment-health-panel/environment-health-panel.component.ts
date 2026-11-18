@@ -14,6 +14,7 @@ const HEALTH_STATUS_TONE: Readonly<Record<HealthStatus, StatusTone>> = {
   invalid: 'warning',
   down: 'danger',
   unknown: 'neutral',
+  'not-observed': 'neutral',
 };
 
 export function healthStatusTone(status: string): StatusTone {
@@ -55,12 +56,14 @@ export class EnvironmentHealthPanelComponent {
   }
 
   target(check: EnvironmentHealthCheck): string {
+    if (check.kind === 'telemetry') return `Telemetry · ${check.target}`;
     const expectation = check.kind === 'http'
       ? ` · expects ${check.expectedStatus}${check.hasBodyMarker ? ' and body marker' : ''}` : '';
     return `${check.kind.toUpperCase()} ${check.target}${expectation}`;
   }
 
   rule(check: EnvironmentHealthCheck): string {
+    if (check.kind === 'telemetry') return 'Evaluated from environment telemetry';
     return `Every ${check.intervalSeconds} s · timeout ${check.timeoutSeconds} s · incident after ${check.failureThreshold} failures`
       + `${check.derived ? ' · derived from the environment address' : ''}`;
   }
@@ -68,6 +71,8 @@ export class EnvironmentHealthPanelComponent {
   lastResult(check: EnvironmentHealthCheck): string {
     const sample = check.lastSample;
     if (!sample) return 'Not probed yet';
+    if (sample.error === 'not-observed') return 'Not observed';
+    if (check.kind === 'telemetry') return sample.error ?? 'Observed';
     if (sample.ok) return sample.status ? `OK · ${sample.status}` : 'OK';
     return [sample.error ?? 'failed', sample.status].filter(item => item !== null).join(' · ');
   }
@@ -75,6 +80,7 @@ export class EnvironmentHealthPanelComponent {
   lastResultTone(check: EnvironmentHealthCheck): StatusTone {
     const sample = check.lastSample;
     if (!sample) return 'neutral';
+    if (sample.error === 'not-observed') return 'neutral';
     return sample.ok ? 'success' : 'danger';
   }
 

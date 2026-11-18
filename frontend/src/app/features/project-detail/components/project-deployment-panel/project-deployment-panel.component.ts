@@ -11,6 +11,8 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
 import { TARGET_READINESS, deploymentHistoryTone, environmentHealthTone, type TargetReadiness } from './deployment-status-tone';
 import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
 import type { RollbackOffer } from '../../state/rollback-offer.model';
+import { catchError, forkJoin, of } from 'rxjs';
+import { runningReleaseLabel, type EnvironmentStatus } from '../../state/deploy-area.model';
 
 @Component({
   selector: 'app-project-deployment-panel',
@@ -37,6 +39,7 @@ export class ProjectDeploymentPanelComponent {
   readonly offers = computed(() => new Map(this.rollbackOffers().map(offer => [offer.environmentId, offer])));
   readonly summary = signal<ProjectDeploymentSummary | null>(null);
   readonly environments = signal<ProjectEnvironments | null>(null);
+  readonly releaseStatuses = signal<readonly EnvironmentStatus[]>([]);
   readonly environmentError = signal<string | null>(null);
   readonly loading = signal(true);
   readonly requestFailed = signal(false);
@@ -116,6 +119,10 @@ export class ProjectDeploymentPanelComponent {
 
   readonly environmentHealthTone = environmentHealthTone;
   readonly historyTone = deploymentHistoryTone;
+
+  releaseLabel(view: ProjectEnvironments['environments'][number]): string {
+    return runningReleaseLabel(view, this.releaseStatuses().find(item => item.environment.id === view.declaration.id) ?? null);
+  }
 
   targetReadiness(target: ProjectDeploymentTarget): { tone: StatusTone; label: string } {
     let readiness: TargetReadiness;
@@ -221,8 +228,14 @@ export class ProjectDeploymentPanelComponent {
   }
 
   private loadEnvironments(projectName: string): void {
-    this.tasks.getProjectEnvironments(projectName).subscribe({
-      next: value => this.environments.set(value),
+    forkJoin({
+      environments: this.tasks.getProjectEnvironments(projectName),
+      statuses: this.tasks.getProjectEnvironmentReleaseStatuses(projectName).pipe(catchError(() => of([] as EnvironmentStatus[]))),
+    }).subscribe({
+      next: value => {
+        this.environments.set(value.environments);
+        this.releaseStatuses.set(value.statuses);
+      },
       error: () => this.environmentError.set('Environments could not be loaded.'),
     });
   }

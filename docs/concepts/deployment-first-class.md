@@ -285,7 +285,11 @@ stays the only executor; releases and runs describe and steer it.
   open health incident and in deployment tools, always through the lifecycle
   route after a confirmation that names current and target release. For
   Production the confirmation is the Owner or Maintainer approval
-  (`approve: true`). Both follow the same approval rule. When the environment's first release has
+  (`approve: true`). Both follow the same approval rule. While
+  `releaseUncertain` is set, the confirmation does not name the lifecycle
+  baseline as the current release, and the run drawer offers no rollback. A
+  refused rollback shows the server reason and the choice to redeploy a known
+  release or fix forward. When the environment's first release has
   no older release to return to, the AGT-3176 rollback route falls back to the
   artifact history (the artifact deployed before releases existed), only while
   the environment is idle and only when the history target belongs to no

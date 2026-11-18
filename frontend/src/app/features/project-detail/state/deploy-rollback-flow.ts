@@ -77,7 +77,8 @@ export class DeployRollbackFlow {
       },
       error: (error: unknown) => {
         this.state.set({ environmentId: null,
-          error: `${offer.environmentName}: ${serverMessage(error) ?? 'The rollback was not accepted.'}` });
+          error: `${offer.environmentName}: ${serverMessage(error) ?? 'The rollback was not accepted.'}`
+            + ' Redeploy a known release or fix forward.' });
         if (project === host.projectName()) host.refresh();
       },
     }));

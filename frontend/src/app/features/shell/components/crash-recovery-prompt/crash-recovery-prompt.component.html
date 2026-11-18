@@ -19,7 +19,8 @@
     [closable]="true"
     (closeRequest)="closeLocal()"
     (backdropClick)="closeLocal()"
-    testid="crash-recovery-prompt">
+    testid="crash-recovery-prompt"
+    [stackManagedExternally]="true">
     <div class="crp" data-testid="crash-recovery-list">
       <div class="crp__toolbar">
         <button type="button"

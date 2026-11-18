@@ -20,8 +20,10 @@ export interface RollbackOffer {
   environmentId: string;
   environmentName: string;
   production: boolean;
+  /** Null while `releaseUncertain`: the lifecycle baseline is then not named as the running release. */
   currentVersion: string | null;
   currentReleaseId: string | null;
+  currentUncertain: boolean;
   targetVersion: string;
   targetCreatedAt: string;
   targetDeployedAt: string | null;
@@ -50,12 +52,14 @@ export function buildRollbackOffers(statuses: readonly EnvironmentStatus[] | nul
   return (statuses ?? []).flatMap(status => {
     const target = status.rollbackTarget;
     if (!target || status.environment.kind === 'preview') return [];
+    const uncertain = status.releaseUncertain === true;
     return [{
       environmentId: status.environment.id,
       environmentName: status.environment.name,
       production: status.environment.kind === 'production',
-      currentVersion: status.currentRelease?.version ?? null,
-      currentReleaseId: status.currentRelease?.id ?? null,
+      currentVersion: uncertain ? null : status.currentRelease?.version ?? null,
+      currentReleaseId: uncertain ? null : status.currentRelease?.id ?? null,
+      currentUncertain: uncertain,
       targetVersion: target.release.version,
       targetCreatedAt: target.release.createdAtUtc,
       targetDeployedAt: target.deployedAtUtc,
@@ -77,10 +81,11 @@ function ago(iso: string | null, now: number): string | null {
  * is never chosen in passing.
  */
 export function rollbackConfirmation(offer: RollbackOffer, now: number): ConfirmDialogOptions {
-  const from = offer.currentVersion ? `Release ${offer.currentVersion}` : 'the current release';
+  const from = offer.currentVersion ? `Release ${offer.currentVersion}`
+    : offer.currentUncertain ? 'an uncertain running release' : 'the current release';
   const health = runtimeHealth(offer.health).label.toLowerCase();
   const items = [
-    `Current: ${from}`,
+    offer.currentUncertain ? 'Current: running release uncertain. A failed release may be running.' : `Current: ${from}`,
     `Target: Release ${offer.targetVersion}, created ${ago(offer.targetCreatedAt, now) ?? 'at an unknown time'}`
       + (offer.targetDeployedAt ? `, last deployed here ${ago(offer.targetDeployedAt, now)}` : ''),
     `Runtime health of the target: ${health}${offer.incidentDetail ? ` (${offer.incidentDetail})` : ''}`,
@@ -95,7 +100,7 @@ export function rollbackConfirmation(offer: RollbackOffer, now: number): Confirm
       : `${offer.environmentName} leaves ${from} and runs Release ${offer.targetVersion}.`,
     items,
     confirmLabel: `Roll back ${offer.environmentName}`,
-    cancelLabel: `Keep ${from}`,
+    cancelLabel: offer.currentUncertain ? 'Keep the current state' : `Keep ${from}`,
     kind: 'danger',
     ...(offer.health === 'incident' ? {
       requireTypedValues: [offer.targetVersion],
