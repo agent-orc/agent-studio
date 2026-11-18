@@ -238,7 +238,10 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3878 adds managed database operations (backup, verification restore,
         // restore) on Start and the Owner's approve and reject of a production
         // restore on Continue.
-        Assert.Equal(165, routes.Count);
+        // AGT-3891 adds the integration release action on Start: it records a
+        // release of the gated integration tip and queues the Staging run, the
+        // same effect as the gate release handoff, so public demo denies it.
+        Assert.Equal(166, routes.Count);
         foreach (var (routePath, path) in new[]
         {
             ("/api/tasks/{jobId}/content-review", ExecutionAdmissionPath.Review),
@@ -273,6 +276,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
             ("/api/projects/{project}/operator-candidate-verifications", ExecutionAdmissionPath.PostStep),
             ("/api/deploy/gate-releases", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/integration-release", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/environments/{environmentId}/run-target-removal/confirm", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/environments/{environmentId}/databases/{name}/deletion", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/environments/{environmentId}/databases/{name}/operations", ExecutionAdmissionPath.Start),
@@ -353,7 +357,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 14,
-                [ExecutionAdmissionPath.Start] = 38,
+                [ExecutionAdmissionPath.Start] = 39,
                 [ExecutionAdmissionPath.Continue] = 39,
                 [ExecutionAdmissionPath.Review] = 10,
                 [ExecutionAdmissionPath.Chat] = 9,
