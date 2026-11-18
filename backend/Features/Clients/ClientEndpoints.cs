@@ -144,6 +144,21 @@ public static class ClientEndpoints
                 : Results.Ok(status with { SwitchStartedAt = updated.DeploySwitchStartedAt });
         });
 
+        // AGT-3930: the guided update's cancel lifts the drain only before the
+        // switch. Once a switch start is recorded, only a verified resume may.
+        clients.MapPost("/{id}/deploy-cancel", (
+            string id,
+            ClientIdentityStore store,
+            AgentStudio.Runner.AttemptAuthorityService authority) =>
+        {
+            var result = store.CancelDrainBeforeSwitch(id);
+            if (result is null) return Results.NotFound(new { error = "client-not-found-retired-or-retiring" });
+            var status = ClientDrainStatus.From(result.Record, authority.ListActiveAttemptsOfExecutor(id));
+            return result.Refused
+                ? Results.Conflict(new { error = "client-switch-started", status })
+                : Results.Ok(status);
+        });
+
         clients.MapPost("/{id}/retire", (string id, ClientIdentityStore store) =>
         {
             if (string.Equals(id, DefaultClientIdentity.Id, StringComparison.OrdinalIgnoreCase))
