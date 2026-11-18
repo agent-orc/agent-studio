@@ -160,6 +160,18 @@ public sealed class CredentialRedactorTests
         Assert.Equal(text, CredentialRedactor.Redact(text));
     }
 
+    [Theory]
+    [InlineData("token: rnr.credential.abcdefghijklmnopqrstuvwxyz012345")]
+    [InlineData("secret=\"rnr.credential.abcdefghijklmnopqrstuvwxyz012345\"")]
+    [InlineData("api_key: Bearer rnr.credential.abcdefghijklmnopqrstuvwxyz012345")]
+    public void A_named_value_another_pattern_masked_keeps_the_credential_marker(string text)
+    {
+        var redacted = CredentialRedactor.Redact(text);
+
+        Assert.DoesNotContain("abcdefghijklmnopqrstuvwxyz012345", redacted);
+        Assert.Contains("[REDACTED_CREDENTIAL]", redacted);
+    }
+
     [Fact]
     public void A_long_input_without_tokens_finishes_in_bounded_time()
     {

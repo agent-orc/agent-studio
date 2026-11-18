@@ -43,7 +43,7 @@ public static class CredentialRedactor
         Linear);
 
     private static readonly Regex NamedSecret = new(
-        """(?ix)(^|[^a-z0-9_-])(["']?(?:authorization|proxy-authorization|cookie|set-cookie|x-csrf-token|csrftoken|enrollmentcode|handoff|claude_code_oauth_token|(?:[a-z0-9]+_?)?(?:api_?key|secret|token|password))["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;}&]+)""",
+        """(?ix)(^|[^a-z0-9_-])(["']?(?:authorization|proxy-authorization|cookie|set-cookie|x-csrf-token|csrftoken|enrollmentcode|handoff|claude_code_oauth_token|(?:[a-z0-9]+_?)?(?:api_?key|secret|token|password))["']?\s*[:=]\s*)("[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;}&]+)""",
         Linear);
 
     /// <summary>Shortest literal worth registering; shorter text would mask ordinary words.</summary>
@@ -110,6 +110,17 @@ public static class CredentialRedactor
         redacted = UrlCredentials.Replace(redacted, "$1[REDACTED]@");
         redacted = AccessTokenUserInfo.Replace(redacted, "$1[REDACTED]@");
         redacted = SecretHeader.Replace(redacted, "$1[REDACTED]");
-        return NamedSecret.Replace(redacted, "$1$2[REDACTED]");
+        // A value an earlier pattern already masked keeps its marker, so
+        // "token: rnr.x.y" reads "token: [REDACTED_CREDENTIAL]" either way.
+        return NamedSecret.Replace(redacted, match => IsMasked(match.Groups[3].Value)
+            ? match.Value
+            : match.Groups[1].Value + match.Groups[2].Value + "[REDACTED]");
+    }
+
+    private static bool IsMasked(string value)
+    {
+        var bare = value.Trim('"', '\'');
+        if (bare.StartsWith("bearer ", StringComparison.OrdinalIgnoreCase)) bare = bare[7..].TrimStart();
+        return bare == Masked;
     }
 }
