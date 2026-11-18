@@ -16,7 +16,8 @@ async function mount() {
   fixture.detectChanges();
   const http = TestBed.inject(HttpTestingController);
   const request = http.expectOne('/api/projects/Alpha/environments');
-  return { fixture, request };
+  const statusRequest = http.expectOne('/api/projects/Alpha/deploy/status');
+  return { fixture, request, statusRequest };
 }
 
 function declaration(id: string, name: string, kind: ProjectEnvironmentDeclaration['kind'] = 'stage'): ProjectEnvironmentDeclaration {
@@ -29,8 +30,9 @@ function declaration(id: string, name: string, kind: ProjectEnvironmentDeclarati
 
 describe('ProjectEnvironmentOverviewComponent', () => {
   it('invites environment setup when no environment is declared', async () => {
-    const { fixture, request } = await mount();
+    const { fixture, request, statusRequest } = await mount();
     request.flush({ project: 'Alpha', environments: [], promotions: [], failureCards: [] });
+    statusRequest.flush([]);
     fixture.detectChanges();
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelector('[data-testid="project-environments-empty"]')).toBeTruthy();
@@ -38,7 +40,7 @@ describe('ProjectEnvironmentOverviewComponent', () => {
   });
 
   it('shows the recorded health of each environment', async () => {
-    const { fixture, request } = await mount();
+    const { fixture, request, statusRequest } = await mount();
     request.flush({
       project: 'Alpha',
       environments: [
@@ -48,6 +50,7 @@ describe('ProjectEnvironmentOverviewComponent', () => {
       promotions: [],
       failureCards: [],
     });
+    statusRequest.flush([]);
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
@@ -59,5 +62,21 @@ describe('ProjectEnvironmentOverviewComponent', () => {
     expect(host.querySelector<HTMLElement>('[data-testid="project-environment-preview"] [data-testid="project-environment-health"]')?.dataset['tone']).toBe('neutral');
     expect(host.querySelector('[data-testid="project-environment-stage"] [data-testid="environment-runbooks"]')).toBeTruthy();
     expect(host.querySelector('[data-testid="project-environment-preview"] [data-testid="environment-runbooks"]')).toBeNull();
+  });
+
+  it('shows uncertainty after a failed host report instead of naming its target', async () => {
+    const { fixture, request, statusRequest } = await mount();
+    const artifact = 'app@sha256:' + 'b'.repeat(64);
+    request.flush({ project: 'Alpha', environments: [
+      { declaration: declaration('stage', 'Stage'), deployedArtifact: artifact, health: 'failed', pendingArtifact: null,
+        history: [{ at: '2026-11-16T12:00:00Z', status: 'failed', artifact, previousArtifact: null, evidence: 'health-http-failed' }] },
+    ], promotions: [], failureCards: [] });
+    statusRequest.flush([{
+      environment: { id: 'stage' }, currentRelease: { version: '2026.11.16.1', artifactDigests: [artifact] },
+      currentDeployment: null, newerRelease: null, cardsSinceLastDeploy: [], health: 'unhealthy', releaseUncertain: true,
+    }]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="project-environment-stage"]').textContent)
+      .toContain('Running release uncertain. A failed release may be running.');
   });
 });

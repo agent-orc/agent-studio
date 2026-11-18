@@ -99,7 +99,7 @@ export default defineConfig({
           : profile === 'networked-checkout' ? '**/security/networked-project-checkout.spec.ts'
           : profile === 'networked-https-demo' ? '**/security/product-card-detail.spec.ts'
           : profile === 'operator-cli' ? '**/operator/studio-op-operator-cli.spec.ts'
-          : profile === 'owner-day' ? ['**/batch-gate/owner-day-real-backend.spec.ts', '**/board/owner-day-acceptance.spec.ts', '**/task-detail/owner-day-demo-19-acceptance-refusal.spec.ts', '**/tokens/owner-day-token-usage.spec.ts']
+          : profile === 'owner-day' ? ['**/batch-gate/owner-day-real-backend.spec.ts', '**/board/owner-day-acceptance.spec.ts', '**/task-detail/owner-day-demo-19-acceptance-refusal.spec.ts', '**/tokens/owner-day-token-usage.spec.ts', '**/usage-cockpit/subscription-week-real-receipts.spec.ts']
           : profile === 'demo' ? ['**/usage-cockpit/cockpit-integration-matrix.spec.ts', '**/project/dossier-decision-live.spec.ts']
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'

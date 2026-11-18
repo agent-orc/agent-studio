@@ -333,7 +333,7 @@ public static class DeploymentReconciler
                 log.Add(new(run.Id, DeployStepNames.Health, at, "Skipped because the deploy host was lost."));
                 break;
             case DeploymentStates.Failed when run.Evidence == DeployEvidence.HealthFailed:
-                log.Add(new(run.Id, run.DeployStep, at, "Deploy host completed the step."));
+                log.Add(new(run.Id, run.DeployStep, at, "Deploy host ran the step; the release did not pass its health check."));
                 log.Add(new(run.Id, DeployStepNames.Health, at, $"Health check failed ({DeployEvidence.HealthFailed})."));
                 break;
             case DeploymentStates.Failed:

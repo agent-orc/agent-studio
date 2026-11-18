@@ -37,6 +37,12 @@
   text-align: center;
 }
 
+.attention-control__drift {
+  color: var(--studio-status-warning);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .attention-control__trigger--active .attention-control__count { color: var(--studio-status-warning); }
 
 @media (pointer: coarse) {
@@ -159,6 +165,13 @@
 
 // Completion refusals are actionable prose, including on narrow phones.
 .attention-list__row[data-attention-type='human-review.ready'] .attention-list__reason {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
+// Commit and image identities remain readable even on a narrow status dialog.
+.attention-list__row[data-attention-type='review-host.drift'] .attention-list__reason {
   display: block;
   overflow: visible;
   -webkit-line-clamp: unset;

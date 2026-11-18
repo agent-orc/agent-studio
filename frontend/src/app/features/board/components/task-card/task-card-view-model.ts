@@ -8,6 +8,7 @@ import { cliTypeIcon, cliTypeLabel, shortModelName, taskModeIcon, taskModeLabel 
 import { shouldShowFailureToast } from '../../../task-detail/services/run-outcome.util';
 import { buildThinkingLevelIndicator, type ThinkingLevelIndicator } from '../../../../services/thinking-level.util';
 import { phaseStaticLabel } from '../../../../services/lifecycle-phase.util';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
 import { isTaskRunActive, resolveRunActivityKind } from '../../../../services/run-activity.util';
 import { buildTokenCostTooltip, formatTokenCostDisplay } from '../../../tokens';
 import { laneName, lanePresentation } from '../../../../models/lane-presentation';
@@ -298,7 +299,7 @@ export function buildTokenBubble(tokenSummary: TaskInfo['tokenSummary']): TaskTo
     const entryTotal = (entry.inputTokens ?? 0) + (entry.outputTokens ?? 0) + (entry.cacheReadTokens ?? 0) + (entry.cacheCreationTokens ?? 0);
     return {
       ts: entry.ts,
-      tsLabel: formatShortTime(entry.ts),
+      tsLabel: formatZonedWithUtc(entry.ts, browserTimeZone()) ?? entry.ts,
       model: entry.displayModel ?? entry.model,
       total: entryTotal,
       // Each run is priced with the rate valid on its own timestamp
@@ -331,7 +332,7 @@ export function buildTokenBubble(tokenSummary: TaskInfo['tokenSummary']): TaskTo
       unpricedRuns,
     }),
     model: tokenSummary.lastModel ?? null,
-    lastUpdate: tokenSummary.lastUpdate ? formatShortTime(tokenSummary.lastUpdate) : null,
+    lastUpdate: formatZonedWithUtc(tokenSummary.lastUpdate, browserTimeZone()),
     tier,
     entries,
     hasModelMismatch: tokenSummary.hasModelMismatch === true

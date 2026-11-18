@@ -9,6 +9,8 @@ import type { WatchPathEntry } from '../../../../models/task.model';
 import { DeploymentDefinitionEditorComponent } from '../deployment-definition-editor/deployment-definition-editor';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { TARGET_READINESS, deploymentHistoryTone, environmentHealthTone, type TargetReadiness } from './deployment-status-tone';
+import { catchError, forkJoin, of } from 'rxjs';
+import { runningReleaseLabel, type EnvironmentStatus } from '../../state/deploy-area.model';
 
 @Component({
   selector: 'app-project-deployment-panel',
@@ -25,6 +27,7 @@ export class ProjectDeploymentPanelComponent {
   readonly projectName = input.required<string>();
   readonly summary = signal<ProjectDeploymentSummary | null>(null);
   readonly environments = signal<ProjectEnvironments | null>(null);
+  readonly releaseStatuses = signal<readonly EnvironmentStatus[]>([]);
   readonly environmentError = signal<string | null>(null);
   readonly loading = signal(true);
   readonly requestFailed = signal(false);
@@ -58,7 +61,8 @@ export class ProjectDeploymentPanelComponent {
     this.environmentError.set(null);
     this.tasks.rollbackProjectEnvironment(this.projectName(), id).subscribe({
       next: () => this.loadEnvironments(this.projectName()),
-      error: () => this.environmentError.set('Rollback could not be queued.'),
+      error: error => this.environmentError.set(
+        `${error?.error?.error ?? 'Rollback could not be queued.'} Redeploy the last known release or fix forward.`),
     });
   }
 
@@ -112,6 +116,10 @@ export class ProjectDeploymentPanelComponent {
 
   readonly environmentHealthTone = environmentHealthTone;
   readonly historyTone = deploymentHistoryTone;
+
+  releaseLabel(view: ProjectEnvironments['environments'][number]): string {
+    return runningReleaseLabel(view, this.releaseStatuses().find(item => item.environment.id === view.declaration.id) ?? null);
+  }
 
   targetReadiness(target: ProjectDeploymentTarget): { tone: StatusTone; label: string } {
     let readiness: TargetReadiness;
@@ -217,8 +225,14 @@ export class ProjectDeploymentPanelComponent {
   }
 
   private loadEnvironments(projectName: string): void {
-    this.tasks.getProjectEnvironments(projectName).subscribe({
-      next: value => this.environments.set(value),
+    forkJoin({
+      environments: this.tasks.getProjectEnvironments(projectName),
+      statuses: this.tasks.getProjectEnvironmentReleaseStatuses(projectName).pipe(catchError(() => of([] as EnvironmentStatus[]))),
+    }).subscribe({
+      next: value => {
+        this.environments.set(value.environments);
+        this.releaseStatuses.set(value.statuses);
+      },
       error: () => this.environmentError.set('Environments could not be loaded.'),
     });
   }

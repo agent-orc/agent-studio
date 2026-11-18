@@ -4,6 +4,7 @@ import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { DialogComponent } from './dialog.component';
+import { ModalStackService } from '../../services/modal-stack.service';
 
 /**
  * Keyboard contract of the shared modal (AGT-3831): Tab is contained by
@@ -19,7 +20,9 @@ import { DialogComponent } from './dialog.component';
     <button type="button" data-testid="opener">Open</button>
     <button type="button" data-testid="elsewhere">Elsewhere</button>
     @if (open()) {
-      <app-dialog title="Spec dialog" testid="spec-modal">
+      <app-dialog title="Spec dialog" testid="spec-modal"
+                  [stackManagedExternally]="stackManagedExternally()"
+                  (closeRequest)="open.set(false)">
         <button type="button" data-testid="inside">Inside</button>
       </app-dialog>
     }
@@ -27,6 +30,7 @@ import { DialogComponent } from './dialog.component';
 })
 class HostComponent {
   readonly open = signal(false);
+  readonly stackManagedExternally = signal(false);
 }
 
 function setup() {
@@ -83,5 +87,44 @@ describe('DialogComponent focus', () => {
     fixture.componentInstance.open.set(false);
     fixture.detectChanges();
     expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it('closes only a shared dialog above task detail and returns focus to its opener', async () => {
+    const env = setup();
+    fixture = env.fixture;
+    const stack = TestBed.inject(ModalStackService);
+    let detailClosed = false;
+    const releaseDetail = stack.push('task-detail', () => { detailClosed = true; });
+    const panel = await openDialog(fixture);
+    expect(stack.depth()).toBe(2);
+    expect(stack.topId()).toBe('app-dialog');
+    panel.querySelector<HTMLButtonElement>('[data-testid="inside"]')!.focus();
+
+    panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.open()).toBe(false);
+    expect(detailClosed).toBe(false);
+    expect(document.querySelector('[data-testid="spec-modal"]')).toBeNull();
+    expect(document.activeElement).toBe(env.opener);
+    releaseDetail();
+  });
+
+  it('uses only the owner entry when the dialog is already stack managed', async () => {
+    const env = setup();
+    fixture = env.fixture;
+    fixture.componentInstance.stackManagedExternally.set(true);
+    const stack = TestBed.inject(ModalStackService);
+    const releaseOwner = stack.push('owner-dialog', () => fixture!.componentInstance.open.set(false));
+    const panel = await openDialog(fixture);
+    expect(stack.depth()).toBe(1);
+    expect(stack.topId()).toBe('owner-dialog');
+
+    panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.open()).toBe(false);
+    expect(document.activeElement).toBe(env.opener);
+    releaseOwner();
   });
 });
