@@ -192,10 +192,13 @@ and keeps its other sources loaded. Marker card keys resolve by exact key
 through `GET /api/tasks/{key}/core`, so archived cards open too. A later card
 click or leaving the view cancels a pending lookup. Log search accepts any
 release ID, including releases whose marker predates the 30-day trend.
-The API derives DORA from production deploy runs and archive-inclusive card creation
+The API derives DORA from production deploy runs, completed production environment
+incidents, and archive-inclusive card creation
 times: successful change runs per week, median card-to-production time, failed
-or rolled-back changes divided by terminal change runs, and median time from a
-failed production run to the next successful run. Missing samples remain
+or rolled-back changes and changes followed by a production incident divided by
+terminal change runs, and median time from a failed production run to the next
+successful run or from a production incident opening to its recovery. Overlapping
+run and incident recoveries count once. Missing samples remain
 unavailable. `GET /api/projects/{project}/deploy/operations/logs` accepts
 environment, bounded time range, level, release, and text filters and returns
 at most 100 lines. `IOperationsTelemetryReader` is the integration boundary

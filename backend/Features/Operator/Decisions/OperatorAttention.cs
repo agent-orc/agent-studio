@@ -38,9 +38,11 @@ public static class OperatorAttention
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var items = facts
             .Where(fact => fact.Type != OperatorDecisionTypes.WatcherHeartbeat
+                && fact.Type != OperatorDecisionTypes.DeployCompleted
                 && OperatorDecisionPolicy.Shows(fact.Type, fact.Project, reader)
                 && seen.Add(fact.Key))
-            .OrderBy(fact => fact.ObservedAtUtc)
+            .OrderBy(fact => fact.Type == OperatorDecisionTypes.EnvironmentIncidentOpen ? 0 : 1)
+            .ThenBy(fact => fact.ObservedAtUtc)
             .ThenBy(fact => fact.Key, StringComparer.Ordinal)
             .Select(fact => new OperatorAttentionItem(fact.Key, fact.Type, fact.Project, fact.CardKey,
                 fact.Cards ?? (fact.CardKey is { } card ? [card] : []), fact.Reason, fact.ObservedAtUtc,
