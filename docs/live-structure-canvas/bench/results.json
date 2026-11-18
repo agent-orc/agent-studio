@@ -1,0 +1,929 @@
+{
+  "generatedAt": "2026-11-17T22:56:17.441Z",
+  "environment": {
+    "chromium": "147.0.7727.15",
+    "cpu": "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz",
+    "cores": 12,
+    "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "viewport": "1440x900, drawing surface 1280x800 at device pixel ratio 1",
+    "headless": true,
+    "versions": {
+      "pixi.js": "8.23.0",
+      "cytoscape": "3.35.0",
+      "three": "0.187.0",
+      "uplot": "1.6.32",
+      "echarts": "6.1.0",
+      "chart.js": "4.6.1"
+    }
+  },
+  "sizes": {
+    "own-canvas2d": {
+      "rawKb": 44.1,
+      "gzipKb": 17.6,
+      "brotliKb": 15.8
+    },
+    "own-engine-only": {
+      "rawKb": 19.3,
+      "gzipKb": 8.2,
+      "brotliKb": 7.5
+    },
+    "pixi-webgl": {
+      "rawKb": 574.1,
+      "gzipKb": 167.7,
+      "brotliKb": 137.5
+    },
+    "cytoscape": {
+      "rawKb": 439.8,
+      "gzipKb": 140.3,
+      "brotliKb": 118.4
+    },
+    "three-3d-reference": {
+      "rawKb": 522.9,
+      "gzipKb": 130.2,
+      "brotliKb": 107.3
+    },
+    "uplot": {
+      "rawKb": 52.4,
+      "gzipKb": 23.3,
+      "brotliKb": 20.9
+    },
+    "echarts": {
+      "rawKb": 545,
+      "gzipKb": 186.1,
+      "brotliKb": 157.6
+    },
+    "chartjs": {
+      "rawKb": 176,
+      "gzipKb": 61.5,
+      "brotliKb": 53.6
+    }
+  },
+  "renderers": [
+    {
+      "name": "own-canvas2d",
+      "mode": "gpu-default",
+      "runs": [
+        {
+          "name": "own-canvas2d",
+          "init": {
+            "firstRenderMs": 171.4,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 3.4,
+          "panZoom": {
+            "frames": 280,
+            "fps": 56,
+            "renderFps": 56,
+            "frameP50": 16.7,
+            "frameP95": 16.8,
+            "slowShare": 0.036,
+            "renderP50": 0.1,
+            "renderP95": 0.2
+          },
+          "idle": {
+            "mainThreadCpuPct": 0,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 59.4,
+            "browserCpuPct": 32.9,
+            "framesPerSec": 22.8
+          },
+          "errors": []
+        },
+        {
+          "name": "own-canvas2d",
+          "init": {
+            "firstRenderMs": 260.3,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 3.9,
+          "panZoom": {
+            "frames": 277,
+            "fps": 55.4,
+            "renderFps": 55.4,
+            "frameP50": 16.7,
+            "frameP95": 16.8,
+            "slowShare": 0.029,
+            "renderP50": 0.1,
+            "renderP95": 0.2
+          },
+          "idle": {
+            "mainThreadCpuPct": 0,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 22.5,
+            "browserCpuPct": 23.1,
+            "framesPerSec": 21.3
+          },
+          "errors": []
+        },
+        {
+          "name": "own-canvas2d",
+          "init": {
+            "firstRenderMs": 178.4,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 3.8,
+          "panZoom": {
+            "frames": 291,
+            "fps": 58.2,
+            "renderFps": 58.2,
+            "frameP50": 16.7,
+            "frameP95": 16.8,
+            "slowShare": 0.017,
+            "renderP50": 0.1,
+            "renderP95": 0.2
+          },
+          "idle": {
+            "mainThreadCpuPct": 0,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 38,
+            "browserCpuPct": 31.2,
+            "framesPerSec": 22.9
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "name": "own-canvas2d-semantic",
+      "mode": "gpu-default",
+      "runs": [
+        {
+          "name": "own-canvas2d-semantic",
+          "init": {
+            "firstRenderMs": 118.1,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 2.3,
+          "panZoom": {
+            "frames": 269,
+            "fps": 53.8,
+            "renderFps": 53.8,
+            "frameP50": 16.7,
+            "frameP95": 33.3,
+            "slowShare": 0.052,
+            "renderP50": 0.1,
+            "renderP95": 0.2
+          },
+          "idle": {
+            "mainThreadCpuPct": 0,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 14.8,
+            "browserCpuPct": 11.5,
+            "framesPerSec": 21.9
+          },
+          "errors": []
+        },
+        {
+          "name": "own-canvas2d-semantic",
+          "init": {
+            "firstRenderMs": 91.5,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 2.2,
+          "panZoom": {
+            "frames": 186,
+            "fps": 37.2,
+            "renderFps": 37.2,
+            "frameP50": 16.7,
+            "frameP95": 50,
+            "slowShare": 0.425,
+            "renderP50": 20.6,
+            "renderP95": 44.7
+          },
+          "idle": {
+            "mainThreadCpuPct": 0,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 12.1,
+            "browserCpuPct": 11.4,
+            "framesPerSec": 21.4
+          },
+          "errors": []
+        },
+        {
+          "name": "own-canvas2d-semantic",
+          "init": {
+            "firstRenderMs": 117.9,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 1.8,
+          "panZoom": {
+            "frames": 212,
+            "fps": 42.4,
+            "renderFps": 42.4,
+            "frameP50": 16.7,
+            "frameP95": 50.1,
+            "slowShare": 0.259,
+            "renderP50": 0.1,
+            "renderP95": 30.4
+          },
+          "idle": {
+            "mainThreadCpuPct": 0,
+            "browserCpuPct": 0.2,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 14.3,
+            "browserCpuPct": 12.3,
+            "framesPerSec": 23.5
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "name": "pixi-webgl",
+      "mode": "gpu-default",
+      "runs": [
+        {
+          "name": "pixi-webgl",
+          "init": {
+            "firstRenderMs": 4814.5,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 28.9,
+          "panZoom": {
+            "frames": 2,
+            "fps": 0.4,
+            "renderFps": 0.4,
+            "frameP50": 2666.5,
+            "frameP95": 2666.5,
+            "slowShare": 0.5,
+            "renderP50": 18.8,
+            "renderP95": 18.8
+          },
+          "idle": {
+            "mainThreadCpuPct": 4,
+            "browserCpuPct": 3.2,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 85.6,
+            "browserCpuPct": 82.8,
+            "framesPerSec": 0.1
+          },
+          "errors": []
+        },
+        {
+          "name": "pixi-webgl",
+          "init": {
+            "firstRenderMs": 3297.8,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 30,
+          "panZoom": {
+            "frames": 3,
+            "fps": 0.6,
+            "renderFps": 0.6,
+            "frameP50": 2266.6,
+            "frameP95": 2699.9,
+            "slowShare": 0.667,
+            "renderP50": 4.9,
+            "renderP95": 8.1
+          },
+          "idle": {
+            "mainThreadCpuPct": 2.1,
+            "browserCpuPct": 3,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 107.3,
+            "browserCpuPct": 85.4,
+            "framesPerSec": 0.1
+          },
+          "errors": []
+        },
+        {
+          "name": "pixi-webgl",
+          "init": {
+            "firstRenderMs": 2358.8,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 30.1,
+          "panZoom": {
+            "frames": 4,
+            "fps": 0.8,
+            "renderFps": 0.8,
+            "frameP50": 1383.3,
+            "frameP95": 1599.9,
+            "slowShare": 0.75,
+            "renderP50": 6.4,
+            "renderP95": 23
+          },
+          "idle": {
+            "mainThreadCpuPct": 1.2,
+            "browserCpuPct": 2.6,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 110.6,
+            "browserCpuPct": 112.7,
+            "framesPerSec": 0.2
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "name": "cytoscape",
+      "mode": "gpu-default",
+      "runs": [
+        {
+          "name": "cytoscape",
+          "init": {
+            "firstRenderMs": 2168.8,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 13.3,
+          "panZoom": {
+            "frames": 250,
+            "fps": 50,
+            "renderFps": 50,
+            "frameP50": 16.7,
+            "frameP95": 33.4,
+            "slowShare": 0.144,
+            "renderP50": 0,
+            "renderP95": 0.1
+          },
+          "idle": {
+            "mainThreadCpuPct": 2,
+            "browserCpuPct": 3.4,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 90.3,
+            "browserCpuPct": 58.1,
+            "framesPerSec": 1.9
+          },
+          "errors": []
+        },
+        {
+          "name": "cytoscape",
+          "init": {
+            "firstRenderMs": 2584.7,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 48.3,
+          "panZoom": {
+            "frames": 280,
+            "fps": 56,
+            "renderFps": 56,
+            "frameP50": 16.7,
+            "frameP95": 16.8,
+            "slowShare": 0.032,
+            "renderP50": 0,
+            "renderP95": 0.1
+          },
+          "idle": {
+            "mainThreadCpuPct": 1.3,
+            "browserCpuPct": 3,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 98.5,
+            "browserCpuPct": 89.4,
+            "framesPerSec": 3.4
+          },
+          "errors": []
+        },
+        {
+          "name": "cytoscape",
+          "init": {
+            "firstRenderMs": 2221.7,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 48.3,
+          "panZoom": {
+            "frames": 258,
+            "fps": 51.6,
+            "renderFps": 51.6,
+            "frameP50": 16.7,
+            "frameP95": 33.3,
+            "slowShare": 0.081,
+            "renderP50": 0,
+            "renderP95": 0.1
+          },
+          "idle": {
+            "mainThreadCpuPct": 1.5,
+            "browserCpuPct": 2.8,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 102.9,
+            "browserCpuPct": 79,
+            "framesPerSec": 2.9
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "name": "own-canvas2d",
+      "mode": "cpu-raster",
+      "runs": [
+        {
+          "name": "own-canvas2d",
+          "init": {
+            "firstRenderMs": 170.9,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 3.4,
+          "panZoom": {
+            "frames": 272,
+            "fps": 54.4,
+            "renderFps": 54.4,
+            "frameP50": 16.7,
+            "frameP95": 16.8,
+            "slowShare": 0.048,
+            "renderP50": 0.1,
+            "renderP95": 0.2
+          },
+          "idle": {
+            "mainThreadCpuPct": 0,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 46.6,
+            "browserCpuPct": 32.5,
+            "framesPerSec": 23.3
+          },
+          "errors": []
+        },
+        {
+          "name": "own-canvas2d",
+          "init": {
+            "firstRenderMs": 280.9,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 3,
+          "panZoom": {
+            "frames": 229,
+            "fps": 45.8,
+            "renderFps": 45.8,
+            "frameP50": 16.7,
+            "frameP95": 33.4,
+            "slowShare": 0.087,
+            "renderP50": 0.1,
+            "renderP95": 0.2
+          },
+          "idle": {
+            "mainThreadCpuPct": 0,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 59.1,
+            "browserCpuPct": 33.2,
+            "framesPerSec": 23
+          },
+          "errors": []
+        },
+        {
+          "name": "own-canvas2d",
+          "init": {
+            "firstRenderMs": 308.4,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 3.1,
+          "panZoom": {
+            "frames": 254,
+            "fps": 50.8,
+            "renderFps": 50.8,
+            "frameP50": 16.7,
+            "frameP95": 33.3,
+            "slowShare": 0.063,
+            "renderP50": 0.1,
+            "renderP95": 0.2
+          },
+          "idle": {
+            "mainThreadCpuPct": 0.1,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 37,
+            "browserCpuPct": 31.9,
+            "framesPerSec": 23.2
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "name": "own-canvas2d-semantic",
+      "mode": "cpu-raster",
+      "runs": [
+        {
+          "name": "own-canvas2d-semantic",
+          "init": {
+            "firstRenderMs": 98.5,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 2.2,
+          "panZoom": {
+            "frames": 236,
+            "fps": 47.2,
+            "renderFps": 47.2,
+            "frameP50": 16.7,
+            "frameP95": 50,
+            "slowShare": 0.102,
+            "renderP50": 0.1,
+            "renderP95": 1
+          },
+          "idle": {
+            "mainThreadCpuPct": 0.1,
+            "browserCpuPct": 0.2,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 7.8,
+            "browserCpuPct": 11.4,
+            "framesPerSec": 23.5
+          },
+          "errors": []
+        },
+        {
+          "name": "own-canvas2d-semantic",
+          "init": {
+            "firstRenderMs": 75.3,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 2.3,
+          "panZoom": {
+            "frames": 199,
+            "fps": 39.8,
+            "renderFps": 39.8,
+            "frameP50": 16.7,
+            "frameP95": 50,
+            "slowShare": 0.432,
+            "renderP50": 21.5,
+            "renderP95": 34.7
+          },
+          "idle": {
+            "mainThreadCpuPct": 0,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 6,
+            "browserCpuPct": 10.6,
+            "framesPerSec": 22.3
+          },
+          "errors": []
+        },
+        {
+          "name": "own-canvas2d-semantic",
+          "init": {
+            "firstRenderMs": 101.2,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 2.2,
+          "panZoom": {
+            "frames": 178,
+            "fps": 35.6,
+            "renderFps": 35.6,
+            "frameP50": 16.8,
+            "frameP95": 50.1,
+            "slowShare": 0.461,
+            "renderP50": 21.3,
+            "renderP95": 49.8
+          },
+          "idle": {
+            "mainThreadCpuPct": 0.3,
+            "browserCpuPct": 0,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 7,
+            "browserCpuPct": 10.8,
+            "framesPerSec": 23.3
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "name": "pixi-webgl",
+      "mode": "cpu-raster",
+      "runs": [
+        {
+          "name": "pixi-webgl",
+          "init": {
+            "firstRenderMs": 2299.7,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 30.3,
+          "panZoom": {
+            "frames": 4,
+            "fps": 0.8,
+            "renderFps": 0.8,
+            "frameP50": 1266.6,
+            "frameP95": 1300,
+            "slowShare": 0.75,
+            "renderP50": 7.8,
+            "renderP95": 8
+          },
+          "idle": {
+            "mainThreadCpuPct": 1,
+            "browserCpuPct": 2.6,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 157.9,
+            "browserCpuPct": 127.1,
+            "framesPerSec": 0.2
+          },
+          "errors": []
+        },
+        {
+          "name": "pixi-webgl",
+          "init": {
+            "firstRenderMs": 2833.2,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 30.1,
+          "panZoom": {
+            "frames": 4,
+            "fps": 0.8,
+            "renderFps": 0.8,
+            "frameP50": 1433.3,
+            "frameP95": 1533.2,
+            "slowShare": 1,
+            "renderP50": 7,
+            "renderP95": 9.2
+          },
+          "idle": {
+            "mainThreadCpuPct": 1.3,
+            "browserCpuPct": 2.4,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 103.8,
+            "browserCpuPct": 108.6,
+            "framesPerSec": 0.2
+          },
+          "errors": []
+        },
+        {
+          "name": "pixi-webgl",
+          "init": {
+            "firstRenderMs": 2099.3,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 30.5,
+          "panZoom": {
+            "frames": 3,
+            "fps": 0.6,
+            "renderFps": 0.6,
+            "frameP50": 1500,
+            "frameP95": 2266.5,
+            "slowShare": 0.667,
+            "renderP50": 6,
+            "renderP95": 6.1
+          },
+          "idle": {
+            "mainThreadCpuPct": 1.2,
+            "browserCpuPct": 2.8,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 152.8,
+            "browserCpuPct": 116.7,
+            "framesPerSec": 0.2
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "name": "cytoscape",
+      "mode": "cpu-raster",
+      "runs": [
+        {
+          "name": "cytoscape",
+          "init": {
+            "firstRenderMs": 3603.9,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 16.1,
+          "panZoom": {
+            "frames": 252,
+            "fps": 50.4,
+            "renderFps": 50.4,
+            "frameP50": 16.7,
+            "frameP95": 33.4,
+            "slowShare": 0.135,
+            "renderP50": 0,
+            "renderP95": 0.1
+          },
+          "idle": {
+            "mainThreadCpuPct": 1.8,
+            "browserCpuPct": 2.8,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 105.3,
+            "browserCpuPct": 70.2,
+            "framesPerSec": 2.2
+          },
+          "errors": []
+        },
+        {
+          "name": "cytoscape",
+          "init": {
+            "firstRenderMs": 3187,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 48.4,
+          "panZoom": {
+            "frames": 199,
+            "fps": 39.8,
+            "renderFps": 39.8,
+            "frameP50": 16.7,
+            "frameP95": 50.1,
+            "slowShare": 0.357,
+            "renderP50": 0,
+            "renderP95": 0.1
+          },
+          "idle": {
+            "mainThreadCpuPct": 1.9,
+            "browserCpuPct": 3,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 104.3,
+            "browserCpuPct": 64.1,
+            "framesPerSec": 2.1
+          },
+          "errors": []
+        },
+        {
+          "name": "cytoscape",
+          "init": {
+            "firstRenderMs": 2732.4,
+            "nodes": 500,
+            "links": 2000
+          },
+          "heapMb": 48.2,
+          "panZoom": {
+            "frames": 266,
+            "fps": 53.2,
+            "renderFps": 53.2,
+            "frameP50": 16.7,
+            "frameP95": 33.3,
+            "slowShare": 0.094,
+            "renderP50": 0,
+            "renderP95": 0.1
+          },
+          "idle": {
+            "mainThreadCpuPct": 2,
+            "browserCpuPct": 3,
+            "framesPerSec": 0
+          },
+          "flow": {
+            "mainThreadCpuPct": 101.4,
+            "browserCpuPct": 53.9,
+            "framesPerSec": 1.7
+          },
+          "errors": []
+        }
+      ]
+    }
+  ],
+  "charts": [
+    {
+      "name": "uplot",
+      "runs": [
+        {
+          "name": "uplot",
+          "init": {
+            "firstRenderMs": 126.4,
+            "updateMs": 2.46
+          },
+          "heapMb": 2.2,
+          "errors": []
+        },
+        {
+          "name": "uplot",
+          "init": {
+            "firstRenderMs": 190,
+            "updateMs": 1.88
+          },
+          "heapMb": 2.1,
+          "errors": []
+        },
+        {
+          "name": "uplot",
+          "init": {
+            "firstRenderMs": 115.1,
+            "updateMs": 3.58
+          },
+          "heapMb": 2.7,
+          "errors": []
+        }
+      ]
+    },
+    {
+      "name": "echarts",
+      "runs": [
+        {
+          "name": "echarts",
+          "init": {
+            "firstRenderMs": 683.1,
+            "updateMs": 53.96
+          },
+          "heapMb": 21.3,
+          "errors": []
+        },
+        {
+          "name": "echarts",
+          "init": {
+            "firstRenderMs": 479.8,
+            "updateMs": 57.63
+          },
+          "heapMb": 19.7,
+          "errors": []
+        },
+        {
+          "name": "echarts",
+          "init": {
+            "firstRenderMs": 580.7,
+            "updateMs": 58.81
+          },
+          "heapMb": 19.8,
+          "errors": []
+        }
+      ]
+    },
+    {
+      "name": "chartjs",
+      "runs": [
+        {
+          "name": "chartjs",
+          "init": {
+            "firstRenderMs": 199,
+            "updateMs": 11.41
+          },
+          "heapMb": 12.4,
+          "errors": []
+        },
+        {
+          "name": "chartjs",
+          "init": {
+            "firstRenderMs": 260.7,
+            "updateMs": 13.62
+          },
+          "heapMb": 11.2,
+          "errors": []
+        },
+        {
+          "name": "chartjs",
+          "init": {
+            "firstRenderMs": 341.8,
+            "updateMs": 39.56
+          },
+          "heapMb": 8.4,
+          "errors": []
+        }
+      ]
+    }
+  ]
+}
