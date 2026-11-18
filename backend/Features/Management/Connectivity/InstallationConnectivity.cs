@@ -196,16 +196,17 @@ public static class ConnectivityPolicy
         CheckOrigins(manifest, Add);
         CheckListeners(manifest, Add);
         CheckRunners(manifest, Add);
-        CheckMachines(manifest, Add);
+        CheckMachines(manifest.Machines, Add);
         return findings;
     }
 
-    private static void CheckMachines(InstallationConnectivityManifest manifest,
+    /// <summary>Machine identity, parent and cycle rules; the placement file applies the same ones.</summary>
+    internal static void CheckMachines(IReadOnlyList<ConnectivityMachine>? machines,
         Action<string, string, string, string> add)
     {
-        if (manifest.Machines is null) return;
+        if (machines is null) return;
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var machine in manifest.Machines)
+        foreach (var machine in machines)
         {
             if (string.IsNullOrWhiteSpace(machine.Id) || string.IsNullOrWhiteSpace(machine.Name)
                 || !ids.Add(machine.Id))
@@ -218,16 +219,16 @@ public static class ConnectivityPolicy
                     add("component-identity", machine.Id ?? "machine", "Component id and name must be set and ids must be unique per machine.",
                         "Give each declared component a unique id and name.");
         }
-        foreach (var machine in manifest.Machines)
+        foreach (var machine in machines)
             if (machine.ParentId is { Length: > 0 } parent &&
                 (!ids.Contains(parent) || string.Equals(parent, machine.Id, StringComparison.OrdinalIgnoreCase)))
                 add("machine-parent", machine.Id, "Machine parentId must name another machine.",
                     "Use a declared parent machine id.");
-        foreach (var machine in manifest.Machines)
+        foreach (var machine in machines)
         {
             var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { machine.Id };
             var parent = machine.ParentId;
-            while (parent is not null && manifest.Machines.FirstOrDefault(m =>
+            while (parent is not null && machines.FirstOrDefault(m =>
                        string.Equals(m.Id, parent, StringComparison.OrdinalIgnoreCase)) is { } ancestor)
             {
                 if (!visited.Add(parent))

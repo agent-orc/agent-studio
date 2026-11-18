@@ -1521,7 +1521,11 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (!_useV1 && !_supportsCapabilityAdvertisement) return;
         var options = _options ?? throw new InvalidOperationException("Runner options are unavailable.");
         if (telemetry is not null)
-            telemetry = telemetry with { Containers = await RunnerCapabilityProbe.ContainersAsync(ct) };
+            telemetry = telemetry with
+            {
+                Containers = await RunnerCapabilityProbe.ContainersAsync(ct),
+                Machine = await HostMachineProbe.CurrentAsync(options, ct),
+            };
         var request = new Contract.CapabilityAdvertisementRequest(
             options.RunnerId,
             RunnerInstanceId,

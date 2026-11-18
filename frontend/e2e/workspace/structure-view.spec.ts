@@ -302,3 +302,135 @@ test('observed differences, versions and a stopped host refresh in both themes',
   await expect(view.locator('[data-node-id="host"]')).toContainText('Stale');
   await expect(view.getByTestId('structure-link-key')).toContainText('Down');
 });
+
+// AGT-3954: nothing is declared; every node comes from host reports and the API itself.
+const seen = '2026-11-17T12:00:00Z';
+const up = { difference: 'undeclared', health: 'up', observedAt: seen };
+const observedNode = (id: string, kind: string, label: string, parentId: string | null, extra: Record<string, unknown> = {}) => ({
+  id, kind, label, parentId, unitId: null, environmentId: null, project: null, provenance: 'observed',
+  sourceRef: 'host capability report', observation: up, ...extra,
+});
+const hostFacts = (hostId: string, cpu: number, extra: Record<string, unknown> = {}) => ({
+  hostId, cpuCores: 24, cpuPercent: cpu, load1: 1.5, load5: 1.2, load15: 1, memoryUsedBytes: 8 * 1024 ** 3,
+  memoryTotalBytes: 32 * 1024 ** 3, mounts: [{ purpose: 'runner work', mount: '/', usedBytes: 84, freeBytes: 16, totalBytes: 100 }],
+  networkReceiveBytesPerSecond: 2048, networkTransmitBytesPerSecond: 1024, busySlots: 1, freeSlots: 2,
+  version: '1.0', stableVersion: '1.0', releaseState: 'current', lastSeenAt: seen, ...extra,
+});
+const container = (id: string, cpu: number) => observedNode(`machine:${id}`, 'container', id, 'machine:lab-vm', {
+  facts: hostFacts(id, cpu, { machine: { kind: 'container', virtualization: 'kvm', containerRuntime: 'docker', containerName: id,
+    reportedParentId: 'lab-vm', source: 'host report' } }) });
+const observedStructure = {
+  revision: 100, generatedAt: seen, findings: null,
+  nodes: [
+    { ...makeNode('installation', 'boundary', 'Installation', null), project: null, observation: { difference: 'declared-only', health: 'not observed' } },
+    observedNode('machine:studio-host', 'vm', 'studio-host', 'installation', { facts: hostFacts('studio-host', 35, {
+      machine: { kind: 'vm', virtualization: 'kvm', source: 'host report' },
+      dataLocations: [{ id: 'data:studio-host:workspace-repository', role: 'workspace-repository', label: 'Workspace repository',
+        sizeBytes: 2 * 1024 ** 3, backupCovered: true, gitRemoteCovered: true }] }) }),
+    ...['api', 'web', 'edge', 'engine'].map(key => observedNode(`component:studio-host:${key}`, 'container',
+      ({ api: 'Studio API', web: 'Web frontend', edge: 'Edge proxy', engine: 'Orchestrator Engine' } as Record<string, string>)[key],
+      'machine:studio-host', { role: 'control' })),
+    observedNode('runner:coding-studio', 'process', 'Coding runner', 'machine:studio-host', { role: 'execution' }),
+    observedNode('runner:review-studio', 'process', 'Review runner', 'machine:studio-host', { role: 'review' }),
+    observedNode('observed-container:studio-host:stage-run', 'container', 'stage-run', 'machine:studio-host',
+      { observation: { ...up, health: 'down', detail: 'exited' } }),
+    observedNode('machine:lab-vm', 'vm', 'lab-vm', 'installation', { observation: { difference: 'undeclared', health: 'not observed' } }),
+    ...[1, 2, 3].map(n => container(`review-host-${n}`, 10 * n)),
+    ...[1, 2, 3].map(n => observedNode(`runner:review-${n}`, 'process', 'Review runner', `machine:review-host-${n}`, { role: 'review' })),
+    container('gate-host-1', 5),
+    observedNode('runner:gate-1', 'process', 'Gate runner', 'machine:gate-host-1', { role: 'verification' }),
+    observedNode('external:cdn', 'external', 'CDN proxy', null),
+  ],
+  links: [
+    { id: 'link:external:cdn|component:studio-host:edge|call', from: 'external:cdn', to: 'component:studio-host:edge', kind: 'call',
+      label: 'Browser traffic', sourceRef: 'studio ingress', observation: { difference: 'observed', health: 'up' } },
+    ...[1, 2, 3].map(n => ({ id: `link:machine:review-host-${n}|component:studio-host:api|call`, from: `machine:review-host-${n}`,
+      to: 'component:studio-host:api', kind: 'call', label: 'Task Server route', sourceRef: 'host telemetry',
+      observation: { difference: 'observed', health: 'up' }, facts: { state: 'reachable' } })),
+  ],
+};
+
+test('observed hosts show without declarations, nest by machine and take live deltas at 1280 and 390 px', async ({ page }) => {
+  test.setTimeout(180_000);
+  fs.mkdirSync(results, { recursive: true });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let push: ((message: string) => void) | null = null;
+  let subscribed: () => void = () => undefined;
+  const subscription = new Promise<void>(resolve => { subscribed = resolve; });
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({ json: {
+    connectionId: 'structure-connection', connectionToken: 'structure-connection', negotiateVersion: 1,
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text'] }],
+  } }));
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
+    push = message => socket.send(message);
+    socket.onMessage(raw => {
+      for (const frame of String(raw).split('\x1e').filter(Boolean)) {
+        const message = JSON.parse(frame) as { protocol?: string; type?: number; target?: string; invocationId?: string };
+        if (message.protocol) socket.send('{}\x1e');
+        else if (message.type === 1 && message.invocationId) {
+          socket.send(JSON.stringify({ type: 3, invocationId: message.invocationId, result: null }) + '\x1e');
+          if (message.target === 'SubscribeToStructure') subscribed();
+        }
+      }
+    });
+  });
+  await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+    v: 1, tabs: [{ kind: 'structure' }], activeKey: 'structure',
+  })));
+  await page.context().route('**/api/**', route => {
+    const url = route.request().url();
+    const json = (body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.includes('/api/v1/operations/structure/library')) return json({ registries: [], consumers: [] });
+    if (url.includes('/api/v1/operations/structure')) return json(observedStructure);
+    if (url.includes('/api/v1/studio/auth/status')) return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+    if (url.includes('/api/v1/management/credential-inventory')) return json({ generatedAt: seen, items: [] });
+    if (url.includes('/api/usage/cockpit')) return json({ workspaceId: 'workspace', clis: [], cost: null });
+    if (url.includes('/api/cli/usage') || url.includes('/api/cli/quota')) return json({ at: seen, ttlSeconds: 600, snapshots: [] });
+    if (url.includes('/api/watch-paths') || url.includes('/api/v1/projects') || url.includes('/api/v1/workspaces') || url.includes('/api/workspaces')) return json([]);
+    if (url.includes('/api/v1/studio/board')) return json({ backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [], codeNotComplete: [], autoReview: [], review: [], humanReview: [], escalated: [], completed: [], archive: [] });
+    if (url.includes('/api/tasks/archive')) return json({ items: [], total: 0, offset: 0, limit: 50 });
+    if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
+    if (url.includes('/api/environment')) return json({ isDev: false, devTools: {} });
+    if (url.includes('/api/workbenches')) return json({ projectName: null, count: 0, currentCount: 0, historyCount: 0, items: [] });
+    return json([]);
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/#/workspace/operations/structure?view=host&level=3&overlay=health');
+  const view = page.getByTestId('structure-view');
+  await expect(view.locator('[data-node-id="machine:review-host-2"]')).toBeVisible();
+  await expect(view.getByTestId('structure-empty')).toHaveCount(0);
+  // Container hosts nest in the VM their reports name; the Studio server carries its components and runner daemons.
+  for (const id of ['machine:review-host-1', 'machine:review-host-2', 'machine:review-host-3', 'machine:gate-host-1'])
+    await expect(view.locator(`[data-node-id="${id}"]`)).toHaveAttribute('aria-label', /Container, .*Not declared/);
+  for (const id of ['component:studio-host:api', 'component:studio-host:web', 'component:studio-host:edge',
+    'component:studio-host:engine', 'runner:coding-studio', 'runner:review-studio', 'observed-container:studio-host:stage-run'])
+    await expect(view.locator(`[data-node-id="${id}"]`)).toBeVisible();
+  await view.locator('[data-outline-id="machine:studio-host"]').click();
+  const facts = view.getByTestId('structure-facts');
+  await expect(facts).toContainText('24 cores · 35% busy');
+  await expect(facts).toContainText('Workspace repository');
+  await expect(facts).toContainText('in backups');
+
+  await subscription;
+  await expect.poll(() => push !== null).toBe(true);
+  push!(JSON.stringify({ type: 1, target: 'structureChanged', arguments: [{
+    fromRevision: 100, revision: 101, generatedAt: seen,
+    upsertNodes: [{ ...observedStructure.nodes.find(node => node.id === 'machine:studio-host'),
+      facts: hostFacts('studio-host', 88, { machine: { kind: 'vm', virtualization: 'kvm', source: 'host report' } }) },
+      container('review-host-4', 12)],
+    removeNodes: ['observed-container:studio-host:stage-run'], upsertLinks: [], removeLinks: [],
+  }] }) + '\x1e');
+  await expect(view.locator('[data-node-id="machine:review-host-4"]')).toBeVisible();
+  await expect(view.locator('[data-node-id="observed-container:studio-host:stage-run"]')).toHaveCount(0);
+  await expect(facts).toContainText('24 cores · 88% busy');
+
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await view.screenshot({ path: path.join(results, `structure-observed-${width}-${theme}.png`) });
+    }
+  }
+  expect(errors).toEqual([]);
+});

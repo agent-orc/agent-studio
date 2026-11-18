@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "machines": [
+    { "id": "studio-server", "name": "Studio server", "kind": "cloud-server", "location": "Cloud provider",
+      "components": [
+        { "id": "api", "name": "Studio API", "role": "control", "kind": "container" },
+        { "id": "web", "name": "Web frontend", "role": "control", "kind": "container" },
+        { "id": "edge", "name": "Edge proxy", "role": "control", "kind": "container" },
+        { "id": "engine", "name": "Orchestrator Engine", "role": "control", "kind": "container" }
+      ] },
+    { "id": "lab-machine", "name": "Home-lab physical machine", "kind": "physical", "location": "Home lab", "components": [] },
+    { "id": "lab-vm", "name": "Home-lab VM", "kind": "vm", "parentId": "lab-machine", "components": [] },
+    { "id": "review-host-1", "name": "Review host 1", "kind": "container", "parentId": "lab-vm", "components": [] },
+    { "id": "gate-host-1", "name": "Gate host", "kind": "container", "parentId": "lab-vm", "components": [] }
+  ],
+  "externals": [
+    { "id": "cdn", "name": "CDN proxy" },
+    { "id": "git-host", "name": "Git hosting" },
+    { "id": "container-registry", "name": "Container registry", "kind": "registry" },
+    { "id": "model-providers", "name": "Model providers" }
+  ],
+  "structureLinks": [
+    { "from": "external:cdn", "to": "component:studio-server:edge", "kind": "call", "label": "Browser traffic" },
+    { "from": "studio-server", "to": "lab-vm", "kind": "tunnel", "label": "Gate link forward" },
+    { "from": "external:container-registry", "to": "studio-server", "kind": "artifact", "label": "Image pull" }
+  ]
+}

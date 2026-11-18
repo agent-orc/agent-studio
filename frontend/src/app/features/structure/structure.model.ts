@@ -23,10 +23,55 @@ export interface StructureNode {
   probe?: string | null;
   /** Health check status: up, degraded, down, unknown or invalid. */
   status?: string | null;
+  /** Performance, network, capability and data facts (AGT-3954). Absent when nothing reports them. */
+  facts?: StructureNodeFacts | null;
+}
+
+/** Facts only; the shape is documented in docs/system/contracts/operations-structure.md. */
+export interface StructureNodeFacts {
+  hostId?: string | null;
+  machine?: { kind: string; virtualization?: string | null; containerRuntime?: string | null;
+    containerName?: string | null; reportedParentId?: string | null; source: string } | null;
+  roles?: { runnerId: string; role: string; status: string; version?: string | null; lastSeenAt: string;
+    busySlots?: number | null; freeSlots?: number | null; runningCards: string[] }[] | null;
+  cpuCores?: number | null;
+  cpuPercent?: number | null;
+  load1?: number | null;
+  load5?: number | null;
+  load15?: number | null;
+  memoryUsedBytes?: number | null;
+  memoryTotalBytes?: number | null;
+  mounts?: { purpose: string; mount: string; usedBytes: number; freeBytes: number; totalBytes: number }[] | null;
+  networkReceiveBytesPerSecond?: number | null;
+  networkTransmitBytesPerSecond?: number | null;
+  busySlots?: number | null;
+  freeSlots?: number | null;
+  runningCards?: string[] | null;
+  version?: string | null;
+  stableVersion?: string | null;
+  releaseState?: string | null;
+  releaseDetail?: string | null;
+  pendingHostUpdate?: string | null;
+  lastSeenAt?: string | null;
+  telemetryObservedAt?: string | null;
+  admissionState?: string | null;
+  tools?: { key: string; name: string; status: string; version?: string | null; targetVersion?: string | null; behind?: boolean }[] | null;
+  requirements?: { key: string; state: string; detail?: string | null; waitingCards?: string[] | null }[] | null;
+  linksDown?: string[] | null;
+  heldCards?: string[] | null;
+  dataLocations?: StructureDataLocation[] | null;
+  imageDigest?: string | null;
+  containerState?: string | null;
+}
+
+export interface StructureDataLocation {
+  id: string; role: string; label: string; sizeBytes?: number | null;
+  backupCovered: boolean; gitRemoteCovered?: boolean | null; measuredAt?: string | null; detail?: string | null;
 }
 
 export interface StructureObservation {
-  difference: 'matched' | 'declared-only' | 'undeclared' | 'differs' | 'stale' | 'unreachable-by-design';
+  /** `observed` marks a link only the reports prove; nodes that nothing declares are `undeclared`. */
+  difference: 'matched' | 'declared-only' | 'undeclared' | 'observed' | 'differs' | 'stale' | 'unreachable-by-design';
   health: 'up' | 'down' | 'degraded' | 'stale' | 'not observed' | string;
   observedAt?: string | null;
   version?: string | null;
@@ -40,15 +85,66 @@ export interface StructureObservation {
 }
 
 export interface StructureLink {
+  /** Stable link id (`link:{from}|{to}|{kind}`); deltas address links by it. */
+  id?: string | null;
   from: string;
   to: string;
   kind: string;
   label: string;
   sourceRef: string;
   observation?: StructureObservation | null;
+  facts?: { state: string; latencyMs?: number | null; probedAt?: string | null; transport?: string | null } | null;
 }
 
-export interface StructureData { nodes: StructureNode[]; links: StructureLink[]; }
+export interface StructureFinding { code: string; subject: string; message: string; remediation: string; }
+export interface StructureData {
+  nodes: StructureNode[];
+  links: StructureLink[];
+  /** Snapshot revision; a delta applies only to the revision it names. */
+  revision?: number;
+  generatedAt?: string | null;
+  findings?: StructureFinding[] | null;
+}
+
+/** `structureChanged` hub push: what changed between two workspace snapshot revisions. */
+export interface StructureDelta {
+  fromRevision: number;
+  revision: number;
+  generatedAt: string;
+  upsertNodes: StructureNode[];
+  removeNodes: string[];
+  upsertLinks: StructureLink[];
+  removeLinks: string[];
+  findings?: StructureFinding[] | null;
+}
+
+/**
+ * Applies a delta to the snapshot it was computed from. Returns null when the
+ * delta does not start at this snapshot's revision; the caller then reads the
+ * whole snapshot again. Order is kept: changed entries stay in place, new ones
+ * append, so the layout does not reshuffle on a fact update.
+ */
+export function applyStructureDelta(data: StructureData, delta: StructureDelta): StructureData | null {
+  if (data.revision === undefined || data.revision !== delta.fromRevision) return null;
+  const merge = <T>(items: T[], upserts: T[], removed: string[], key: (item: T) => string): T[] => {
+    const gone = new Set(removed);
+    const changed = new Map(upserts.map(item => [key(item), item]));
+    const kept = items.filter(item => !gone.has(key(item))).map(item => {
+      const next = changed.get(key(item));
+      if (next) changed.delete(key(item));
+      return next ?? item;
+    });
+    return [...kept, ...changed.values()];
+  };
+  return {
+    ...data,
+    nodes: merge(data.nodes, delta.upsertNodes, delta.removeNodes, node => node.id),
+    links: merge(data.links, delta.upsertLinks, delta.removeLinks, link => link.id ?? `${link.from}|${link.to}|${link.kind}`),
+    revision: delta.revision,
+    generatedAt: delta.generatedAt,
+    findings: delta.findings ?? null,
+  };
+}
 export interface StructureBox extends StructureNode {
   children: StructureBox[];
   collapsed: boolean;
@@ -222,4 +318,57 @@ export function observationWord(observation?: StructureObservation | null): stri
 export function observationGlyph(observation?: StructureObservation | null): string {
   const word = observationWord(observation);
   return word === 'Up' ? '●' : word === 'Down' ? '■' : word === 'Degraded' || word === 'Differs' ? '▲' : '○';
+}
+
+const gib = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+const rate = (bytes: number): string => bytes >= 1024 ** 2 ? `${(bytes / 1024 ** 2).toFixed(1)} MiB/s`
+  : `${(bytes / 1024).toFixed(0)} KiB/s`;
+const MACHINE_WORD: Record<string, string> = { container: 'Container', vm: 'Virtual machine', physical: 'Physical machine', unknown: 'Machine' };
+
+/** One label and value per fact the node carries, in reading order. Facts only; nothing is ranked. */
+export function factRows(facts?: StructureNodeFacts | null): { label: string; value: string }[] {
+  if (!facts) return [];
+  const rows: { label: string; value: string }[] = [];
+  // Labels are the row identity, so a repeated one (two mounts with one purpose) gets a suffix.
+  const add = (label: string, value: string | null | undefined): void => {
+    if (!value) return;
+    let unique = label;
+    for (let n = 2; rows.some(row => row.label === unique); n++) unique = `${label} ${n}`;
+    rows.push({ label: unique, value });
+  };
+  const machine = facts.machine;
+  add('Runs as', machine ? [MACHINE_WORD[machine.kind] ?? machine.kind, machine.containerRuntime,
+    machine.containerName, machine.virtualization && machine.virtualization !== 'none' ? `on ${machine.virtualization}` : null,
+    machine.reportedParentId ? `in ${machine.reportedParentId}` : null].filter(Boolean).join(' · ') : null);
+  add('CPU', facts.cpuCores != null || facts.cpuPercent != null
+    ? [facts.cpuCores != null ? `${facts.cpuCores} cores` : null,
+      facts.cpuPercent != null ? `${facts.cpuPercent.toFixed(0)}% busy` : null].filter(Boolean).join(' · ') : null);
+  add('Load', facts.load1 != null ? [facts.load1, facts.load5, facts.load15].map(v => v?.toFixed(2) ?? '–').join(' / ') : null);
+  add('Memory', facts.memoryTotalBytes != null
+    ? `${facts.memoryUsedBytes != null ? gib(facts.memoryUsedBytes) : '–'} of ${gib(facts.memoryTotalBytes)}` : null);
+  for (const mount of facts.mounts ?? [])
+    add(`Disk ${mount.purpose}`, mount.totalBytes > 0
+      ? `${Math.round(mount.usedBytes * 100 / mount.totalBytes)}% used · ${gib(mount.freeBytes)} free` : null);
+  add('Network', facts.networkReceiveBytesPerSecond != null || facts.networkTransmitBytesPerSecond != null
+    ? `↓ ${rate(facts.networkReceiveBytesPerSecond ?? 0)} · ↑ ${rate(facts.networkTransmitBytesPerSecond ?? 0)}` : null);
+  add('Slots', facts.busySlots != null || facts.freeSlots != null
+    ? `${facts.busySlots ?? 0} busy · ${facts.freeSlots ?? '–'} free` : null);
+  add('Running', facts.runningCards?.length ? facts.runningCards.join(', ') : null);
+  add('Roles', facts.roles?.length ? facts.roles.map(role => `${role.role} ${role.status}`).join(', ') : null);
+  add('Version', facts.version ? [facts.version, facts.stableVersion ? `stable ${facts.stableVersion}` : null,
+    facts.releaseState && facts.releaseState !== 'current' ? facts.releaseState : null].filter(Boolean).join(' · ') : null);
+  add('Host update', facts.pendingHostUpdate);
+  add('Last seen', facts.lastSeenAt ? new Date(facts.lastSeenAt).toLocaleString('en-US') : null);
+  add('Toolchains', facts.tools?.length ? facts.tools.map(tool =>
+    `${tool.name} ${tool.version ?? tool.status}${tool.behind ? ' (behind)' : ''}`).join(', ') : null);
+  add('Requirements', facts.requirements?.length ? facts.requirements.map(item => `${item.key} ${item.state}`).join(', ') : null);
+  add('Links down', facts.linksDown?.length ? String(facts.linksDown.length) : null);
+  add('Held cards', facts.heldCards?.length ? facts.heldCards.join(', ') : null);
+  for (const location of facts.dataLocations ?? [])
+    add(location.label, [location.sizeBytes != null ? gib(location.sizeBytes) : 'size not measured',
+      location.backupCovered ? 'in backups' : 'not in backups',
+      location.gitRemoteCovered === true ? 'Git remote' : location.gitRemoteCovered === false ? 'no Git remote' : null]
+      .filter(Boolean).join(' · '));
+  add('Container', facts.containerState ? [facts.containerState, facts.imageDigest?.slice(0, 19)].filter(Boolean).join(' · ') : null);
+  return rows;
 }

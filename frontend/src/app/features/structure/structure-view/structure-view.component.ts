@@ -3,13 +3,14 @@ import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
+import { JobsHubClient } from '../../../services/jobs-hub-client.service';
 import { studioProjectSlug } from '../../../services/studio-project-slug.util';
 import { replaceStudioRouteQuery } from '../../studio-shell/services/studio-route';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
 import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
 import { LAYOUT, layoutStructure, leafDetail, type LayoutBox, type RoutedLink } from '../structure-layout';
-import { isGroup, kindText, observationGlyph, observationText, observationWord, projectStructure, summaryText, visibleBoxes,
-  type StructureBox, type StructureData, type StructureObservation } from '../structure.model';
+import { applyStructureDelta, factRows, isGroup, kindText, observationGlyph, observationText, observationWord, projectStructure,
+  summaryText, visibleBoxes, type StructureBox, type StructureData, type StructureNode, type StructureObservation } from '../structure.model';
 
 interface LibraryChannel { name: string; version: string; publishedAt: string | null; }
 interface LibraryRegistry {
@@ -41,6 +42,7 @@ export class StructureViewComponent implements OnDestroy {
   private readonly http = inject(HttpClient);
   private readonly auth = inject(AuthSessionState);
   private readonly element = inject(ElementRef) as ElementRef<HTMLElement>;
+  private readonly hub = inject(JobsHubClient);
   readonly projectName = input<string | null>(null);
   readonly projectSlug = studioProjectSlug;
   readonly embedded = input(false);
@@ -66,6 +68,8 @@ export class StructureViewComponent implements OnDestroy {
   readonly environments = computed(() => this.data().nodes.filter(node => node.kind === 'environment'));
   readonly selectedNode = computed(() => this.data().nodes.find(node => node.id === this.selected()) ?? null);
   readonly selectedLinks = computed(() => this.data().links.filter(link => link.from === this.selected() || link.to === this.selected()));
+  /** Facts of the selected node, one row per fact it carries (AGT-3954). */
+  readonly selectedFacts = computed(() => factRows(this.selectedNode()?.facts));
   /** Content width of the drawing area; the layout wraps to it. */
   readonly canvasWidth = signal(880);
   readonly roots = computed(() => projectStructure(this.data(), this.view(), this.level(), this.toggles()));
@@ -99,9 +103,14 @@ export class StructureViewComponent implements OnDestroy {
     if (this.overlay() === 'drift') return observation?.difference === 'differs'
       ? `≠ declared${observation.version ? ` · ${observation.version}` : ''}${observation.expectedVersion ? ` / ${observation.expectedVersion}` : ''}`
       : (observation?.difference ?? 'declared-only').replaceAll('-', ' ');
-    if (this.overlay() === 'load') return observation?.cpuPercent != null || observation?.memoryUsedBytes != null || observation?.activeGates != null
-      ? `${observation.cpuPercent != null ? `${observation.cpuPercent.toFixed(0)}% CPU` : 'CPU not observed'} · ${observation.memoryUsedBytes != null ? `${(observation.memoryUsedBytes / 1024 ** 3).toFixed(1)} GiB memory` : 'Memory not observed'}${observation.activeGates != null ? ` · ${observation.activeGates} active gates` : ''}`
-      : 'Load not observed';
+    if (this.overlay() === 'load') {
+      const facts = item.box.facts;
+      const cpu = observation?.cpuPercent ?? facts?.cpuPercent;
+      const memory = observation?.memoryUsedBytes ?? facts?.memoryUsedBytes;
+      return cpu != null || memory != null || observation?.activeGates != null
+        ? `${cpu != null ? `${cpu.toFixed(0)}% CPU` : 'CPU not observed'} · ${memory != null ? `${(memory / 1024 ** 3).toFixed(1)} GiB memory` : 'Memory not observed'}${observation?.activeGates != null ? ` · ${observation.activeGates} active gates` : ''}`
+        : 'Load not observed';
+    }
     return observation?.detail ?? this.placementDetail(item);
   }
   /** Calls and artifact flows carry an arrow; tunnels and transports are symmetric. */
@@ -140,6 +149,23 @@ export class StructureViewComponent implements OnDestroy {
       destroyRef.onDestroy(() => observer.disconnect());
     });
     void this.loadLibrary(false);
+    destroyRef.onDestroy(this.hub.subscribeStructure());
+    // Deltas apply to the workspace snapshot they were computed from; a scoped
+    // view, or a gap in revisions, reads the snapshot again instead.
+    effect(() => {
+      const delta = this.hub.structureDelta();
+      if (!delta) return;
+      untracked(() => {
+        const current = this.data();
+        if (current.revision !== undefined && delta.revision <= current.revision) return;
+        const next = this.projectName() || this.environment() ? null : applyStructureDelta(current, delta);
+        if (next) { this.readGeneration++; this.data.set(next); }
+        else void this.load();
+      });
+    });
+    effect(() => {
+      if (this.hub.structureResync() > 0) untracked(() => void this.load());
+    });
     effect(() => {
       this.projectName();
       this.auth.status();
@@ -241,6 +267,10 @@ export class StructureViewComponent implements OnDestroy {
     this.selected.set(id);
     this.remember();
     this.element.nativeElement.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
+  }
+  /** Machines and reporting hosts (including container hosts) link to their host row. */
+  isHostNode(node: StructureNode): boolean {
+    return node.id.startsWith('machine:') || ['physical', 'cloud-server', 'vm', 'host', 'server'].includes(node.kind);
   }
   linkHost(id: string): string {
     const nodes = new Map(this.data().nodes.map(node => [node.id, node]));

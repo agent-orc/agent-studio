@@ -6,6 +6,7 @@ namespace AgentStudio.Host;
 public class TaskHub : Hub
 {
     internal const string UnscopedSecurityGroup = "security:unscoped";
+    internal const string StructureGroup = "structure:workspace";
 
     private readonly IConfiguration _configuration;
     private readonly AccessSecurityStore _security;
@@ -98,6 +99,8 @@ public class TaskHub : Hub
     // F22:
     // - conversationEventsAppended(jobId, ProjectedEvent[])  → live append from a source change
     // - conversationProjectionInvalidated(jobId)             → client should refetch the snapshot
+    // AGT-3954:
+    // - structureChanged(StructureDelta)                     → operations structure delta (SubscribeToStructure)
 
     /// <summary>
     /// Join the per-job group that receives <c>conversationEventsAppended</c>
@@ -116,6 +119,23 @@ public class TaskHub : Hub
 
     public Task UnsubscribeFromConversation(string jobId)
         => Groups.RemoveFromGroupAsync(Context.ConnectionId, ConversationProjector.GroupName(jobId));
+
+    /// <summary>
+    /// AGT-3954: join the group that receives <c>structureChanged</c> deltas.
+    /// The caller needs the permission the structure read itself requires.
+    /// </summary>
+    public Task SubscribeToStructure()
+    {
+        if (SecurityProfiles.IsPublicDemo(_configuration)) throw new HubException("Structure access denied.");
+        var principal = LivePrincipal();
+        if (principal is not null && !_security.AuthorizeUser(principal.User.Id, IamPermissions.WorkspaceOperate,
+                PermissionTarget.WorkspaceWide).Allowed)
+            throw new HubException("Structure access denied.");
+        return Groups.AddToGroupAsync(Context.ConnectionId, StructureGroup);
+    }
+
+    public Task UnsubscribeFromStructure()
+        => Groups.RemoveFromGroupAsync(Context.ConnectionId, StructureGroup);
 
     internal static string ProjectGroup(string projectHandle, AgentStudio.Registry.ProjectRegistry projects)
     {

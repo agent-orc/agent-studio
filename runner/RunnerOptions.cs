@@ -35,6 +35,19 @@ public sealed class RunnerOptions
     /// <summary>Reported hostname; defaults to the machine name.</summary>
     public required string Hostname { get; init; }
 
+    /// <summary>
+    /// AGT-3954: id of the machine this host runs in (<c>RUNNER_PARENT_MACHINE_ID</c>),
+    /// for example the VM that runs a review container. The operations structure
+    /// nests the host under it; a placement file may declare the same id.
+    /// </summary>
+    public string? ParentMachineId { get; init; }
+
+    /// <summary>Container name to report when the runtime does not expose one (<c>RUNNER_CONTAINER_NAME</c>).</summary>
+    public string? ContainerName { get; init; }
+
+    /// <summary>Overrides the detected machine kind: container, vm or physical (<c>RUNNER_MACHINE_KIND</c>).</summary>
+    public string? MachineKind { get; init; }
+
     /// <summary>Free-form label describing which backend/topology this runner serves.</summary>
     public required string BackendName { get; init; }
 
@@ -546,6 +559,12 @@ public sealed class RunnerOptions
             RunnerName = Val("runner-name", "RUNNER_NAME", "agent-runner-01"),
             ClientId = Val("client-id", "RUNNER_CLIENT_ID").Trim() is { Length: > 0 } clientId ? clientId : null,
             Hostname = Val("hostname", "RUNNER_HOSTNAME", Environment.MachineName),
+            ParentMachineId = Val("parent-machine-id", "RUNNER_PARENT_MACHINE_ID").Trim() is { Length: > 0 } parentMachine
+                ? parentMachine : null,
+            ContainerName = Val("container-name", "RUNNER_CONTAINER_NAME").Trim() is { Length: > 0 } containerName
+                ? containerName : null,
+            MachineKind = Val("machine-kind", "RUNNER_MACHINE_KIND").Trim() is { Length: > 0 } machineKind
+                ? machineKind.ToLowerInvariant() : null,
             BackendName = Val("backend-name", "RUNNER_BACKEND_NAME", "remote-runner"),
             Role = Val("role", "RUNNER_ROLE", "coding").Trim().ToLowerInvariant(),
             HostAdapter = OptIn(Val("host-adapter", "RUNNER_HOST_ADAPTER")),

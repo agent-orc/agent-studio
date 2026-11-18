@@ -149,7 +149,12 @@
       @if (selectedNode(); as node) {
         <section class="structure-targets" data-testid="structure-targets" aria-label="Node destinations">
           <h3>{{ node.label }}</h3>
-          @if (node.kind === 'physical' || node.kind === 'cloud-server' || node.kind === 'vm' || node.kind === 'host' || node.kind === 'server') {
+          @if (selectedFacts().length) {
+            <dl class="structure-facts" data-testid="structure-facts" aria-label="Facts">
+              @for (row of selectedFacts(); track row.label) { <div><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div> }
+            </dl>
+          }
+          @if (isHostNode(node)) {
             <a [href]="'#/workspace/settings/environment?host=' + node.id">Host row</a>
             <a [href]="'#/workspace/settings/environment?host=' + node.id + '&view=telemetry'">Host telemetry</a>
           } @else if (node.kind === 'container' || node.kind === 'process') {

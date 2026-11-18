@@ -173,7 +173,9 @@ public sealed record HostTelemetrySnapshotDto(
     IReadOnlyList<HostContainerSummaryDto>? Containers = null,
     ClaimLoadGateDto? ClaimLoadGate = null,
     OneShotClaimRouteConditionDto? OneShotClaimRoute = null,
-    IReadOnlyList<HostFilesystemUsageDto>? Filesystems = null);
+    IReadOnlyList<HostFilesystemUsageDto>? Filesystems = null,
+    HostMachineDto? Machine = null,
+    HostNetworkUsageDto? Network = null);
 
 /// <summary>
 /// The one-shot claim route as this runner observed it while it answered
@@ -214,7 +216,11 @@ public sealed record ClaimGateEventDto(
     long DurationSeconds,
     int ActiveSlots);
 
-public sealed record HostContainerSummaryDto(string Name, string? ImageDigest, string State);
+/// <param name="Id">Short container id; a process inside the container sees it as its host name.</param>
+/// <param name="ComposeProject">The <c>com.docker.compose.project</c> label, when set.</param>
+/// <param name="ComposeService">The <c>com.docker.compose.service</c> label, when set.</param>
+public sealed record HostContainerSummaryDto(string Name, string? ImageDigest, string State,
+    string? Id = null, string? ComposeProject = null, string? ComposeService = null);
 
 /// <summary>
 /// The coding host's salvage store (AGT-2999): the tarball directory the

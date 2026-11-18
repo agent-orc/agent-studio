@@ -61,12 +61,14 @@ public sealed record RunnerLinkOptions(
     }
 }
 
+/// <param name="DurationMs">Round trip of the bounded probe command (AGT-3954 structure link latency).</param>
 public sealed record RunnerLinkProbe(
     DateTime At,
     string Kind,
     bool Succeeded,
     int? ExitCode,
-    string Detail);
+    string Detail,
+    long? DurationMs = null);
 
 public sealed record RunnerLinkResource(
     string RunnerId,
@@ -668,11 +670,14 @@ public sealed class LinkSupervisor : BackgroundService
         LinkState link, IReadOnlyList<string> arguments, string kind, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var log = Path.Combine(link.Options.LogDirectory, SafeName(link.Options.RunnerId) + ".log");
+        var started = UtcNow();
         await using var process = _processes.Start(new SshCommand(link.Options.SshExecutable, arguments, log, timeout));
         var exit = await process.WaitAsync(cancellationToken);
         var command = arguments[^1];
-        var probe = new RunnerLinkProbe(UtcNow(), kind, exit == 0, exit,
-            RunnerLinkPolicy.ProbeDetail(exit, kind, command, process.StandardOutput, process.StandardError));
+        var finished = UtcNow();
+        var probe = new RunnerLinkProbe(finished, kind, exit == 0, exit,
+            RunnerLinkPolicy.ProbeDetail(exit, kind, command, process.StandardOutput, process.StandardError),
+            Math.Max(0, (long)(finished - started).TotalMilliseconds));
         link.Transport = RunnerLinkPolicy.Transport(exit, process.StandardError) ?? link.Transport;
         if (kind is "listener-cleanup" or "adopted-listener-release")
         {

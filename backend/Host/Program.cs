@@ -1761,6 +1761,12 @@ builder.Services.AddSignalR();
 builder.Services.AddSingleton<AgentStudio.Host.TaskHubBroadcaster>();
 builder.Services.AddSingleton<AgentStudio.Host.WorkbenchHubBroadcaster>();
 builder.Services.AddSingleton<AgentStudio.Host.GitStateHubBroadcaster>();
+// AGT-3954: cached operations structure, refreshed in the background; deltas go out on the Studio hub.
+builder.Services.AddSingleton<AgentStudio.Management.StudioIngressObserver>();
+builder.Services.AddSingleton<AgentStudio.Management.StudioSelfObserver>();
+builder.Services.AddSingleton<AgentStudio.Management.IStructureDeltaPublisher, AgentStudio.Host.StructureHubBroadcaster>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureSnapshotService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Management.StructureSnapshotService>());
 if (SecurityProfiles.IsLocal(builder.Configuration))
 {
     builder.Services.AddCors(options =>
@@ -1842,6 +1848,10 @@ var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
 // which forwarding replaces below (AGT-3230).
 app.UseConnectionPeerCapture();
 app.UseOperatorListener();
+// AGT-3954: note which front doors (edge, CDN, browser) requests arrive through, before
+// the forwarded headers are consumed. One timestamp write per request.
+var ingressObserver = app.Services.GetRequiredService<AgentStudio.Management.StudioIngressObserver>();
+app.Use((context, next) => { ingressObserver.Observe(context.Request); return next(context); });
 app.UseForwardedHeaders();
 // Directly after forwarding, so every later short-circuit (Task Server proxy
 // 404, rejections, exception handler) carries the framing and content policy

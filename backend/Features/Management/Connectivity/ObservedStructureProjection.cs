@@ -15,13 +15,26 @@ public static class ObservedStructureProjection
         IReadOnlyList<RunnerLinkResource> links, IReadOnlyList<StructureDeploymentFact> deployments,
         IReadOnlyList<StructureHealthFact> health, HostReleaseDriftSnapshot? releases,
         string engineState, DateTime now, IReadOnlyList<PullGateHost>? gates = null)
+        => Apply(declared, new StructureHostFacts(hosts, gates ?? [], links, releases), deployments, health, engineState, now);
+
+    /// <summary>
+    /// Annotates declared nodes, then adds every reporting host, the Studio
+    /// server and the links the reports prove (AGT-3954, <see cref="ObservedHostStructure"/>).
+    /// </summary>
+    public static StructureResponse Apply(StructureResponse declared, StructureHostFacts facts,
+        IReadOnlyList<StructureDeploymentFact> deployments, IReadOnlyList<StructureHealthFact> health,
+        string engineState, DateTime now)
     {
+        var hosts = facts.Hosts;
+        var links = facts.Links;
+        var releases = facts.Releases;
+        var gates = facts.Gates;
         var hostReports = hosts.GroupBy(h => h.HostId, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(h => h.LastSeenAt).ToArray(), StringComparer.Ordinal);
         var byHost = hostReports.ToDictionary(item => item.Key, item => item.Value[0], StringComparer.Ordinal);
         var byHealth = health.ToDictionary(h => (h.ProjectId, h.View.EnvironmentId), h => h.View);
         var byDeployment = deployments.ToDictionary(d => (d.ProjectId, d.View.Declaration.Id), d => d.View);
-        var byGate = (gates ?? []).ToDictionary(g => g.Id, StringComparer.Ordinal);
+        var byGate = gates.ToDictionary(g => g.Id, StringComparer.Ordinal);
         var declaredById = declared.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
         string? HostFor(StructureNode node)
         {
@@ -43,28 +56,9 @@ public static class ObservedStructureProjection
             else if (node.Id.StartsWith("machine:", StringComparison.Ordinal))
             {
                 var hostId = node.Id[8..];
-                if (byHost.TryGetValue(hostId, out var host))
-                {
-                    var stale = now - host.LastSeenAt > TimeSpan.FromSeconds(90);
-                    var releaseHost = hostReports[hostId].FirstOrDefault(report =>
-                        HostReleaseDriftPolicy.Evaluate(report.Release, releases?.Stable, now).State
-                            is HostReleaseDriftStates.Behind or HostReleaseDriftStates.Differs) ?? host;
-                    var verdict = HostReleaseDriftPolicy.Evaluate(releaseHost.Release, releases?.Stable, now);
-                    var behind = verdict.State == HostReleaseDriftStates.Behind;
-                    var differs = behind || verdict.State == HostReleaseDriftStates.Differs;
-                    var down = host.Status != "active";
-                    var telemetry = host.Telemetry;
-                    observation = new(stale ? "stale" : differs ? "differs" : "matched",
-                        stale ? "stale" : down ? "down" : "up", host.LastSeenAt,
-                        releaseHost.Release?.Version, releases?.Stable.Version, behind,
-                        telemetry is not null && now - telemetry.ObservedAt <= TimeSpan.FromSeconds(90)
-                            ? telemetry.CpuPercent : null,
-                        telemetry is not null && now - telemetry.ObservedAt <= TimeSpan.FromSeconds(90)
-                            ? telemetry.MemoryUsedBytes : null,
-                        telemetry is not null && now - telemetry.ObservedAt <= TimeSpan.FromSeconds(90)
-                            ? telemetry.MemoryTotalBytes : null,
-                        host.ActiveGateCount + (byGate.TryGetValue(hostId, out var gateLoad) ? gateLoad.Busy : 0), verdict.Reason);
-                }
+                if (hostReports.TryGetValue(hostId, out var reportsOfHost))
+                    observation = ObservedHostStructure.HostObservation(reportsOfHost, facts, now, undeclared: false,
+                        byGate.GetValueOrDefault(hostId));
                 else if (byGate.TryGetValue(hostId, out var gate))
                 {
                     var stale = now - gate.LastHeartbeat.UtcDateTime > TimeSpan.FromMinutes(2);
@@ -144,24 +138,6 @@ public static class ObservedStructureProjection
             return node with { Observation = observation };
         }).ToList();
 
-        foreach (var host in hosts.Where(host => host.Containers is not null))
-        {
-            var parent = $"machine:{host.HostId}";
-            if (!nodes.Any(node => node.Id == parent)) continue;
-            foreach (var container in host.Containers!)
-            {
-                if (nodes.Any(node => HostFor(node) == host.HostId && node.Kind == "container" &&
-                    (string.Equals(node.UnitId, container.Name, StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(node.Label, container.Name, StringComparison.OrdinalIgnoreCase)))) continue;
-                if (nodes.Any(node => node.Id == $"observed-container:{host.HostId}:{container.Name}")) continue;
-                var stale = now - host.LastSeenAt > TimeSpan.FromSeconds(90);
-                nodes.Add(new($"observed-container:{host.HostId}:{container.Name}", "container", container.Name,
-                    parent, null, null, null, "observed", "host capability report", Observation:
-                    new(stale ? "stale" : "undeclared", stale ? "stale" : container.State == "running" ? "up" : "down",
-                        host.LastSeenAt, container.ImageDigest, Detail: container.State)));
-            }
-        }
-
         var observedLinks = declared.Links.Select(link =>
         {
             var hostId = link.From.StartsWith("machine:", StringComparison.Ordinal) ? link.From[8..]
@@ -175,7 +151,7 @@ public static class ObservedStructureProjection
                 stale ? "stale" : unknown ? "not observed" : state.State == RunnerLinkStates.Up ? "up" : "down",
                 state.LastHeartbeatAt, Detail: state.State) };
         }).ToArray();
-        return new(nodes, observedLinks);
+        return ObservedHostStructure.Extend(declared with { Nodes = nodes, Links = observedLinks }, facts, now);
     }
 
     private static string ProbeDescription(this EnvironmentHealthView value)

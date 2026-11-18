@@ -16,6 +16,7 @@ public sealed class HostTelemetrySampler
     }
     private CpuCounters? _previousCpu;
     private (long InPages, long OutPages, DateTime At)? _previousSwap;
+    private (long Receive, long Transmit, DateTime At)? _previousNetwork;
     private DateTime _nextAt = DateTime.MinValue;
 
     public HostTelemetrySample? SampleIfDue(
@@ -91,7 +92,19 @@ public sealed class HostTelemetrySampler
         _previousSwap = currentSwap;
 
         return new HostTelemetrySample(now, cpu, ParseDouble(loads[0]), ParseDouble(loads[1]), ParseDouble(loads[2]),
-            Math.Max(0, total - available), total, swapIn, swapOut, steal, ioWait, LinuxHostCpuCount(), activeSlots);
+            Math.Max(0, total - available), total, swapIn, swapOut, steal, ioWait, LinuxHostCpuCount(), activeSlots,
+            Network: SampleNetwork(now));
+    }
+
+    /// <summary>AGT-3954: throughput of the host's own interfaces since the previous sample.</summary>
+    private HostNetworkUsageDto? SampleNetwork(DateTime now)
+    {
+        (long Receive, long Transmit)? counters;
+        try { counters = HostNetworkCounters.Parse(File.ReadLines("/proc/net/dev")); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        var usage = HostNetworkCounters.Rate(counters, now, _previousNetwork);
+        _previousNetwork = counters is { } value ? (value.Receive, value.Transmit, now) : null;
+        return usage;
     }
 
     private HostTelemetrySample SampleWindows(DateTime now, int activeSlots)

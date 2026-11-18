@@ -53,6 +53,11 @@ read-only declared facts. `scope=project:<id>` narrows project declarations;
 `environment=<id>` narrows environment instances. The view does not infer
 runtime health from declarations.
 
+The placement sections can also live in their own placement file
+(`Structure:PlacementPath`), which never feeds connectivity, and reporting
+hosts show without any declaration; see
+[structure-placement.md](structure-placement.md).
+
 ## Resolved ports
 
 | Listener | Port | Owner | Bind | `one-box` | transition | `wireguard-direct` |

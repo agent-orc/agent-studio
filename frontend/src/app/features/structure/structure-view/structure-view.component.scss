@@ -107,3 +107,7 @@
 .structure-targets { display: grid; gap: var(--studio-spacing-2); padding: var(--studio-spacing-3); background: var(--studio-bg-surface); border: 1px solid var(--studio-border); border-radius: 6px; }
 .structure-targets h3 { margin: 0; font-size: 13px; }
 .structure-targets a { color: var(--studio-accent); }
+.structure-facts { display: grid; gap: var(--studio-spacing-1); margin: 0; font-size: 11px; font-variant-numeric: tabular-nums; }
+.structure-facts > div { display: grid; grid-template-columns: minmax(72px, auto) minmax(0, 1fr); gap: var(--studio-spacing-2); }
+.structure-facts dt { color: var(--studio-fg-muted); }
+.structure-facts dd { margin: 0; overflow-wrap: anywhere; color: var(--studio-fg); }

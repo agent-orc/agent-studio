@@ -7,6 +7,7 @@ import {
 import type { TaskInfo } from '../models/task.model';
 import type { WorkbenchHubEvent } from '../models/project-docs.model';
 import { BuildUpdateNoticeService } from './build-update-notice.service';
+import type { StructureDelta } from '../features/structure/structure.model';
 
 /**
  * Callbacks the {@link TaskService} registers for the fine-grained task
@@ -74,6 +75,11 @@ export class JobsHubClient {
   readonly orchestratorContextsRevision = signal(0);
   /** Latest native agent-plan update, delivered on the shared jobs hub. */
   readonly planUpdated = signal<PlanUpdatedEvent | null>(null);
+  /** Latest operations structure delta (AGT-3954); only sent while a view holds a structure subscription. */
+  readonly structureDelta = signal<StructureDelta | null>(null);
+  /** Bumps after each (re)connect while subscribed, so a view reads the snapshot it may have missed. */
+  readonly structureResync = signal(0);
+  private structureSubscribers = 0;
 
   private connection: HubConnection | null = null;
   private handlers: JobsHubHandlers | null = null;
@@ -120,6 +126,7 @@ export class JobsHubClient {
     conn.on('orchestratorContextChanged', () => {
       this.publishOrchestratorContextRefresh();
     });
+    conn.on('structureChanged', (delta: StructureDelta) => this.structureDelta.set(delta));
     conn.on('planUpdated', (jobId: string, cliType: string) => {
       this.planUpdated.update(previous => ({
         jobId,
@@ -131,6 +138,7 @@ export class JobsHubClient {
     conn.onreconnecting(() => this.setConnected(false));
     conn.onreconnected(() => {
       this.setConnected(true);
+      this.joinStructure();
       this.buildUpdateNotice.checkAfterReconnect();
       this.publishWorkbenchReconnect();
       this.handlers?.reconnected?.();
@@ -167,6 +175,7 @@ export class JobsHubClient {
       .start()
       .then(() => {
         this.setConnected(true);
+        this.joinStructure();
         this.buildUpdateNotice.checkAfterReconnect();
         this.publishWorkbenchReconnect();
         // Initial convergence pull: the board may have changed between the
@@ -179,6 +188,31 @@ export class JobsHubClient {
         this.setConnected(false);
         this.scheduleColdRetry();
       });
+  }
+
+  /**
+   * Starts structure deltas for one open structure view. Reference counted:
+   * the hub group is left when the last view releases it. The poll in the
+   * view remains the fallback while the socket is down.
+   */
+  subscribeStructure(): () => void {
+    this.structureSubscribers++;
+    if (this.structureSubscribers === 1) this.joinStructure();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.structureSubscribers = Math.max(0, this.structureSubscribers - 1);
+      if (this.structureSubscribers === 0 && this.connected())
+        this.connection?.invoke('UnsubscribeFromStructure').catch(() => undefined);
+    };
+  }
+
+  private joinStructure(): void {
+    if (this.structureSubscribers === 0 || !this.connection || !this.connected()) return;
+    this.connection.invoke('SubscribeToStructure')
+      .then(() => this.structureResync.update(value => value + 1))
+      .catch(() => undefined);
   }
 
   private setConnected(connected: boolean): void {

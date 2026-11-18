@@ -55,6 +55,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Managed PostgreSQL databases for hosted apps: project.yml `databases`, run-zone provisioning, generated credentials, retention and owner deletion (IP-D5 option B, AGT-3877); backups, restore runbook, liveness, size and connection metrics (AGT-3878) | [operations/managed-databases/](../operations/managed-databases/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
+| Operations structure without declarations: observed hosts, machine nesting, host settings, the placement file (`Structure:PlacementPath`) and live deltas (AGT-3954) | [operations/setup/structure-placement.md](../operations/setup/structure-placement.md) |
 | Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
 | Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
@@ -87,6 +88,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Conditional board reads: ETag/304 on `/api/tasks/grouped` and `/api/tasks/`, what the validator has to cover, and the client-derived run-activity backoff (AGT-2703); board reads serve a pinned published snapshot with per-client read-your-writes (AGT-3088) | [domains/tasks.md#conditional-board-reads-agt-2703](../system/domains/tasks.md#conditional-board-reads-agt-2703) |
 | Frontend | [domains/frontend.md](../system/domains/frontend.md) |
 | Stable view URL contract | [contracts/stable-view-urls.md](../system/contracts/stable-view-urls.md) |
+| Operations structure response, node and link ids, facts and the `structureChanged` delta (AGT-3954) | [contracts/operations-structure.md](../system/contracts/operations-structure.md) |
 | Global search palette and API | [domains/frontend.md#global-search](../system/domains/frontend.md#global-search) |
 | Global search is slow because one repository has a long history | [common-problems/global-search-slow-repository/](../system/common-problems/global-search-slow-repository/) |
 | Frontend navigation style guide | [frontend/style-guide/navigation.md](../quality/frontend/style-guide/navigation.md) |

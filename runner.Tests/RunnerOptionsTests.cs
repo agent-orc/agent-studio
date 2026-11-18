@@ -152,6 +152,29 @@ public class RunnerOptionsTests
     }
 
     [Fact]
+    public void Machine_placement_settings_are_read_from_the_environment_and_stay_optional()
+    {
+        // AGT-3954: the operations structure nests a host under the machine it names.
+        var work = Path.Combine(Path.GetTempPath(), "runner-machine-work");
+        var environment = new Dictionary<string, string>
+        {
+            ["RUNNER_WORKDIR"] = work,
+            ["AGENT_HOST_PARENT_MACHINE_ID"] = "lab-vm",
+            ["RUNNER_CONTAINER_NAME"] = "review-host-1",
+            ["RUNNER_MACHINE_KIND"] = "Container",
+        };
+        var (options, _, _, _) = RunnerOptions.Parse(["--poll"], name => environment.GetValueOrDefault(name));
+        Assert.Equal("lab-vm", options.ParentMachineId);
+        Assert.Equal("review-host-1", options.ContainerName);
+        Assert.Equal("container", options.MachineKind);
+
+        var (plain, _, _, _) = RunnerOptions.Parse(["--poll"], name => name == "RUNNER_WORKDIR" ? work : null);
+        Assert.Null(plain.ParentMachineId);
+        Assert.Null(plain.ContainerName);
+        Assert.Null(plain.MachineKind);
+    }
+
+    [Fact]
     public void Health_check_uses_work_directory_fallback_with_only_workdir_in_environment()
     {
         var work = Path.Combine(Path.GetTempPath(), "runner-health-work");
