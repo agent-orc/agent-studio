@@ -3,7 +3,9 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { EnvironmentHealthPanelComponent, healthStatusTone } from './environment-health-panel.component';
+import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { healthResponse } from '../../../../../testing/environment-health';
 
 @Component({
@@ -71,6 +73,30 @@ describe('EnvironmentHealthPanelComponent', () => {
     fixture.detectChanges();
     expect(element.textContent).toContain('No environments are declared');
     http.verify();
+  });
+
+  it('links the incident card by its board key', async () => {
+    const references = { openReferenceOrNotify: vi.fn(() => true) };
+    await TestBed.configureTestingModule({
+      imports: [EnvironmentHealthPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting(),
+        { provide: TaskReferenceNavigationService, useValue: references }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(EnvironmentHealthPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Demo Project');
+    fixture.detectChanges();
+    const [production, ...rest] = healthResponse.environments;
+    TestBed.inject(HttpTestingController).expectOne('/api/projects/Demo%20Project/environments/health')
+      .flush({ ...healthResponse, environments: [{ ...production, incidentCardKey: 'NS-2' }, ...rest] });
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const link = element.querySelector<HTMLButtonElement>('[data-testid="environment-health-incident-card"]')!;
+    expect(link.textContent!.trim()).toBe('NS-2');
+    expect(element.querySelector('[data-testid="environment-health-incident"]')!.textContent)
+      .not.toContain('health-production-202610190745');
+    link.click();
+    expect(references.openReferenceOrNotify).toHaveBeenCalledWith('NS-2');
   });
 
   it('names a broken declaration on its environment', async () => {

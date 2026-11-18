@@ -32,7 +32,7 @@
               <span class="runbooks__summary">
                 <strong>{{ run.name }}</strong>
                 <app-status-indicator [tone]="runTone(run.state)" [label]="run.state" [compact]="true" testId="runbook-run-state" />
-                <span class="runbooks__muted">requested by {{ run.requestedByName ?? run.requestedBy }}@if (run.approvedBy) {, approved by {{ run.approvedByName ?? run.approvedBy }}}</span>
+                <span class="runbooks__muted">requested by {{ run.requestedByName ?? (run.requestedBy | principalName) }}@if (run.approvedBy) {, approved by {{ run.approvedByName ?? (run.approvedBy | principalName) }}}</span>
               </span>
               <button type="button" class="studio-button studio-button--ghost runbooks__log-toggle" (click)="toggleLog(run.id)"
                 [attr.aria-expanded]="openLogId() === run.id" [attr.data-testid]="'runbook-log-toggle-' + run.id">
