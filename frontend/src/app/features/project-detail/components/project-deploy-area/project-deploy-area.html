@@ -37,7 +37,9 @@
       @switch (view()) {
         @case ('overview') {
           <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()" [busy]="environmentActionBusy()"
-            (openRun)="openRun($event)" (openTools)="show('tools')" (stop)="stopEnvironment($event)" (remove)="removeEnvironment($event)" />
+            [projectName]="projectName()" [definition]="pipelineDefinition()"
+            (openRun)="openRun($event)" (openTools)="show('tools')" (definitionChanged)="refresh()"
+            (stop)="stopEnvironment($event)" (remove)="removeEnvironment($event)" />
           @if (environmentActionMessage(); as message) { <p role="status" data-testid="deploy-environment-action-message">{{ message }}</p> }
           @if (environmentActionError(); as error) { <p role="alert" data-testid="deploy-environment-action-error">{{ error }}</p> }
           @for (removal of pendingRemovals(); track removal.hostId + ':' + removal.environmentId) {

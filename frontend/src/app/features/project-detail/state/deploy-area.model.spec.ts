@@ -7,6 +7,7 @@ import {
   artifactReleaseLookups,
   buildDeployRuns,
   buildEnvironmentCards,
+  declaredEnvironments,
   carriesArtifact,
   environmentNames,
   filterDeployRuns,
@@ -472,5 +473,27 @@ describe('deploy area model', () => {
     expect(groups.map(group => [group.step, group.state, group.lines.length])).toEqual([
       ['publish-static', 'succeeded', 2], ['health', 'failed', 1], ['rollback', null, 1],
     ]);
+  });
+  it('lists schema 2 environments that have no status card yet, matching staging to the stage card', () => {
+    const step = { path: 'deploy[0]', kind: 'static-site', target: 'web-vm' };
+    const definition = {
+      project: 'Shop', path: '.agent-studio/project.yml', exists: true, schemaVersion: 2, valid: true, issues: [],
+      migrationAvailable: false,
+      diagram: {
+        schemaVersion: 2, gate: { source: 'commands' as const, build: [], test: [], testSuites: [] }, artifacts: [],
+        environmentsDefaulted: false, lifecycleDefaulted: false,
+        environments: [
+          { path: 'environments[0]', name: 'staging', order: 0, protected: false, automatic: true, approval: [], steps: [step], variables: [] },
+          { path: 'environments[1]', name: 'production', order: 1, protected: true, automatic: false, approval: [], steps: [], variables: [] },
+        ],
+      },
+    };
+    const stage = buildEnvironmentCards(deploySourcesFixture()).filter(card => card.id === 'stage');
+
+    expect(declaredEnvironments(definition, stage)).toEqual([
+      { name: 'production', label: 'Production', protected: true, hasSteps: false },
+    ]);
+    expect(declaredEnvironments({ ...definition, schemaVersion: 1 }, [])).toEqual([]);
+    expect(declaredEnvironments(null, [])).toEqual([]);
   });
 });

@@ -16,3 +16,46 @@ testSuites:
 cachePaths: [node_modules]
 capabilities: [git, child-process]
 environment: {}
+
+# Schema 2 deployment section (commented out). Studio writes it for you:
+# Settings > Pipeline > "Preview schema 2 migration", then "Add deploy steps".
+# To write it by hand instead, change schemaVersion above to 2, uncomment every
+# line below the marker, and replace the project id, deploy host id (app-vm),
+# compose files, service, and URLs with your own. Compose files stay below /srv.
+# The container listens on port 3000 and answers /health.
+# --- schema 2 deployment ---
+# project:
+#   id: container-service
+# artifacts:
+#   - name: app
+#     type: container
+#     dockerfile: Dockerfile
+# environments:
+#   - name: staging
+#     protected: false
+#   - name: production
+#     protected: true
+# lifecycles:
+#   standard:
+#     - phase: staging
+#       automatic: true
+#     - phase: production
+#       approval: [Owner, Maintainer]
+#       requires: staging
+# deploy:
+#   - step: container
+#     artifact: app
+#     target: app-vm
+#     composeFile: /srv/apps/container-service/staging/compose.yml
+#     service: container-service
+#     healthUrl: https://staging.example.com/health
+#     healthTimeoutSeconds: 120
+#     environments: [staging]
+#   - step: container
+#     artifact: app
+#     target: app-vm
+#     composeFile: /srv/apps/container-service/production/compose.yml
+#     service: container-service
+#     healthUrl: https://example.com/health
+#     healthTimeoutSeconds: 120
+#     environments: [production]

@@ -9,14 +9,43 @@
       <app-empty-state icon="warn" title="Environments could not be loaded" [body]="errorBody()" testid="deploy-environments-error" />
     }
     @default {
-      @if (cards().length) {
+      @if (cards().length || declared().length) {
         <div class="deploy-overview__grid">
           @for (card of cards(); track card.id) {
             <app-deploy-environment-card [environment]="card" [now]="now()" [busy]="busy()"
               (openRun)="openRun.emit($event)" (openTools)="openTools.emit()"
               (stop)="stop.emit($event)" (remove)="remove.emit($event)" />
           }
+          @for (environment of declared(); track environment.name) {
+            <article class="deploy-overview__declared" [attr.aria-labelledby]="'deploy-declared-' + environment.name"
+              [attr.data-testid]="'deploy-environment-declared-' + environment.name">
+              <header class="deploy-overview__declared-head">
+                <h3 [id]="'deploy-declared-' + environment.name">{{ environment.label }}</h3>
+                <app-status-indicator [compact]="true" tone="neutral" testId="deploy-environment-declared-state"
+                  [label]="environment.hasSteps ? 'Not deployable yet' : 'No deploy step yet'" />
+              </header>
+              <p>
+                Declared in <code>.agent-studio/project.yml</code>@if (environment.protected) {, protected: every deploy needs an approval}.
+                @if (environment.hasSteps) { Fix the project.yml issues on the Pipeline tab before it can deploy. }
+                @else { Add a deploy step so releases can reach it. }
+              </p>
+            </article>
+          }
         </div>
+        @if (canAddSteps()) {
+          @if (addingSteps()) {
+            <app-project-deploy-steps-form [projectName]="projectName()" [environmentNames]="environmentNames()"
+              (written)="stepsWritten()" (cancelled)="addingSteps.set(false)" />
+          } @else {
+            <div class="deploy-overview__actions">
+              <button type="button" class="deploy-overview__button" data-testid="deploy-add-deploy-step"
+                (click)="addingSteps.set(true)">Add deploy step</button>
+            </div>
+          }
+        }
+      } @else if (definition()?.schemaVersion === 2) {
+        <app-empty-state icon="layout" title="No environments declared" testid="deploy-environments-empty"
+          body="Declare Staging, and optionally Production, under environments in .agent-studio/project.yml. They then appear here." />
       } @else {
         <app-empty-state icon="layout" title="No environments declared" testid="deploy-environments-empty"
           body="Add one JSON file per environment under docs/deployments/environments/ in the project repository. Each names its kind (stage or production), target host, address, and health URL. Staging and Production then appear here." />
