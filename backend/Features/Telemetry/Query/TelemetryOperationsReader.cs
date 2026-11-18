@@ -59,11 +59,7 @@ public sealed class TelemetryOperationsReader(TelemetryStore store, TelemetryOpt
             break;
         }
 
-        var cpu = new SortedDictionary<long, double>();
-        foreach (var series in store.QueryMetrics(key, new MetricQuery(CpuTimeMetric, Empty, plan, MetricAggregation.Sum,
-                     TelemetryQueryParser.MaxSeriesLimit)).Series)
-            foreach (var point in series.Points)
-                cpu[point.Time.ToUnixTimeSeconds()] = cpu.GetValueOrDefault(point.Time.ToUnixTimeSeconds()) + point.Value / plan.StepSeconds;
+        var cpu = ReadCpuCores(key, plan);
 
         // Several processes report one series each; the environment uses their sum.
         var memory = new SortedDictionary<long, double>();
@@ -94,6 +90,37 @@ public sealed class TelemetryOperationsReader(TelemetryStore store, TelemetryOpt
             routes.OrderByDescending(item => item.Value).ThenBy(item => item.Key, StringComparer.Ordinal)
                 .Take(TopEndpointCount).Select(item => new OperationsEndpointCount(item.Key, (long)Math.Round(item.Value))).ToArray(),
             [], samples);
+    }
+
+    /// <summary>
+    /// <c>process.cpu.time</c> is a cumulative counter of CPU seconds per process
+    /// and state. The store turns cumulative sums into per-point deltas when it
+    /// writes them (resets included, see <see cref="MetricBucketPolicy"/>), so the
+    /// bucket sum is the CPU seconds spent inside that bucket. Dividing by the wall
+    /// time the bucket covers gives the average cores used. The current bucket is
+    /// still running and covers only the time since it began, with at least one
+    /// minute because the first delta after the bucket started spans the export
+    /// interval before it. Series that are not sums (a gauge carrying the running
+    /// total) hold no deltas and are skipped; summing their totals would count the
+    /// same CPU seconds again with every export.
+    /// </summary>
+    private SortedDictionary<long, double> ReadCpuCores(TelemetryEnvironmentKey key, MetricQueryPlan plan)
+    {
+        var now = clock.GetUtcNow().ToUnixTimeSeconds();
+        var minimumSeconds = MetricBucketPolicy.NativeSeconds(MetricResolution.Minute);
+        var cpu = new SortedDictionary<long, double>();
+        foreach (var series in store.QueryMetrics(key, new MetricQuery(CpuTimeMetric, Empty, plan, MetricAggregation.Sum,
+                     TelemetryQueryParser.MaxSeriesLimit)).Series)
+        {
+            if (!string.Equals(series.Kind, nameof(MetricKind.Sum), StringComparison.Ordinal)) continue;
+            foreach (var point in series.Points)
+            {
+                var at = point.Time.ToUnixTimeSeconds();
+                var covered = Math.Clamp(now - at, minimumSeconds, plan.StepSeconds);
+                cpu[at] = cpu.GetValueOrDefault(at) + point.Value / covered;
+            }
+        }
+        return cpu;
     }
 
     public IReadOnlyList<OperationsLogLine>? SearchLogs(OperationsLogQuery query)

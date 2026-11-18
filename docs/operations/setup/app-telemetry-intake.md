@@ -94,7 +94,7 @@ It understands the OpenTelemetry semantic conventions:
 | Operations measure | Source |
 |---|---|
 | Requests, error rate, top endpoints, request trend | `http.server.request.duration` (or the older `http.server.duration`): observation count, status code 500 and above, `http.route` |
-| CPU | `process.cpu.time` per hour divided by the hour, summed over processes; the summary shows the latest hour |
+| CPU | CPU seconds of the `process.cpu.time` counter spent in each hour divided by the time that hour covers (the current hour so far, at least a minute), summed over processes and states; the summary shows the latest hour. A `process.cpu.time` gauge is ignored |
 | Memory | `process.memory.usage`, summed over processes; the summary shows the latest hour |
 | Log search | log records; the level filter is a minimum severity, the release filter matches `agent_studio.release.id` |
 
