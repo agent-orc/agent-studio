@@ -161,6 +161,22 @@ public sealed class RemoteReviewStatusInputTests : IDisposable
         Assert.Contains("# Opening report", fit.Prompt);
     }
 
+    [Fact]
+    public void Oversized_report_without_a_summary_keeps_its_head_within_the_bound()
+    {
+        File.WriteAllText(Path.Combine(_folder, "status.md"),
+            TaskTransitionService.ResultScaffoldMarker);
+        File.WriteAllText(Path.Combine(_folder, "results", "status.md"),
+            "# Opening report\n" + new string('r', 40_000) + " report-tail");
+
+        var status = RemoteReviewPlanBuilder.ReviewStatus.Read(_folder);
+
+        Assert.True(status.Text.Length <= RemoteReviewPlanBuilder.ReviewStatus.Characters);
+        Assert.Contains("# Opening report", status.Text);
+        Assert.Contains("report-tail", status.Text);
+        Assert.DoesNotContain(TaskTransitionService.ResultScaffoldMarker, status.Text);
+    }
+
     private ReviewPlanDto BuildPlan(string mode)
     {
         var config = new ConfigurationBuilder().Build();

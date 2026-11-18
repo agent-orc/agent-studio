@@ -1168,7 +1168,9 @@ public sealed class RemoteReviewPlanBuilder
                 using var reader = new StreamReader(reportPath);
                 var head = new char[1_000];
                 var count = reader.Read(head, 0, head.Length);
-                report = new string(head, 0, count) + "\n... (report middle omitted)\n" + report;
+                const string omitted = "\n... (report middle omitted)\n";
+                var tailRoom = Characters - count - omitted.Length;
+                report = new string(head, 0, count) + omitted + report[^Math.Min(tailRoom, report.Length)..];
             }
             if (report.Length == 0) return new(summary, false, string.Empty);
             if (!IsSummary(summary)) return new(report, true, string.Empty);
