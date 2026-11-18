@@ -11,6 +11,7 @@ import {
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
+import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
@@ -52,6 +53,8 @@ export class DeployEnvironmentCardComponent {
     return `Release ${newer.version} is ready with ${count} ${count === 1 ? 'card' : 'cards'}`;
   });
   readonly runTone = runStateTone;
+  readonly hostTone = runHostStateTone;
+  readonly hostLabel = runHostStateLabel;
   readonly health = computed<{ tone: StatusTone; label: string }>(() => {
     const health = this.environment().health;
     if (health.status === 'no-checks') return { tone: 'neutral', label: 'No checks' };

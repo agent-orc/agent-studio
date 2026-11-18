@@ -7,6 +7,21 @@ namespace AgentStudio.Tests;
 
 public class ClaudeQuotaProbeTests
 {
+    [Fact]
+    public void ParseUsageWindows_KeepsFableAllowanceSeparate()
+    {
+        var windows = ClaudeQuotaProbe.ParseUsageWindows("""
+            Current session 12% used
+            Current week (all models) 25% used Resets Nov 20, 2pm (UTC)
+            Current week (Fable) 100% used Resets Nov 21, 2pm (UTC)
+            """, Now);
+        Assert.Equal(3, windows.Count);
+        Assert.Equal(25, windows[1].UsedPct);
+        Assert.Equal("Weekly (Fable)", windows[2].Label);
+        Assert.Equal(100, windows[2].UsedPct);
+        Assert.NotEqual(windows[1].ResetAt, windows[2].ResetAt);
+    }
+
     private static string ReadFixture(string name)
         => File.ReadAllText(Path.Combine(
             AppContext.BaseDirectory,

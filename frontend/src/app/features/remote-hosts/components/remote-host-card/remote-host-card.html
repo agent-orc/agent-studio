@@ -87,6 +87,7 @@
             <div><dt>Last link probe</dt><dd>{{ h.runnerLink?.lastProbe?.detail || 'Never' }}</dd></div>
             <div><dt>SSH child</dt><dd>{{ h.runnerLink?.childPid || 'Not running' }}</dd></div>
             <div><dt>Last claim</dt><dd>{{ h.lastClaimAt ? (h.lastClaimAt | date:'short') : 'None' }}</dd></div>
+            @if (h.serviceRole === 'deploy') { <div data-testid="remote-host-last-report"><dt>Last report</dt><dd>{{ h.lastReportAt ? (h.lastReportAt | date:'short') : 'None' }}</dd></div> }
             <div><dt>Fallback probe</dt><dd>{{ h.gitPushCheckedAt ? (h.gitPushCheckedAt | date:'short') : 'Never' }}</dd></div>
           </dl>
           <div class="detail__actions">
@@ -138,7 +139,7 @@
               }
             </div>
           }
-          @if (h.role === 'remote' && h.serviceRole !== 'review') {
+          @if (h.role === 'remote' && h.serviceRole !== 'review' && h.serviceRole !== 'deploy') {
             <div class="detail__badges">
               <app-git-token-capability mode="badges" [status]="h.gitPushStatus" [detail]="h.gitPushDetail" />
             </div>
@@ -198,7 +199,7 @@
               }
             </ul>
           }
-          @if (h.serviceRole !== 'review') { <app-git-token-capability mode="warning" [status]="h.gitPushStatus" [detail]="h.gitPushDetail" /> }
+          @if (h.serviceRole !== 'review' && h.serviceRole !== 'deploy') { <app-git-token-capability mode="warning" [status]="h.gitPushStatus" [detail]="h.gitPushDetail" /> }
           <app-capability-health [host]="h" [focusCapability]="linkedCapability()"
             (reprobe)="capabilityReprobe.emit({ id: h.id, capability: $event })" />
           }

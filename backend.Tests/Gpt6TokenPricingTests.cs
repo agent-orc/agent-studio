@@ -9,7 +9,25 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class Gpt6TokenPricingTests
 {
+    // clock-independent: pricing uses the supplied historical timestamp and never compares it with now.
     private static readonly DateTime AfterRelease = new(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
+
+    [Theory]
+    [InlineData("claude-fable-5-2")]
+    [InlineData("claude-fable-5.2")]
+    public void Fable52_UsesDatedPublishedPrices(string model)
+    {
+        var at = new DateTime(2026, 11, 17, 0, 0, 0, DateTimeKind.Utc);
+        var estimate = TokenTestServices.Pricing().Estimate(model, 1_000_000, 1_000_000, 1_000_000, 1_000_000, at);
+        Assert.True(estimate.ModelKnown);
+        Assert.Equal(8m, estimate.PriceBasis!.InputPerMillion);
+        Assert.Equal(0.20m, estimate.PriceBasis.CacheReadPerMillion);
+        Assert.Equal(40m, estimate.PriceBasis.OutputPerMillion);
+        Assert.Equal(10m, estimate.PriceBasis.CacheWritePerMillion);
+        Assert.Equal(58.20m, estimate.Total);
+        var beforeRelease = TokenTestServices.Pricing().Estimate(model, 1, 1, 0, 0, at.AddDays(-9));
+        Assert.Equal(TokenEconomy.PriceStatus.NoPriceForDate, beforeRelease.Status);
+    }
 
     [Theory]
     // model, input, cached, output per MTok (operator facts, 2026-09-25)

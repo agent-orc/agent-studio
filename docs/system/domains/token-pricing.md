@@ -3,7 +3,8 @@
 > **Status (2026-10-11):** Live on exactly pinned `TokenEconomy` 0.3.7,
 > including historical prices for the GPT-5.6 family, the GPT-5.5 family
 > (GPT-5.5, GPT-5.5 Pro, the GPT-5.5 Cyber preview), and the Claude 5 /
-> Sonnet 4.6 family. Studio contains no model rates.
+> Sonnet 4.6 family. A dated Fable 5.2 seed supplements this version until
+> Token Economy TE-82 is available in the pinned package.
 
 ## Contract
 
@@ -12,6 +13,16 @@ All historical cost callers use injectable `ITokenPricing`, implemented by
 The package-specific implementation in
 `backend/Features/Tokens/Pricing/TokenEconomyPriceProvider.cs` adapts
 `TokenEconomy.ModelPriceCatalog.Default` and its historical pricing API.
+
+Fable 5.2 uses the published catalogue entry when present. With 0.3.7,
+`TokenEconomyPriceProvider` adds one local listing effective 2026-11-09,
+verified 2026-11-17: USD 8 input, 0.20 cache read, 40 output, and 10 for
+5-minute cache writes per million tokens. It carries the provider source URL
+and retains `NoPriceForDate` before release. The provider publishes fast mode
+at USD 16 input / 80 output per million tokens; Studio's existing ledger is a
+Standard API list-price estimate and does not infer fast mode from a model ID.
+Fable 5.2 has a 1M context window and 128K maximum output.
+[Provider pricing](https://platform.claude.com/docs/en/about-claude/pricing).
 
 The adapter is exposed through `ITokenPriceProvider`. `AddTokenUsage` registers
 one singleton provider and one singleton `ITokenPricing` service. There is no

@@ -29,6 +29,13 @@
         <app-status-indicator [tone]="runTone(run.state)" [label]="lastRunLabel() ?? ''" [compact]="true" testId="deploy-environment-last-run-state" />&ngsp;<span class="env-card__muted env-card__numeric">{{ lastRunAge() }}</span>
       } @else { No runs yet }
     </dd>
+    @if (environment().host; as host) {
+      <dt>Run host</dt>
+      <dd data-testid="deploy-environment-host">
+        <span [title]="host.id">{{ host.name }}</span>
+        @if (host.state; as state) {&ngsp;<app-status-indicator [tone]="hostTone(state)" [label]="hostLabel(state)" [compact]="true" testId="deploy-environment-host-state" />}
+      </dd>
+    }
   </dl>
   @if (newer(); as newer) { <p class="env-card__muted env-card__newer" data-testid="deploy-environment-newer">{{ newer }}</p> }
   @if (environment().awaitingApproval; as approval) {

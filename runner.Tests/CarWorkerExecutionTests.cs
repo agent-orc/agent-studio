@@ -40,6 +40,23 @@ public sealed class CarWorkerExecutionTests : IDisposable
     }
 
     [Theory]
+    [InlineData("low")]
+    [InlineData("medium")]
+    [InlineData("high")]
+    [InlineData("xhigh")]
+    [InlineData("max")]
+    [Trait("Category", "MachineBound")]
+    public async Task Fable52ExplicitEffort_ReachesTheWorkerEnvironment(string level)
+    {
+        if (NodeMissing()) return;
+        var run = await RunFixtureAsync(Fixture.Load("p1-happy-done.claude.fixture"),
+            model: "claude-fable-5-2", thinkingLevel: level);
+        Assert.False(run.LaunchFailed);
+        Assert.Equal(level, run.SpawnedEnvironment!["CLAUDE_CODE_EFFORT_LEVEL"]);
+        Assert.Contains("claude-fable-5-2", run.SpawnedArgv!);
+    }
+
+    [Theory]
     [MemberData(nameof(AllStreamFixtures))]
     public async Task Every_fixture_reaches_classification_byte_identical_through_the_car_engine(string fixtureName)
     {
@@ -604,7 +621,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
         int timeoutSeconds = 120,
         IReadOnlyDictionary<string, string>? extraEnvironment = null,
         string? cleanContextKey = null,
-        CancellationToken stopToken = default)
+        CancellationToken stopToken = default,
+        string? model = null, string? thinkingLevel = null)
     {
         var workerDirectory = Path.Combine(_root, Guid.NewGuid().ToString("N"));
         var workingDirectory = Path.Combine(workerDirectory, "worktree");
@@ -621,6 +639,7 @@ public sealed class CarWorkerExecutionTests : IDisposable
             ResultsDirectory: resultsDirectory,
             TimeoutSeconds: timeoutSeconds,
             CliType: fixture.Cli,
+            Model: model, ThinkingLevel: thinkingLevel,
             PermissionMode: permissionMode,
             ContextMode: contextMode,
             RunId: $"car-parity-{Guid.NewGuid():N}",
