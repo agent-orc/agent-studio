@@ -1,12 +1,14 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   PipelineDefinitionIssue,
   PipelineDefinitionResponse,
+  PipelineMigrationConfirmResponse,
   PipelineMigrationResponse,
   ProjectPipelineDefinitionService,
 } from '../../services/project-pipeline-definition.service';
+import { ProjectDeployStepsFormComponent } from '../project-deploy-steps-form/project-deploy-steps-form';
 import { ProjectPipelineDiagramComponent } from '../project-pipeline-diagram/project-pipeline-diagram';
 
 /** Validation state of the pipeline definition: valid, or the number of issues to fix. */
@@ -20,11 +22,13 @@ export function pipelineValidationStatus(valid: boolean, issueCount: number): { 
  * validation result with line and path, and the schema 1 to schema 2
  * migration. The migration is a dry run first; only the explicit confirmation
  * writes, and the backend refuses it when project.yml changed in between.
+ * A schema 2 file without deploy steps offers the deploy-step form (F5), which
+ * follows the same preview-then-write contract.
  */
 @Component({
   selector: 'app-project-pipeline-definition',
   standalone: true,
-  imports: [PendingButtonDirective, ProjectPipelineDiagramComponent, StatusIndicatorComponent],
+  imports: [PendingButtonDirective, ProjectDeployStepsFormComponent, ProjectPipelineDiagramComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-pipeline-definition.html',
   styleUrl: './project-pipeline-definition.scss',
@@ -41,6 +45,8 @@ export class ProjectPipelineDefinitionComponent implements OnInit {
   readonly confirming = signal(false);
   readonly message = signal<string | null>(null);
   readonly error = signal<string | null>(null);
+  readonly addingSteps = signal(false);
+  readonly environmentNames = computed(() => this.definition()?.diagram?.environments.map(item => item.name) ?? []);
 
   ngOnInit(): void {
     this.load();
@@ -99,6 +105,14 @@ export class ProjectPipelineDefinitionComponent implements OnInit {
         this.confirming.set(false);
       },
     });
+  }
+
+  stepsWritten(response: PipelineMigrationConfirmResponse): void {
+    this.definition.set(response.definition);
+    this.addingSteps.set(false);
+    this.message.set(response.commitSha
+      ? `project.yml now has deploy steps (commit ${response.commitSha.slice(0, 7)}).`
+      : 'project.yml already had these deploy steps.');
   }
 
   discardMigration(): void {

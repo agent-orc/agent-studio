@@ -40,6 +40,7 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 import { BatchGateService } from '../../../../services/batch-gate.service';
 import { batchIsolationHold } from '../../../../models/batch-isolation-hold';
 import { isHeldRequeue } from './isolation-requeue';
+import { contentRefusalOf } from './content-refusal';
 import { injectAcceptanceRefusalTooltip } from '../../state/acceptance-refusal.model';
 /** Task detail title, lane pager and primary and overflow actions. */
 @Component({
@@ -257,6 +258,7 @@ export class DetailHeaderComponent {
   });
   /** AGT-2795: the decision lane guard's reason, shown instead of a failing click. */
   readonly primaryDecisionRefusal = computed(() => triageDecisionRefusal(this.info(), this.triagePrimary()));
+  readonly primaryContentRefusal = contentRefusalOf(() => this.info(), () => this.triagePrimary()); // AGT-3830: holds Accept; the toolbar offers the next step.
 
   /** Remaining lane actions + always-on Edit/Delete fallbacks. */
   readonly triageOverflow = computed<TriageButton[]>(() => this.gateInfrastructurePark() || this.reviewsOnly()
@@ -320,7 +322,7 @@ export class DetailHeaderComponent {
     if (!p) return '';
     if (this.mutationsBlocked()) return 'Update in progress — actions paused.';
     if (this.isHeldRequeue(p)) return `Batch flight ${this.isolationHold()?.flight} is isolating. Requeue waits until isolation ends.`;
-    const refusal = this.primaryDecisionRefusal();
+    const refusal = this.primaryDecisionRefusal() ?? this.primaryContentRefusal();
     if (refusal) return refusal;
     if (this.primaryBlockedByIntegration()) return acceptanceHoldReason(this.info());
     if (p.id === 'mark-done' && this.acceptanceRefusalTip()) return this.acceptanceRefusalTip()!;
@@ -332,7 +334,7 @@ export class DetailHeaderComponent {
   }
 
   primaryDisabled(button: TriageButton): boolean {
-    return this.mutationsBlocked() || this.triageActingId() !== null || this.primaryAwaitingGit() || this.primaryBlockedByIntegration() || !!this.primaryDecisionRefusal() || this.isHeldRequeue(button);
+    return this.mutationsBlocked() || this.triageActingId() !== null || this.primaryAwaitingGit() || this.primaryBlockedByIntegration() || !!this.primaryDecisionRefusal() || !!this.primaryContentRefusal() || this.isHeldRequeue(button);
   }
 
   overflowTooltip(): string {
@@ -343,9 +345,8 @@ export class DetailHeaderComponent {
 
   onPrimaryClick(): void {
     const p = this.triagePrimary();
-    if (!p) return;
     // Hold acceptance until Git status loads, and requeue while isolation is active.
-    if (this.primaryAwaitingGit() || this.primaryBlockedByIntegration() || this.primaryDecisionRefusal() || this.isHeldRequeue(p)) return;
+    if (!p || this.primaryDisabled(p)) return;
     this.emitTriage(p);
   }
 

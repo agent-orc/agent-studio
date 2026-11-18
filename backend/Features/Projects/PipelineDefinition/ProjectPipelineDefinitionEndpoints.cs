@@ -6,11 +6,12 @@ namespace AgentStudio.Projects;
 /// <summary>
 /// The project.yml pipeline under <c>/api/projects/{projectName}/pipeline-definition</c>:
 /// the parsed diagram with issues (line and path), validation of edited text,
-/// the schema 2 migration dry run, and its confirmation. Only the confirmation
-/// writes: one managed repository commit that is pushed like a pipeline post
-/// step, so it is classified as <see cref="ExecutionAdmissionPath.PostStep"/> and
-/// the public-demo profile refuses it by route identity. The reads and the
-/// validation write nothing and stay unclassified.
+/// the schema 2 migration dry run and its confirmation, and the deploy-step
+/// form's preview and confirmation (F5). Only the two confirmations write, each
+/// one managed repository commit that is pushed like a pipeline post step, so
+/// they are classified as <see cref="ExecutionAdmissionPath.PostStep"/> and the
+/// public-demo profile refuses them by route identity. The reads, the
+/// validation, and the preview write nothing and stay unclassified.
 /// </summary>
 public static class ProjectPipelineDefinitionEndpoints
 {
@@ -33,6 +34,17 @@ public static class ProjectPipelineDefinitionEndpoints
             string projectName,
             ConfirmPipelineMigrationRequest? body,
             ProjectPipelineDefinitionService definitions) => ToResult(definitions.Confirm(projectName, body)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        app.MapPost("/api/projects/{projectName}/pipeline-definition/deploy-steps/preview", (
+            string projectName,
+            PipelineDeployStepsRequest? body,
+            ProjectPipelineDefinitionService definitions) => ToResult(definitions.PreviewDeploySteps(projectName, body)));
+
+        app.MapPost("/api/projects/{projectName}/pipeline-definition/deploy-steps", (
+            string projectName,
+            PipelineDeployStepsRequest? body,
+            ProjectPipelineDefinitionService definitions) => ToResult(definitions.ConfirmDeploySteps(projectName, body)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
     }
 

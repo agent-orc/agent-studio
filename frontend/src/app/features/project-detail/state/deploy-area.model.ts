@@ -2,6 +2,7 @@ import { InjectionToken } from '@angular/core';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
 import type { RunHostState } from '../../../models/run-host.model';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
+import type { PipelineDefinitionResponse } from '../services/project-pipeline-definition.service';
 import type { RollbackTarget } from './rollback-offer.model';
 
 // BD-1 wire contract served by AGT-3201 under /api/projects/{project}/deploy
@@ -504,6 +505,39 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       host: hostOf(base, sources.environments),
     };
   });
+}
+
+/** Display name of a project.yml environment id. */
+export function environmentLabel(name: string): string {
+  return name === 'staging' ? 'Staging' : name === 'production' ? 'Production' : name;
+}
+
+/** An environment project.yml declares that has no deployable status card yet (F5). */
+export interface DeclaredEnvironmentView {
+  name: string;
+  label: string;
+  protected: boolean;
+  /** False when project.yml has no deploy step for it yet. */
+  hasSteps: boolean;
+}
+
+/**
+ * Environments a schema 2 project.yml declares without a status card: before
+ * deploy steps exist the environment service cannot deploy them, so Overview
+ * shows them from the parsed definition instead of the legacy JSON guidance.
+ */
+export function declaredEnvironments(definition: PipelineDefinitionResponse | null,
+  cards: readonly EnvironmentCardView[]): DeclaredEnvironmentView[] {
+  if (definition?.schemaVersion !== 2 || !definition.diagram) return [];
+  const shown = new Set(cards.flatMap(card => [card.id, card.name.toLowerCase()]));
+  return definition.diagram.environments
+    .filter(item => !shown.has(item.name) && !shown.has(item.name === 'staging' ? 'stage' : item.name))
+    .map(item => ({
+      name: item.name,
+      label: environmentLabel(item.name),
+      protected: item.protected,
+      hasSteps: item.steps.length > 0,
+    }));
 }
 
 function hostOf(base: CardBase, environments: ProjectEnvironments | null): EnvironmentHostView | null {
