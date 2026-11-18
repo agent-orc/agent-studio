@@ -5,15 +5,61 @@ deploys and keeps them in a built-in store, one store per project environment.
 This implements Dossier
 [integrierte-plattform](../integrierte-plattform/index.html) section 8.3 (IP-15)
 with decision IP-D14 option A: a built-in store, with export hooks for external
-systems. No exporter ships yet. The Studio views over this data are a separate
-card (IP-16).
+systems. No exporter ships yet. Deploy, Operations reads its trends and log
+search from this store, and Deploy, Telemetry manages the ingest tokens.
 
 ## Connect an application
 
-1. Declare the environment in the project repository under
-   `docs/deployments/environments/<id>.json`. Tokens are issued only for
+### Through a deploy (recommended)
+
+Enable telemetry for the environment in schema 2 `.agent-studio/project.yml`:
+
+```yaml
+environments:
+  - name: staging
+    telemetry: true
+  - name: production
+    protected: true
+    telemetry: true
+```
+
+A legacy declaration under `docs/deployments/environments/<id>.json` accepts
+`"telemetry": true` as well. Every container deploy of such an environment then
+sets these variables on the workload:
+
+| Variable | Value |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `Telemetry:PublicOtlpEndpoint`, or `<studio>/api/telemetry/otlp` under the URL the deploy host reached Studio at |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Bearer <ingest token>` |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment.name=<environment>,agent_studio.release.id=<release>` |
+
+At the deploy claim Studio mints an ingest token for metrics and logs scoped to
+the environment (name "Studio deploy", created by `studio:deploy`). It stores
+the token through the secret provider as `studio-telemetry-ingest` in the
+environment's scope and binds it there. The deploy host resolves it like any
+other workload secret, so Studio never shows or logs it. Revoking that token
+under Deploy, Telemetry stops the running workload at once; the next deploy
+mints a new token and revokes earlier deploy tokens. SSH container steps pass
+the variables into the compose service even when the compose file does not map
+them. A project must not declare these variables itself for such an
+environment. Static sites and run-zone (edge) environments get no telemetry
+variables. Set `Telemetry:PublicOtlpEndpoint` when workloads reach Studio at
+another address than the deploy host does, for example from a container network.
+
+The `container-service` project template ships the OpenTelemetry Node SDK
+configured for this.
+
+### By hand
+
+1. Declare the environment (schema 2 `project.yml`, or
+   `docs/deployments/environments/<id>.json`). Tokens are issued only for
    declared environments.
-2. Create an ingest token (owner or operator; the plaintext is shown once):
+2. Open Deploy, Telemetry, choose the environment and create a token (owner or
+   operator). Studio shows the endpoint, protocol and headers once; copy them.
+   The page lists every token with its signals, creation, last use (updated at
+   most every five minutes) and expiry, and revokes a token after a confirming
+   click. The same operations are available on the API:
 
    ```http
    POST /api/projects/{project}/environments/{environment}/telemetry/tokens
@@ -38,6 +84,24 @@ declaration file was removed, or the project left Studio) gets HTTP 401 within
 30 seconds, the time the intake trusts the declarations it last read. The token
 is rejected, not revoked: if the declarations cannot be read, the intake answers
 503 with `Retry-After` and the token keeps working once they can be read again.
+
+## Operations view
+
+Deploy, Operations reads the last 30 days of each environment from this store
+in hourly steps (`IOperationsTelemetryReader` is `TelemetryOperationsReader`).
+It understands the OpenTelemetry semantic conventions:
+
+| Operations measure | Source |
+|---|---|
+| Requests, error rate, top endpoints, request trend | `http.server.request.duration` (or the older `http.server.duration`): observation count, status code 500 and above, `http.route` |
+| CPU | `process.cpu.time` per hour divided by the hour, summed over processes; the summary shows the latest hour |
+| Memory | `process.memory.usage`, summed over processes; the summary shows the latest hour |
+| Log search | log records; the level filter is a minimum severity, the release filter matches `agent_studio.release.id` |
+
+An environment that never sent telemetry keeps the empty state. The store keeps
+count, sum, minimum and maximum per bucket, not histogram buckets, so response
+percentiles stay "No data". Sessions, active users, restarts, disk and network
+have no source metric yet and stay "No data" as well.
 
 ## Intake behaviour
 

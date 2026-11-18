@@ -563,6 +563,32 @@ public sealed class ProjectDefinitionSchemaTwoTests
     }
 
     [Fact]
+    public void Environment_telemetry_is_opt_in_and_must_be_a_boolean()
+    {
+        var enabled = ProjectDefinitionReader.Parse(Valid.Replace(
+            "  - name: staging\n    protected: false\n", "  - name: staging\n    protected: false\n    telemetry: true\n",
+            StringComparison.Ordinal));
+        Assert.True(enabled.IsValid, Describe(enabled));
+        Assert.Equal([true, false], enabled.Definition!.Deployment!.Environments.Select(item => item.Telemetry));
+
+        var invalid = ProjectDefinitionReader.Parse(Valid.Replace(
+            "  - name: production\n    protected: true\n", "  - name: production\n    protected: true\n    telemetry: yes\n",
+            StringComparison.Ordinal));
+        Assert.Contains(invalid.Issues, issue => issue is { Code: "environment-telemetry-invalid", Path: "environments[1].telemetry" });
+    }
+
+    [Fact]
+    public void Json_schema_environment_entries_declare_the_validator_keys()
+    {
+        using var schema = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(RepositoryRoot.Find(), "docs", "app", "schemas", "project-execution.schema.json")));
+        var entries = schema.RootElement.GetProperty("properties").GetProperty("environments").GetProperty("oneOf")[1]
+            .GetProperty("prefixItems").EnumerateArray();
+        Assert.All(entries, entry => Assert.Equal(ProjectDeploymentVocabulary.EnvironmentKeys,
+            entry.GetProperty("properties").EnumerateObject().Select(item => item.Name)));
+    }
+
+    [Fact]
     public void Json_schema_declares_the_validator_vocabulary()
     {
         using var schema = JsonDocument.Parse(File.ReadAllText(

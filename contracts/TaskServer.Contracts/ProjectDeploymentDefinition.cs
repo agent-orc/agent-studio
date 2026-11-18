@@ -18,6 +18,12 @@ public sealed record ProjectArtifactDefinition(string Name, string Type, string?
 public sealed record ProjectEnvironmentDefinition(string Name, bool Protected)
 {
     /// <summary>
+    /// Studio connects the workload to its OTLP intake (M5): a container deploy
+    /// receives the endpoint, the protocol and an ingest token scoped to this environment.
+    /// </summary>
+    public bool Telemetry { get; init; }
+
+    /// <summary>
     /// Lets the control plane's health checks reach RFC 1918, shared and unique-local
     /// addresses, for an environment hosted on a LAN or VPN. The JSON declaration's
     /// <c>healthChecksAllowPrivateNetwork</c>; loopback, link-local and metadata stay refused.
@@ -146,7 +152,7 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
-    public static readonly IReadOnlyList<string> EnvironmentKeys = ["name", "protected", "healthChecksAllowPrivateNetwork"];
+    public static readonly IReadOnlyList<string> EnvironmentKeys = ["name", "protected", "telemetry", "healthChecksAllowPrivateNetwork"];
     public static readonly IReadOnlyList<string> LifecyclePhaseKeys = ["phase", "automatic", "approval", "requires"];
     public static readonly IReadOnlyList<string> ApprovalRoles = ["Owner", "Maintainer"];
     public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments", "tenants", "tenantTags", "channels"];
@@ -365,9 +371,9 @@ public static partial class ProjectDefinitionReader
 
     /// <summary>
     /// Environments are either the inline shorthand <c>[staging, production]</c>
-    /// or a list of maps with <c>name</c>, <c>protected</c> and
-    /// <c>healthChecksAllowPrivateNetwork</c>. The shorthand
-    /// protects production.
+    /// or a list of maps with <c>name</c>, <c>protected</c>, <c>telemetry</c> and
+    /// <c>healthChecksAllowPrivateNetwork</c>. The shorthand protects production
+    /// and leaves telemetry off.
     /// </summary>
     private static IReadOnlyList<ProjectEnvironmentDefinition> Environments(
         IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues)
@@ -396,12 +402,17 @@ public static partial class ProjectDefinitionReader
                 var isProtected = protectedText is null
                     ? name == "production"
                     : bool.TryParse(protectedText, out var parsed) && parsed;
+                var telemetryText = Get(item, "telemetry");
+                if (telemetryText is not null && !bool.TryParse(telemetryText, out _))
+                    issues.Add(new($"environments[{index}].telemetry", "environment-telemetry-invalid",
+                        "telemetry must be true or false."));
                 var privateText = Get(item, "healthChecksAllowPrivateNetwork");
                 if (privateText is not null && !bool.TryParse(privateText, out _))
                     issues.Add(new($"environments[{index}].healthChecksAllowPrivateNetwork",
                         "environment-health-private-network-invalid", "healthChecksAllowPrivateNetwork must be true or false."));
                 return new ProjectEnvironmentDefinition(name, isProtected)
                 {
+                    Telemetry = telemetryText is not null && bool.TryParse(telemetryText, out var telemetry) && telemetry,
                     HealthChecksAllowPrivateNetwork = bool.TryParse(privateText, out var allowPrivate) && allowPrivate,
                 };
             }).ToArray();

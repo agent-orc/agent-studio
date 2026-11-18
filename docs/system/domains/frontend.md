@@ -201,11 +201,16 @@ successful run or from a production incident opening to its recovery. Overlappin
 run and incident recoveries count once. Missing samples remain
 unavailable. `GET /api/projects/{project}/deploy/operations/logs` accepts
 environment, bounded time range, level, release, and text filters and returns
-at most 100 lines. `IOperationsTelemetryReader` is the integration boundary
-for the pending intake store; until it is connected, telemetry and logs show
-an explicit empty state while deploy markers and DORA remain live. The reader
-contract allows only aggregate usage without personal identifiers and requires
-secret masking before stored log lines are returned.
+at most 100 lines. `IOperationsTelemetryReader` reads the built-in OTLP store
+([app telemetry intake](../../operations/setup/app-telemetry-intake.md#operations-view));
+an environment that has not sent telemetry shows an explicit empty state while
+deploy markers and DORA remain live. The reader contract allows only aggregate
+usage without personal identifiers and requires secret masking before stored
+log lines are returned. The Deploy area's Telemetry tab
+(`ProjectTelemetryTokensComponent`, `?view=telemetry`) lists the ingest tokens of
+one environment with signals, last use, expiry and state, creates a token whose
+endpoint, protocol and headers it shows once, labels the deploy-managed token,
+and revokes a token after a confirming click.
 
 ## Workspace deployment dashboard
 
