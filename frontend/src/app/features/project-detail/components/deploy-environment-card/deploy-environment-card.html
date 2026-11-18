@@ -4,6 +4,7 @@
     <p class="env-card__health"><span class="env-card__sr">Health: </span><app-status-indicator [tone]="health().tone" [label]="health().label" testId="deploy-environment-health" /></p>
   </header>
   @if (environment().address; as address) { <p class="env-card__address">{{ address }}</p> }
+  @if (healthProblem(); as problem) { <p class="env-card__problem" data-testid="deploy-environment-health-problem">{{ problem }}</p> }
   <dl class="env-card__facts">
     <dt>Release</dt>
     <dd data-testid="deploy-environment-release">

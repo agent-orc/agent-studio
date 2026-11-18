@@ -74,10 +74,12 @@ describe('NotificationStackComponent — below-toolbar dock (AGT-3873)', () => {
     return { top, bottom, height: bottom - top, left: 0, right: 100, width: 100, x: 0, y: top, toJSON: () => ({}) };
   }
 
-  function root(bar: DOMRect | null, banner: DOMRect | null, form: DOMRect | null = null): ParentNode {
+  function root(bar: DOMRect | null, banner: DOMRect | null,
+    form: DOMRect | null = null, phone: DOMRect | null = null): ParentNode {
     const element = (box: DOMRect | null) => box && { getBoundingClientRect: () => box };
     return { querySelector: (selector: string) => selector.includes('studio-tabbar') ? element(bar)
       : selector.includes('task-move-refusal') ? element(banner)
+        : selector.includes('app-mobile-lane-primary') ? element(phone)
         : selector.includes('acceptance-refusal-form') ? element(form) : null } as unknown as ParentNode;
   }
 
@@ -113,5 +115,9 @@ describe('NotificationStackComponent — below-toolbar dock (AGT-3873)', () => {
     expect(toolbarDockTop(root(rect(44, 80), null, rect(84, 300)), 900)).toBe(308);
     // A phone: the form under the wrapped toolbar reaches past half the screen.
     expect(toolbarDockTop(root(rect(48, 140), rect(150, 360), rect(285, 525)), 844)).toBe(533);
+  });
+
+  it('docks below the phone refusal action as well as its banner', () => {
+    expect(toolbarDockTop(root(rect(48, 122), rect(130, 319), null, rect(329, 540)), 844)).toBe(548);
   });
 });

@@ -44,6 +44,7 @@ import { AUTONOMY_STOPS } from '../autonomy-slider/autonomy-slider';
 // By path, not the barrel: the editor renders only inside @defer (initial bundle budget).
 import { WorkspaceQuotaComponent } from '../../../quota/components/workspace-quota/workspace-quota.component';
 import { QualityStudioConnectionSettingsComponent } from '../quality-studio-connection-settings/quality-studio-connection-settings.component';
+import { IncidentWebhookSettingsComponent } from '../incident-webhook-settings/incident-webhook-settings.component';
 import { ServerCheckoutStore } from '../../../server-checkout';
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';
@@ -85,6 +86,7 @@ interface WorkspaceListItemLite {
     BatchSettingsComponent, SettingsJumpLinksComponent,
     WorkspaceQuotaComponent,
     QualityStudioConnectionSettingsComponent,
+    IncidentWebhookSettingsComponent,
   ],
   templateUrl: './project-settings-panel.component.html',
   styleUrl: './project-settings-panel.component.scss',
@@ -215,6 +217,7 @@ export class ProjectSettingsPanelComponent implements OnInit {
       error: () => { /* Do not infer an empty gate when project discovery failed. */ },
     });
   }
+
 
   /**
    * AGT-1812: resolve this project's owning workspace, then load its default

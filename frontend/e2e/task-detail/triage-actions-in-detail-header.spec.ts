@@ -144,7 +144,7 @@ async function openJobInDetail(page: Page, id: string, watchPath: string) {
 }
 
 async function waitForAcceptReady(page: Page): Promise<void> {
-  await expect(page.getByTestId('studio-triage-action-mark-done')).toBeEnabled({ timeout: 30_000 });
+  await expect(page.locator('[data-testid="studio-triage-action-mark-done"]:visible, [data-testid="studio-mobile-triage-action-mark-done"]:visible')).toBeEnabled({ timeout: 30_000 });
 }
 
 async function openReviewJobReadyToAccept(page: Page, id: string, watchPath: string): Promise<void> {
@@ -178,7 +178,10 @@ async function openReviewJobReadyToAccept(page: Page, id: string, watchPath: str
 
 async function clickAcceptAndWaitForMove(page: Page, moveCount: () => number): Promise<void> {
   for (let attempt = 0; attempt < 3 && moveCount() === 0; attempt++) {
-    const accept = page.getByTestId('studio-triage-action-mark-done');
+    // Below 600 px the phone primary owns Accept; the toolbar copy can still
+    // match `:visible` for a frame before the phone layout hides it.
+    const phone = (page.viewportSize()?.width ?? 1280) < 600;
+    const accept = page.getByTestId(phone ? 'studio-mobile-triage-action-mark-done' : 'studio-triage-action-mark-done');
     await expect(accept).toBeEnabled({ timeout: 10_000 });
     await accept.click();
     const confirm = page.getByRole('button', { name: 'Accept anyway' });
@@ -213,14 +216,24 @@ for (const view of [
       });
       await clickAcceptAndWaitForMove(page, () => moveCount);
 
-      await expect(page.getByTestId('task-move-refusal')).toContainText('Complete the required review for the current brief, or use a written operator override');
-      await expect(page.getByTestId('studio-triage-action-mark-done')).toBeVisible();
+      const refusalBanner = page.getByTestId('task-move-refusal');
+      await expect(refusalBanner).toContainText('Acceptance refused: no content verdict for the current brief.');
+      await expect(refusalBanner.getByTestId('task-move-refusal-override')).toBeVisible();
+      await expect(refusalBanner.getByTestId('task-move-refusal-review')).toBeVisible();
+      // AGT-3830: the content refusal's next step replaces Accept. AGT-3873: the
+      // overridable refusal opens its written-reason form in place, focused.
+      await expect(page.getByTestId('acceptance-refusal-action')).toHaveText('Review again');
+      await expect(page.getByTestId('acceptance-refusal-override')).toBeVisible();
+      await expect(page.getByTestId('acceptance-refusal-override-reason')).toBeFocused();
+      await expect(page.getByTestId('studio-triage-action-mark-done')).toHaveCount(0);
+      await expect(page.getByTestId('notification-stack-below-toolbar').getByTestId('notification-warning')).toBeVisible();
       await expect(page.getByRole('heading', { name: 'No task selected' })).toBeHidden();
       await expect(page).toHaveURL(originalUrl);
       expect((await getJob(job.id, wp.path)).state).toBe('5-human-review');
       if (view.name === 'light') {
         await page.waitForTimeout(15_000);
         await expect(page.getByTestId('task-move-refusal')).toBeVisible();
+        await expect(page.getByTestId('acceptance-refusal-action')).toHaveText('Review again');
       }
       const dir = process.env.JOB_RESULTS_DIR;
       if (dir) {
@@ -265,7 +278,7 @@ test('failed Accept error dialog closes with Escape and focuses the action', asy
  * studio slim tab-bar header); the spec resolves the user-visible one.
  */
 test.describe('Triage actions in detail header', () => {
-  test('code-free review card accepts a named deliverable', async ({ page }) => {
+  test('code-free review card explains its owner decision hold', async ({ page }) => {
     const wp = await getFirstWatchPath();
     const jobs = await plantHumanReviewJobs(wp, 1);
     try {
@@ -273,14 +286,12 @@ test.describe('Triage actions in detail header', () => {
 
       const cluster = page.getByTestId('studio-triage-panel');
       await expect(cluster).toBeVisible();
-      const primary = page.getByTestId('studio-triage-action-mark-done');
-      await expect(primary).toBeVisible({ timeout: 10_000 });
-
-      await expect(primary).toBeEnabled();
-      await expect(primary).toContainText('Accept');
-      await primary.click();
-      await expect.poll(async () => (await getJob(jobs[0].id, wp.path)).state,
-        { timeout: 10_000 }).toBe('6-completed');
+      const refusal = cluster.getByTestId('acceptance-refusal');
+      await expect(refusal).toBeVisible({ timeout: 10_000 });
+      await expect(refusal).toHaveAttribute('data-refusal-source', 'hold');
+      await expect(refusal.getByTestId('acceptance-refusal-reason')).toContainText('Parked for an owner decision');
+      await expect(refusal.getByTestId('acceptance-refusal-action')).toContainText('Accept with override');
+      await expect.poll(async () => (await getJob(jobs[0].id, wp.path)).state).toBe('5-human-review');
     } finally {
       for (const j of jobs) await deleteJob(j.id, wp.path).catch(() => {});
     }

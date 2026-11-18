@@ -73,6 +73,20 @@ export class NotificationService {
     if (all.length > 0) this.dismiss(all[0].id);
   }
 
+  /**
+   * AGT-3830: dismisses the newest notice that stays until closed and returns
+   * true, or returns false when none is open. A surface that owns Escape (the
+   * task detail) calls this first, so Escape closes a sticky notice before it
+   * closes the surface under it.
+   */
+  dismissNewestPersistent(): boolean {
+    const sticky = this.notifications().filter((n) => !n.durationMs);
+    const newest = sticky[sticky.length - 1];
+    if (!newest) return false;
+    this.dismiss(newest.id);
+    return true;
+  }
+
   success(message: string, title?: string): number {
     return this.notify({ message, title, kind: 'success' });
   }

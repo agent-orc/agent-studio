@@ -340,7 +340,8 @@ public sealed partial class ProjectEnvironmentService
                 environment.Protected ? "person" : "stage-healthy-10m",
                 variables.Where(item => item.Secret is not null && item.Tenants.Count == 0
                     && item.TenantTags.Count == 0 && item.Channels.Count == 0)
-                    .Select(item => item.Secret!).ToArray(), 8080)
+                    .Select(item => item.Secret!).ToArray(), 8080,
+                HealthChecksAllowPrivateNetwork: environment.HealthChecksAllowPrivateNetwork)
             {
                 SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
                 Protected = environment.Protected, Automatic = phase.Automatic, Requires = phase.Requires,
@@ -374,12 +375,15 @@ public sealed partial class ProjectEnvironmentService
                     Error = $"{file.EnvironmentId}.json diverges from schema 2 project.yml; migrate the declaration before deploying." });
                 continue;
             }
+            // Either file may opt into private-network health checks; the JSON key predates schema 2.
+            var privateNetwork = legacy.HealthChecksAllowPrivateNetwork || environment.HealthChecksAllowPrivateNetwork;
             // The run zone, not SSH, executes an edge-hosted environment (AGT-3877): the host
             // reports health without SSH step results, so its job carries no SSH steps.
             if (legacy.Hosting is not null)
             {
                 output.Add(file with { Declaration = legacy with
                 {
+                    HealthChecksAllowPrivateNetwork = privateNetwork,
                     Variables = variables, Artifacts = definition.Artifacts, Protected = environment.Protected,
                     Automatic = phase.Automatic, Requires = phase.Requires,
                 } });
@@ -387,7 +391,7 @@ public sealed partial class ProjectEnvironmentService
             }
             output.Add(file with { Declaration = legacy with
             {
-                Template = "ssh-v2",
+                Template = "ssh-v2", HealthChecksAllowPrivateNetwork = privateNetwork,
                 SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
                 Protected = environment.Protected,
                 Automatic = phase.Automatic, Requires = phase.Requires,

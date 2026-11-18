@@ -1,5 +1,5 @@
 <div class="detail">
-  <app-mobile-lane-primary [primary]="mobilePrimary()" [mutationsBlocked]="mutationsBlocked()"
+  <app-mobile-lane-primary [primary]="mobilePrimary()" [job]="detail().info" [mutationsBlocked]="mutationsBlocked()"
                            (pressed)="mobilePrimaryRequest.emit()" />
   <app-task-resource-status />
   <app-detail-header

@@ -264,6 +264,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/projects/{project}/environments/{environment}/secrets/{name}/rotate", IamPermissions.SecretsWrite)]
     [InlineData("POST", "/api/runner/secrets/resolve", IamPermissions.RunnerService)]
     [InlineData("POST", "/api/projects/{projectName}/pipeline-definition/migration", IamPermissions.ProjectSettingsWrite)]
+    [InlineData("POST", "/api/projects/{projectName}/pipeline-definition/deploy-steps", IamPermissions.ProjectSettingsWrite)]
+    [InlineData("POST", "/api/projects/{projectName}/pipeline-definition/deploy-steps/preview", IamPermissions.ProjectSettingsWrite)]
     [InlineData("GET", "/api/bus/{project}/messages", IamPermissions.ProjectRead)]
     [InlineData("POST", "/api/telemetry/otlp/v1/metrics", IamPermissions.Anonymous)]
     [InlineData("POST", "/api/telemetry/otlp/v1/logs", IamPermissions.Anonymous)]
