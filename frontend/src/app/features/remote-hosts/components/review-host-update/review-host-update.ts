@@ -215,14 +215,21 @@ export class ReviewHostUpdateComponent {
     this.busy.set(true);
     this.stage.set('aborting');
     try {
-      await firstValueFrom(this.http.post(this.url(target) + '/resume', {}));
-      const status = await firstValueFrom(this.http.get<ReviewDrainStatus>(this.url(target) + '/drain-status'));
+      // AGT-3930: the server refuses the cancel once any operator recorded the
+      // switch start, so a stale session cannot erase that baseline.
+      const status = await firstValueFrom(this.http.post<ReviewDrainStatus>(this.url(target) + '/deploy-cancel', {}));
       if (status.draining) {
         this.fail('The host still reports draining. Retry cancellation.');
         return;
       }
       this.reset();
-    } catch (error) { this.failDrainAccess(error, 'Could not resume the host after cancellation. Retry cancellation.'); }
+    } catch (error) {
+      const refused = error instanceof HttpErrorResponse && error.status === 409
+        ? (error.error as { status?: ReviewDrainStatus } | null)?.status : undefined;
+      if (refused && this.applyStatus(refused) === 'switching')
+        this.message.set('Another operator started the host switch, so cancel is closed. Run the review host steps in the deploy procedure, then check for a new heartbeat.');
+      else if (!refused) this.failDrainAccess(error, 'Could not resume the host after cancellation. Retry cancellation.');
+    }
     finally { this.busy.set(false); }
   }
 

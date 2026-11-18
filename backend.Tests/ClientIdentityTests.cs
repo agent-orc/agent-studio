@@ -386,6 +386,30 @@ public class ClientIdentityTests : IDisposable
     }
 
     [Fact]
+    public void DeployCancel_LiftsADrainBeforeTheSwitch_AndIsRefusedOnceASwitchStartIsRecorded()
+    {
+        var config = BuildConfig();
+        var store = BuildStore(config);
+        var runner = store.Register(new RegisterClientRequest { DisplayName = "review-cancel-runner", Kind = ClientIdentityKinds.Service });
+
+        store.RequestDrain(runner.Id, retireAfterDrain: false);
+        var cancelled = store.CancelDrainBeforeSwitch(runner.Id);
+        Assert.False(cancelled?.Refused);
+        Assert.Null(cancelled?.Record.DrainRequestedAt);
+        Assert.Null(BuildStore(config).Find(runner.Id)?.DrainRequestedAt);
+
+        // A second operator records the switch start; a stale cancel keeps it.
+        var drainedAt = store.RequestDrain(runner.Id, retireAfterDrain: false)?.DrainRequestedAt;
+        var started = store.RecordDeploySwitchStart(runner.Id)?.DeploySwitchStartedAt;
+        var refused = store.CancelDrainBeforeSwitch(runner.Id);
+        Assert.True(refused?.Refused);
+        Assert.Equal(started, refused?.Record.DeploySwitchStartedAt);
+        var reloaded = BuildStore(config).Find(runner.Id);
+        Assert.Equal(drainedAt, reloaded?.DrainRequestedAt);
+        Assert.Equal(started, reloaded?.DeploySwitchStartedAt);
+    }
+
+    [Fact]
     public void Retire_DoesNotCompleteWhenClaimPollOmitsTelemetry()
     {
         var config = BuildConfig();
