@@ -114,13 +114,18 @@ public static class ManagementEndpoints
             // AGT-3840: each role lists the keys claims withhold from it, plus
             // the keys its refused review claims named, so an Online role that
             // cannot take the waiting work says why.
+            var pendingAttemptIds = authority.ListPendingReviewAttempts()
+                .Select(attempt => attempt.AttemptId)
+                .ToHashSet(StringComparer.Ordinal);
             return Results.Ok(registry.ListCapabilitySnapshots()
                 .Select(snapshot => authority.ListReviewDaemonRestarts(snapshot.RunnerId) is { Count: > 0 } restarts
                     ? snapshot with { ReviewRestarts = restarts }
                     : snapshot)
                 .Select(snapshot => AgentStudio.Runner.HeldCapabilityProjection.Merge(
                         registry.HeldCapabilities(snapshot.RunnerId),
-                        unclaimable.ForExecutor(snapshot.RunnerId)) is { Count: > 0 } held
+                        unclaimable.ForExecutor(snapshot.RunnerId),
+                        registry.RegisteredReviewCapabilities(snapshot.RunnerId, snapshot.InstanceId),
+                        pendingAttemptIds) is { Count: > 0 } held
                     ? snapshot with { HeldCapabilities = held }
                     : snapshot)
                 .ToArray());
