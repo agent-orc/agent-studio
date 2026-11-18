@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TokenAnalysisResponse } from '../../src/app/features/token-analysis/models/token-analysis.model';
+import { setTheme } from '../helpers/theme';
 
 // The demo profile boots the real backend with --owner-day. No routes are mocked.
 test('owner-day token usage reconciles across workspace, projects, and visible cards', async ({ page, request }) => {
@@ -57,9 +58,13 @@ test('owner-day token usage reconciles across workspace, projects, and visible c
   await expect(diagnostic).toBeVisible();
   await diagnostic.getByRole('button', { name: 'Show unpriced models' }).click();
   await expect(diagnostic).toContainText('demo-unpriced-model');
-  await expect(diagnostic.locator('table')).toContainText('Calls');
-  await expect(diagnostic.locator('table')).toContainText('Tokens');
+  await expect(diagnostic).toContainText('Current workspace week:');
+  await expect(diagnostic.locator('table')).toContainText('Unpriced calls');
+  await expect(diagnostic.locator('table')).toContainText('Unpriced tokens');
   const results = join(process.env.JOB_RESULTS_DIR ?? 'test-results', 'owner-day-token-usage');
   mkdirSync(results, { recursive: true });
-  await page.screenshot({ path: join(results, 'workspace--real.png'), fullPage: false });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(results, `workspace--${theme}.png`), fullPage: false });
+  }
 });
