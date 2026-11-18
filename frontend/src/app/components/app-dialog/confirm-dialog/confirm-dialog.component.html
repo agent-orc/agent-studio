@@ -5,6 +5,7 @@
               [kind]="confirm.kind === 'danger' ? 'danger' : 'primary'"
               size="sm"
               testid="confirm-dialog"
+              [stackManagedExternally]="true"
               (closeRequest)="onCancel()"
               (backdropClick)="onBackdropClick()"
               (keydown)="onPanelKeydown($event)">

@@ -54,11 +54,13 @@ public sealed record GateFailureRoute(GateFailureRouteAction Action, string? Cat
 /// </param>
 /// <param name="FixRoundsForDelivery">Gate fix rounds already started for this delivery SHA.</param>
 /// <param name="AutomaticRoundsEnabled">The project allows automatic failure continuations.</param>
+/// <param name="FixRoundsForFingerprint">Gate fix rounds already started for this card and fingerprint, across delivery SHAs.</param>
 public sealed record GateFailureRoutingFacts(
     bool ReplayBudgetLeft,
     int? OtherCardsWithFingerprint,
     int FixRoundsForDelivery,
-    bool AutomaticRoundsEnabled);
+    bool AutomaticRoundsEnabled,
+    int FixRoundsForFingerprint = 0);
 
 /// <summary>
 /// Pure routing of a classified gate failure (AGT-3009). The human park is the
@@ -70,6 +72,9 @@ public static class GateFailureRoutingPolicy
 {
     /// <summary>One fix round per delivery SHA. A round that changes nothing leaves the same SHA red.</summary>
     public const int MaxFixRoundsPerDelivery = 1;
+
+    /// <summary>A repeated invalid preparation may use two rounds across new delivery SHAs.</summary>
+    public const int MaxDefinitionFixRoundsPerFingerprint = 2;
 
     /// <summary>
     /// The fingerprint becomes one cause at its second card: the first card
@@ -107,6 +112,10 @@ public static class GateFailureRoutingPolicy
                 if (!facts.AutomaticRoundsEnabled)
                     return new(GateFailureRouteAction.ParkExhausted,
                         GateFailureParkCategories.Product, "automatic-fix-rounds-disabled");
+                if (triage.Kind == GateProductKinds.Definition
+                    && facts.FixRoundsForFingerprint >= MaxDefinitionFixRoundsPerFingerprint)
+                    return new(GateFailureRouteAction.ParkExhausted,
+                        GateFailureParkCategories.Product, "definition-fingerprint-budget-spent");
                 return facts.FixRoundsForDelivery < MaxFixRoundsPerDelivery
                     ? new(GateFailureRouteAction.FixRound, null, "product-fix-round")
                     : new(GateFailureRouteAction.ParkExhausted,
@@ -141,6 +150,8 @@ public static class GateFailureRoutingPolicy
                 "The same exact-subject gate was retried after a transport failure and remains unavailable; repair the gate transport, then retry the gate.",
             _ when route.Reason == "automatic-fix-rounds-disabled" =>
                 "Automatic fix rounds are disabled for this project; start a steer round with the failing items.",
+            _ when route.Reason == "definition-fingerprint-budget-spent" =>
+                "The same preparation failure remains after two automatic fix rounds; correct the named rule before retrying.",
             _ => "The bounded fix round is spent and the gate is still red on the same delivery.",
         };
         var kind = triage.Kind is null ? string.Empty : $"/{triage.Kind}";

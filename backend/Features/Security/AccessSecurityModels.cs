@@ -274,7 +274,8 @@ public static class TelemetrySignals
 {
     public const string Metrics = "metrics";
     public const string Logs = "logs";
-    public static readonly string[] All = [Metrics, Logs];
+    public const string Traces = "traces";
+    public static readonly string[] All = [Metrics, Logs, Traces];
 }
 
 public sealed record TelemetryIngestPrincipal(string TokenId, string Project, string Environment, IReadOnlySet<string> Signals);

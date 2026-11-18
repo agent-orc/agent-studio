@@ -83,7 +83,7 @@ public sealed class TelemetryIngestTokenTests : IDisposable
     }
 
     [Theory]
-    [InlineData("traces")]
+    [InlineData("profiles")]
     [InlineData("")]
     public void Unknown_signals_and_past_expiry_are_refused(string signal)
     {

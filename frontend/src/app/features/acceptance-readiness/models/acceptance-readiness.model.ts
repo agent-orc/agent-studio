@@ -30,6 +30,8 @@ export interface AcceptanceReadinessItem {
   reason: string;
   stage: string;
   refusal: string;
+  /** Whether the completion admission checks permit a written operator override. */
+  overrideAllowed: boolean;
   aspect: string | null;
   contentStatus: string | null;
   concern: string | null;
@@ -81,10 +83,9 @@ export function readinessPresentation(readiness: string): ReadinessPresentation 
 }
 
 /**
- * AGT-3867: whether a written operator override can admit a refused
- * completion. The completion policy lets an override replace a content
- * verdict, never a missing research report (AGT-3565).
+ * Whether the completion admission checks permit a written operator override.
+ * The server computes this from the refusal stage and content facts.
  */
-export function acceptanceOverrideAllowed(refusal: string | null | undefined): boolean {
-  return !/required report is missing/i.test(refusal ?? '');
+export function acceptanceOverrideAllowed(item: AcceptanceReadinessItem | null): boolean {
+  return item?.stage !== 'batch-gate' && (item?.overrideAllowed ?? true);
 }
