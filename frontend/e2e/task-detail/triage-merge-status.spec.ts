@@ -403,6 +403,36 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
       }
     }
   });
+  test('batch gate refusal offers a round without an override in both themes', async ({ page }) => {
+    await installBaseRoutes(page);
+    await installJobRoutes(page, { detailMerge: { mergeCommit: MERGE_SHA }, landedState: 'merged-to-develop' });
+    await page.route('**/api/tasks/acceptance-readiness', route => json(route, {
+      checkedAtUtc: '2026-11-16T08:00:00Z', counts: {},
+      items: [{
+        jobId: JOB_ID, taskKey: `${WATCH_PATH}::${JOB_ID}`, key: null, projectName: PROJECT, title: 'Fixture',
+        readiness: 'integrated-unverified', headline: 'Integrated, not verified',
+        reason: 'The batch gate holds no passing evidence for this delivery.', stage: 'batch-gate',
+        refusal: 'batch-gate-evidence-missing', overrideAllowed: false,
+        aspect: 'requirement-fit', contentStatus: 'pass', concern: null, missing: null,
+        latestResultRef: null, round: { prompt: 'Close the acceptance gap on this card.', baseRef: null },
+      }],
+    }));
+    await openJob(page);
+    await expect(page.getByTestId('acceptance-next-steps-send-round')).toBeVisible();
+    await expect(page.getByTestId('accept-with-reason-open')).toHaveCount(0);
+    await expect(page.getByTestId('acceptance-primary-next-step'))
+      .toContainText('Send a round to close the batch gate evidence gap');
+    await expect(page.getByTestId('acceptance-primary-next-step')).not.toContainText('override');
+    await expect(page.getByTestId('acceptance-refusal-action')).toHaveText('Send a round…');
+    for (const value of ['dark', 'light'] as const) {
+      await setTheme(page, value);
+      await dismissDevErrorDialog(page);
+      if (RESULTS_DIR) {
+        fs.mkdirSync(RESULTS_DIR, { recursive: true });
+        await page.screenshot({ path: path.join(RESULTS_DIR, `batch-gate-acceptance-${value}.png`) });
+      }
+    }
+  });
   // AGT-3076: the rebuilt attempt authority store lost this integrated card's
   // run attempt. The delivery panel says why acceptance needs an override
   // before the operator tries to accept.

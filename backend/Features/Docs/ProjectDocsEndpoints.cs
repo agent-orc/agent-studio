@@ -213,6 +213,12 @@ public static class ProjectDocsEndpoints
                     : body.RevisionPrompt.Trim();
                 var round = await revisions.StartAsync(projectName, card, prompt, body.Actor.Trim(),
                     body.CliType, body.Model, body.ThinkingLevel, ct);
+                if (round.Status is "started" or "queued" or "saved")
+                {
+                    decisions.RecordAppliedReworkRoute(projectName, id, body.OperationId, card.Route,
+                        new WorkbenchAgentRoute(body.CliType, body.Model, body.ThinkingLevel));
+                    docs.InvalidateWikiContent(projectName);
+                }
                 return WorkbenchDecisionHttpResult(result with { RevisionCard = card, RevisionRound = round });
             });
 

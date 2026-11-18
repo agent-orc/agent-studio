@@ -46,7 +46,7 @@
             <ul>@for (endpoint of m.topEndpoints; track endpoint.path) { <li><code>{{ endpoint.path }}</code> · {{ metric(endpoint.requests) }} requests</li> }</ul>
           }
         } @else {
-          <p class="project-operations__empty" role="status">Telemetry is not available yet. Monitoring, usage, load and logs will appear when the intake store is connected.</p>
+          <p class="project-operations__empty" role="status">Telemetry is not available yet. Monitoring, usage, and load charts will appear when measurements are available.</p>
         }
         <h4>Deploy and rollback markers</h4>
         @if (!row.markers.length) { <p>No deploy runs in the last 30 days.</p> }
@@ -75,7 +75,7 @@
     </section>
     <section class="project-operations__logs" aria-labelledby="operations-logs-title" data-testid="operations-logs">
       <h3 id="operations-logs-title">Search application logs</h3>
-      @if (!telemetryAvailable() && !logs()) { <p role="status">Application logs will be searchable when the telemetry intake store is connected.</p> }
+      @if (!telemetryAvailable() && !logs()) { <p>Search the intake store for application logs in a selected environment and time window.</p> }
       <div class="project-operations__filters">
         <label>Environment <select data-testid="operations-log-environment" [value]="selectedEnvironment()" (change)="changeFilter(selectedEnvironment, $any($event.target).value)">
           @for (row of state.environments; track row.environment.id) { <option [value]="row.environment.id">{{ row.environment.name }}</option> }
@@ -97,8 +97,34 @@
         @else { <ol class="project-operations__log-lines">@for (line of result.lines; track line.at + line.message) {
           <li><time [attr.datetime]="line.at">{{ line.at | date:'medium':'UTC' }} UTC</time><strong>{{ line.level }}</strong><span>{{ line.message }}</span>
             @if (line.releaseId) { <button type="button" (click)="openRelease.emit(line.releaseId)">Release {{ line.releaseId }}</button> }
+            @if (line.traceId) { <button type="button" data-testid="operations-log-trace" (click)="openTrace(line.traceId)">View trace</button> }
           </li>
         }</ol> }
+      }
+    </section>
+    <section class="project-operations__traces" aria-labelledby="operations-traces-title" data-testid="operations-traces">
+      <h3 id="operations-traces-title">Slow and failed traces</h3>
+      <p>Find requests in the selected environment and time window. Traces over 500 ms and failed traces appear here.</p>
+      <button type="button" data-testid="operations-search-traces" (click)="searchTraces()">Search traces</button>
+      @if (traceError(); as message) { <p role="alert">{{ message }}</p> }
+      @if (traces(); as rows) {
+        @if (!rows.length) { <p role="status">No slow or failed traces match this window.</p> }
+        @else { <ol class="project-operations__trace-list">@for (trace of rows; track trace.traceId) {
+          <li><button type="button" (click)="openTrace(trace.traceId)">{{ trace.name }} · {{ trace.durationMs }} ms · {{ trace.spanCount }} spans @if (trace.failed) { · Failed }</button></li>
+        }</ol> }
+      }
+      @if (selectedTraceId(); as traceId) {
+        <h4>Span waterfall for {{ traceId }}</h4>
+        @if (spans(); as rows) {
+          @if (!rows.length) { <p role="status">No spans are stored for this trace.</p> }
+          @else { <ol class="project-operations__waterfall" data-testid="operations-span-waterfall">@for (span of rows; track span.spanId) {
+            <li><span class="project-operations__span-name">{{ span.name }}</span>
+              <span class="project-operations__span-track"><span class="project-operations__span-bar"
+                [class.project-operations__span-bar--failed]="span.failed"
+                [style.margin-left.%]="spanOffset(span)" [style.width.%]="spanWidth(span)"></span></span>
+              <span class="project-operations__span-duration">{{ span.durationMs }} ms</span></li>
+          }</ol> }
+        }
       }
     </section>
   } @else if (!error()) { <app-loading-surface kind="list" label="Loading operations…" /> }

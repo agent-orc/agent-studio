@@ -383,11 +383,15 @@ public sealed class TaskLiveStatusProjection(
 
     private TaskLiveReviewUnclaimable? UnclaimableOf(BoardReviewActivity? review)
     {
+        if (review is not { State: AttemptLifecycleState.Pending }) return null;
         if (unclaimableLog?.Latest(review?.AttemptId) is not { NamesCapabilities: true } observation) return null;
+        var instanceId = reviewExecutors.InstanceIdOf(observation.ExecutorId) ?? string.Empty;
         return ReviewUnclaimable(
             observation,
             reviewExecutors.HostIdOf(observation.ExecutorId),
-            reviewExecutors.HeldCapabilities(observation.ExecutorId));
+            reviewExecutors.HeldCapabilities(observation.ExecutorId),
+            reviewExecutors.RegisteredReviewCapabilities(observation.ExecutorId, instanceId),
+            reviewExecutors.AdmittedReviewCapabilities(observation.ExecutorId, instanceId));
     }
 
     /// <summary>
@@ -397,11 +401,16 @@ public sealed class TaskLiveStatusProjection(
     internal static TaskLiveReviewUnclaimable? ReviewUnclaimable(
         ReviewUnclaimableObservation? observation,
         string? hostId,
-        IReadOnlyList<AgentStudio.TaskServer.Contracts.HeldCapabilityDto> holds)
+        IReadOnlyList<AgentStudio.TaskServer.Contracts.HeldCapabilityDto> holds,
+        IReadOnlySet<string>? registeredCapabilities = null,
+        IReadOnlySet<string>? admittedCapabilities = null)
     {
         if (observation is not { NamesCapabilities: true }) return null;
         var keys = observation.MissingCapabilities
             .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Where(key => admittedCapabilities?.Contains(key) != true)
+            .Where(key => registeredCapabilities?.Contains(key) != true
+                || holds.Any(hold => string.Equals(hold.Key, key, StringComparison.Ordinal)))
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();

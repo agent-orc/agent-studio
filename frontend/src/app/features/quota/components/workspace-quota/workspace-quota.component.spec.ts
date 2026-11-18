@@ -62,6 +62,8 @@ describe('WorkspaceQuotaComponent', () => {
     expect(rows[0].querySelector('time')?.getAttribute('datetime')).toBe('2026-10-12');
     expect(rows[6].textContent).toContain('Sun 18 Oct');
     expect(rows[6].textContent).toContain('60 tokens');
+    expect(text(root, 'workspace-quota-week-period'))
+      .toContain('Admission week: 12 Oct 2026, 00:00 UTC to 19 Oct 2026, 00:00 UTC.');
     expect(root.textContent).not.toContain('Day 1');
   });
 

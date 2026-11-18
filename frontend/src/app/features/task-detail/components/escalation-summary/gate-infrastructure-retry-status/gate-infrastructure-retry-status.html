@@ -1,0 +1,6 @@
+@if (retry(); as request) {
+  <p role="status" data-testid="gate-infrastructure-retry-status">
+    @if (request.status === 'pending') { Retry requested at {{ request.requestedAtUtc | date:'medium' }}; waits for the batch gate. }
+    @if (request.status === 'refused') { Gate retry refused: {{ request.reason }} }
+  </p>
+}

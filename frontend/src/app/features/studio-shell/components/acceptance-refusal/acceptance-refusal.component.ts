@@ -41,7 +41,7 @@ export class AcceptanceRefusalComponent {
   readonly reason = signal('');
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
-  readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length > 0);
+  readonly canSubmit = computed(() => !this.busy() && this.reason().trim().length >= 8);
   /** F12: the ranked reason in full, with its next step and the gaps under it. */
   readonly detail = computed(() => {
     const refusal = this.refusal();

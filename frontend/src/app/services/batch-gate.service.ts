@@ -9,6 +9,7 @@ import type {
   BatchTestFailureReport,
   GateQueueStallRelease,
   GateQueueStallReport,
+  InfrastructureRetryRequest,
 } from '../models/batch-gate.model';
 
 interface ProjectFeed {
@@ -144,8 +145,8 @@ export class BatchGateService {
   releaseQueueStalled(project: string): Observable<GateQueueStallRelease> {
     return this.http.post<GateQueueStallRelease>(`${this.url(project)}/queue-stalls/release`, {});
   }
-  retryInfrastructureGate(project: string, taskKey: string): Observable<{ retried: boolean }> {
-    return this.http.post<{ retried: boolean }>(
+  retryInfrastructureGate(project: string, taskKey: string): Observable<InfrastructureRetryRequest> {
+    return this.http.post<InfrastructureRetryRequest>(
       `${this.url(project)}/infrastructure/${encodeURIComponent(taskKey)}/retry`, {});
   }
 }
