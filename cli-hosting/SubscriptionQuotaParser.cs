@@ -15,6 +15,9 @@ public static class SubscriptionQuotaParser
     private static readonly Regex ClaudeWeek = new(
         @"Current\s*week\s*\(\s*all\s*models?\s*\)[^\d]{0,220}?(?<pct>\d+)\s*%\s*used",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex ClaudeFableWeek = new(
+        @"Current\s*week\s*\(\s*Fable(?:\s*models?)?(?:\s*only)?\s*\)[^\d]{0,220}?(?<pct>\d+)\s*%\s*used",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex ClaudeReset = new(
         @"Resets\s*(?<reset>(?:[A-Za-z]+\s*\d+\s*,?\s*)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:\((?<tz>[^)]+)\))?",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -40,9 +43,12 @@ public static class SubscriptionQuotaParser
         var windows = new List<SubscriptionQuotaWindow>();
         var session = ClaudeSession.Match(text);
         var week = ClaudeWeek.Match(text);
+        var fable = ClaudeFableWeek.Match(text);
         if (session.Success) windows.Add(ClaudeWindow(text, session, week.Success ? week.Index : text.Length,
             "Current session (5h)", nowUtc));
-        if (week.Success) windows.Add(ClaudeWindow(text, week, text.Length, "Weekly (all models)", nowUtc));
+        if (week.Success) windows.Add(ClaudeWindow(text, week,
+            fable.Success && fable.Index > week.Index ? fable.Index : text.Length, "Weekly (all models)", nowUtc));
+        if (fable.Success) windows.Add(ClaudeWindow(text, fable, text.Length, "Weekly (Fable)", nowUtc));
         if (windows.Count == 0 && TabbedApiUsage.IsMatch(text))
             windows.Add(new("Quota", null));
         return windows;

@@ -20,7 +20,7 @@ public static class OtlpResponses
     public static string ContentType(OtlpEncoding encoding)
         => encoding == OtlpEncoding.Protobuf ? ProtobufContentType : JsonContentType;
 
-    /// <param name="rejectedField">JSON name of the rejected count: rejectedDataPoints or rejectedLogRecords.</param>
+    /// <param name="rejectedField">JSON name of the rejected count: rejectedDataPoints, rejectedLogRecords, or rejectedSpans.</param>
     public static byte[] Success(OtlpEncoding encoding, long rejected, string? message, string rejectedField)
     {
         if (rejected <= 0 && string.IsNullOrEmpty(message))

@@ -80,8 +80,40 @@ public sealed class CardDeploymentProjectionTests
              Run("d3", R2, Production, attemptedState, 3)]);
 
         var badge = Assert.Single(views.Where(item => item.CardKey == "WEB-2")).Environments[0];
-        Assert.Equal((CardDeploymentProjection.RolledBack, R2.Id, At.AddHours(2)),
+        Assert.Equal((attemptedState == DeploymentStates.Failed ? DeploymentStates.Failed
+            : CardDeploymentProjection.RolledBack, R2.Id, attemptedState == DeploymentStates.Failed
+                ? At.AddHours(3) : At.AddHours(2)),
             (badge.State, badge.ReleaseId, badge.AtUtc));
+    }
+
+    [Fact]
+    public void FailedReleaseFollowedByRollback_RemembersFailureAndRollback()
+    {
+        var views = CardDeploymentProjection.Project("demo", [Stage], [R1, R2],
+            [Run("d1", R1, Stage, DeploymentStates.Succeeded, 1),
+             Run("d2", R2, Stage, DeploymentStates.Failed, 2),
+             Run("d3", R1, Stage, DeploymentStates.Succeeded, 3) with { Trigger = DeploymentTriggers.AutomaticRollback }]);
+
+        var badge = Assert.Single(views.Where(item => item.CardKey == "WEB-2")).Environments[0];
+        Assert.Equal(("failed-rolled-back", R2.Id, At.AddHours(2)),
+            (badge.State, badge.ReleaseId, badge.AtUtc));
+    }
+
+    [Fact]
+    public void FailedRelease_RemainsFailedUntilALaterReleaseContainingTheCardSucceeds()
+    {
+        var fixedRelease = Release("r3", 3, ["WEB-2"]);
+        var failed = Run("d1", R2, Production, DeploymentStates.Failed, 3);
+        var unrelated = Run("d2", R1, Production, DeploymentStates.Succeeded, 4);
+        var beforeFix = CardDeploymentProjection.Project("demo", [Production], [R1, R2, fixedRelease],
+            [failed, unrelated]);
+        Assert.Equal(DeploymentStates.Failed,
+            Assert.Single(beforeFix.Where(item => item.CardKey == "WEB-2")).Environments[0].State);
+
+        var afterFix = CardDeploymentProjection.Project("demo", [Production], [R1, R2, fixedRelease],
+            [failed, unrelated, Run("d3", fixedRelease, Production, DeploymentStates.Succeeded, 5)]);
+        var badge = Assert.Single(afterFix.Where(item => item.CardKey == "WEB-2")).Environments[0];
+        Assert.Equal((DeploymentStates.Succeeded, fixedRelease.Id), (badge.State, badge.ReleaseId));
     }
 
     [Fact]

@@ -29,6 +29,10 @@ public sealed record RemoteQueueStarvationSnapshot
     public string? Signal { get; init; }
     public IReadOnlyList<ProviderLimitStatus> ProviderLimits { get; init; } = [];
     public IReadOnlyList<RunnerPickupPause> PickupPauses { get; init; } = [];
+    /// <summary>AGT-3948: coding hosts whose provider-auth binding is latched indeterminate.</summary>
+    public IReadOnlyList<ProviderAuthLatch> ProviderAuthLatches { get; init; } = [];
+    /// <summary>AGT-3948: what the operator does about <see cref="ProviderAuthLatches"/>; null without one.</summary>
+    public string? OperatorAction { get; init; }
 }
 
 public sealed record RunnerPickupPause(
@@ -147,6 +151,44 @@ public static class RemoteQueueStarvationPolicy
 }
 
 /// <summary>
+/// AGT-3948: names a latched provider-auth binding on the Ready cards its
+/// refusal blocks, so the watchdog reports the cause and the restart instead of
+/// a bare capability mismatch.
+/// </summary>
+public static class RemoteQueueStarvationLatchOverlay
+{
+    public static RemoteQueueStarvationSnapshot Apply(
+        RemoteQueueStarvationSnapshot snapshot, IReadOnlyList<ProviderAuthLatch> latches)
+    {
+        var coding = latches.Where(latch => latch.Role == "coding").ToArray();
+        if (coding.Length == 0) return snapshot;
+        // The refusing runner's own latch first; any latched host otherwise.
+        ProviderAuthLatch? Blocking(RemoteQueueStarvationItem item)
+            => item.BlockReasonCode is null && item.LastRejection is { } rejection
+                ? coding.Where(latch => rejection.Capability == latch.CapabilityKey
+                        || rejection.Reason.Contains($"'{latch.CapabilityKey}'", StringComparison.Ordinal))
+                    .OrderByDescending(latch => latch.RunnerId == rejection.RunnerId)
+                    .FirstOrDefault()
+                : null;
+        var items = snapshot.Items
+            .Select(item => Blocking(item) is { } latch
+                ? item with
+                {
+                    BlockReasonCode = ProviderAuthLatchPolicy.Cause,
+                    BlockReason = ProviderAuthLatchPolicy.Describe(latch),
+                }
+                : item)
+            .ToArray();
+        return snapshot with
+        {
+            Items = items,
+            ProviderAuthLatches = coding,
+            OperatorAction = ProviderAuthLatchPolicy.OperatorActions(coding),
+        };
+    }
+}
+
+/// <summary>
 /// Pure server projection that overlays provider and pickup admission state on
 /// the queue watchdog. Provider limits and breaker pauses are acute even when
 /// there is no Ready-card starvation row to display.
@@ -216,6 +258,7 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
     private readonly ILogger<RemoteQueueStarvationWatchdog> _logger;
     private readonly TaskRunnerService? _runner;
     private readonly TaskListGitProjectionCache? _dependencyGitProjection;
+    private readonly V1ReviewExecutorRegistry? _executors;
     private readonly object _gate = new();
     private RemoteQueueStarvationSnapshot _current = new() { ObservedAt = DateTime.UtcNow };
     private string? _warningSignature;
@@ -228,8 +271,10 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
         IConfiguration configuration,
         ILogger<RemoteQueueStarvationWatchdog> logger,
         TaskRunnerService? runner = null,
-        TaskListGitProjectionCache? dependencyGitProjection = null)
+        TaskListGitProjectionCache? dependencyGitProjection = null,
+        V1ReviewExecutorRegistry? executors = null)
     {
+        _executors = executors;
         _scanner = scanner;
         _settings = settings;
         _clients = clients;
@@ -265,6 +310,9 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
             _runner?.AllowsLocalCoding == true,
             SecurityProfiles.IsNetworked(_configuration),
             integration);
+        if (_executors is not null)
+            next = RemoteQueueStarvationLatchOverlay.Apply(next,
+                ProviderAuthLatchPolicy.Detect(_executors.ListCapabilitySnapshots(), now));
 
         lock (_gate)
         {
@@ -327,14 +375,15 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
             return;
 
         _logger.LogWarning(
-            "remote-ready-starvation waitingTasks={WaitingTaskCount} availableSlots={AvailableSlots} oldestEnteredLaneAt={OldestEnteredLaneAt} lastSuccessfulClaimAt={LastSuccessfulClaimAt} rejectedTasks={RejectedTaskCount} causes={Causes}",
+            "remote-ready-starvation waitingTasks={WaitingTaskCount} availableSlots={AvailableSlots} oldestEnteredLaneAt={OldestEnteredLaneAt} lastSuccessfulClaimAt={LastSuccessfulClaimAt} rejectedTasks={RejectedTaskCount} causes={Causes} operatorAction={OperatorAction}",
             next.WaitingTaskCount,
             next.AvailableSlots,
             next.OldestEnteredLaneAt,
             next.LastSuccessfulClaimAt,
             next.Items.Count(item => item.LastRejection is not null),
             string.Join("; ", next.Items.Where(item => item.BlockReason is not null)
-                .Select(item => $"{item.TaskKey}: {item.BlockReason}")));
+                .Select(item => $"{item.TaskKey}: {item.BlockReason}")),
+            next.OperatorAction ?? "none");
         _warningSignature = signature;
         _lastWarningAt = now;
     }

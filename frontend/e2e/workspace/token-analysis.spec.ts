@@ -57,6 +57,33 @@ test('the analysis page reads the real backend endpoint', async ({ page }) => {
   await expect(page.getByTestId('token-analysis-stats').or(page.getByTestId('token-analysis-empty')).first()).toBeVisible();
 });
 
+test('mixed reasoning level shows priced subtotal and an unpriced model keeps its diagnostic link', async ({ page }) => {
+  mkdirSync(RESULT_DIR, { recursive: true });
+  const analysis = fixtureResponse();
+  const unpriced = analysis.cards[0].slices[1];
+  unpriced.model = 'demo-unpriced-model';
+  unpriced.level = 'high';
+  unpriced.costUsd = 0;
+  unpriced.priced = false;
+  await pin(page, analysis);
+  await page.setViewportSize({ width: 1280, height: 2600 });
+  await open(page);
+
+  const high = page.getByTestId('token-analysis-distribution-level').getByRole('row', { name: /^high\b/ });
+  await expect(high.getByRole('cell').last()).toContainText('$0.600');
+  await expect(high.getByRole('link', { name: 'Incomplete price data; view unpriced models' }))
+    .toHaveAttribute('href', '#/workspace/settings/tokens');
+  const model = page.getByTestId('token-analysis-distribution-model')
+    .getByRole('row', { name: /^demo-unpriced-model\b/ });
+  await expect(model.getByRole('link', { name: 'no price data' }))
+    .toHaveAttribute('href', '#/workspace/settings/tokens');
+
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await shoot(page, 'token-analysis-view', `token-analysis-distribution-mixed-${theme}.png`);
+  }
+});
+
 test('operator filters cards, opens a drill-down, and the URL restores both', async ({ page }) => {
   mkdirSync(RESULT_DIR, { recursive: true });
   await pin(page);
@@ -67,6 +94,8 @@ test('operator filters cards, opens a drill-down, and the URL restores both', as
   await expect(page.getByTestId('token-analysis-table-total')).toHaveText('2.6K');
   await expect(page.getByTestId('token-analysis-time-chart').locator('[data-incomplete="true"]')).toHaveCount(1);
   await expect(page.getByTestId('token-analysis-quota-table')).toContainText('100K');
+  await expect(page.getByTestId('token-analysis-quota-table').locator('tbody td').nth(1))
+    .toContainText(/Mon 19 Oct, \d\d:00 .*UTC\)?/);
   for (const theme of ['dark', 'light'] as const) {
     await setTheme(page, theme);
     await shoot(page, 'token-analysis-view', `token-analysis-1280-${theme}.png`);
@@ -78,6 +107,8 @@ test('operator filters cards, opens a drill-down, and the URL restores both', as
 
   await page.getByTestId('token-analysis-row-AGT-1').getByRole('button').click();
   await expect(page.getByTestId('card-token-drilldown-events').locator('li')).toHaveCount(2);
+  await expect(page.getByTestId('card-token-drilldown-events').locator('.dd__when span').first())
+    .toContainText(/Mon 19 Oct, \d\d:00 .*UTC\)?/);
   await expect(page.getByTestId('card-token-drilldown-summary')).toContainText('3 rounds');
   await shoot(page, 'card-token-drilldown', 'token-analysis-drilldown-1280-light.png');
 

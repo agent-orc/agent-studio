@@ -31,6 +31,9 @@ public sealed record CompletionAdmissionPreview(
     CompletionContentFacts? Content = null,
     TaskIntegrationVerification? Verification = null)
 {
+    /// <summary>A written operator reason cannot bypass the batch gate or a required research report.</summary>
+    public bool OverrideAllowed => Stage != CompletionAdmissionStages.BatchGate && Content?.MissingReport is null;
+
     public static CompletionAdmissionPreview Admitted(string message, CompletionContentFacts? content,
         TaskIntegrationVerification? verification)
         => new(true, CompletionAdmissionStages.Admitted, message, content, verification);

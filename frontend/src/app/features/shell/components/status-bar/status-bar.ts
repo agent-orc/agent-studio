@@ -82,6 +82,7 @@ export class StatusBarComponent implements OnInit, OnDestroy {
     const v = this.usageView(cli);
     return nameWithVisibleText([
       v.name,
+      v.fable.reported ? `Fable ${v.fable.value}` : '',
       v.weekly.reported ? `WK ${v.weekly.value}` : '',
       v.session.reported ? `Session ${v.session.value}` : '',
       v.state === 'stale' ? this.age(cli.fetchedAt) : '',

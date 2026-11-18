@@ -25,7 +25,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 5 | `app-detail-header` | Legacy task identity and actions | Legacy focused view; hidden in Studio | Header row; original detail extraction `839f3c9801`. |
 | Task 6 | `app-archived-task-notice` | Archive state and restore | Archived task | Notice; `1bc7b5703`. |
 | Task 7 | `app-task-live-status` including `app-pickup-hold` | Current, hold reason and Way out, Next | A meaningful live status exists; hold only for a real hold | Status narrative; AGT-2315 (`029616f74`), hold `e942088b0`, AGT-2378 (`63246e17f6`) board-fresh overlay correction. |
-| Task 8 | `app-card-environment-badges` | Task environment facts | At least one relevant environment fact | Compact badges; `4be44bafd`. |
+| Task 8 | `app-card-environment-badges` | Task environment facts | The card belongs to a release or has verified integration evidence | Compact wrapping badges; `4be44bafd`, AGT-3900. |
 | Task 9 | `app-task-preview` | Explicit task preview | Preview exists | Notice; `53d8fd867`. |
 | Task 10 | `app-batch-detail` | Batch verification and panel action | Current task is a batch member in a relevant phase | Notice plus ghost button; `27424297a7`, restricted by AGT-3463. |
 | Task 11 | `app-older-brief-offer` | Older brief action | Older brief can be used | Action row; `1e21a6843`. |
@@ -61,8 +61,9 @@ menu. `studio-tab-actions` owns these controls (`ccc0039eb`, AGT-2819).
 The acceptance refusal (`app-acceptance-refusal`, AGT-3704) renders only for a
 Human Review Accept that is held by its integration verdict or was refused by
 the server. It shows the reason as a compact warning indicator and exactly one
-action: Retry integration for a failed integration, otherwise Accept with
-override, which asks for a written reason. It is omitted during the bounded
+action: Retry integration for a failed integration, Send a round when the
+admission answer forbids an override, otherwise Accept with override, which
+asks for a written reason. It is omitted during the bounded
 Git wait (the primary's skeleton is that progress) and when the attempt-gap
 notice owns the refusal. The reason truncates first at narrow widths; its
 tooltip keeps the full sentence. The primary action can be Run now

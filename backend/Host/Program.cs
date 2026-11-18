@@ -704,6 +704,7 @@ builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconcil
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.RunHostDirectory>();
 builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
     sp.GetRequiredService<IConfiguration>()["HostedData:LocalVolumeRoot"] is { Length: > 0 } root
         ? new LocalHostedVolumeBackupEngine(root, Path.Combine(
@@ -725,7 +726,7 @@ builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
-    AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+    AgentStudio.Projects.StoreOperationsTelemetryReader>();
 builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))

@@ -158,6 +158,42 @@ public sealed class RemoteReviewStatusInputTests : IDisposable
         Assert.StartsWith(RemoteReviewPlanBuilder.ReviewStatus.AgentReportHeading, status.Text);
     }
 
+    [Fact]
+    public void Read_redacts_credentials_in_the_agent_report_and_plan()
+    {
+        var credential = "ghp_" + new string('q', 24);
+        File.WriteAllText(Path.Combine(_folder, "results", "status.md"), "Report credential: " + credential);
+
+        var status = RemoteReviewPlanBuilder.ReviewStatus.Read(_folder);
+        var fit = Assert.Single(BuildPlan(TaskModes.Coding).Commands, command => command.Aspect == "requirement-fit");
+
+        Assert.True(status.CarriesAgentReport);
+        Assert.Contains("[REDACTED_CREDENTIAL]", status.Text);
+        Assert.DoesNotContain(credential, status.Text);
+        Assert.Contains("[REDACTED_CREDENTIAL]", fit.Prompt);
+        Assert.DoesNotContain(credential, fit.Prompt);
+    }
+
+    [Fact]
+    public void Read_withholds_a_linked_agent_report_from_the_plan()
+    {
+        const string hostContent = "Host file content must stay outside the review plan.";
+        var hostFile = Path.Combine(_folder, "host-report.md");
+        File.WriteAllText(hostFile, hostContent);
+        File.CreateSymbolicLink(Path.Combine(_folder, "results", "status.md"), hostFile);
+        File.WriteAllText(Path.Combine(_folder, "status.md"), "# Status\nGenerated summary.");
+
+        var status = RemoteReviewPlanBuilder.ReviewStatus.Read(_folder);
+        var fit = Assert.Single(BuildPlan(TaskModes.Coding).Commands, command => command.Aspect == "requirement-fit");
+
+        Assert.False(status.CarriesAgentReport);
+        Assert.Contains("Generated summary.", status.Text);
+        Assert.Contains("Agent report withheld", status.Text);
+        Assert.DoesNotContain(hostContent, status.Text);
+        Assert.Contains("Agent report withheld", fit.Prompt);
+        Assert.DoesNotContain(hostContent, fit.Prompt);
+    }
+
     private ReviewPlanDto BuildPlan(string mode)
     {
         var config = new ConfigurationBuilder().Build();

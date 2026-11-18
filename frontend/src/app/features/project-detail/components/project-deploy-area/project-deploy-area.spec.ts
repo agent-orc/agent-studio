@@ -5,6 +5,7 @@ import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/t
 import { BehaviorSubject, Subject, map, of, type Observable } from 'rxjs';
 import { vi } from 'vitest';
 import { ProjectDeployAreaComponent } from './project-deploy-area';
+import { DEPLOY_LIVE_REFRESH_MS } from '../../state/deploy-area-reads';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
 import { ServerCheckoutStore } from '../../../server-checkout';
 import { urlProject } from '../../../server-checkout/testing/server-checkout.fixtures';
@@ -37,6 +38,8 @@ class FakeDeployData {
   actionResult = new Subject<unknown>();
   controlledReads = false;
   controlledReleases = false;
+  controlledEnvironments = false;
+  readonly environmentReads: Subject<DeployPanel<unknown>>[] = [];
   readonly releasePageReads: Subject<DeployPanel<unknown>>[] = [];
   readonly containingReads: Subject<DeployPanel<unknown>>[] = [];
   readonly statusReads: Subject<DeployPanel<unknown>>[] = [];
@@ -45,7 +48,13 @@ class FakeDeployData {
   readonly artifactLookups: { project: string; artifact: string; notAfterUtc: string | null; read: Subject<DeployPanel<unknown>> }[] = [];
   readonly runsById = new Map<string, unknown>();
 
-  environments(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`environments:${project}`); return this.environmentsPanel; }
+  environments(project: string): Observable<DeployPanel<unknown>> {
+    this.requests.push(`environments:${project}`);
+    if (!this.controlledEnvironments) return this.environmentsPanel;
+    const read = new Subject<DeployPanel<unknown>>();
+    this.environmentReads.push(read);
+    return read;
+  }
   statuses(): Observable<DeployPanel<unknown>> {
     this.requests.push('status');
     if (!this.controlledReads) return this.statusPanel;
@@ -189,7 +198,7 @@ describe('ProjectDeployAreaComponent', () => {
     await settle();
   });
 
-  afterEach(() => { host().remove(); vi.unstubAllGlobals(); });
+  afterEach(() => { host().remove(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
   it('shows a refused release with its reason and next step until a release clears it (F2)', async () => {
     data.serveEverything();
@@ -409,9 +418,81 @@ describe('ProjectDeployAreaComponent', () => {
     expect((byTestId('deploy-run-reject') as HTMLButtonElement).disabled).toBe(true);
     data.actionResult.next(deployDeploymentsFixture()[1]);
     await settle();
-    expect(data.requests).toEqual(['status', 'deployments:0:all', 'deployments:0:all', 'log:run-c-production']);
+    expect(data.requests).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all', 'log:run-c-production']);
     // The table stays while the reload is in flight.
     expect(byTestId('deploy-run-drawer')).not.toBeNull();
+  });
+
+  it('re-reads environments after an approval, so the card drops the closed promotion without a reload (F17)', async () => {
+    data.serveEverything();
+    await settle();
+    const productionApproval = () => host().querySelector('[data-testid="deploy-environment-production"] [data-testid="deploy-environment-approval"]');
+    expect(productionApproval()).not.toBeNull();
+    await click('deploy-environment-review-approval');
+    await click('deploy-run-approve');
+    expect(window.confirm).toHaveBeenCalledWith('Approve deploying release 2026.10.19.2 (1 card) to Production?');
+
+    // The server queued the run and closed the AGT-3176 promotion.
+    const runs = deployDeploymentsFixture();
+    runs[1].state = 'queued';
+    const statuses = deployStatusFixture();
+    statuses[1].currentDeployment = runs[1];
+    data.deploymentsPanel.next({ status: 'ready', value: runs });
+    data.statusPanel.next({ status: 'ready', value: statuses });
+    data.controlledEnvironments = true;
+    data.actionResult.next(runs[1]);
+    await settle();
+    // Run status alone still leaves the stale promotion on the card.
+    expect(productionApproval()).not.toBeNull();
+    expect(data.environmentReads).toHaveLength(1);
+    const environments = deployEnvironmentsFixture();
+    environments.promotions[1].status = 'approved';
+    data.environmentReads[0].next({ status: 'ready', value: environments });
+    await settle();
+    expect(productionApproval()).toBeNull();
+    expect(text('deploy-run-drawer')).toContain('Queued');
+  });
+
+  it('follows a queued run until the host reports, then stops reading (F17)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    data.serveEverything();
+    await settle();
+    // Nothing in flight: no reads without a user action.
+    data.requests.length = 0;
+    vi.advanceTimersByTime(DEPLOY_LIVE_REFRESH_MS * 3);
+    expect(data.requests).toEqual([]);
+
+    const runs = deployDeploymentsFixture();
+    runs[1].state = 'queued';
+    const statuses = deployStatusFixture();
+    statuses[1].currentDeployment = runs[1];
+    data.deploymentsPanel.next({ status: 'ready', value: runs });
+    data.statusPanel.next({ status: 'ready', value: statuses });
+    await settle();
+    expect(text('deploy-environment-production')).toContain('2026.10.18.1');
+    data.requests.length = 0;
+    vi.advanceTimersByTime(DEPLOY_LIVE_REFRESH_MS);
+    expect(data.requests).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
+
+    // The host reports healthy: the next read shows the new release on the card and in history.
+    runs[1].state = 'succeeded';
+    runs[1].finishedAtUtc = '2026-10-19T11:59:00Z';
+    statuses[1] = { ...statuses[1], currentRelease: RELEASE_3, currentDeployment: runs[1], newerRelease: null, cardsSinceLastDeploy: [] };
+    const environments = deployEnvironmentsFixture();
+    environments.environments[1].deployedArtifact = environments.environments[0].deployedArtifact;
+    environments.environments[1].history.unshift({ at: '2026-10-19T11:59:00Z', status: 'healthy',
+      artifact: environments.environments[0].deployedArtifact!, previousArtifact: null, evidence: 'health-ok' });
+    environments.promotions[1].status = 'deployed';
+    data.environmentsPanel.next({ status: 'ready', value: environments });
+    data.statusPanel.next({ status: 'ready', value: statuses });
+    data.deploymentsPanel.next({ status: 'ready', value: runs });
+    await settle();
+    expect(text('deploy-environment-production')).toContain('2026.10.19.2');
+    expect(text('deploy-environment-production')).not.toContain('Nothing deployed yet');
+    expect(host().querySelector('[data-testid="deploy-environment-production"] [data-testid="deploy-environment-approval"]')).toBeNull();
+    data.requests.length = 0;
+    vi.advanceTimersByTime(DEPLOY_LIVE_REFRESH_MS * 3);
+    expect(data.requests).toEqual([]);
   });
 
   it('shows the server refusal of an action in the drawer', async () => {
@@ -424,7 +505,7 @@ describe('ProjectDeployAreaComponent', () => {
 
     expect(text('deploy-run-action-error')).toBe('Approval requires the Owner or Maintainer role.');
     expect((byTestId('deploy-run-approve') as HTMLButtonElement).disabled).toBe(false);
-    expect(data.requests.slice(-3)).toEqual(['status', 'deployments:0:all', 'deployments:0:all']);
+    expect(data.requests.slice(-4)).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
   });
 
   it('confirms abort of a running run and refreshes after a refusal', async () => {
@@ -437,13 +518,13 @@ describe('ProjectDeployAreaComponent', () => {
     await click('deploy-run-open-run-c-production');
     await click('deploy-run-cancel');
 
-    expect(window.confirm).toHaveBeenCalledWith('Abort Production run run-c-production?');
+    expect(window.confirm).toHaveBeenCalledWith('Abort deploying release 2026.10.19.2 (1 card) to Production?');
     expect(data.actions).toEqual(['cancel:run-c-production']);
     data.requests.length = 0;
     data.actionResult.error(new HttpErrorResponse({ status: 403, error: { error: 'Only an approver may abort Production.' } }));
     await settle();
     expect(text('deploy-run-action-error')).toBe('Only an approver may abort Production.');
-    expect(data.requests).toEqual(['status', 'deployments:0:all', 'deployments:0:all']);
+    expect(data.requests).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
   });
 
   it('refreshes status and runs after an already-claimed cancellation conflict', async () => {
@@ -456,7 +537,7 @@ describe('ProjectDeployAreaComponent', () => {
     await settle();
 
     expect(text('deploy-run-action-error')).toBe('The run is already claimed.');
-    expect(data.requests).toEqual(['status', 'deployments:0:all', 'deployments:0:all']);
+    expect(data.requests).toEqual(['environments:Website', 'status', 'deployments:0:all', 'deployments:0:all']);
   });
 
   it('keeps an approval in flight when the drawer closes, switches, and Refresh is pressed', async () => {
@@ -639,7 +720,7 @@ describe('ProjectDeployAreaComponent', () => {
     expect(text('deploy-run-drawer')).toContain('Production');
     expect(data.requests).not.toContain('deployment:run-c-production');
     await click('deploy-run-approve');
-    expect(window.confirm).toHaveBeenCalledWith('Approve Production run run-c-production?');
+    expect(window.confirm).toHaveBeenCalledWith('Approve deploying release 2026.10.19.2 (1 card) to Production?');
     expect(data.actions).toEqual(['approve:run-c-production']);
   });
 
@@ -665,7 +746,7 @@ describe('ProjectDeployAreaComponent', () => {
       user: { id: 'usr_1', username: 'local.owner', displayName: 'local.owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
     });
     await settle();
-    expect(window.confirm).toHaveBeenCalledWith('Approve Production run run-c-production?');
+    expect(window.confirm).toHaveBeenCalledWith('Approve deploying release 2026.10.19.2 (1 card) to Production?');
     expect(data.actions).toEqual(['approve:run-c-production']);
     expect(document.querySelector('[data-testid="local-owner-dialog"]')).toBeNull();
   });

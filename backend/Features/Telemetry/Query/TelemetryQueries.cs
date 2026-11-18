@@ -53,6 +53,11 @@ public sealed record LogRecordResponse(DateTimeOffset Time, string TimeUnixNano,
 
 public sealed record LogPageResponse(IReadOnlyList<LogRecordResponse> Records, string? NextCursor);
 
+public sealed record TraceSummaryResponse(string TraceId, DateTimeOffset StartedAt, double DurationMs,
+    bool Failed, string Name, int SpanCount);
+public sealed record SpanResponse(string SpanId, string? ParentSpanId, string Name, string Kind,
+    DateTimeOffset StartedAt, double DurationMs, bool Failed, IReadOnlyDictionary<string, string> Attributes);
+
 /// <summary>
 /// Boundary parsing of the query API. Times are ISO 8601; the range defaults
 /// to the last hour. Attribute filters are <c>attr.&lt;key&gt;=&lt;value&gt;</c>

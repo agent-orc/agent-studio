@@ -74,6 +74,17 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(events).toEqual({ runs: ['run-c-production'], tools: 0 });
   });
 
+  it('names the run host that serves the environment and whether it is reachable', async () => {
+    await render({ ...fullCards()[0], host: { id: 'runner_1', name: 'run-host-1', state: 'reachable', lastSeenAt: '2026-10-19T11:59:00Z' } });
+    expect(text('deploy-environment-host')).toContain('run-host-1');
+    expect(text('deploy-environment-host')).toContain('Reachable');
+    expect(tone('deploy-environment-host-state')).toBe('success');
+
+    await render({ ...fullCards()[0], host: { id: 'web-vm', name: 'web-vm', state: 'not-enrolled', lastSeenAt: null } });
+    expect(text('deploy-environment-host')).toContain('Not enrolled');
+    expect(tone('deploy-environment-host-state')).toBe('neutral');
+  });
+
   it('opens the last run by its deployment id', async () => {
     await render(fullCards()[0]);
     const events = emitted();
@@ -173,7 +184,7 @@ describe('DeployEnvironmentCardComponent', () => {
       await render(fullCards()[0]);
       const terms = Array.from(host().querySelectorAll('dt')).map(dt => dt.textContent?.trim());
 
-      expect(terms).toEqual(['Release', 'Deployed', 'Cards', 'Last run']);
+      expect(terms).toEqual(['Release', 'Deployed', 'Cards', 'Last run', 'Run host']);
       expect(host().querySelector('.env-card__health')?.textContent?.trim()).toBe('Health: Healthy');
     });
   });
