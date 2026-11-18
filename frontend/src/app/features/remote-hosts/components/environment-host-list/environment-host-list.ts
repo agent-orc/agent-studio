@@ -43,6 +43,14 @@ export class EnvironmentHostListComponent {
       .map(hold => `${hold.key} · ${heldCauseLabel(hold.cause)}${hold.detail ? ': ' + hold.detail : ''}`)
       .join('\n');
   }
+  roleLabel(role: RemoteHost): string {
+    switch (role.serviceRole) {
+      case 'coding': return 'Coding';
+      case 'review': return 'Review';
+      case 'deploy': return 'Run host';
+      default: return 'Runner';
+    }
+  }
   hasGroup(name: string): boolean { return this.groups().some(group => group.name === name); }
   notEnrolled(group: PhysicalHostGroup): boolean { return groupNotEnrolled(group, this.now()); }
   notClaiming(group: PhysicalHostGroup): boolean {

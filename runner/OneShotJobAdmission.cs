@@ -109,6 +109,9 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        var effortEnvironment = new Dictionary<string, string>();
+        CarWorkerExecution.ApplyThinkingEnvironment(effortEnvironment, request.Cli, request.Model, request.ThinkingLevel);
+        foreach (var pair in effortEnvironment) start.Environment[pair.Key] = pair.Value;
         WorkerEdgeCredentialBoundary.RemoveFrom(start.Environment);
         if (personaIsolation)
             WorkerEdgeCredentialBoundary.RemovePersonaDeploymentCredentials(start.Environment);

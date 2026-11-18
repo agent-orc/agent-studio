@@ -4,6 +4,8 @@ import { ChatComponent } from 'coding-agent-chat/composer';
 import type { ChatMessage, ChatSubmitEvent } from 'coding-agent-chat/core';
 import { Subscription } from 'rxjs';
 import { ProviderAuthStatusService } from '../../services/provider-auth-status.service';
+import { RunHostEnrollmentComponent } from '../run-host-enrollment/run-host-enrollment';
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 
 export interface ProvisionedHostDraft {
   name: string;
@@ -28,7 +30,7 @@ const STEPS: readonly WizardStep[] = [
 @Component({
   selector: 'app-add-host-wizard',
   standalone: true,
-  imports: [FormsModule, ChatComponent],
+  imports: [FormsModule, ChatComponent, RunHostEnrollmentComponent, SegmentedControlComponent],
   templateUrl: './add-host-wizard.html',
   styleUrl: './add-host-wizard.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -36,6 +38,13 @@ const STEPS: readonly WizardStep[] = [
 export class AddHostWizardComponent implements OnDestroy {
   readonly cancelled = output<void>();
   readonly completed = output<ProvisionedHostDraft>();
+  /** F4: a run host code was issued; the host appears after its first claim. */
+  readonly runHostEnrolled = output<void>();
+  readonly kind = signal<'execution' | 'deploy'>('execution');
+  readonly kindOptions = [
+    { value: 'execution', label: 'Execution host (coding and review)', testid: 'add-host-kind-execution' },
+    { value: 'deploy', label: 'Run host (deploy)', testid: 'add-host-kind-deploy' },
+  ] as const;
   readonly step = signal(0);
   readonly name = signal('agent-runner-02');
   readonly address = signal('ssh://runner@host.example.com');

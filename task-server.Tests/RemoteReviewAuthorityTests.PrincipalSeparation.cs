@@ -18,7 +18,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Review_verdict_from_the_delivery_coding_principal_is_refused()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, codingPrincipal: "principal-shared");
@@ -42,7 +42,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Review_verdict_from_a_principal_that_is_not_a_runner_is_refused()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, codingPrincipal: "principal-coder");
@@ -60,7 +60,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Review_claim_skips_a_delivery_the_claiming_principal_coded()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, codingPrincipal: "principal-shared");

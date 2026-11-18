@@ -95,11 +95,11 @@ public static class AdHocClaudeInvoker
         OrchestratorTokenUsage? usage,
         long durationMs,
         bool ok,
+        string cliType,
         string? project = null,
         string? jobId = null,
         string? thinkingLevel = null,
-        string? participantId = null,
-        string cliType = "claude")
+        string? participantId = null)
     {
         if (recorder == null) return;
         recorder.Record(new AdHocUsageRecord
@@ -107,7 +107,7 @@ public static class AdHocClaudeInvoker
             Ts = DateTime.UtcNow,
             Source = source,
             Model = string.IsNullOrWhiteSpace(usage?.Model) ? model : usage!.Model!,
-            CliType = usage?.CliType ?? cliType,
+            CliType = cliType,
             ThinkingLevel = usage?.ThinkingLevel ?? thinkingLevel,
             ParticipantId = participantId,
             InputTokens = usage?.InputTokens ?? 0,

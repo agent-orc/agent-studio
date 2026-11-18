@@ -3,6 +3,12 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+Review role release drift becomes operator attention as soon as that role has
+claimed a review. The attention fact names its claimed and graded cards and
+compares the role's commit and image with Stable. An idle role still uses the
+host release watchdog's grace period. A fresh heartbeat reporting the expected
+commit and image clears the attention fact.
+
 ## Persona occurrences, PT-4
 
 PT-D4, PT-D5 and PT-D8 use the Dossier's recommended option B. The Watcher
@@ -796,6 +802,10 @@ unreported claim expires with its lease and is queued again.
   this cache policy and log `provider-auth recovered provider=... after=...`
   once per recovery. A live same-provider run is
   counter-evidence and makes the conflicting state claimable but degraded.
+- The management re-probe API accepts only a key registered or held by the
+  runner role. It keeps at most 32 distinct keys per runner, rejects another
+  key with HTTP 429, and discards queued keys when the runner is revoked or a
+  new daemon instance registers the same identity.
 - `backend/Features/Management/RunnerLinks/LinkSupervisor.cs`: Task Server-owned
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,
   remote listener cleanup, bounded retry ladder, silent child process and

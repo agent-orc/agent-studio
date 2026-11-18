@@ -73,6 +73,16 @@ describe('usage chip number formatting', () => {
 });
 
 describe('CLI chip view', () => {
+  it('shows reported Fable usage separately without borrowing it as all-model weekly usage', () => {
+    const window = { ...cli().windows[0], id: 'claude/fable', label: 'Weekly (Fable)', usedPct: 84 };
+    const view = buildCliChipView('claude', cli({ cliId: 'claude', windows: [window, cli().windows[0]] }), ZONE, NOW);
+    expect(view.fable).toMatchObject({ reported: true, value: '84%' });
+    expect(view.weekly.value).toBe('15%');
+    expect(view.ariaLabel).toContain('Fable weekly 84 percent used');
+    const onlyFable = buildCliChipView('claude', cli({ windows: [window] }), ZONE, NOW);
+    expect(onlyFable.weekly.reported).toBe(false);
+    expect(buildCliChipView('codex', cli(), ZONE, NOW).fable.reported).toBe(false);
+  });
   it('names both windows with expanded wording and ends with the action', () => {
     const view = buildCliChipView('codex', cli(), ZONE, NOW);
     expect(view.state).toBe('normal');

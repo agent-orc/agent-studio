@@ -125,9 +125,23 @@ public sealed class ProjectDefinitionIssueTextTests : IDisposable
 
         var followUp = CompletionGate.BuildFollowUp(decision.Findings, source: decision.Source);
         Assert.Contains("project definition check", followUp);
-        Assert.Contains("commands.prepare is required", followUp);
+        Assert.Contains("[prepare-path-invalid]", followUp);
         Assert.Contains("- [ ] " + finding, followUp);
         Assert.DoesNotContain("unfinished work", followUp);
+    }
+
+    [Fact]
+    public void ReviewFollowUp_SuiteIssue_QuotesCodeWithoutPrepareAdvice()
+    {
+        var finding = ProjectDefinitionIssueText.Describe(
+            new ProjectDefinitionIssue("testSuites[0].id", "suite-id-invalid",
+                "Test suite ids are required and unique.", 14));
+
+        var followUp = CompletionGate.BuildFollowUp([finding],
+            source: CompletionGate.CompletionGateSource.ProjectDefinition);
+
+        Assert.Contains("testSuites[0].id (line 14) [suite-id-invalid]", followUp);
+        Assert.DoesNotContain("commands.prepare is required", followUp);
     }
 
     [Fact]

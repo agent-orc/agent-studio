@@ -90,6 +90,35 @@ describe('AccessRunnersComponent', () => {
     expect(element.querySelector('[data-testid="access-enrollment-code"]')?.textContent).toContain('expires 30 days after enrollment');
   });
 
+  it('issues a run host code bound to the chosen projects and prints the host commands with the id to use', async () => {
+    const fixture = TestBed.createComponent(AccessRunnersComponent);
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+    const kind = element.querySelector('[data-testid="access-enrollment-kind"]') as HTMLSelectElement;
+    expect(Array.from(kind.options).map(option => option.textContent?.trim())).toContain('Run host (deploy)');
+    kind.value = 'deploy';
+    kind.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="access-enrollment-projects"] legend')?.textContent).toContain('may deploy');
+    const name = element.querySelector('[data-testid="access-enrollment-name"]') as HTMLInputElement;
+    name.value = 'run-host-1';
+    name.dispatchEvent(new Event('input'));
+    (element.querySelector('[data-testid="access-enrollment-project-PROJ-002"]') as HTMLInputElement).click();
+    fixture.detectChanges();
+    (element.querySelector('[data-testid="access-enrollment-create"]') as HTMLButtonElement).click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(access.createEnrollment).toHaveBeenCalledWith('run-host-1', 'deploy', ['PROJ-002']);
+    const command = element.querySelector('[data-testid="access-run-host-command"]')?.textContent ?? '';
+    expect(command).toContain(`agent-host --enroll ${location.origin} ${ENROLLMENT_CODE}`);
+    expect(command).toContain('RUNNER_HOSTNAME=%s');
+    expect(command).toContain('"$RUNNER_ID"');
+    expect(command).toContain('agent-runner-deploy.service');
+    (Array.from(element.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Done') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="access-run-host-command"]')).toBeNull();
+  });
+
   it('shows bound projects, a pre-binding notice, and the credential end of each runner', () => {
     access.runners.set([
       { id: 'runner_bound', name: 'web-host', createdAt: '2026-10-19T08:00:00Z', projects: ['PROJ-001'],

@@ -70,6 +70,19 @@ public sealed record AutoReviewQueueSnapshot
 
     public IReadOnlyList<string>? UnclaimableMissingCapabilities { get; init; }
 
+    /// <summary>
+    /// AGT-3948: <see cref="ProviderAuthLatchPolicy.Cause"/> when review hosts hold a
+    /// latched provider-auth binding the pending work needs; otherwise null.
+    /// Names the cause behind a bare <c>unclaimable-plan-requirements</c>.
+    /// </summary>
+    public string? StagnationCause { get; init; }
+
+    /// <summary>AGT-3948: what the operator does about <see cref="StagnationCause"/>.</summary>
+    public string? OperatorAction { get; init; }
+
+    /// <summary>AGT-3948: review hosts whose provider-auth binding is latched indeterminate.</summary>
+    public IReadOnlyList<ProviderAuthLatch> ProviderAuthLatches { get; init; } = [];
+
     /// <summary>Completed review passes per minute over the trailing <see cref="ThroughputWindowMinutes"/> window.</summary>
     public double DrainRatePerMinute { get; init; }
 
@@ -108,6 +121,7 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
     private readonly AutoReviewStatusSnapshot _status;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AutoReviewQueueStagnationWatchdog> _logger;
+    private readonly V1ReviewExecutorRegistry? _executors;
     private readonly object _gate = new();
 
     private AutoReviewQueueSnapshot _current = new() { ObservedAt = DateTime.UtcNow };
@@ -122,8 +136,10 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
         ReviewClaimUnclaimableLog unclaimable,
         AutoReviewStatusSnapshot status,
         IConfiguration configuration,
-        ILogger<AutoReviewQueueStagnationWatchdog> logger)
+        ILogger<AutoReviewQueueStagnationWatchdog> logger,
+        V1ReviewExecutorRegistry? executors = null)
     {
+        _executors = executors;
         _queue = queue;
         _authority = authority;
         _unclaimable = unclaimable;
@@ -165,6 +181,13 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
             ?? DefaultThroughputWindowMinutes,
             1, 24 * 60);
         var throughput = _queue.Telemetry.Summarize(now, TimeSpan.FromMinutes(throughputWindowMinutes));
+        var latches = pendingReviewAttempts == 0 || _executors is null
+            ? []
+            : ProviderAuthLatchPolicy.Detect(_executors.ListCapabilitySnapshots(), now)
+                .Where(latch => latch.Role == "review"
+                    && (unclaimable?.MissingCapabilities is not { Count: > 0 } missing
+                        || missing.Contains(latch.CapabilityKey, StringComparer.Ordinal)))
+                .ToArray();
 
         lock (_gate)
         {
@@ -214,6 +237,9 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
                 OldestPendingAttemptCreatedAt = claimActivity.OldestPendingCreatedAt,
                 UnclaimableReason = unclaimable?.Reason,
                 UnclaimableMissingCapabilities = unclaimable?.MissingCapabilities,
+                StagnationCause = latches.Length > 0 ? ProviderAuthLatchPolicy.Cause : null,
+                OperatorAction = ProviderAuthLatchPolicy.OperatorActions(latches),
+                ProviderAuthLatches = latches,
                 DrainRatePerMinute = throughput.DrainRatePerMinute,
                 MedianReviewDurationMs = throughput.MedianDurationMs,
                 ThroughputWindowMinutes = throughput.WindowMinutes,
@@ -280,14 +306,17 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
         }
 
         var repeatDue = _lastWarningAt is null || now - _lastWarningAt >= TimeSpan.FromMinutes(30);
-        if (_warningActive && !repeatDue)
+        // AGT-3948: a newly named cause is news even inside the repeat window.
+        if (_warningActive && !repeatDue
+            && string.Equals(previous.StagnationCause, next.StagnationCause, StringComparison.Ordinal))
             return;
 
         _logger.LogWarning(
             "auto-review-queue-stagnant queueDepth={QueueDepth} activeJobs={ActiveJobs} stagnantSince={StagnantSince} "
             + "thresholdMinutes={ThresholdMinutes} reviewClaimStagnant={ReviewClaimStagnant} "
             + "oldestPendingAttempt={OldestPendingAttemptId} oldestPendingTask={OldestPendingTaskKey} "
-            + "lastReviewClaimAt={LastReviewClaimAt} unclaimableReason={UnclaimableReason} missing={MissingCapabilities}",
+            + "lastReviewClaimAt={LastReviewClaimAt} unclaimableReason={UnclaimableReason} missing={MissingCapabilities} "
+            + "cause={StagnationCause} operatorAction={OperatorAction} latches={ProviderAuthLatches}",
             next.QueueDepth,
             next.ActiveJobs,
             next.StagnantSince,
@@ -297,7 +326,10 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
             next.OldestPendingTaskKey ?? "none",
             next.LastReviewClaimAt,
             next.UnclaimableReason ?? "none",
-            string.Join(",", next.UnclaimableMissingCapabilities ?? []));
+            string.Join(",", next.UnclaimableMissingCapabilities ?? []),
+            next.StagnationCause ?? next.UnclaimableReason ?? "none",
+            next.OperatorAction ?? "none",
+            string.Join(" | ", next.ProviderAuthLatches.Select(ProviderAuthLatchPolicy.Describe)));
         _warningActive = true;
         _lastWarningAt = now;
     }

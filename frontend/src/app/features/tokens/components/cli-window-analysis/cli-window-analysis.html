@@ -29,7 +29,7 @@
   <section class="cwa__panel" data-testid="subscription-week">
     <div class="cwa__section-head"><div><h3>Current provider week</h3><p>Subscription quota and captured receipts in the provider's exact weekly window.</p></div></div>
     @if (subscriptionWeek(); as week) {
-      <p data-testid="subscription-week-period">{{ formatUtc(week.startUtc) }} to {{ formatUtc(week.resetAtUtc) }}</p>
+      <p data-testid="subscription-week-period">Provider week: start {{ formatUtc(week.startUtc) }}; reset {{ formatUtc(week.resetAtUtc) }}.</p>
       <div class="cwa__levels">
         <article><span>Provider used</span><strong data-testid="subscription-week-pct">{{ week.usedPct === null ? 'Unknown' : week.usedPct + '%' }}</strong><small>Observed {{ formatUtc(week.observedAt) }}</small></article>
         <article><span>Captured tokens</span><strong data-testid="subscription-week-tokens">{{ formatTokens(week.totalTokens) }}</strong><small>{{ week.receiptCount }} receipts, {{ week.receipts.length }} usage rows in this window; includes ledger and ad hoc measurements</small></article>

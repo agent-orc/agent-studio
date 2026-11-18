@@ -22,6 +22,14 @@ describe('acceptancePrimaryReason (F12)', () => {
     expect(acceptancePrimaryReason(null)).toBeNull();
   });
 
+  it('names a round instead of an override for a batch-gate refusal', () => {
+    const item = readinessItem('a', 'integrated-unverified', {
+      stage: 'batch-gate', overrideAllowed: false,
+    });
+    expect(acceptancePrimaryReason(item)?.nextStep)
+      .toBe('Send a round to close the batch gate evidence gap, or wait for a gate to pass.');
+  });
+
   it('reads an unknown class from a newer backend as a refusal', () => {
     expect(readinessNextStep({ readiness: 'later-class' as never, aspect: null }))
       .toBe('Resolve the refusal, or accept with an override.');

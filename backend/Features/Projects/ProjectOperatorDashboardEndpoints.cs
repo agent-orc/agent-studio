@@ -138,9 +138,12 @@ public static class ProjectOperatorDashboardEndpoints
             catch (HttpRequestException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
+        // F4: each environment names its run host and whether that host is reachable.
         app.MapGet("/api/projects/{projectName}/environments", (string projectName,
-            ProjectEnvironmentService environments) => environments.Read(projectName) is { } value
-                ? Results.Ok(value) : Results.NotFound());
+            ProjectEnvironmentService environments, RunHostDirectory runHosts) => environments.Read(projectName) is { } value
+                ? Results.Ok(runHosts.Attach(value)) : Results.NotFound());
+
+        app.MapGet("/api/deploy/run-hosts", (RunHostDirectory runHosts) => Results.Ok(runHosts.List()));
 
         app.MapGet("/api/projects/{projectName}/previews/{cardKey}/screenshot", (
             HttpContext context, string projectName, string cardKey,
@@ -185,7 +188,7 @@ public static class ProjectOperatorDashboardEndpoints
             return DeployEndpoints.QuotaRefusable(() => deploy.RollbackEnvironment(projectName, environmentId, actor) switch
             {
                 { Kind: DeployOutcomeKind.Ok } => Results.Accepted(),
-                { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "No previous artifact is available." }),
+                { Kind: DeployOutcomeKind.NotFound } refused => Results.NotFound(new { error = refused.Error }),
                 { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                     statusCode: StatusCodes.Status403Forbidden),
                 var refused => Results.Conflict(new { error = refused.Error }),
@@ -222,13 +225,17 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/deploy/jobs/claim", async (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, DeployService deploy, RunbookService runbooks,
-            ProjectSecretBindings bindings, AccessSecurityStore security,
-            IConfiguration configuration, CancellationToken ct) =>
+            ProjectSecretBindings bindings, AccessSecurityStore security, RunHostDirectory runHosts,
+            ProjectRegistry projects, IConfiguration configuration, CancellationToken ct) =>
         {
             // F6: the credential must belong to the claimed host on every profile, before
             // a lease exists, so a mismatch cannot surface only at secret resolution.
             if (DeployClaimRefusal(context, request.HostId, configuration, security) is { } refused) return refused;
-            var job = environments.Claim(request.HostId, requireVerifiedRelease: true);
+            // F4: a run host deploys only the projects its credential is bound to.
+            var job = environments.Claim(request.HostId, requireVerifiedRelease: true,
+                project => RunnerProjectBinding.Allows(context, project, projects));
+            runHosts.RecordContact(RunnerCredential(context, configuration, security),
+                job is null ? DeployHostContact.Poll : DeployHostContact.Claim);
             return await CompleteClaimAsync(job, project =>
             {
                 deploy.SyncAfterHostCall(project);
@@ -236,11 +243,12 @@ public static class ProjectOperatorDashboardEndpoints
             }, bindings, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
-        app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (string project, string jobId,
+        app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (HttpContext context, string project, string jobId,
             DeployReportRequest request, ProjectEnvironmentService environments, DeployService deploy,
-            RunbookService runbooks) =>
+            RunbookService runbooks, AccessSecurityStore security, RunHostDirectory runHosts, IConfiguration configuration) =>
         {
             if (!environments.Report(project, jobId, request, requireVerifiedRelease: true)) return Results.Conflict();
+            runHosts.RecordContact(RunnerCredential(context, configuration, security), DeployHostContact.Report);
             deploy.SyncAfterHostCall(project);
             runbooks.SyncAfterHostCall(project);
             return Results.Ok();
@@ -289,9 +297,10 @@ public static class ProjectOperatorDashboardEndpoints
         // AGT-3877: managed database credentials exist before the host may resolve them.
         app.MapGet("/api/deploy/run-targets/{hostId}/desired-state", async (HttpContext context, string hostId,
             ProjectEnvironmentService environments, ManagedDatabaseCredentials credentials,
-            IConfiguration configuration, CancellationToken ct) =>
+            AccessSecurityStore security, RunHostDirectory runHosts, IConfiguration configuration, CancellationToken ct) =>
         {
             if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
+            RecordRunTargetContact(context, hostId, configuration, security, runHosts, DeployHostContact.Poll);
             await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.EnsureForHostAsync(hostId, ct));
             return Results.Ok(environments.DesiredState(hostId));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
@@ -299,9 +308,10 @@ public static class ProjectOperatorDashboardEndpoints
         app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", async (HttpContext context, string hostId,
             RunTargetObservedReport report, ProjectEnvironmentService environments,
             ManagedDatabaseCredentials credentials, ManagedDatabaseMetrics metrics, IConfiguration configuration,
-            CancellationToken ct) =>
+            AccessSecurityStore security, RunHostDirectory runHosts, CancellationToken ct) =>
         {
             if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
+            RecordRunTargetContact(context, hostId, configuration, security, runHosts, DeployHostContact.Report);
             var measured = new List<(string Project, ManagedDatabaseRecord Record)>();
             var accepted = environments.RecordObserved(hostId, report, measured);
             // AGT-3878: database size and connections reach the environment's operations intake.
@@ -315,10 +325,15 @@ public static class ProjectOperatorDashboardEndpoints
             deploy.AppendHostStepLog(project, jobId, request) ? Results.Ok() : Results.Conflict())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
-        app.MapPost("/api/deploy/jobs/{project}/{jobId}/renew", (string project, string jobId,
-            DeployLeaseRequest request, ProjectEnvironmentService environments) =>
-            environments.RenewClaim(project, jobId, request.LeaseToken) ? Results.Ok() : Results.Conflict())
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+        // A long deploy renews its lease; the renewal keeps the run host reachable meanwhile.
+        app.MapPost("/api/deploy/jobs/{project}/{jobId}/renew", (HttpContext context, string project, string jobId,
+            DeployLeaseRequest request, ProjectEnvironmentService environments, AccessSecurityStore security,
+            RunHostDirectory runHosts, IConfiguration configuration) =>
+        {
+            if (!environments.RenewClaim(project, jobId, request.LeaseToken)) return Results.Conflict();
+            runHosts.RecordContact(RunnerCredential(context, configuration, security), DeployHostContact.Poll);
+            return Results.Ok();
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         app.MapGet("/api/projects/{projectName}/throughput", (
             string projectName,
@@ -408,6 +423,13 @@ public static class ProjectOperatorDashboardEndpoints
     // checked by AccessSecurityMiddleware, so answer 403 directly.
     private static IResult RunTargetForbidden() => Results.Json(
         new { error = "A run target may access only its enrolled host identity." }, statusCode: StatusCodes.Status403Forbidden);
+
+    private static void RecordRunTargetContact(HttpContext context, string hostId, IConfiguration configuration,
+        AccessSecurityStore security, RunHostDirectory runHosts, DeployHostContact contact)
+    {
+        if (RunnerCredential(context, configuration, security) is { } host && host.RunnerId == hostId)
+            runHosts.RecordContact(host, contact);
+    }
 
     /// <summary>
     /// Null when the caller may claim for <paramref name="hostId"/>. A presented runner

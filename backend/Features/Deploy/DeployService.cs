@@ -490,9 +490,11 @@ public sealed class DeployService
         {
             var snapshot = SyncLocked(project);
             if (snapshot is null || snapshot.Runs.All(item => item.Id != deploymentId)) return null;
+            var run = snapshot.Runs.First(item => item.Id == deploymentId);
             return new DeploymentLogResponse(deploymentId, _store.ReadLog(project, deploymentId)
+                .Select(item => item with { Step = DeploymentStepPlan.LogStepFor(run, item.Step) })
                 .Where(item => step is null || item.Step == step).ToArray())
-            { Tenant = snapshot.Runs.First(item => item.Id == deploymentId).Tenant };
+            { Tenant = run.Tenant };
         }
     }
 
@@ -577,27 +579,30 @@ public sealed class DeployService
             var releases = tenant is null ? snapshot.Releases : snapshot.Records.Values
                 .Where(record => record.Tenants.Any(item => item.Name == tenant))
                 .Select(record => record.Release).ToArray();
+            var confirmedHostReports = tenant is null
+                ? snapshot.View.Environments.Select(view => (view.Declaration.Id,
+                        Report: view.History.FirstOrDefault(row => row.Status is "healthy" or "rolled-back")))
+                    .Where(item => item.Report is not null)
+                    .ToDictionary(item => item.Id, item => item.Report!.At, StringComparer.Ordinal)
+                : null;
             return EnvironmentStatusProjection.Project(selected, releases,
-                snapshot.Deployments(project).Where(item => item.Tenant == tenant).ToArray(), hostHealth)
+                snapshot.Deployments(project).Where(item => item.Tenant == tenant).ToArray(), hostHealth,
+                confirmedHostReports)
                 .Select(item => item with { Tenant = tenant })
                 .Concat(tenant is null ? previews : []).ToArray();
         }
     }
 
     public IReadOnlyList<CardDeploymentView>? Cards(string project)
-        => Cards(project, _scanner.ScanAllJobsWithArchive()
-            .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
-            .Select(item => string.IsNullOrWhiteSpace(item.Key) ? item.Id : item.Key!));
-
-    private IReadOnlyList<CardDeploymentView>? Cards(string project, IEnumerable<string> cardKeys)
     {
+        var integratedCardKeys = CaptureDeliveryVerifications(project).Integrated.Keys;
         lock (_gate)
         {
             var snapshot = SyncLocked(project);
             if (snapshot is null) return null;
             var repo = _git.ResolveRepoRootForProject(project);
             return CardDeploymentProjection.Project(project, snapshot.Environments,
-                snapshot.Releases, snapshot.Deployments(project), cardKeys,
+                snapshot.Releases, snapshot.Deployments(project), integratedCardKeys,
                 (origin, target) => repo is not null && Contains(repo, origin.CommitSha, target.CommitSha));
         }
     }
@@ -605,16 +610,13 @@ public sealed class DeployService
     public IReadOnlyList<CardDeploymentView> CardMatrix()
     {
         var cards = new List<CardDeploymentView>();
-        var byProject = _scanner.ScanAllJobsWithArchive()
-            .ToLookup(item => item.ProjectName, StringComparer.OrdinalIgnoreCase);
         foreach (var project in _scanner.GetWatchPaths().Select(item => item.Name)
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             try
             {
                 if (_environments.Declarations(project) is not { Count: > 0 }) continue;
-                if (Cards(project, byProject[project].Select(item => string.IsNullOrWhiteSpace(item.Key)
-                        ? item.Id : item.Key!)) is { } projected) cards.AddRange(projected);
+                if (Cards(project) is { } projected) cards.AddRange(projected);
             }
             catch (JsonException ex)
             {
@@ -632,11 +634,16 @@ public sealed class DeployService
             var record = snapshot?.Records.GetValueOrDefault(releaseId);
             var release = record?.Release;
             if (release is null) return null;
-            var currentTitles = _scanner.ScanAllJobsWithArchive()
+            var tasks = _scanner.ScanAllJobsWithArchive()
                 .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
                 .Where(item => !string.IsNullOrWhiteSpace(item.Key))
                 .GroupBy(item => item.Key!, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            var currentTitles = tasks.ToDictionary(item => item.Key, item => item.Value.Title,
+                StringComparer.OrdinalIgnoreCase);
+            // Chores are internal or technical work: marked so product notes can leave them out.
+            var maintenance = tasks.Where(item => item.Value.TaskType == TaskTypes.Chore)
+                .Select(item => item.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var cards = record!.CardTitles is { } captured
                 ? captured.Concat(currentTitles.Where(item => !captured.ContainsKey(item.Key)))
                     .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase)
@@ -645,8 +652,32 @@ public sealed class DeployService
                 .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
             var preview = !snapshot.Deployments(project).Any(item => item.ReleaseId == releaseId
                 && production.Contains(item.EnvironmentId) && item.State == DeploymentStates.Succeeded);
-            return ReleaseNotesProjection.Project(release, cards, preview);
+            return ReleaseNotesProjection.Project(release, cards, preview,
+                _store.ReadReleaseNoteEdits(project, releaseId), maintenance);
         }
+    }
+
+    /// <summary>Rewrites one card's note of a release in product language; empty text restores the card title.</summary>
+    public DeployOutcome<ReleaseNotesResponse> EditNote(string project, string releaseId, string cardKey,
+        ReleaseNoteEditRequest request, DeployActor actor)
+    {
+        if (request.Text?.Trim() is { Length: > ReleaseNotesProjection.MaxNoteLength })
+            return DeployOutcome<ReleaseNotesResponse>.Invalid(
+                $"A release note has at most {ReleaseNotesProjection.MaxNoteLength} characters.");
+        lock (_gate)
+        {
+            var release = SyncLocked(project)?.Records.GetValueOrDefault(releaseId)?.Release;
+            if (release is null) return DeployOutcome<ReleaseNotesResponse>.NotFound($"Unknown release '{releaseId}'.");
+            var key = release.CardKeys.FirstOrDefault(item => string.Equals(item, cardKey, StringComparison.OrdinalIgnoreCase));
+            if (key is null)
+                return DeployOutcome<ReleaseNotesResponse>.NotFound($"Release {release.Version} does not contain {cardKey}.");
+            _store.SaveReleaseNoteEdit(project, releaseId, key, request.Text);
+            _store.AppendAudit(project, [new(_clock.GetUtcNow().UtcDateTime, actor.Id, "release-note-edited", releaseId,
+                null, null, string.IsNullOrWhiteSpace(request.Text)
+                    ? $"Release {release.Version}: the note of {key} uses the card title again."
+                    : $"Release {release.Version}: the note of {key} was edited.")]);
+        }
+        return DeployOutcome<ReleaseNotesResponse>.Ok(Notes(project, releaseId)!);
     }
 
     /// <summary>Read-only release placement; the cache changes with releases, deploy runs and integration evidence.</summary>

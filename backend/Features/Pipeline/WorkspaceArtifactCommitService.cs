@@ -799,12 +799,20 @@ public sealed class WorkspaceArtifactCommitService
     {
         var ignored = CheckIgnored(gitRoot, pathspecs.Concat(excluded).ToList());
         var addFree = new HashSet<string>(excluded.Where(ignored.Contains), StringComparer.Ordinal);
+        // check-ignore normally hides tracked paths. When an excluded tracked
+        // file is below an ignored folder, add -A refuses its exclude pathspec.
+        // Stage tracked and untracked files separately so the refused file is
+        // never hashed, even temporarily, during the retry.
+        var trackedIgnoredExcludes = CheckIgnored(gitRoot, excluded, noIndex: true)
+            .Except(ignored, StringComparer.Ordinal).Any();
         var dropped = pathspecs.RemoveAll(ignored.Contains);
         NoteIgnoredPaths(gitRoot, scope, ignored.Concat(ignoredOversized).Distinct(StringComparer.Ordinal).ToList());
         if (pathspecs.Count == 0)
             return WorkspaceArtifactCommitResult.Skipped(dropped > 0 ? "all-paths-ignored" : "no-data-paths");
 
-        var add = RunAdd(gitRoot, pathspecs, excluded, addFree, timeout);
+        var add = trackedIgnoredExcludes
+            ? RunAddWithoutIgnoredExcludes(gitRoot, pathspecs, excluded, addFree, timeout)
+            : RunAdd(gitRoot, pathspecs, excluded, addFree, timeout);
         if (add.Code != 0 && IsIgnoredPathsError(add.ErrorText))
         {
             var reported = ParseIgnoredPaths(add.ErrorText);
@@ -836,7 +844,7 @@ public sealed class WorkspaceArtifactCommitService
                 ResetPaths(gitRoot, addFree);
                 return WorkspaceArtifactCommitResult.Skipped("all-paths-ignored");
             }
-            add = RunAdd(gitRoot, pathspecs, excluded, addFree, timeout);
+            add = RunAddWithoutIgnoredExcludes(gitRoot, pathspecs, excluded, addFree, timeout);
         }
         ResetPaths(gitRoot, addFree);
         return add.Code == 0
@@ -854,8 +862,30 @@ public sealed class WorkspaceArtifactCommitService
         return RunGitRetryingIndexLock(gitRoot, addArgs, timeout: timeout);
     }
 
-    // A tracked file below an ignored excluded folder is still staged by the
-    // folder's `add -A`; unstaging keeps it out of the index as the exclude did.
+    private GitProcessResult RunAddWithoutIgnoredExcludes(
+        string gitRoot, IReadOnlyList<string> pathspecs, IReadOnlyList<string> excluded,
+        IReadOnlySet<string> addFree, TimeSpan timeout)
+    {
+        var trackedArgs = new List<string> { "add", "-u", "--" };
+        trackedArgs.AddRange(pathspecs);
+        trackedArgs.AddRange(BuildLiteralExcludePathspecs(excluded.Where(path => !addFree.Contains(path)).ToList()));
+        var tracked = RunGitRetryingIndexLock(gitRoot, trackedArgs, timeout: timeout);
+        if (tracked.Code != 0) return tracked;
+
+        var untracked = RunGit(gitRoot, ["ls-files", "-z", "--others", "--exclude-standard", "--", .. pathspecs]);
+        if (untracked.Code != 0) return untracked;
+        var files = untracked.Out.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Where(file => !excluded.Any(path => file.Equals(path, StringComparison.Ordinal)
+                || file.StartsWith(path.TrimEnd('/') + "/", StringComparison.Ordinal)))
+            .ToList();
+        if (files.Count == 0) return tracked;
+        var input = string.Concat(files.Select(file => $":(literal){file}\0"));
+        return RunGitRetryingIndexLock(gitRoot,
+            ["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], input, timeout);
+    }
+
+    // An ignored excluded path may already be staged by another writer.
+    // Reset it after the add without ever adding an oversized tracked file.
     private void ResetPaths(string gitRoot, IReadOnlyCollection<string> paths)
     {
         if (paths.Count == 0) return;
@@ -865,14 +895,17 @@ public sealed class WorkspaceArtifactCommitService
     }
 
     /// <summary>The subset of <paramref name="paths"/> the repository ignores,
-    /// from <c>git check-ignore --stdin</c>. Tracked files never count as
-    /// ignored. A failing check returns an empty set, leaving the add-time
-    /// fallback in <see cref="StageSkippingIgnored"/> to recover.</summary>
-    private HashSet<string> CheckIgnored(string gitRoot, IReadOnlyList<string> paths)
+    /// from <c>git check-ignore --stdin</c>. Tracked files count only when
+    /// <paramref name="noIndex"/> is true. A failing check returns an empty
+    /// set, leaving the add-time fallback in <see cref="StageSkippingIgnored"/>
+    /// to recover.</summary>
+    private HashSet<string> CheckIgnored(string gitRoot, IReadOnlyList<string> paths, bool noIndex = false)
     {
         var ignored = new HashSet<string>(StringComparer.Ordinal);
         if (paths.Count == 0) return ignored;
-        var check = RunGit(gitRoot, ["check-ignore", "-z", "--stdin"],
+        var check = RunGit(gitRoot, noIndex
+            ? ["check-ignore", "--no-index", "-z", "--stdin"]
+            : ["check-ignore", "-z", "--stdin"],
             string.Concat(paths.Distinct(StringComparer.Ordinal).Select(path => path + "\0")));
         if (check.Code == 0)
             ignored.UnionWith(check.Out.Split('\0', StringSplitOptions.RemoveEmptyEntries));

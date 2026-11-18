@@ -7,6 +7,38 @@ itself healthy. The results feed uptime, latency and incidents in the project's
 Deploy area (Operations tab) and the workspace Environment view. Incidents
 become Activity entries and cards.
 
+Production environments also evaluate telemetry rules every worker tick. The
+default rules are 5xx share of `http.server.request.duration` at 5% over two
+minutes, request latency p95 at 2 seconds over two minutes, filesystem usage at
+90% of the declared reservation over two minutes, and `process.restart.count`
+at one restart over five minutes. The latency rule reads
+`http.server.request.duration.p95` when exported. If only the duration
+histogram is available, it uses its stored high-water value as a conservative
+signal. `system.filesystem.usage` or `container.filesystem.usage` supplies used
+bytes; `storageReservationBytes` in the declaration supplies the reservation.
+Without it, the rule sums the `used`, `free` and `reserved` filesystem state
+series for each mount, or reads `system.filesystem.capacity` when available.
+The fullest mount determines the alert. Each missing rule reads
+`not-observed`, and an environment with missing production telemetry cannot
+read `up` merely because its health URL answers.
+
+Rules can be tuned in the environment declaration:
+
+```json
+"telemetryAlerts": {
+  "storageReservationBytes": 10000000000,
+  "5xxRate": { "threshold": 0.05, "windowMinutes": 2, "recoveryEvaluations": 2 },
+  "latencyP95": { "threshold": 2, "windowMinutes": 2 },
+  "storageUsage": { "threshold": 0.9 },
+  "restarts": { "threshold": 1, "windowMinutes": 5 }
+}
+```
+
+A firing rule joins the same environment incident as a failed probe. Its
+Activity alert and card name the rule, measured value and window. Recovery
+requires two healthy evaluations by default; missing telemetry does not count
+as recovery. The rules cannot be disabled by an empty `healthChecks` list.
+
 Implemented decision: IP-D14 option A (built-in store, export later through
 IP-15). Samples and state live in the installation; no extra service is needed.
 
@@ -96,7 +128,7 @@ Store layout under `<TaskRepository>/health-checks/<project>/`:
 | Path | Contents | Retention |
 |---|---|---|
 | `state.json` | Counters, open and last incidents of checks and environments, card ids, certificate warnings | current |
-| `<environment>/<check>/raw/<yyyy-MM-dd>.jsonl` | One sample per probe (at most one per minute) | 30 days |
+| `<environment>/<check>/raw/<yyyy-MM-dd>.jsonl` | One sample per probe or observed telemetry rule evaluation | 30 days |
 | `<environment>/<check>/hourly.jsonl` | Count, failures, p50, p95, max latency per hour of every completed day | 400 days |
 
 Once an hour every completed raw day is folded into hourly aggregates, and raw
@@ -113,7 +145,8 @@ oldest edge has hour granularity. An environment's uptime is its worst check's. 
 percentiles (p50, p95, p99 over 24 hours) come from its first HTTP check. The
 status is `down` while an incident is open, `invalid` when the declaration is
 broken or a target is refused, `degraded` after a failed probe below the
-threshold, `up` when every check passed, and `unknown` before the first probe.
+threshold, `not-observed` while production telemetry is missing, `up` when
+every check passed, and `unknown` before the first probe.
 
 An incident opens after `failureThreshold` consecutive failures. Its start time
 is the first failure of that streak. It closes after `recoveryThreshold`

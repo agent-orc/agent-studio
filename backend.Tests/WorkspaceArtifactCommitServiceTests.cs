@@ -512,6 +512,42 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
     }
 
     [Fact]
+    public void EvidenceCommit_TrackedOversizedFileBelowNewlyIgnoredFolder_NeverWritesBlob()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["WorkspaceArtifacts:MaximumFileBytes"] = "1024",
+            })
+            .Build();
+        var service = new WorkspaceArtifactCommitService(
+            config, NullLogger<WorkspaceArtifactCommitService>.Instance);
+        var job = JobFolder("ASS-TRACKED-IGNORED");
+        var results = Path.Combine(job, "results");
+        Directory.CreateDirectory(results);
+        var large = Path.Combine(results, "trace.bin");
+        File.WriteAllText(large, "original\n");
+        RunGit(_root, "add", Relative(large));
+        RunGit(_root, "commit", "-q", "-m", "track result");
+        File.WriteAllText(Path.Combine(_root, ".gitignore"), "results/\n");
+        File.WriteAllBytes(large, System.Security.Cryptography.RandomNumberGenerator.GetBytes(4096));
+        var blob = RunGitCapture(_root, "hash-object", large).Trim();
+        Assert.NotEqual(0, RunGitResult(_root, "cat-file", "-e", blob).Code);
+        var evidence = Path.Combine(job, "status.md");
+        File.WriteAllText(evidence, "first\n");
+
+        var result = service.TryCommitEvidence(_root, [job], [], "evidence: first\n");
+
+        Assert.True(result.DidCommit, result.Error);
+        Assert.Contains(Relative(evidence), RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD"));
+        Assert.DoesNotContain(Relative(large), RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD"));
+        Assert.Empty(RunGitCapture(_root, "diff", "--cached", "--name-only"));
+        Assert.Equal("original\n", RunGitCapture(_root, "show", $":{Relative(large)}"));
+        Assert.NotEqual(0, RunGitResult(_root, "cat-file", "-e", blob).Code);
+    }
+
+    [Fact]
     public void ArtifactCommit_DefaultLimitRefusesSixMegabytes()
     {
         var logger = new RefusalLogger();

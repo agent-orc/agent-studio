@@ -10,12 +10,13 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed partial class TaskServerStoreTests
+public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture) : IClassFixture<InitializedStoreFixture>
 {
+    private readonly InitializedStoreFixture _fixture = fixture;
     [Fact]
     public async Task Capacity_on_one_host_switches_to_sibling_then_cross_provider_equivalent()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 2, 15, 37, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -61,7 +62,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Unauthorized_provider_switches_only_claims_on_that_host()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 2, 16, 0, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -105,7 +106,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Exhausted_model_capacity_requeues_from_salvage_without_a_capability_hold()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -140,7 +141,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Quota_refusal_blocks_new_coding_claim_without_changing_ready_task()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
         var seed = Store(temp.Path, clock);
         await seed.InitializeAsync();
@@ -171,7 +172,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Unconfigured_meter_claims_without_quota_events_and_reports_admission_off()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
         var seed = Store(temp.Path, clock);
         await seed.InitializeAsync();
@@ -193,7 +194,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Unreachable_meter_raises_one_event_per_outage_and_one_on_recovery()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
         var seed = Store(temp.Path, clock);
         await seed.InitializeAsync();
@@ -241,7 +242,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Slow_quota_admission_does_not_hold_the_write_gate()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
         var seed = Store(temp.Path, clock);
         await seed.InitializeAsync();
@@ -302,7 +303,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Steering_feedback_rebuilds_the_same_command_and_attempt_in_all_read_views_after_restart()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -340,7 +341,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Follow_up_is_reserved_on_claim_and_consumed_only_after_worker_start_acknowledgement()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -384,7 +385,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Follow_up_saved_before_continuation_intents_is_still_delivered_on_worker_start()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -426,7 +427,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Follow_up_is_restored_when_claimed_worker_is_lost_before_start()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -461,7 +462,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Terminal_move_supersedes_a_queued_follow_up()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -487,10 +488,38 @@ public sealed partial class TaskServerStoreTests
         Assert.Contains(history!.Audit, row => row.Action == "follow-up.superseded");
     }
 
+    [Theory]
+    [InlineData("low")]
+    [InlineData("medium")]
+    [InlineData("high")]
+    [InlineData("xhigh")]
+    [InlineData("max")]
+    public async Task Fable52Continuation_KeepsExplicitModelAndEffort(string level)
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        var receipt = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "fable-continue", task.Version,
+                "Continue the deployment view", "claude-fable-5-2", "claude", level, "continue", "operator"),
+            "operator", default);
+        var intent = await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId, "fable-continue", default);
+        Assert.NotNull(intent);
+        Assert.True(receipt.ExplicitSelection);
+        Assert.Equal("claude-fable-5-2", intent.Model);
+        Assert.Equal("claude", intent.CliType);
+        Assert.Equal(level, intent.ThinkingLevel);
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var durable = await restarted.GetContinuationIntentAsync(project.ProjectId, task.TaskId, "fable-continue", default);
+        Assert.Equal(intent, durable);
+    }
+
     [Fact]
     public async Task Continuation_rounds_are_ordered_idempotent_and_bound_to_one_run()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -623,7 +652,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Untiered_known_model_can_be_explicitly_pinned_without_policy_rewriting()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -651,7 +680,7 @@ public sealed partial class TaskServerStoreTests
     [InlineData("gpt-6-sol")]
     public async Task Model_only_continuation_without_a_studio_cli_snapshots_its_policy_provider(string model)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -670,7 +699,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Thinking_only_continuation_without_a_studio_cli_requires_one_policy_provider()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -694,7 +723,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Continuation_claim_survives_server_restart_without_false_consumption()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -719,7 +748,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Terminal_move_explicitly_supersedes_every_waiting_continuation_round()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -749,7 +778,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Steering_rejects_stale_generation_without_mutation_and_preserves_actor_reason()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -802,7 +831,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Completed_session_evidence_survives_restart_and_reaches_the_next_claim()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -851,7 +880,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Resumed_mechanical_fallback_requeues_with_reason_and_qualifies_the_next_fresh_claim()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -917,7 +946,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Mechanical_fallback_without_resumed_evidence_is_rejected()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, _, _) = await SeedReadyTaskAsync(store);
@@ -937,7 +966,7 @@ public sealed partial class TaskServerStoreTests
     public async Task Mechanical_claim_respects_the_task_text_correctness_floor(
         string body, string expectedThinking)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -957,7 +986,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Releasing_a_dead_runner_attempt_returns_its_progress_task_to_ready()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -985,7 +1014,7 @@ public sealed partial class TaskServerStoreTests
     [InlineData("runner-salvage-failed")]
     public async Task Three_identical_prelaunch_failures_escalate_and_stop_claiming(string failureCode)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -1032,7 +1061,7 @@ public sealed partial class TaskServerStoreTests
     [InlineData("continuation-base-unreadable")]
     public async Task Unavailable_review_base_escalates_on_the_first_release(string reason)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 13, 8, 0, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -1055,7 +1084,7 @@ public sealed partial class TaskServerStoreTests
         // a runner-process-missing release returns the card to Ready, restores the
         // stashed follow-up and records the salvage ref. The failure budget must
         // leave that path unchanged and only reset the consecutive-failure chain.
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -1099,7 +1128,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Prelaunch_release_for_a_card_moved_out_of_progress_spends_no_budget_and_records_no_escalation()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -1421,7 +1450,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Backup_initialization_does_not_quarantine_live_authority()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var servingStore = Store(temp.Path);
         await servingStore.InitializeAsync();
         await SeedReadyTaskAsync(servingStore);
@@ -1457,7 +1486,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Restart_restores_fence_authority_and_quarantines_the_attempt()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var first = Store(temp.Path);
         await first.InitializeAsync();
         var (_, _, task) = await SeedReadyTaskAsync(first);
@@ -1519,7 +1548,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Restart_registration_re_adopts_coding_attempt_and_accepts_completion()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var first = Store(temp.Path);
         await first.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(first);
@@ -1589,7 +1618,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Task_Server_restart_gap_inside_grace_re_adopts_and_renews_same_lease()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(
             new DateTimeOffset(2026, 9, 12, 10, 0, 0, TimeSpan.Zero));
         var first = Store(temp.Path, clock);
@@ -2358,7 +2387,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Idempotency_keys_replay_the_same_ingest_and_reject_cross_run_aliases()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, _) = await SeedReadyTaskAsync(store);
@@ -2404,7 +2433,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Exact_run_authority_can_upload_artifacts_after_completion()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReadyTaskAsync(store);
@@ -2452,7 +2481,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Typed_outcome_completion_is_fenced_idempotent_and_survives_restart_with_raw_facts()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -2554,7 +2583,7 @@ public sealed partial class TaskServerStoreTests
     {
         const string salvageRef = "refs/heads/agent-studio/salvage/runner/AGT-2874/run-1/fence-1/1111111";
         const string salvageSha = "1111111111111111111111111111111111111111";
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -2597,7 +2626,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Provider_rejection_without_declared_sibling_escalates_instead_of_retrying_same_model()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -2627,7 +2656,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Claim_requires_fresh_host_acceptance_of_the_primary_named_model()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2653,7 +2682,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Legacy_host_without_model_acceptance_can_claim_named_primary()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2671,7 +2700,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Legacy_executor_is_marked_for_upgrade_in_execution_host_snapshot()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2693,7 +2722,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Advertised_unavailable_model_refuses_claim()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2717,7 +2746,7 @@ public sealed partial class TaskServerStoreTests
     [InlineData(CodexCliRelease.Gpt61Terra)]
     public async Task Gpt61_claim_below_cli_floor_reports_version_instead_of_account(string model)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2744,7 +2773,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Unknown_model_waits_during_grace_then_names_host_capability()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2771,7 +2800,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Claim_refuses_a_primary_model_whose_acceptance_went_stale()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2792,7 +2821,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Unsupported_host_model_returns_ready_and_holds_claim_until_causally_newer_acceptance()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2841,7 +2870,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Rejected_fallback_does_not_hold_a_recovered_primary_route()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2866,7 +2895,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Rejected_same_provider_fallback_does_not_hold_a_blank_primary_route()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2886,7 +2915,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Capability_response_names_configured_quota_routes_and_ready_card_models()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2914,7 +2943,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Permit_is_not_reoffered_or_accepted_without_fresh_causal_model_acceptance()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -3010,7 +3039,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Held_primary_model_does_not_hide_a_provider_refusal_sibling_route()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -3053,7 +3082,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Held_primary_model_does_not_hide_an_operator_selected_route()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -3120,7 +3149,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Needs_input_completion_persists_question_and_salvage_branch_and_routes_to_human_review()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -3172,7 +3201,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Typed_event_payloads_fail_before_persistence_when_the_bound_is_exceeded()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = new TaskServerStore(
             Options.Create(new TaskServerOptions
             {
@@ -3206,7 +3235,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Protocol_novelty_event_remains_visible_in_run_and_task_history()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -3245,7 +3274,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Drain_stops_new_admission_allows_completion_and_prepares_safe_shutdown()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReadyTaskAsync(store);
@@ -3307,7 +3336,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Lost_handoff_ack_replays_one_envelope_and_one_lane_transition()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReadyTaskAsync(store);
@@ -3349,7 +3378,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Restart_completes_from_a_locally_durable_handoff_ack_without_replaying_handoff()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var first = Store(temp.Path);
         await first.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(first);
@@ -3392,7 +3421,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Restart_accepts_unacknowledged_handoff_from_the_exact_process_unknown_authority()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var first = Store(temp.Path);
         await first.InitializeAsync();
         await SeedReadyTaskAsync(first);
@@ -3422,7 +3451,7 @@ public sealed partial class TaskServerStoreTests
     [InlineData("SuccessfulCompletion")]
     public async Task Successful_completion_requires_the_matching_durable_envelope(string outcome)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReadyTaskAsync(store);
@@ -3445,7 +3474,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Outbox_observability_reports_backlog_oldest_sequence_and_final_state()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
@@ -3468,7 +3497,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Outbox_sequence_is_persisted_and_rejects_a_late_new_fact()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReadyTaskAsync(store);
@@ -3515,7 +3544,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Completed_task_extends_result_retention_from_the_terminal_transition()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(
             new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock, resultRetentionDays: 30);
@@ -3573,7 +3602,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Invariant_reconciliation_schedules_orphan_process_termination()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(
             new DateTimeOffset(2026, 7, 25, 0, 40, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
@@ -3628,7 +3657,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Invariant_reconciliation_records_lease_without_process_for_backend_authority()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(
             new DateTimeOffset(2026, 7, 25, 1, 0, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
@@ -3672,7 +3701,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Invariant_reconciliation_records_progress_without_run_without_requeueing()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(
             new DateTimeOffset(2026, 7, 25, 1, 20, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
@@ -3706,7 +3735,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Lane_reconciliation_retains_process_unknown_authority()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(
             new DateTimeOffset(2026, 7, 25, 1, 40, 0, TimeSpan.Zero));
         var first = Store(temp.Path, clock);
@@ -3740,7 +3769,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Result_handoff_rejects_a_ref_from_another_fence_generation()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReadyTaskAsync(store);
@@ -3782,7 +3811,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Result_handoff_replays_an_already_acknowledged_legacy_ref_during_upgrade()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReadyTaskAsync(store);
@@ -3854,7 +3883,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task Completion_gate_items_reach_the_run_completed_lifecycle_event()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
@@ -3908,7 +3937,7 @@ public sealed partial class TaskServerStoreTests
     [Fact]
     public async Task An_oversized_gate_item_is_refused_rather_than_truncated()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReadyTaskAsync(store);

@@ -74,7 +74,8 @@ public sealed class CapabilityHoldProjectionTests
             Contract.ReviewClaimEmptyReasons.QuotaDeferred);
 
         var held = Assert.Single(HeldCapabilityProjection.Merge(
-            registry.HeldCapabilities(Runner), log.ForExecutor(Runner)));
+            registry.HeldCapabilities(Runner), log.ForExecutor(Runner),
+            registry.RegisteredReviewCapabilities(Runner, Instance), Set("review_codex")));
 
         Assert.Equal(Codex, held.Key);
         Assert.Equal(Contract.HeldCapabilityStates.Held, held.State);
@@ -93,7 +94,8 @@ public sealed class CapabilityHoldProjectionTests
             "review_codex", "AGT-3649", _clock.GetUtcNow().UtcDateTime, [Codex])]);
 
         var held = Assert.Single(HeldCapabilityProjection.Merge(
-            registry.HeldCapabilities(Runner), log.ForExecutor(Runner)));
+            registry.HeldCapabilities(Runner), log.ForExecutor(Runner),
+            registry.RegisteredReviewCapabilities(Runner, Instance), Set("review_codex")));
 
         Assert.Equal(Contract.HeldCapabilityCauses.ProbeIndeterminate, held.Cause);
         Assert.Equal("probe timed out", held.Detail);
@@ -101,19 +103,79 @@ public sealed class CapabilityHoldProjectionTests
     }
 
     [Fact]
+    public void RefusalRecordedBeforeRecovery_DoesNotCreateANotRegisteredHold()
+    {
+        var registry = Registry([Contract.ReviewCapabilities.ReviewExecutor, Codex]);
+        Advertise(registry, new Contract.AdvertisedCapabilityDto(Codex, "provider-auth", "unavailable"));
+        var log = new ReviewClaimUnclaimableLog(NullLogger<ReviewClaimUnclaimableLog>.Instance, _clock);
+        log.Record(Runner, [new Contract.ReviewUnclaimableAttemptDto(
+            "review_codex", "AGT-3649", _clock.GetUtcNow().UtcDateTime, [Codex])]);
+
+        Advertise(registry, 3, new Contract.AdvertisedCapabilityDto(Codex, "provider-auth", "ready", Signal: "ok"));
+
+        Assert.Contains(Codex, registry.AdmittedReviewCapabilities(Runner, Instance));
+        Assert.Empty(registry.HeldCapabilities(Runner));
+        Assert.Empty(HeldCapabilityProjection.Merge(registry.HeldCapabilities(Runner), log.ForExecutor(Runner),
+            registry.RegisteredReviewCapabilities(Runner, Instance), Set("review_codex")));
+    }
+
+    [Fact]
+    public void RefusalForAttemptNoLongerPending_DoesNotAddHoldOrWaitingWork()
+    {
+        var registry = Registry([Contract.ReviewCapabilities.ReviewExecutor, Claude]);
+        Advertise(registry, new Contract.AdvertisedCapabilityDto(Claude, "provider-auth", "ready"));
+        var log = new ReviewClaimUnclaimableLog(NullLogger<ReviewClaimUnclaimableLog>.Instance, _clock);
+        log.Record(Runner, [new Contract.ReviewUnclaimableAttemptDto(
+            "review_old", "AGT-3649", _clock.GetUtcNow().UtcDateTime, [Codex])]);
+
+        Assert.Empty(HeldCapabilityProjection.Merge(registry.HeldCapabilities(Runner), log.ForExecutor(Runner),
+            registry.RegisteredReviewCapabilities(Runner, Instance), Set("review_current")));
+    }
+
+    [Fact]
+    public void OldRefusalDoesNotAddWaitingWorkToARegisteredHold()
+    {
+        var registry = Registry([Contract.ReviewCapabilities.ReviewExecutor, Codex]);
+        Advertise(registry, new Contract.AdvertisedCapabilityDto(Codex, "provider-auth", "unavailable"));
+        var log = new ReviewClaimUnclaimableLog(NullLogger<ReviewClaimUnclaimableLog>.Instance, _clock);
+        log.Record(Runner, [new Contract.ReviewUnclaimableAttemptDto(
+            "review_old", "AGT-3649", _clock.GetUtcNow().UtcDateTime, [Codex])]);
+
+        var hold = Assert.Single(HeldCapabilityProjection.Merge(registry.HeldCapabilities(Runner),
+            log.ForExecutor(Runner), registry.RegisteredReviewCapabilities(Runner, Instance), Set("review_current")));
+        Assert.Empty(hold.WaitingTaskKeys ?? []);
+    }
+
+    [Fact]
     public void ReprobeRequest_IsHandedOutOnce_AndOnlyForARegisteredRole()
     {
         var registry = Registry([Contract.ReviewCapabilities.ReviewExecutor, Codex]);
 
-        Assert.False(registry.RequestReprobe("unknown-runner", Codex));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.RunnerNotRegistered,
+            registry.RequestReprobe("unknown-runner", Codex));
         Assert.Null(registry.TakeReprobeRequests(Runner));
-        Assert.True(registry.RequestReprobe(Runner, Codex));
-        Assert.True(registry.RequestReprobe(Runner, Codex));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.UnknownCapability,
+            registry.RequestReprobe(Runner, Claude));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.Queued, registry.RequestReprobe(Runner, Codex));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.Queued, registry.RequestReprobe(Runner, Codex));
 
         Assert.Equal([Codex], registry.TakeReprobeRequests(Runner));
         Assert.Null(registry.TakeReprobeRequests(Runner));
         Assert.Equal(["git:fetch", Codex],
             CapabilityReprobeDelivery.Merge(["git:fetch"], [Codex, "git:fetch"]).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void ReprobeQueue_IsBounded_AndClearedWhenIdentityIsRemoved()
+    {
+        var capabilities = Enumerable.Range(0, 33).Select(i => $"provider-auth:provider{i}").ToArray();
+        var registry = Registry([Contract.ReviewCapabilities.ReviewExecutor, .. capabilities]);
+        foreach (var key in capabilities.Take(32))
+            Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.Queued, registry.RequestReprobe(Runner, key));
+        Assert.Equal(V1ReviewExecutorRegistry.ReprobeRequestResult.QueueFull,
+            registry.RequestReprobe(Runner, capabilities[32]));
+        registry.ClearReprobeRequests(Runner);
+        Assert.Null(registry.TakeReprobeRequests(Runner));
     }
 
     private V1ReviewExecutorRegistry Registry(IReadOnlyList<string> capabilities)
@@ -124,9 +186,17 @@ public sealed class CapabilityHoldProjectionTests
         return registry;
     }
 
+    private static IReadOnlySet<string> Set(params string[] values)
+        => values.ToHashSet(StringComparer.Ordinal);
+
     private void Advertise(V1ReviewExecutorRegistry registry, params Contract.AdvertisedCapabilityDto[] capabilities)
+        => Advertise(registry, 1, capabilities);
+
+    private void Advertise(V1ReviewExecutorRegistry registry, long generation,
+        params Contract.AdvertisedCapabilityDto[] capabilities)
         => registry.AdvertiseCapabilities(Runner, new Contract.CapabilityAdvertisementRequest(
-            Runner, Instance, 2, _clock.GetUtcNow().UtcDateTime, 180, 1,
+            Runner, Instance, Contract.CapabilityProtocol.CurrentSchemaVersion,
+            _clock.GetUtcNow().UtcDateTime, 180, generation,
             [new Contract.AdvertisedCapabilityDto(Contract.ReviewCapabilities.ReviewExecutor, "executor", "ready"),
              .. capabilities]));
 }

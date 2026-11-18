@@ -28,6 +28,7 @@ public sealed record EnvironmentDeclaration(
     public ManagedDatabaseEnvironmentPolicy? DatabasePolicy { get; init; }
 
     public ManagedDatabaseEnvironmentPolicy EffectiveDatabasePolicy => DatabasePolicy ?? ManagedDatabaseEnvironmentPolicy.For(Kind);
+    public TelemetryAlertDeclarations TelemetryAlerts { get; init; } = new(TelemetryAlertDeclarations.Defaults, null);
     public bool? Protected { get; init; }
     public bool? Automatic { get; init; }
     public string? Requires { get; init; }
@@ -120,7 +121,11 @@ public sealed record DeploymentFailureCard(string EnvironmentId, string Artifact
 
 public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<ProjectEnvironmentView> Environments,
     IReadOnlyList<EnvironmentPromotion> Promotions, IReadOnlyList<DeployJob> Jobs,
-    IReadOnlyList<DeploymentFailureCard> FailureCards, IReadOnlyList<RunTargetRemovalRecord>? RunTargetRemovals = null);
+    IReadOnlyList<DeploymentFailureCard> FailureCards, IReadOnlyList<RunTargetRemovalRecord>? RunTargetRemovals = null)
+{
+    /// <summary>The run host of each declared target host id; the environments route fills it (F4).</summary>
+    public IReadOnlyList<AgentStudio.Deploy.RunHostStatus>? RunHosts { get; init; }
+}
 
 public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence,
     IReadOnlyList<DeployStepResult>? Steps = null, string? ScreenshotBase64 = null,
@@ -625,6 +630,7 @@ public sealed partial class ProjectEnvironmentService
                 : value.TryGetProperty("managedDatabases", out _)
                     ? throw new JsonException("managedDatabases applies only to environments hosted in the run zone (destination \"edge\").")
                     : null,
+            TelemetryAlerts = TelemetryAlertDeclarations.Parse(value, Path.GetFileName(file)),
         };
     }
 
@@ -1101,7 +1107,11 @@ public sealed partial class ProjectEnvironmentService
     /// so the run log records each reclaim. Claims older than
     /// <see cref="HostLostAfter"/> fail as <c>host-lost</c> first.
     /// </summary>
-    public DeployJob? Claim(string hostId, bool requireVerifiedRelease = false)
+    /// <param name="projectAllowed">
+    /// The projects the claiming run host is bound to (SM-9, F4); a job of any
+    /// other project stays queued. Null admits every project.
+    /// </param>
+    public DeployJob? Claim(string hostId, bool requireVerifiedRelease = false, Func<string, bool>? projectAllowed = null)
     {
         lock (_gate)
         {
@@ -1125,6 +1135,7 @@ public sealed partial class ProjectEnvironmentService
                 return null;
             foreach (var (project, state) in states)
             {
+                if (projectAllowed is not null && !projectAllowed(project)) continue;
                 var retryableEnvironments = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var job in state.Jobs.Where(item => item.HostId == hostId &&
                     item.Destination != RunTargetVocabulary.EdgeDestination &&
