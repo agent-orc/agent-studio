@@ -3,6 +3,16 @@
 Version: 2026-11-17
 Status: System-of-record map for frontend changes.
 
+Card delivery badges are shown for cards named by a release or with verified
+integration evidence. An unreleased integrated card can show pending delivery;
+an unintegrated or incident card has no badges. A failed
+deployment remains visible on the card after an environment rollback, with the
+failed release version and attempt date, until a later deployment of a release
+containing that card succeeds. A successful rollback after a failed attempt
+reads "Failed, rolled back"; a rollback that withdraws a previously successful
+card reads "Rolled back". State labels use product wording, and the badge text
+wraps so release versions and dates remain readable on narrow board cards.
+
 Needs you shows a review-host row when a differing release claims review work.
 The status-bar trigger shows a compact Review host cue while the row is open;
 the row opens the affected Execution Hosts detail and its Update review host
