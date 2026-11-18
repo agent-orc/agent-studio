@@ -15,7 +15,15 @@ public sealed record ProjectArtifactDefinition(string Name, string Type, string?
 /// One ordered deployment environment. A protected environment accepts a deploy,
 /// redeploy, or rollback only after an Owner or Maintainer approval.
 /// </summary>
-public sealed record ProjectEnvironmentDefinition(string Name, bool Protected);
+public sealed record ProjectEnvironmentDefinition(string Name, bool Protected)
+{
+    /// <summary>
+    /// Lets the control plane's health checks reach RFC 1918, shared and unique-local
+    /// addresses, for an environment hosted on a LAN or VPN. The JSON declaration's
+    /// <c>healthChecksAllowPrivateNetwork</c>; loopback, link-local and metadata stay refused.
+    /// </summary>
+    public bool HealthChecksAllowPrivateNetwork { get; init; }
+}
 
 public sealed record ProjectLifecyclePhase(string Phase, bool Automatic, IReadOnlyList<string> Approval, string? Requires);
 
@@ -107,7 +115,7 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
-    public static readonly IReadOnlyList<string> EnvironmentKeys = ["name", "protected"];
+    public static readonly IReadOnlyList<string> EnvironmentKeys = ["name", "protected", "healthChecksAllowPrivateNetwork"];
     public static readonly IReadOnlyList<string> LifecyclePhaseKeys = ["phase", "automatic", "approval", "requires"];
     public static readonly IReadOnlyList<string> ApprovalRoles = ["Owner", "Maintainer"];
     public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments", "tenants", "tenantTags", "channels"];
@@ -324,7 +332,8 @@ public static partial class ProjectDefinitionReader
 
     /// <summary>
     /// Environments are either the inline shorthand <c>[staging, production]</c>
-    /// or a list of maps with <c>name</c> and <c>protected</c>. The shorthand
+    /// or a list of maps with <c>name</c>, <c>protected</c> and
+    /// <c>healthChecksAllowPrivateNetwork</c>. The shorthand
     /// protects production.
     /// </summary>
     private static IReadOnlyList<ProjectEnvironmentDefinition> Environments(
@@ -354,7 +363,14 @@ public static partial class ProjectDefinitionReader
                 var isProtected = protectedText is null
                     ? name == "production"
                     : bool.TryParse(protectedText, out var parsed) && parsed;
-                return new ProjectEnvironmentDefinition(name, isProtected);
+                var privateText = Get(item, "healthChecksAllowPrivateNetwork");
+                if (privateText is not null && !bool.TryParse(privateText, out _))
+                    issues.Add(new($"environments[{index}].healthChecksAllowPrivateNetwork",
+                        "environment-health-private-network-invalid", "healthChecksAllowPrivateNetwork must be true or false."));
+                return new ProjectEnvironmentDefinition(name, isProtected)
+                {
+                    HealthChecksAllowPrivateNetwork = bool.TryParse(privateText, out var allowPrivate) && allowPrivate,
+                };
             }).ToArray();
     }
 

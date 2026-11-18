@@ -242,6 +242,7 @@
 /api/projects/{projectName}/execution/proposal-preview	free	-	-	-
 /api/projects/{projectName}/gate-result-cache	free	-	-	-
 /api/projects/{projectName}/graph	free	-	-	-
+/api/projects/{projectName}/incident-webhook	free	-	-	-
 /api/projects/{projectName}/lane-sort-strategies	free	-	-	-
 /api/projects/{projectName}/operator-sweeps	free	-	-	-
 /api/projects/{projectName}/post-work/shadow	free	-	-	-

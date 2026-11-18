@@ -224,7 +224,8 @@ export interface DeployRun {
 }
 
 export type DeployCards = { status: 'known'; keys: string[] } | { status: 'unknown'; reason: string };
-export type DeployHealth = { status: 'reported'; state: HealthState } | { status: 'no-checks' };
+/** `problem`: why a misconfigured check is not probed and how to fix the declaration (F16). */
+export type DeployHealth = { status: 'reported'; state: HealthState; problem?: string | null } | { status: 'no-checks' };
 
 /** The latest run of a card: an AGT-3201 deployment, or the last AGT-3176 host report without it. */
 export interface CardRun {
@@ -526,7 +527,9 @@ function healthFor(status: EnvironmentStatus | null, base: CardBase, health?: En
   if (base.view?.observed?.state === 'crash-loop') return { status: 'reported', state: 'crash-loop' };
   const observed = health?.environments.find(item => item.environmentId === base.id);
   if (observed && (observed.checks.length > 0 || observed.status === 'invalid'))
-    return { status: 'reported', state: observed.status };
+    return observed.status === 'invalid'
+      ? { status: 'reported', state: observed.status, problem: observed.error }
+      : { status: 'reported', state: observed.status };
   if (base.view && !base.healthUrl && !base.hasChecks) return { status: 'no-checks' };
   // AGT-3201 health wins when it knows; it reads a host rollback as unknown, AGT-3176 as healthy.
   const reported = status ? STATUS_HEALTH[status.health] ?? 'unknown' : 'unknown';

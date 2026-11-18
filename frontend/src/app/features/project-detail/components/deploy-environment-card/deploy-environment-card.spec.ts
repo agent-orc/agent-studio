@@ -151,6 +151,17 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(tone('deploy-environment-health')).toBe('danger');
   });
 
+  it('shows a misconfigured check as a declaration problem with its fix, not as a red failure (F16)', async () => {
+    const problem = 'Health check http targets http://172.17.0.1:8080/health. Set healthChecksAllowPrivateNetwork: true.';
+    await render({ ...fullCards()[0], health: { status: 'reported', state: 'invalid', problem } });
+    expect(text('deploy-environment-health')).toBe('Misconfigured');
+    expect(tone('deploy-environment-health')).toBe('warning');
+    expect(text('deploy-environment-health-problem')).toBe(problem);
+
+    await render(fullCards()[0]);
+    expect(host().querySelector('[data-testid="deploy-environment-health-problem"]')).toBeNull();
+  });
+
   it('renders without a deployment and offers no run action', async () => {
     const environments = deployEnvironmentsFixture();
     environments.environments[1] = { ...environments.environments[1], deployedArtifact: null, history: [] };
