@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -80,6 +81,11 @@ def build(config, action, commit):
         if name == "gate_worker":
             publish.append("/p:UseAppHost=false")
         run(publish, cwd=source)
+        if name == "agent_host":
+            shutil.copytree(source / "deploy/agent-host", output / "deploy/agent-host")
+            (output / "scripts").mkdir(exist_ok=True)
+            shutil.copy2(source / "scripts/upgrade-agent-runner-deploy.sh",
+                         output / "scripts/upgrade-agent-runner-deploy.sh")
         destination = base / f"{name}.tar.gz"
         checksum_path = base / f"{name}.sha256"
         descriptor, temporary = tempfile.mkstemp(prefix=f".{name}-", suffix=".tar.gz", dir=base)
