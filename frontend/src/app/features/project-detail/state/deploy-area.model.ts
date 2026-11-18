@@ -357,6 +357,30 @@ export function runningReleaseOf(view: ProjectEnvironments['environments'][numbe
   return { artifact, release, uncertain: false };
 }
 
+/** What runs in an environment: the release version leads, the artifact digest is secondary. */
+export interface EnvironmentReleaseDisplay {
+  version: string | null;
+  digest: string | null;
+  artifact: string | null;
+  deployedAt: string | null;
+  /** "12 min ago", "just now", or null when the deploy time is unknown. */
+  age: string | null;
+  /** A failed deploy left the running release unknown (AGT-3899). */
+  uncertain: boolean;
+}
+
+export function environmentReleaseDisplay(card: EnvironmentCardView, now: number): EnvironmentReleaseDisplay {
+  const age = formatAge(card.deployedAt, now);
+  return {
+    version: card.releaseVersion,
+    digest: card.artifact ? shortArtifact(card.artifact) : null,
+    artifact: card.artifact,
+    deployedAt: card.deployedAt,
+    age: age && age !== 'just now' ? `${age} ago` : age,
+    uncertain: card.releaseUncertain === true,
+  };
+}
+
 /** The latest successful host report for the deployed artifact (AGT-3176). */
 function hostReportOf(view: CardBase['view']): ProjectEnvironments['environments'][number]['history'][number] | null {
   return view?.history.find(row => HOST_REPORT[row.status]?.state === 'succeeded'
@@ -494,30 +518,6 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
   });
 }
 
-/** What runs in an environment: the release version leads, the artifact digest is secondary. */
-export interface EnvironmentReleaseDisplay {
-  version: string | null;
-  digest: string | null;
-  artifact: string | null;
-  deployedAt: string | null;
-  /** "12 min ago", "just now", or null when the deploy time is unknown. */
-  age: string | null;
-  /** A failed deploy left the running release unknown (AGT-3899). */
-  uncertain: boolean;
-}
-
-export function environmentReleaseDisplay(card: EnvironmentCardView, now: number): EnvironmentReleaseDisplay {
-  const age = formatAge(card.deployedAt, now);
-  return {
-    version: card.releaseVersion,
-    digest: card.artifact ? shortArtifact(card.artifact) : null,
-    artifact: card.artifact,
-    deployedAt: card.deployedAt,
-    age: age && age !== 'just now' ? `${age} ago` : age,
-    uncertain: card.releaseUncertain === true,
-  };
-}
-
 function hostOf(base: CardBase, environments: ProjectEnvironments | null): EnvironmentHostView | null {
   const id = base.view?.declaration.targetHostId;
   if (!id) return null;
@@ -535,22 +535,22 @@ function cardsFor(deployed: boolean, release: Release | null, releaseRecordsKnow
     : { status: 'unknown', reason: 'Card lists arrive with release records' };
 }
 
-/**
- * The one health projection of an environment (M2 of the playthrough: every
- * surface reads this, never the host report alone). An open incident wins, then
- * the control-plane checks once they have data, then the last deploy report.
- */
 function healthFor(status: EnvironmentStatus | null, base: CardBase, health?: EnvironmentHealthResponse | null): DeployHealth {
   const observed = health?.environments.find(item => item.environmentId === base.id);
+  // M2 of the playthrough: an open incident wins, then control-plane checks that know, then the last deploy report.
   if (observed?.currentIncident) return { status: 'reported', state: 'down' };
-  const watched = !!observed && (observed.checks.length > 0 || observed.status === 'invalid');
-  if (watched && observed.status !== 'unknown') return { status: 'reported', state: observed.status };
-  // Without a declared health URL there is nothing to check.
-  if (!watched && base.view && !base.healthUrl && !base.hasChecks) return { status: 'no-checks' };
-  // AGT-3201 health wins when it knows; it reads a host rollback as unknown, AGT-3176 as healthy.
+  if (observed?.status === 'unknown' && observed.checks.length > 0) return { status: 'reported', state: lastReportHealth(status, base) };
+  if (observed && (observed.checks.length > 0 || observed.status === 'invalid'))
+    return { status: 'reported', state: observed.status };
+  if (base.view && !base.healthUrl && !base.hasChecks) return { status: 'no-checks' };
+  return { status: 'reported', state: lastReportHealth(status, base) };
+}
+
+/** AGT-3201 health wins when it knows; it reads a host rollback as unknown, AGT-3176 as healthy. */
+function lastReportHealth(status: EnvironmentStatus | null, base: CardBase): HealthState {
   const reported = status ? STATUS_HEALTH[status.health] ?? 'unknown' : 'unknown';
   const host = base.view ? HOST_HEALTH[base.view.health] ?? 'unknown' : 'unknown';
-  return { status: 'reported', state: reported !== 'unknown' ? reported : host };
+  return reported !== 'unknown' ? reported : host;
 }
 
 function lastRunOf(runs: readonly Deployment[]): CardRun | null {

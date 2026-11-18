@@ -1,14 +1,15 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import {
+  HEALTH_LABEL,
   RUN_STATE_LABEL,
   formatAge,
   shortArtifact,
   triggerLabel,
   type EnvironmentCardView,
 } from '../../state/deploy-area.model';
-import { environmentHealthDisplay, runStateTone } from '../../state/deploy-status-tone';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
 
 function ago(age: string | null): string | null {
@@ -51,7 +52,11 @@ export class DeployEnvironmentCardComponent {
   readonly runTone = runStateTone;
   readonly hostTone = runHostStateTone;
   readonly hostLabel = runHostStateLabel;
-  readonly health = computed(() => environmentHealthDisplay(this.environment().health));
+  readonly health = computed<{ tone: StatusTone; label: string }>(() => {
+    const health = this.environment().health;
+    if (health.status === 'no-checks') return { tone: 'neutral', label: 'No checks' };
+    return { tone: healthStateTone(health.state), label: HEALTH_LABEL[health.state] };
+  });
   readonly lastRunLabel = computed(() => {
     const run = this.environment().lastRun;
     return run ? `${triggerLabel(run.trigger)} ${RUN_STATE_LABEL[run.state].toLowerCase()}` : null;

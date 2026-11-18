@@ -3,22 +3,18 @@ import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, combineLatest, filter, forkJoin, map, of, startWith, switchMap, take } from 'rxjs';
 import { TaskService } from '../../../services/task.service';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
-import {
-  artifactReleaseLookups,
-  buildEnvironmentCards,
-  ready,
-  type DeployPanel,
-  type DeploySources,
-  type EnvironmentCardView,
-  type DeployRunAction,
-  type Deployment,
-  type DeploymentLogLine,
-  type DeploymentLogResponse,
-  type EnvironmentStatus,
-  type Release,
-  type DeployRunFilter,
-  type ReleaseGateStatus,
+import type {
+  DeployPanel,
+  DeployRunAction,
+  Deployment,
+  DeploymentLogLine,
+  DeploymentLogResponse,
+  EnvironmentStatus,
+  Release,
+  DeployRunFilter,
+  ReleaseGateStatus,
 } from '../state/deploy-area.model';
+import { artifactReleaseLookups, buildEnvironmentCards, ready, type DeploySources, type EnvironmentCardView } from '../state/deploy-area.model';
 import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
 import { EnvironmentHealthService } from '../../environment-health/services/environment-health.service';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
