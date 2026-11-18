@@ -13,5 +13,5 @@ export function contentRefusalOf(info: () => TaskInfo, primary: () => TriageButt
   const readiness = inject(AcceptanceReadinessStore);
   const refusals = inject(AcceptanceRefusalStore);
   return computed(() => primary()?.id !== 'mark-done' ? null : contentRefusalReason(
-    acceptanceRefusalFor(info(), refusals.forTask(info().taskKey), false, readiness.itemFor(info()))));
+    acceptanceRefusalFor(info(), refusals.forCard(info()), false, readiness.itemFor(info()))));
 }
