@@ -92,6 +92,25 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
         return binding;
     }
 
+    /// <summary>Studio binds the ingest token it minted for deployed workloads (M5); no person chose the value.</summary>
+    public const string TelemetryIngestActor = "studio:telemetry";
+
+    /// <summary>
+    /// Binds the deploy ingest token in the environment's own scope. The
+    /// repository enabled telemetry for the environment in project.yml, and the
+    /// token is scoped to that environment's intake, so production needs no
+    /// separate approver.
+    /// </summary>
+    public ProjectSecretBinding BindTelemetryIngest(string project, string environment)
+    {
+        var name = DeployTelemetryVocabulary.SecretName;
+        var reference = new SecretReference(SecretScope.ForEnvironment(project, environment), name).ToString();
+        var binding = new ProjectSecretBinding(name, reference, TelemetryIngestActor, clock.GetUtcNow().UtcDateTime,
+            TelemetryIngestActor);
+        lock (_gate) Write(project, environment, Read(project, environment).Where(item => item.Name != name).Append(binding));
+        return binding;
+    }
+
     /// <summary>Removes the binding of a managed database credential after its data was deleted.</summary>
     public void UnbindManagedDatabase(string project, string environment, string name)
     {

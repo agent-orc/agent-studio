@@ -1,4 +1,5 @@
 using System.Globalization;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Telemetry;
 
 namespace AgentStudio.Projects;
@@ -12,6 +13,8 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
     private static readonly string[] CpuNames = ["process.cpu.utilization", "container.cpu.utilization", "system.cpu.utilization", "process.cpu.time", "container.cpu.usage"];
     private static readonly string[] MemoryNames = ["process.memory.usage", "container.memory.usage", "system.memory.usage"];
     private static readonly string[] DiskNames = ["system.filesystem.usage", "container.filesystem.usage"];
+    /// <summary>The release id Studio's deploy injects first (M5), then the sender's own conventions.</summary>
+    private static readonly string[] ReleaseAttributes = [DeployTelemetryVocabulary.ReleaseAttribute, "service.version", "release.id"];
     private static readonly string[] NetworkNames = ["system.network.io", "container.network.io", "process.network.io"];
 
     public OperationsMetrics? ReadMetrics(string project, string environmentId, DateTimeOffset since, DateTimeOffset until)
@@ -157,9 +160,9 @@ public sealed class StoreOperationsTelemetryReader(TelemetryStore store, Telemet
             {
                 if (query.Level is not null && !string.Equals(TelemetrySeverity.Name(record.SeverityNumber),
                         TelemetrySeverity.Name(TelemetrySeverity.Parse(query.Level)!.Value), StringComparison.Ordinal)) continue;
-                var release = Attribute(record.Attributes, "service.version") ?? Attribute(record.Attributes, "release.id");
-                if (query.ReleaseId is not null && query.ReleaseId != release
-                    && query.ReleaseId != Attribute(record.Attributes, "release.id")) continue;
+                var release = ReleaseAttributes.Select(name => Attribute(record.Attributes, name)).FirstOrDefault(value => value is not null);
+                if (query.ReleaseId is not null
+                    && !ReleaseAttributes.Any(name => Attribute(record.Attributes, name) == query.ReleaseId)) continue;
                 lines.Add(new(record.Time, TelemetrySeverity.Name(record.SeverityNumber), record.Body, release,
                     record.TraceId));
             }

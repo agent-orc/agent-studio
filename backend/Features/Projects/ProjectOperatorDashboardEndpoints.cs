@@ -1,6 +1,7 @@
 using AgentStudio.Deploy;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
+using AgentStudio.Telemetry;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Management;
 using AgentStudio.Registry;
@@ -232,8 +233,8 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/deploy/jobs/claim", async (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, DeployService deploy, RunbookService runbooks,
-            ProjectSecretBindings bindings, AccessSecurityStore security, RunHostDirectory runHosts,
-            ProjectRegistry projects, IConfiguration configuration, CancellationToken ct) =>
+            ProjectSecretBindings bindings, AccessSecurityStore security, DeployTelemetryCredentials telemetry,
+            RunHostDirectory runHosts, ProjectRegistry projects, IConfiguration configuration, CancellationToken ct) =>
         {
             // F6: the credential must belong to the claimed host on every profile, before
             // a lease exists, so a mismatch cannot surface only at secret resolution.
@@ -243,11 +244,12 @@ public static class ProjectOperatorDashboardEndpoints
                 project => RunnerProjectBinding.Allows(context, project, projects));
             runHosts.RecordContact(RunnerCredential(context, configuration, security),
                 job is null ? DeployHostContact.Poll : DeployHostContact.Claim);
+            var endpoint = TelemetryEndpoints.RequestEndpoint(context);
             return await CompleteClaimAsync(job, project =>
             {
                 deploy.SyncAfterHostCall(project);
                 runbooks.SyncAfterHostCall(project);
-            }, bindings, ct);
+            }, bindings, ct, (claimed, token) => telemetry.PrepareClaimAsync(claimed, endpoint, token));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (HttpContext context, string project, string jobId,
@@ -394,16 +396,25 @@ public static class ProjectOperatorDashboardEndpoints
         });
     }
 
+    /// <param name="telemetry">
+    /// Mints the environment's deploy ingest token and adds the intake endpoint
+    /// to a job whose environment enables telemetry (M5). The token then goes
+    /// through the same secret preflight as the declared references.
+    /// </param>
     internal static async Task<IResult> CompleteClaimAsync(DeployJob? job, Action<string> sync,
-        ProjectSecretBindings bindings, CancellationToken ct)
+        ProjectSecretBindings bindings, CancellationToken ct,
+        Func<DeployJob, CancellationToken, Task<DeployJob>>? telemetry = null)
     {
         if (job is null) return Results.Ok(job);
         try
         {
             sync(job.Project);
-            if (job.SecretRefs.Count == 0 || job.RetryStep == "health" || job.RunbookName is not null
+            if (job.RetryStep == "health" || job.RunbookName is not null
                 || job.Kind is "preview" or "preview-remove") return Results.Ok(job);
-            var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, job.SecretRefs,
+            if (job.Telemetry is not null && telemetry is not null) job = await telemetry(job, ct);
+            var names = PreflightNames(job);
+            if (names.Count == 0) return Results.Ok(job);
+            var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, names,
                 job.EnvironmentKind ?? "production", ct);
             return Results.Ok(job with
             {
@@ -415,7 +426,8 @@ public static class ProjectOperatorDashboardEndpoints
         {
             // The lease is already claimed. Return a reportable, unusable job
             // without exposing provider or storage exception text to the host.
-            var names = job.SecretRefs.Count == 0 ? ["deploy-preflight"] : job.SecretRefs;
+            var declared = PreflightNames(job);
+            var names = declared.Count == 0 ? ["deploy-preflight"] : declared;
             return Results.Ok(job with
             {
                 SecretBindings = null,
@@ -425,6 +437,11 @@ public static class ProjectOperatorDashboardEndpoints
             });
         }
     }
+
+    private static IReadOnlyList<string> PreflightNames(DeployJob job)
+        => job.Telemetry is { } telemetry
+            ? [.. job.SecretRefs.Append(telemetry.SecretName).Distinct(StringComparer.Ordinal)]
+            : job.SecretRefs;
 
     // Results.Forbid() needs an authentication scheme; Runner credentials are
     // checked by AccessSecurityMiddleware, so answer 403 directly.

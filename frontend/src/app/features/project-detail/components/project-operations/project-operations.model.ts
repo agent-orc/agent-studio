@@ -34,6 +34,8 @@ export interface OperationsSpan { spanId: string; parentSpanId: string | null; n
 export function metric(value: number | null | undefined, unit = ''): string {
   return value === null || value === undefined ? 'No data' : `${Number(value.toFixed(1)).toLocaleString('en-US')}${unit}`;
 }
+/** Used against reserved; without a reservation the used value still shows. */
 export function ratio(used: number | null, reserved: number | null, unit: string): string {
-  return used === null || reserved === null ? 'No data' : `${metric(used, unit)} / ${metric(reserved, unit)}`;
+  if (used === null) return 'No data';
+  return reserved === null ? metric(used, unit) : `${metric(used, unit)} / ${metric(reserved, unit)}`;
 }

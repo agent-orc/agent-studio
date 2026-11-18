@@ -15,6 +15,7 @@ import { DeployActionsStore } from '../../state/deploy-actions.store';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 import { ManagedDatabasesPanelComponent } from '../managed-databases-panel/managed-databases-panel';
 import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-page/project-secrets-page.component';
+import { ProjectTelemetryTokensComponent } from '../project-telemetry-tokens/project-telemetry-tokens';
 import { FlowHealthPageComponent, type FlowDetailTarget } from '../../../flow-health';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
@@ -29,10 +30,7 @@ import { DeployRollbackFlow } from '../../state/deploy-rollback-flow';
 import { serverCheckoutMissing } from '../../../server-checkout/server-checkout.model';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import {
-  DEPLOY_CLOCK,
-  artifactReleaseLookups,
-  buildDeployRuns,
-  buildEnvironmentCards,
+  DEPLOY_CLOCK, artifactReleaseLookups, buildDeployRuns, buildEnvironmentCards,
   environmentNames,
   ready,
   ALL_DEPLOY_RUNS,
@@ -47,7 +45,7 @@ import { DEPLOY_LIVE_REFRESH_MS, deployInFlight, deploymentEnvironment, deployNo
   isProductionRun, pageItems } from '../../state/deploy-area-reads';
 import { DeployAreaSecrets, missingSecretsPrompt } from './deploy-area-secrets';
 
-export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
+export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'telemetry' | 'secrets' | 'tools';
 
 const IDLE: DeployRunActionState = { busy: null, error: null };
 
@@ -60,7 +58,8 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
-    FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective, RollbackOfferComponent,
+    ProjectTelemetryTokensComponent, FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective,
+    RollbackOfferComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',

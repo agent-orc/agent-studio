@@ -3854,9 +3854,10 @@ project.yml reader has no escapes. `POST .../deploy-steps` repeats the form with
 both preview digests and writes under the same precondition and `PostStep`
 classification as the migration. Until steps exist, Deploy > Overview shows
 each declared environment as "No deploy step yet"; the JSON declaration
-guidance appears only for schema 1 projects. The `static-web` and
-`container-service` templates carry this section commented out below a
-`# --- schema 2 deployment ---` marker.
+guidance appears only for schema 1 projects. The `static-web` template carries
+this section commented out below a `# --- schema 2 deployment ---` marker; the
+`container-service` template is schema 2 with its deploy steps, telemetry
+environments and runbooks already declared (M5).
 
 A static site over SSH and a compose service, each with a health check:
 
