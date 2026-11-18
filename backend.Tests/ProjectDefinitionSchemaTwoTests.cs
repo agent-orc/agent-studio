@@ -79,6 +79,25 @@ public sealed class ProjectDefinitionSchemaTwoTests
 
     private static string Valid => Head + Pipeline;
 
+    [Fact]
+    public void Removing_production_accepts_a_staging_only_definition()
+    {
+        var stagingOnly = Cut(Valid, "  - name: production\n", "lifecycles:");
+        stagingOnly = Cut(stagingOnly, "    - phase: production\n", "deploy:");
+        stagingOnly = Cut(stagingOnly, "  - step: container\n", "variables:");
+        stagingOnly = stagingOnly[..stagingOnly.IndexOf("  - name: DATABASE_URL", StringComparison.Ordinal)];
+
+        var result = ProjectDefinitionReader.Parse(stagingOnly);
+
+        Assert.True(result.IsValid, Describe(result));
+        Assert.Equal(["staging"], result.Definition!.Deployment!.Environments.Select(item => item.Name));
+        Assert.Equal(["staging"], result.Definition.Deployment.StandardLifecycle.Select(item => item.Phase));
+
+        var defaultLifecycle = ProjectDefinitionReader.Parse(Cut(stagingOnly, "lifecycles:", "deploy:"));
+        Assert.True(defaultLifecycle.IsValid, Describe(defaultLifecycle));
+        Assert.Equal(["staging"], defaultLifecycle.Definition!.Deployment!.StandardLifecycle.Select(item => item.Phase));
+    }
+
     [Theory]
     [InlineData("database-url")]
     [InlineData("database_url")]

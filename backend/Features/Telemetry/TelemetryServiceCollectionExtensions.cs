@@ -10,7 +10,8 @@ public static class TelemetryServiceCollectionExtensions
         services.AddSingleton<TelemetryIntakeQueue>();
         services.AddSingleton<ITelemetryIngestCredentials, AccessStoreTelemetryIngestCredentials>();
         services.AddSingleton<ITelemetryEnvironmentDirectory, DeclaredTelemetryEnvironments>();
-        services.AddSingleton<ITelemetryValueMasker, CredentialTelemetryValueMasker>();
+        services.AddSingleton<ITelemetryValueMasker>(sp =>
+            new CredentialTelemetryValueMasker(sp.GetRequiredService<AgentStudio.Secrets.ISecretStore>()));
         services.AddSingleton<TelemetryIntakeService>();
         services.AddSingleton<DeployTelemetryCredentials>();
         services.AddSingleton<TelemetryWriter>();

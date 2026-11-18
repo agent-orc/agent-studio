@@ -159,6 +159,25 @@ Stage P1 of the [deployment Dossier](../operations/bereitstellung/index.html)
 adds a release layer in `backend/Features/Deploy/`. The host deploy queue above
 stays the only executor; releases and runs describe and steer it.
 
+- **Integration release (AGT-3891).** A project without the promotion train
+  needs no shell and no `runner.release` credential. After a card is integrated
+  and the project's own gate is green on the integration branch tip (a
+  `integrated-verified` integration record naming the tip, or a green
+  post-merge run on it), Studio packs the tip's committed tree (or the
+  declared static artifact `path`) into a `release-package@sha256:` package,
+  registers it in the artifact registry with builder `studio-integration`,
+  and creates the release, which queues the automatic Staging run. A
+  reconciler checks every project each 15 seconds; a refused attempt for the
+  same commit repeats after 5 minutes. The Releases tab reads
+  `GET /api/projects/{project}/deploy/integration-release` (state, reason and
+  next step) and offers `POST` on the same route as "Create release" when
+  the tip is ready or a refusal can be retried. The POST needs the
+  environment deploy permission for Staging. Studio packs committed files
+  only: a container environment, an artifact path that is build output, a
+  symbolic link in the package, or an explicit `delivery.fullSuite: required`
+  without a green full-suite verdict blocks the release with its reason. A
+  repository that contains `scripts/release/promote-develop-to-main.sh` keeps
+  releasing through the train; Studio creates no integration release for it.
 - **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
   operator route `POST /api/projects/{project}/environments/releases`) records an
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process

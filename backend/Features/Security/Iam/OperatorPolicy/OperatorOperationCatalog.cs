@@ -209,6 +209,7 @@ public static class OperatorOperationCatalog
         new("POST", "/api/clients/{}/drain", OperatorOperationIds.HostDrain),
         new("POST", "/api/clients/{}/resume", OperatorOperationIds.HostResume),
         new("POST", "/api/clients/{}/deploy-switch", OperatorOperationIds.HostDrain),
+        new("POST", "/api/clients/{}/deploy-cancel", OperatorOperationIds.HostResume),
         new("POST", "/api/hosts/{}/logs", OperatorOperationIds.HostLogsCollect),
         new("POST", "/api/hosts/{}/configuration", OperatorOperationIds.HostConfigurationApply),
         new("POST", "/api/tasks/{}/integration/retry", OperatorOperationIds.GateRerun),

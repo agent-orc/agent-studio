@@ -3,13 +3,15 @@
 ## Host operations
 
 `project.yml` declares two runbooks that Studio can run on the deploy host under
-Deploy, Runbooks. Each step names a script the operator installs on the host;
-Studio never sends a command line.
+Deploy, Runbooks. Each step runs a script from `deploy/runbooks` that the operator
+installs on the host ([install](../deployments/README.md#runbooks)); Studio never
+sends a command line. After the scripts succeed, Studio probes the `http` health
+check and fails the run when it does not pass.
 
-| Runbook | Step | What the host script should do |
+| Runbook | Script | Use it when |
 |---|---|---|
-| `restart` | `restart-service` | `docker compose -f <composeFile> restart app` for the environment |
-| `collect-diagnostics` | `collect-diagnostics` | Print `docker compose ps`, the last 200 log lines, and `GET /health` |
+| `restart` | `deploy/runbooks/restart.sh` | The service itself is stuck; restarts the `app` container |
+| `disk-cleanup` | `deploy/runbooks/disk-cleanup.sh` | The host runs out of disk; prunes stopped containers, unused images and old build cache |
 
 ## Health check fails
 

@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { ProjectEnvironments } from '../../src/app/models/project-overview.model';
 import { setTheme } from '../helpers/theme';
 import {
   ARTIFACT_A,
@@ -110,6 +111,9 @@ async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false)
   await page.route(`**/api/projects/${PROJECT}/environments/health`, route => answer(route, deploy.health ?? {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
+  await page.route(`**${DEPLOY}/secret-readiness**`, route => answer(route, {
+    project: PROJECT, releaseId: null, environments: [],
+  }));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
   // A predicate, not a glob: the artifact query value contains "/", which a glob "*" does not match.
   await page.route(url => url.pathname === `${DEPLOY}/releases/page`, route => {
@@ -199,6 +203,46 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('Stop and Remove explain retention and require a later host confirmation', async ({ page }) => {
+    const environments: ProjectEnvironments = deployEnvironmentsFixture();
+    const calls: string[] = [];
+    await openDeploy(page, fullMocks({ environments }));
+    await page.route(`**/api/projects/${PROJECT}/environments/stage/stop`, async route => {
+      calls.push('stop');
+      await route.fulfill(json({}));
+    });
+    await page.route(`**/api/projects/${PROJECT}/environments/stage/run-target-removal/confirm`, async route => {
+      calls.push('host-removal');
+      await route.fulfill(json({}));
+    });
+    await page.route('**/api/tasks', async route => {
+      calls.push('card');
+      expect(route.request().postDataJSON().promptMarkdown).toContain('Do not add a removal tombstone');
+      await route.fulfill(json({ id: 'WEB-100' }));
+    });
+
+    const stage = page.getByRole('article', { name: 'Staging' });
+    await expect(stage.getByRole('button', { name: 'Stop Staging' })).toBeVisible();
+    await expect(stage.getByRole('button', { name: 'Remove Staging' })).toBeVisible();
+    await stage.getByRole('button', { name: 'Stop Staging' }).click();
+    await expect(page.getByTestId('deploy-environment-action-message')).toContainText('Stop queued');
+    await stage.getByRole('button', { name: 'Remove Staging' }).click();
+    await expect(page.getByTestId('deploy-environment-action-message')).toContainText('WEB-100');
+    expect(calls).toEqual(['stop', 'card']);
+
+    environments.runTargetRemovals = [{ environmentId: 'stage', hostId: 'run-host', kind: 'stage', status: 'pending-confirmation' }];
+    await page.getByTestId('deploy-refresh').click();
+    await expect(page.getByTestId('deploy-pending-removal')).toContainText('app stays on the host');
+    await setTheme(page, 'light');
+    await capture(page, 'deploy-environment-removal-pending-light');
+    await page.getByTestId('deploy-pending-removal').screenshot({ path: path.join(results, 'deploy-pending-removal-light--mocked.png') });
+    await setTheme(page, 'dark');
+    await capture(page, 'deploy-environment-removal-pending-dark');
+    await page.getByTestId('deploy-pending-removal').screenshot({ path: path.join(results, 'deploy-pending-removal-dark--mocked.png') });
+    await page.getByTestId('deploy-pending-removal').getByRole('button', { name: 'Confirm host removal' }).click();
+    expect(calls).toEqual(['stop', 'card', 'host-removal']);
+  });
+
   test('persists signed-in cookies across a browser restart and approves Production', async ({ browser, baseURL }) => {
     const first = await browser.newContext({ baseURL });
     const signInPage = await first.newPage();
@@ -883,6 +927,10 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(production.getByTestId('deploy-environment-approval')).toContainText('Release 2026.10.19.2, requested by local.dev');
 
     await staging.getByRole('button', { name: 'Open last run for Staging' }).focus();
+    await page.keyboard.press('Tab');
+    await expect(staging.getByRole('button', { name: 'Stop Staging' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(staging.getByRole('button', { name: 'Remove Staging' })).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(production.getByRole('button', { name: 'Open last run for Production' })).toBeFocused();
     await page.keyboard.press('Tab');

@@ -61,7 +61,7 @@ public sealed class ProjectRepositoryProvisioningTests
         Assert.Equal(2, parsed.Definition!.SchemaVersion);
         var deployment = parsed.Definition.Deployment!;
         Assert.Equal([("staging", true), ("production", true)], deployment.Environments.Select(item => (item.Name, item.Telemetry)));
-        Assert.Equal(["restart", "collect-diagnostics"], deployment.Runbooks.Select(item => item.Name));
+        Assert.Equal(["restart", "disk-cleanup"], deployment.Runbooks.Select(item => item.Name));
 
         // The declarations Studio derives from the file give every container deploy its telemetry.
         var declarations = AgentStudio.Projects.ProjectEnvironmentService.ApplyDefinition([], yaml);

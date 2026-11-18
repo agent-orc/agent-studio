@@ -120,7 +120,31 @@ public sealed record PreviewJobSpec(string Project, string CardKey, string Sourc
     public string? Dockerfile { get; init; }
 }
 
-public sealed record RunbookStepResult(int Index, bool Success);
+/// <param name="Output">The host's masked output tail of the step, bounded again by <see cref="RunbookStepOutput"/>.</param>
+public sealed record RunbookStepResult(int Index, bool Success, string? Output = null);
+
+/// <summary>
+/// The control plane's bound on reported runbook output. The host masks the secret values it
+/// passed to the script; this applies the credential patterns and the line limits once more,
+/// so a host that sends more cannot grow the run log.
+/// </summary>
+public static class RunbookStepOutput
+{
+    public const int MaxLines = 200;
+    public const int MaxLineLength = 400;
+
+    public static IReadOnlyList<string> Lines(string? output)
+    {
+        if (string.IsNullOrEmpty(output)) return [];
+        var lines = output.Split('\n');
+        return lines.Skip(Math.Max(0, lines.Length - MaxLines))
+            .Select(line => new string(line.Select(ch => ch == '\t' ? ' ' : ch).Where(ch => !char.IsControl(ch))
+                .Take(MaxLineLength * 4).ToArray()))
+            .Select(line => AgentStudio.Security.CredentialRedactor.Redact(line))
+            .Select(line => line.Length > MaxLineLength ? line[..MaxLineLength] + "…" : line)
+            .ToArray();
+    }
+}
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -970,6 +994,33 @@ public sealed partial class ProjectEnvironmentService
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
         if (!HasIndependentReleaseEvidence(project, artifact, commit)) return false;
+        return RecordBuiltArtifact(project, artifact, commit,
+            () => _registry.PushVerified(project, commit, artifact, builderIdentity));
+    }
+
+    /// <summary>
+    /// An integration release: Studio packed <paramref name="packagePath"/>
+    /// from <paramref name="commit"/> after the project's own gate passed on
+    /// it (<paramref name="gateRunId"/>). Records it like a gate-built
+    /// artifact and returns the artifact, or null when the commit is not on
+    /// the integration branch or the package cannot be stored.
+    /// </summary>
+    public string? RegisterIntegrationArtifact(string project, string commit, string packagePath, string gateRunId)
+    {
+        if (!Commit.IsMatch(commit)) return null;
+        string artifact;
+        using (var stream = File.OpenRead(packagePath))
+            artifact = "release-package@sha256:" + Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        return RecordBuiltArtifact(project, artifact, commit,
+            () => _registry.PushStudioPackage(project, commit, packagePath, gateRunId, IntegrationReleaseBuilder))
+            ? artifact : null;
+    }
+
+    /// <summary>Builder identity of packages Studio packs from its own gate verdict.</summary>
+    public const string IntegrationReleaseBuilder = "studio-integration";
+
+    private bool RecordBuiltArtifact(string project, string artifact, string commit, Func<bool> register)
+    {
         var repo = _git.ResolveRepoRootForProject(project);
         if (repo is null || !_git.IsGitRepo(repo)) return false;
         var branch = _git.ResolveIntegrationBranch(repo, _settings.Get(project).IntegrationBranch);
@@ -978,7 +1029,7 @@ public sealed partial class ProjectEnvironmentService
             return false;
         lock (_gate)
         {
-            if (!_registry.PushVerified(project, commit, artifact, builderIdentity)) return false;
+            if (!register()) return false;
             var path = ArtifactPath(project, commit, artifact);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             if (File.Exists(path))
@@ -1483,6 +1534,8 @@ public sealed partial class ProjectEnvironmentService
             }
             var results = job.RunbookName is null ? Array.Empty<RunbookStepResult>() : report.RunbookResults?
                 .Take(job.RunbookSteps.Count).Where(item => item.Index >= 0 && item.Index < job.RunbookSteps.Count)
+                .Select(item => item with { Output = item.Output is null ? null
+                    : string.Join('\n', RunbookStepOutput.Lines(item.Output)) })
                 .ToArray() ?? [];
             var validResults = job.RunbookName is null || results.Select((item, index) => item.Index == index).All(value => value);
             var expectedSteps = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();

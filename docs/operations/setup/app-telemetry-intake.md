@@ -175,9 +175,28 @@ the batch processor, `send_batch_max_size`).
 
 Points older than the hourly retention, log records and spans older than the log
 retention, and anything more than 10 minutes in the future count as rejected.
-Log bodies, event names, severity text, span names, and the attribute values of logs, metrics, and spans pass through the
-credential redactor before durable staging, storage, queries, or export. Values held by the secret provider (AGT-3222) will
-be masked once that provider exists.
+Log bodies, event names, severity text, span names, and attribute names and values of logs, metrics, and spans pass through the
+credential redactor before durable staging, storage, queries, or export. For each
+batch, intake also reads the active secret values in the project's environment,
+project, and inherited workspace scopes from the secret store. It masks those
+exact values even if no workload has resolved them recently. A secret-store read
+failure makes intake return 503 instead of staging an unverified batch. The
+writer repeats masking before SQLite storage and export.
+
+### Purge telemetry stored before provider-value masking
+
+The new masking rule does not rewrite existing SQLite rows or pending journal
+files. For each affected environment, stop Studio, remove
+`<StoreRoot>/<project>/<environment>.sqlite` and its `-wal` and `-shm` files,
+then restart Studio. The default `StoreRoot` is
+`<TaskRepository>/telemetry`. This discards that environment's logs, spans, and metric
+history. Before restarting, remove every file from
+`<StoreRoot>/pending/`, including temporary and completed journal files, since
+old journal files may contain unmasked values and their file names do not identify
+the environment. This discards queued batches
+for all environments. Purge copies of those files in backups and any exported
+telemetry through the relevant storage retention process. Do not inspect or
+print the old rows to look for a secret.
 
 ## Storage and retention
 
