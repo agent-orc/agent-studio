@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using Contract = AgentStudio.TaskServer.Contracts;
 using AgentStudio.Review;
 using AgentStudio.Tasks;
+using AgentStudio.Security;
 
 namespace AgentStudio.Runner;
 
@@ -1146,6 +1147,9 @@ public sealed class RemoteReviewPlanBuilder
         internal const string SummaryOmitted =
             "(Generated summary omitted: the agent report fills the status bound.)";
 
+        internal const string AgentReportWithheld =
+            "(Agent report withheld: results/status.md is a link.)";
+
         internal const string AgentReportNote =
             "The generated summary points to results/status.md. The agent report is the place "
             + "to check what the task and each follow-up round asked for: judge a round requirement "
@@ -1160,12 +1164,35 @@ public sealed class RemoteReviewPlanBuilder
 
         internal static ReviewStatus Read(string folderPath)
         {
-            var summary = RemoteReviewPlanBuilder.Read(Path.Combine(folderPath, "status.md"), Characters, string.Empty);
-            var report = RemoteReviewPlanBuilder.Read(
-                Path.Combine(folderPath, "results", "status.md"), Characters, string.Empty).Trim();
+            var summary = RedactedTail(RemoteReviewPlanBuilder.Read(
+                Path.Combine(folderPath, "status.md"), Characters, string.Empty));
+            var resultsPath = Path.Combine(folderPath, "results");
+            var reportPath = Path.Combine(resultsPath, "status.md");
+            if (IsLink(resultsPath) || IsLink(reportPath))
+            {
+                var summaryRoom = Characters - AgentReportWithheld.Length - 2;
+                if (summary.Length > summaryRoom) summary = summary[^summaryRoom..];
+                return new(summary.Length == 0 ? AgentReportWithheld : summary.TrimEnd() + "\n\n" + AgentReportWithheld,
+                    false, string.Empty);
+            }
+            var report = RedactedTail(RemoteReviewPlanBuilder.Read(
+                reportPath, Characters, string.Empty).Trim());
             if (report.Length == 0) return new(summary, false, string.Empty);
             if (!IsSummary(summary)) return new(report, true, string.Empty);
             return Compose(summary.Trim(), report);
+        }
+
+        private static bool IsLink(string path)
+        {
+            try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+        }
+
+        private static string RedactedTail(string text)
+        {
+            var redacted = CredentialRedactor.Redact(text);
+            return redacted.Length <= Characters ? redacted : redacted[^Characters..];
         }
 
         internal static ReviewStatus Compose(string summary, string report)

@@ -62,6 +62,72 @@ async function screenshot(page: Page, name: string): Promise<void> {
 }
 
 test.describe('Operator attention list', () => {
+  test('shows an open environment incident first with its two destinations in both themes and on a phone', async ({ page }) => {
+    const [watch] = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');
+    const project = watch.name ?? 'alpha';
+    const incident = {
+      id: `environment.incident-open|${project}|production/20261116`, type: 'environment.incident-open',
+      project, cardKey: 'health-production-1', cards: ['health-production-1'],
+      title: `${project} · Production incident`, reason: 'Production since 2026-11-16 01:00 UTC: http: HTTP 503',
+      observedAt: '2026-11-16T01:00:00Z', suggestedOperations: ['card.inspect'], evidence: [],
+    };
+    await page.route('**/api/operator/attention', route => route.fulfill({ json: { items: [incident], count: 1 } }));
+    await gotoStudio(page);
+    for (const { name, width, height } of VIEWPORTS) {
+      await page.setViewportSize({ width, height });
+      for (const theme of (name === 'desktop' ? ['light', 'dark'] : ['light']) as ('light' | 'dark')[]) {
+        await setTheme(page, theme);
+        await page.getByTestId('studio-attention-trigger').click();
+        const row = page.getByTestId('attention-group-incident').getByTestId('attention-row');
+        await expect(row).toContainText('Production since 2026-11-16 01:00 UTC');
+        await expect(row).toContainText('HTTP 503');
+        await expect(row.getByTestId('attention-row-action')).toHaveText('Open incident card');
+        await expect(row.getByTestId('attention-open-operations')).toBeVisible();
+        await screenshot(page, `incident-${name}-${theme}`);
+        await page.getByTestId('studio-attention-list').getByRole('button', { name: 'Close' }).click();
+      }
+    }
+    await page.getByTestId('studio-attention-trigger').click();
+    await page.getByTestId('attention-open-operations').click();
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/operations/);
+  });
+
+  test('review host drift shows a status cue and opens its host detail', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.route('**/api/workbenches', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }),
+    }));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [] }),
+    }));
+    await page.route('**/api/operator/backups', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'ok', warnings: [], backups: [], offHost: {} }),
+    }));
+    const item = { id: 'review-host.drift|first-run-review', type: 'review-host.drift', project: null,
+      cardKey: null, cards: ['AGT-3648'],
+      reason: 'Review host first-run-review worked on AGT-3648 while running commit f947f2b, image review@sha256:bbbb; Stable expects commit 3d61e8b, image review@sha256:aaaa. Graded cards: AGT-3648.',
+      observedAt: new Date().toISOString(), suggestedOperations: [],
+      evidence: [{ label: 'Review host', href: '/workspace/settings/environment?host=first-run-review' }] };
+    await page.route('**/api/operator/attention', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items: [item], count: 1 }),
+    }));
+    await gotoStudio(page);
+    await setTheme(page, 'light');
+    await expect(page.getByTestId('review-host-drift-cue')).toBeVisible();
+    await page.getByTestId('studio-attention-trigger').click();
+    await expect(page.locator('[data-attention-type="review-host.drift"]')).toContainText('AGT-3648');
+    await expect(page.locator('[data-attention-type="review-host.drift"] [data-testid="attention-row-reason"]'))
+      .toHaveCSS('display', 'block');
+    await screenshot(page, 'review-host-drift-attention-1280-light');
+    await setTheme(page, 'dark');
+    await screenshot(page, 'review-host-drift-attention-1280-dark');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByTestId('review-host-drift-cue')).toBeVisible();
+    await screenshot(page, 'review-host-drift-attention-390-dark');
+    await page.locator('[data-attention-type="review-host.drift"] [data-testid="attention-row-action"]').click();
+    await expect(page).toHaveURL(/environment\?host=first-run-review/);
+  });
+
   test('accepts three Human Review cards from Needs you and auto-advance with a stale board projection', async ({ page }) => {
     test.setTimeout(240_000);
     const [watch] = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');

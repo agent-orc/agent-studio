@@ -44,7 +44,7 @@
                           [attr.aria-label]="cellLabel(row, environment.name)"
                           (click)="openDeployment.emit(row.name)">
                     <span class="deployment-dashboard__cell-head">
-                      <strong>Release {{ status.currentRelease?.version ?? 'None' }}{{ status.currentRelease?.channel ? ' · ' + status.currentRelease?.channel : '' }}</strong>
+                      <strong>@if (status.releaseUncertain) { Running release uncertain. A failed release may be running. } @else { Release {{ status.currentRelease?.version ?? 'None' }}{{ status.currentRelease?.channel ? ' · ' + status.currentRelease?.channel : '' }} }</strong>
                       <app-status-indicator [tone]="stateTone(status.currentDeployment?.state)" [label]="stateLabel(status.currentDeployment?.state)" [compact]="true" testId="deployment-dashboard-state" />
                     </span>
                     <span class="deployment-dashboard__cell-detail">
@@ -52,7 +52,7 @@
                       <app-status-indicator [tone]="healthTone(status.health)" [label]="healthLabel(status.health)" [compact]="true" testId="deployment-dashboard-health" />
                     </span>
                     @if (status.currentDeployment?.state === 'awaiting-approval') { <app-status-indicator tone="warning" label="Approval pending" [compact]="true" testId="deployment-dashboard-approval" /> }
-                    @if (status.newerRelease; as newer) { <app-status-indicator tone="info" [label]="'Newer release ' + newer.version + ' · ' + newer.channel" [compact]="true" testId="deployment-dashboard-newer-release" /> }
+                    @if (!status.releaseUncertain && status.newerRelease; as newer) { <app-status-indicator tone="info" [label]="'Newer release ' + newer.version + ' · ' + newer.channel" [compact]="true" testId="deployment-dashboard-newer-release" /> }
                   </button>
                 }
               </td>

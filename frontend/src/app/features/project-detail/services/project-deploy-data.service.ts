@@ -14,6 +14,7 @@ import type {
   Release,
   DeployRunFilter,
   ReleaseGateStatus,
+  SecretReadinessResponse,
 } from '../state/deploy-area.model';
 import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
 import { EnvironmentHealthService } from '../../environment-health/services/environment-health.service';
@@ -24,7 +25,8 @@ export interface ReleaseNotes {
   releaseId: string;
   version: string;
   preview: boolean;
-  notes: { cardKey: string; text: string }[];
+  /** `maintenance` marks chore cards; `edited` says a person wrote the text (F18). */
+  notes: { cardKey: string; text: string; maintenance?: boolean; edited?: boolean }[];
 }
 
 /**
@@ -78,6 +80,12 @@ export class ProjectDeployDataService {
       'Release notes could not be loaded.', true);
   }
 
+  /** Rewrites one card's note in product language; empty text restores the card title. */
+  editReleaseNote(projectName: string, releaseId: string, cardKey: string, text: string): Observable<ReleaseNotes> {
+    return this.http.put<ReleaseNotes>(
+      `${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/notes/${encodeURIComponent(cardKey)}`, { text });
+  }
+
   releasePage(projectName: string, offset: number): Observable<DeployPanel<DeployPage<Release>>> {
     return panel(this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`,
       { params: { offset, limit: 25 } }), 'Releases could not be loaded.', true);
@@ -118,6 +126,16 @@ export class ProjectDeployDataService {
       'The release gate state could not be loaded.', true);
   }
 
+  /**
+   * F14: secrets a deploy would miss per environment, for the release or, without
+   * one, for the newest release the next run deploys.
+   */
+  secretReadiness(projectName: string, releaseId?: string | null): Observable<DeployPanel<SecretReadinessResponse>> {
+    const options = releaseId ? { params: { releaseId } } : {};
+    return panel(this.http.get<SecretReadinessResponse>(`${deployRoot(projectName)}/secret-readiness`, options),
+      'Secret bindings could not be checked.', true);
+  }
+
   /** AGT-3201 deploy runs, newest first. */
   deployments(projectName: string): Observable<DeployPanel<Deployment[]>> {
     return panel(this.http.get<Deployment[]>(`${deployRoot(projectName)}/deployments`),
@@ -149,12 +167,18 @@ export class ProjectDeployDataService {
     return panel(request, 'The step log could not be loaded.', true);
   }
 
-  /** Approve, reject, or cancel a run; the server checks role and state. */
-  act(projectName: string, deploymentId: string, action: DeployRunAction, reason?: string): Observable<Deployment> {
+  /**
+   * Approve, reject, or cancel a run; the server checks role and state. With
+   * `confirmMissingSecrets` a Production approval goes ahead without the secret
+   * bindings the server would otherwise refuse it for (F14).
+   */
+  act(projectName: string, deploymentId: string, action: DeployRunAction, reason?: string,
+    options: { confirmMissingSecrets?: boolean } = {}): Observable<Deployment> {
+    const intervention = action === 'retry' || action === 'skip' || action === 'abort';
     return this.http.post<Deployment>(
-      `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${
-        action === 'retry' || action === 'skip' || action === 'abort' ? 'intervention' : action}`,
-      action === 'retry' || action === 'skip' || action === 'abort' ? { action, reason } : {});
+      `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${intervention ? 'intervention' : action}`,
+      intervention ? { action, reason }
+        : action === 'approve' && options.confirmMissingSecrets ? { confirmMissingSecrets: true } : {});
   }
 
   pipeline(projectName: string): Observable<DeployPanel<PipelineDefinitionResponse>> {

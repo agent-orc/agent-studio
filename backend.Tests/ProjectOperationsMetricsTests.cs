@@ -48,6 +48,35 @@ public sealed class ProjectOperationsMetricsTests
     }
 
     [Fact]
+    public void Production_health_incident_counts_as_a_recovery_and_failed_change()
+    {
+        var changed = Run("prod", "new", DeploymentStates.Succeeded, -2);
+        var incident = new EnvironmentIncident("incident-1", "prod", "Production",
+            End.AddHours(-1), End.AddMinutes(-54));
+        var result = DoraMetrics.Calculate([Production], [Release("new", "CARD-1")], [changed],
+            new Dictionary<string, DateTime>(), End.AddDays(-7), End, [incident]);
+
+        Assert.Equal(1, result.RecoveriesMeasured);
+        Assert.Equal(0.1, result.MedianRecoveryHours!.Value, 4);
+        Assert.Equal(1, result.ChangeFailureRate);
+    }
+
+    [Fact]
+    public void Incident_and_failed_deploy_for_one_outage_count_one_recovery()
+    {
+        var failed = Run("prod", "new", DeploymentStates.Failed, -1);
+        var restored = Run("prod", "new", DeploymentStates.Succeeded, 0);
+        var incident = new EnvironmentIncident("incident-1", "prod", "Production",
+            End.AddHours(-1), End);
+
+        var result = DoraMetrics.Calculate([Production], [Release("new", "CARD-1")], [failed, restored],
+            new Dictionary<string, DateTime>(), End.AddDays(-7), End, [incident]);
+
+        Assert.Equal(1, result.RecoveriesMeasured);
+        Assert.Equal(1, result.MedianRecoveryHours);
+    }
+
+    [Fact]
     public void Successful_change_followed_by_rollback_counts_as_failed_change()
     {
         var changed = Run("prod", "new", DeploymentStates.Succeeded, -4);

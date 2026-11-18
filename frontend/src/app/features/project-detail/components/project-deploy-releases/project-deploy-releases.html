@@ -58,7 +58,7 @@
                   <p class="releases__numeric" data-testid="deploy-release-quality-counts">{{ quality.pass }} pass · {{ quality.concerns }} concerns · {{ quality.block }} block · {{ quality.notReviewed }} not reviewed</p>
                   <ul class="releases__quality-cards" aria-label="Card Quality verdicts">
                     @for (card of quality.cards; track card.key) {
-                      <li [attr.data-testid]="'deploy-release-quality-card-' + card.key"><span>{{ card.key }}</span><span>{{ verdictLabel(card.verdict) }}</span></li>
+                      <li [attr.data-testid]="'deploy-release-quality-card-' + card.key"><span>{{ card.key }}</span><span>{{ verdictLabel(card.verdict) }}@if (card.source === 'review') { <span class="releases__muted"> · from the card review</span> }@if (card.reason) { <span class="releases__muted"> · {{ card.reason }}</span> }</span></li>
                     }
                   </ul>
                   <p data-testid="deploy-release-range-verdict">Release range: {{ verdictLabel(quality.rangeVerdict) }}</p>
@@ -79,6 +79,23 @@
                 <dt>Artifacts</dt>
                 <dd><ul class="releases__digests">@for (digest of release.artifactDigests; track digest) { <li><code>{{ digest }}</code></li> }</ul></dd>
                 <dt>Running in</dt><dd data-testid="deploy-release-live-in">{{ liveIn().length ? liveIn().join(', ') : 'No environment' }}</dd>
+                <dt>Secrets</dt>
+                <dd data-testid="deploy-release-secrets">
+                  @switch (secrets().status) {
+                    @case ('loading') { <span class="releases__muted">Checking secret bindings…</span> }
+                    @case ('unavailable') { <span class="releases__muted">This server does not check secret bindings.</span> }
+                    @case ('error') { <span class="releases__muted">{{ secrets().message }}</span> }
+                    @default {
+                      @if (secretGaps().length) {
+                        <div class="releases__secret-gaps">
+                          @for (gap of secretGaps(); track gap.environmentId) {
+                            <app-deploy-secret-gaps [readiness]="gap" [named]="true" (bind)="openSecrets.emit($event)" />
+                          }
+                        </div>
+                      } @else { Every environment has its secrets bound }
+                    }
+                  }
+                </dd>
               </dl>
               @defer (on immediate) { <app-project-deploy-release-notes [release]="release" /> }
             </article>

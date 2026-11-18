@@ -1,0 +1,99 @@
+<section class="steps" aria-labelledby="deploy-steps-title" data-testid="deploy-steps-form">
+  <header class="steps__head">
+    <h4 id="deploy-steps-title">Add deploy steps</h4>
+    <p>Studio previews the change to <code>.agent-studio/project.yml</code> before it writes one commit.</p>
+  </header>
+
+  <fieldset class="steps__group" [disabled]="confirming()">
+    <legend>Artifact</legend>
+    <div class="steps__choice" role="radiogroup" aria-label="Artifact type">
+      <label><input type="radio" name="deploy-steps-artifact" value="static" data-testid="deploy-steps-type-static"
+        [checked]="artifactType() === 'static'" (change)="setArtifactType('static')" /> Static site</label>
+      <label><input type="radio" name="deploy-steps-artifact" value="container" data-testid="deploy-steps-type-container"
+        [checked]="artifactType() === 'container'" (change)="setArtifactType('container')" /> Container</label>
+    </div>
+    <label class="steps__field">
+      <span>{{ artifactType() === 'static' ? 'Bundle directory' : 'Dockerfile' }}</span>
+      <input type="text" data-testid="deploy-steps-artifact-path" [value]="artifactPath()"
+        (input)="setArtifactPath($any($event.target).value)" />
+    </label>
+  </fieldset>
+
+  @for (environment of environments(); track environment.name) {
+    <fieldset class="steps__group" [disabled]="confirming()" [attr.data-testid]="'deploy-steps-env-' + environment.name">
+      <legend>{{ label(environment.name) }}</legend>
+      <div class="steps__grid">
+        <label class="steps__field">
+          <span>Target host</span>
+          <input type="text" placeholder="web-vm" data-testid="deploy-steps-target" [value]="environment.target"
+            (input)="setField(environment.name, 'target', $any($event.target).value)" />
+        </label>
+        @if (artifactType() === 'static') {
+          <label class="steps__field">
+            <span>Directory</span>
+            <input type="text" placeholder="/srv/www/site" data-testid="deploy-steps-directory" [value]="environment.directory ?? ''"
+              (input)="setField(environment.name, 'directory', $any($event.target).value)" />
+          </label>
+        } @else {
+          <label class="steps__field">
+            <span>Compose file</span>
+            <input type="text" placeholder="/srv/apps/web/compose.yml" data-testid="deploy-steps-compose" [value]="environment.composeFile ?? ''"
+              (input)="setField(environment.name, 'composeFile', $any($event.target).value)" />
+          </label>
+          <label class="steps__field">
+            <span>Compose service</span>
+            <input type="text" placeholder="web" data-testid="deploy-steps-service" [value]="environment.service ?? ''"
+              (input)="setField(environment.name, 'service', $any($event.target).value)" />
+          </label>
+        }
+        <label class="steps__field">
+          <span>Health URL</span>
+          <input type="url" placeholder="https://example.com/healthz" data-testid="deploy-steps-health-url" [value]="environment.healthUrl"
+            (input)="setField(environment.name, 'healthUrl', $any($event.target).value)" />
+        </label>
+        <label class="steps__field steps__field--narrow">
+          <span>Health timeout (s)</span>
+          <input type="number" min="1" max="900" data-testid="deploy-steps-timeout" [value]="environment.healthTimeoutSeconds ?? ''"
+            (input)="setHealthTimeout(environment.name, $any($event.target).value)" />
+        </label>
+      </div>
+    </fieldset>
+  }
+
+  @if (preview(); as change) {
+    <section class="steps__preview" aria-labelledby="deploy-steps-preview-title" data-testid="deploy-steps-preview">
+      <h4 id="deploy-steps-preview-title">Proposed change (nothing is written yet)</h4>
+      @if (change.available) {
+        @if (change.diagram; as diagram) { <app-project-pipeline-diagram [diagram]="diagram" [issues]="change.issues" /> }
+        @if (!change.valid) {
+          <ul class="steps__issues" data-testid="deploy-steps-issues" aria-label="Proposal issues">
+            @for (issue of change.issues; track issueKey(issue)) {
+              <li><code>{{ issue.path }}</code> <span>{{ issue.message }}</span></li>
+            }
+          </ul>
+        }
+        <details class="steps__details" open>
+          <summary>Proposed project.yml</summary>
+          <pre data-testid="deploy-steps-yaml"><code>{{ change.proposedYaml }}</code></pre>
+        </details>
+      } @else {
+        <p class="steps__error" data-testid="deploy-steps-refusal">{{ change.notes.length > 0 ? change.notes[0] : 'The deploy steps cannot be added.' }}</p>
+      }
+    </section>
+  }
+
+  <div class="steps__actions">
+    @if (preview()?.available && preview()?.valid) {
+      <button type="button" class="steps__button" data-testid="deploy-steps-confirm"
+        [appPendingButton]="confirming()" pendingLabel="Writing project.yml" (click)="confirm()">Write deploy steps to project.yml</button>
+      <button type="button" class="steps__button steps__button--ghost" data-testid="deploy-steps-edit"
+        [disabled]="confirming()" (click)="editForm()">Edit values</button>
+    } @else {
+      <button type="button" class="steps__button" data-testid="deploy-steps-preview-button" [disabled]="!complete()"
+        [appPendingButton]="previewing()" pendingLabel="Preparing preview" (click)="previewChange()">Preview change</button>
+      <button type="button" class="steps__button steps__button--ghost" data-testid="deploy-steps-cancel"
+        (click)="cancelled.emit()">Cancel</button>
+    }
+  </div>
+  @if (error()) { <p class="steps__error" role="alert">{{ error() }}</p> }
+</section>

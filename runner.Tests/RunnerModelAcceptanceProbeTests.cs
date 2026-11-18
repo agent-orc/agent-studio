@@ -8,6 +8,22 @@ namespace AgentRunner.Tests;
 public sealed class RunnerModelAcceptanceProbeTests
 {
     [Fact]
+    public async Task Fable52_ConfiguredRouteGetsItsOwnHostAcceptanceEvidence()
+    {
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((provider, model, _) =>
+        {
+            Assert.Equal("claude", provider);
+            Assert.Equal("claude-fable-5-2", model);
+            return Task.FromResult(new ProcessResult(0, "OK", ""));
+        }, _ => "host-login");
+        await probe.RefreshAsync([("claude", "claude-fable-5-2")], CancellationToken.None);
+        var evidence = Assert.Single(probe.Snapshot("claude", ["claude-fable-5-2"]));
+        Assert.Equal("ready", evidence.Status);
+        Assert.Equal("model-acceptance:claude:claude-fable-5-2", evidence.Key);
+    }
+
+    [Fact]
     public async Task Host_flight_contention_is_retried_on_the_next_refresh()
     {
         var busy = true;
@@ -82,6 +98,27 @@ public sealed class RunnerModelAcceptanceProbeTests
         Assert.Equal([CodexCliRelease.Gpt61Sol, CodexCliRelease.Gpt61Terra], calls);
         Assert.All(probe.Snapshot("codex", candidates.Select(item => item.Model).ToArray()),
             capability => Assert.Equal("ready", capability.Status));
+    }
+
+    [Theory]
+    [InlineData(CodexCliRelease.Gpt62Sol)]
+    [InlineData(CodexCliRelease.Gpt62Astra)]
+    public async Task Gpt62_route_gets_its_own_host_acceptance_evidence(string model)
+    {
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((provider, probed, _) =>
+        {
+            Assert.Equal("codex", provider);
+            Assert.Equal(model, probed);
+            return Task.FromResult(new ProcessResult(0,
+                "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}", ""));
+        }, _ => "login-a");
+
+        await probe.RefreshAsync([("codex", model)], CancellationToken.None);
+
+        var evidence = Assert.Single(probe.Snapshot("codex", [model]));
+        Assert.Equal("ready", evidence.Status);
+        Assert.Equal($"model-acceptance:codex:{model}", evidence.Key);
     }
 
     [Fact]
@@ -168,7 +205,7 @@ public sealed class RunnerModelAcceptanceProbeTests
         var probe = new RunnerModelAcceptanceProbe();
         probe.UseConfiguredModels(
         [
-            new ConfiguredModelRouteDto("Codex", " gpt-6.2-sol "),
+            new ConfiguredModelRouteDto("Codex", " gpt-7-sol "),
             new ConfiguredModelRouteDto("claude", "claude-opus-6[1m]"),
             new ConfiguredModelRouteDto("codex", "../escape"),
             new ConfiguredModelRouteDto("codex", "gpt 6"),
@@ -177,9 +214,9 @@ public sealed class RunnerModelAcceptanceProbeTests
 
         var candidates = RunnerCapabilityProbe.ModelCandidates(options, probe.ConfiguredModels);
 
-        Assert.Equal(("codex", "gpt-6.2-sol"), candidates[0]);
+        Assert.Equal(("codex", "gpt-7-sol"), candidates[0]);
         Assert.Equal(("claude", "claude-opus-6[1m]"), candidates[1]);
-        Assert.Contains(("codex", "gpt-6.2-sol"), candidates);
+        Assert.Contains(("codex", "gpt-7-sol"), candidates);
         Assert.Contains(("claude", "claude-opus-6[1m]"), candidates);
         Assert.Equal(2, candidates.Count);
         Assert.DoesNotContain(candidates, item => item.Model.Contains("escape", StringComparison.Ordinal)
@@ -199,6 +236,8 @@ public sealed class RunnerModelAcceptanceProbeTests
             Role = "review",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
+            // Isolate routed-model selection from the installed CLI's version-gated models.
+            CodexCliBin = Path.Combine(Path.GetTempPath(), "absent-codex-" + Guid.NewGuid().ToString("N")),
         };
         (string Provider, string Model)[] routes =
             [("codex", "gpt-5.4-mini"), ("codex", "gpt-6-sol")];

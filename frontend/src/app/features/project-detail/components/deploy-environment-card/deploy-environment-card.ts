@@ -10,6 +10,8 @@ import {
 } from '../../state/deploy-area.model';
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
+import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
@@ -19,7 +21,7 @@ function ago(age: string | null): string | null {
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [DatePipe, StatusIndicatorComponent, DeploySecretGapsComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,6 +31,8 @@ export class DeployEnvironmentCardComponent {
   readonly now = input.required<number>();
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  /** F14: open the binding panel on this environment. */
+  readonly openSecrets = output<string>();
 
   readonly headingId = computed(() => `deploy-environment-${this.environment().id}-title`);
   readonly release = computed(() => {
@@ -49,10 +53,16 @@ export class DeployEnvironmentCardComponent {
     return `Release ${newer.version} is ready with ${count} ${count === 1 ? 'card' : 'cards'}`;
   });
   readonly runTone = runStateTone;
+  readonly hostTone = runHostStateTone;
+  readonly hostLabel = runHostStateLabel;
   readonly health = computed<{ tone: StatusTone; label: string }>(() => {
     const health = this.environment().health;
     if (health.status === 'no-checks') return { tone: 'neutral', label: 'No checks' };
     return { tone: healthStateTone(health.state), label: HEALTH_LABEL[health.state] };
+  });
+  readonly healthProblem = computed(() => {
+    const health = this.environment().health;
+    return health.status === 'reported' ? health.problem ?? null : null;
   });
   readonly lastRunLabel = computed(() => {
     const run = this.environment().lastRun;

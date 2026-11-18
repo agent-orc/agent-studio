@@ -25,6 +25,7 @@ describe('ProjectDeployReleasesComponent', () => {
 
   let data: {
     releaseNotes: () => unknown;
+    secretReadiness: () => unknown;
     integrationRelease: ReturnType<typeof vi.fn>;
     createIntegrationRelease: ReturnType<typeof vi.fn>;
   };
@@ -36,6 +37,7 @@ describe('ProjectDeployReleasesComponent', () => {
   beforeEach(async () => {
     data = {
       releaseNotes: () => of({ status: 'unavailable' }),
+      secretReadiness: () => of({ status: 'unavailable' }),
       integrationRelease: vi.fn(() => of({ status: 'unavailable' })),
       createIntegrationRelease: vi.fn(),
     };

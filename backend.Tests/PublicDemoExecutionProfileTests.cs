@@ -238,10 +238,12 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3878 adds managed database operations (backup, verification restore,
         // restore) on Start and the Owner's approve and reject of a production
         // restore on Continue.
+        // F5 of the playthrough adds the deploy-step form confirm on PostStep: like the
+        // schema 2 migration it commits and pushes project.yml; its preview writes nothing.
         // AGT-3891 adds the integration release action on Start: it records a
         // release of the gated integration tip and queues the Staging run, the
         // same effect as the gate release handoff, so public demo denies it.
-        Assert.Equal(166, routes.Count);
+        Assert.Equal(167, routes.Count);
         foreach (var (routePath, path) in new[]
         {
             ("/api/tasks/{jobId}/content-review", ExecutionAdmissionPath.Review),
@@ -296,6 +298,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/environments/{environmentId}/stop", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/intervention", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
+            ("/api/projects/{projectName}/pipeline-definition/deploy-steps", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/tasks/{jobId}/review-results", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/review/retry", ExecutionAdmissionPath.Continue),
@@ -362,7 +365,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Review] = 10,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 32,
-                [ExecutionAdmissionPath.PostStep] = 23,
+                [ExecutionAdmissionPath.PostStep] = 24,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

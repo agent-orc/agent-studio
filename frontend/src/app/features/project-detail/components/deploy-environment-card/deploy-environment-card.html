@@ -4,16 +4,19 @@
     <p class="env-card__health"><span class="env-card__sr">Health: </span><app-status-indicator [tone]="health().tone" [label]="health().label" testId="deploy-environment-health" /></p>
   </header>
   @if (environment().address; as address) { <p class="env-card__address">{{ address }}</p> }
+  @if (healthProblem(); as problem) { <p class="env-card__problem" data-testid="deploy-environment-health-problem">{{ problem }}</p> }
   <dl class="env-card__facts">
     <dt>Release</dt>
     <dd data-testid="deploy-environment-release">
-      @if (release(); as release) {
+      @if (environment().releaseUncertain) { Running release uncertain. A failed release may be running.
+      } @else if (release(); as release) {
         <span class="env-card__release" [title]="environment().artifact ?? ''">{{ release }}</span>
       } @else { Nothing deployed yet }
     </dd>
     <dt>Deployed</dt>
     <dd data-testid="deploy-environment-age">
-      @if (age(); as age) {
+      @if (environment().releaseUncertain) { Unknown
+      } @else if (age(); as age) {
         <time [attr.datetime]="environment().deployedAt" [title]="environment().deployedAt | date:'medium'">{{ age }}</time>
       } @else { Never }
     </dd>
@@ -27,6 +30,13 @@
         <app-status-indicator [tone]="runTone(run.state)" [label]="lastRunLabel() ?? ''" [compact]="true" testId="deploy-environment-last-run-state" />&ngsp;<span class="env-card__muted env-card__numeric">{{ lastRunAge() }}</span>
       } @else { No runs yet }
     </dd>
+    @if (environment().host; as host) {
+      <dt>Run host</dt>
+      <dd data-testid="deploy-environment-host">
+        <span [title]="host.id">{{ host.name }}</span>
+        @if (host.state; as state) {&ngsp;<app-status-indicator [tone]="hostTone(state)" [label]="hostLabel(state)" [compact]="true" testId="deploy-environment-host-state" />}
+      </dd>
+    }
   </dl>
   @if (newer(); as newer) { <p class="env-card__muted env-card__newer" data-testid="deploy-environment-newer">{{ newer }}</p> }
   @if (environment().awaitingApproval; as approval) {
@@ -34,6 +44,7 @@
       Awaiting approval: {{ approval.subject }}@if (approval.requestedBy) { <span class="env-card__muted">, requested by {{ approval.requestedBy }}</span> }
     </p>
   }
+  <app-deploy-secret-gaps [readiness]="environment().secrets" (bind)="openSecrets.emit($event)" />
   @if (environment().intervention; as intervention) {
     <button type="button" class="env-card__note" data-testid="deploy-environment-intervention"
             (click)="openRun.emit(intervention.deploymentId)">

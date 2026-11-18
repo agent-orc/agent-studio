@@ -704,6 +704,7 @@ builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconcil
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.RunHostDirectory>();
 builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
     sp.GetRequiredService<IConfiguration>()["HostedData:LocalVolumeRoot"] is { Length: > 0 } root
         ? new LocalHostedVolumeBackupEngine(root, Path.Combine(
@@ -720,6 +721,7 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.DeploySecretReadiness>();
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityReleaseRangeVerdictClient>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
 builder.Services.AddSingleton<AgentStudio.Deploy.IntegrationReleaseService>();
@@ -728,7 +730,7 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
-    AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+    AgentStudio.Projects.StoreOperationsTelemetryReader>();
 builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
@@ -748,7 +750,15 @@ builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
 builder.Services.AddSingleton(_ => new HealthCheckConnector());
 builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
 builder.Services.AddSingleton<HealthCheckStore>();
+builder.Services.AddSingleton<IncidentActions>();
+builder.Services.AddSingleton<TelemetryAlertReader>();
 builder.Services.AddSingleton<HealthAlerts>();
+builder.Services.AddHttpClient(IncidentWebhookService.HttpClientName, client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan;
+}).ConfigurePrimaryHttpMessageHandler(services =>
+    services.GetRequiredService<HealthCheckConnector>().CreateHandler());
+builder.Services.AddSingleton<IncidentWebhookService>();
 builder.Services.AddSingleton<EnvironmentHealthService>();
 // Test hosts never probe the addresses their fixture declarations name.
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
@@ -1520,7 +1530,11 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPro
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGateHostFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
+    sp.GetRequiredService<HealthCheckStore>(),
+    () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name)));
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());

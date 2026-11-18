@@ -2400,6 +2400,14 @@ public partial class GitService
         => FindWatchPathEntry(watchPath) is { } entry
            && !string.IsNullOrWhiteSpace(ResolveConfiguredRepositoryPath(entry));
 
+    /// <summary>
+    /// Reads only filesystem facts to check whether the configured path can be
+    /// used as a server checkout for integration.
+    /// </summary>
+    public bool HasUsableConfiguredRepository(string? watchPath)
+        => FindWatchPathEntry(watchPath) is { } entry
+           && IntegrationWorktreeProvider.HasUsableCheckout(ResolveConfiguredRepositoryPath(entry));
+
     private WatchPathEntry? FindWatchPathEntry(string? watchPath)
     {
         var entries = _scanner.GetWatchPaths();
@@ -3150,12 +3158,12 @@ public partial class GitService
             sw.Stop();
             if (p.ExitCode != 0)
             {
-                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, jobId: jobId);
+                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, cliType: CliTypes.Codex, jobId: jobId);
                 return new GenerateMessageResult(null, $"codex exited {p.ExitCode}: {stderr.Trim()}");
             }
 
             var text = ParseCodexAgentMessage(stdout);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, jobId: jobId);
+            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, cliType: CliTypes.Codex, jobId: jobId);
 
             var (msg, suspicious) = ParseCommitReview(text);
             if (!string.IsNullOrWhiteSpace(suspicious))

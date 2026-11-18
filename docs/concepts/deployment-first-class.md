@@ -250,8 +250,11 @@ stays the only executor; releases and runs describe and steer it.
   Owner or Maintainer. Owner is the Studio owner role; Maintainer is an account
   with the project's production approval grant. Approval needs a signed-in
   Studio session in every profile; on the local profile a mutation counts the
-  session only with its CSRF token. A caller without a session, such as a coding
-  agent on the local API, is `local-operator` and never approves.
+  session only with its CSRF token. Missing session or CSRF proof asks the
+  person to sign in again to approve; a signed-in person without approval
+  permission receives the Owner or Maintainer role refusal. A caller without
+  a session, such as a coding agent on the local API, is `local-operator` and
+  never approves.
 - **Tenant lifecycle.** A project.yml schema 2 tenant has a unique name, optional
   tags and a nonempty list of participating environments. Production
   participation requires Staging. An explicit tenant deploy uses the tenant

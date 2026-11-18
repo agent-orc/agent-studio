@@ -71,6 +71,34 @@ export interface ServiceAccount {
 /** The project entry that binds a runner to every project. */
 export const ALL_RUNNER_PROJECTS = '*';
 
+/** The identity an enrollment code issues: coding and review, the orchestration engine, or a run host. */
+export type EnrollmentKind = 'runner' | 'orchestrator' | 'deploy';
+
+/** The one scope of a run host credential; deploy credentials carry no other scope. */
+export const RUN_HOST_SCOPE = 'runner.deploy';
+
+/** Where the run host keeps its enrollment and the env file `agent-runner-deploy.service` reads. */
+const RUN_HOST_CONFIG = '/etc/agent-runner/run-host';
+const RUN_HOST_ENV = '/etc/agent-runner/deploy.env';
+
+/**
+ * Host commands for a run host code (F4). Enrollment prints and saves the
+ * runner id (`runner_...`); the deploy service claims with that id as its host
+ * id, so the second command copies it into the service environment. The same
+ * id is the `targetHostId` of every environment this host serves.
+ */
+export function runHostCommand(serverUrl: string, code: string): string {
+  const url = serverUrl.replace(/\/+$/, '');
+  return [
+    `sudo RUNNER_ENROLLMENT_CONFIG_DIR=${RUN_HOST_CONFIG} /opt/agent-host/agent-host --enroll ${url} ${code}`,
+    `sudo sh -c 'mkdir -p /var/lib/agent-host/artifacts && . ${RUN_HOST_CONFIG}/installation.env && printf "RUNNER_SERVER_URL=%s\\nRUNNER_HOSTNAME=%s\\n`
+      + `RUNNER_AUTH_TOKEN_FILE=%s\\nDEPLOY_ARTIFACT_STORE=/var/lib/agent-host/artifacts\\n`
+      + `DEPLOY_SECRET_STORE=/etc/agent-host/secrets\\n" "$RUNNER_SERVER_URL" "$RUNNER_ID" "$RUNNER_AUTH_TOKEN_FILE"`
+      + ` > ${RUN_HOST_ENV}'`,
+    'sudo systemctl enable --now agent-runner-deploy.service',
+  ].join('\n');
+}
+
 export interface RunnerEnrollment {
   id: string;
   name: string;

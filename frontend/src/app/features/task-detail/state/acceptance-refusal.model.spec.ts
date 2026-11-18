@@ -65,12 +65,13 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
     });
 
     it('leads with the readiness reason and lists the integration hold under it', () => {
-      expect(acceptanceRefusalFor(card({ status: 'no-branch' }), null, false, noVerdict)).toEqual({
+      expect(acceptanceRefusalFor(card({ status: 'no-branch' }), null, false, noVerdict)).toMatchObject({
         reason: 'The current run has no requirement-fit verdict: Only build-tests ran.',
         headline: 'No content verdict',
         nextStep: 'Run the requirement-fit review for the current run.',
         secondary: ['No delivery branch or commit was found for this card.'],
-        action: 'override', actionLabel: 'Accept with override…', source: 'hold',
+        action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
+        secondaryAction: { action: 'override', actionLabel: 'Accept with a reason…' },
       });
     });
 
@@ -89,10 +90,11 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
       expect(acceptanceRefusalFor(card({ status: 'pending' }), null, false, readinessItem('AGT-1', 'ready'))?.reason)
         .toBe('The delivery is not in develop yet.');
       const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap', message: 'Completion refused.' };
-      // AGT-3873: a content refusal carries the review's concern from the dry run.
-      expect(acceptanceRefusalFor(card({ status: 'pending' }), server, false, noVerdict)).toEqual({
-        reason: 'Completion refused.', action: 'override', actionLabel: 'Accept with override…', source: 'server',
-        concern: 'The lane hides the reason.',
+      expect(acceptanceRefusalFor(card({ status: 'pending' }), server, false, noVerdict))
+        .toMatchObject({ reason: noVerdict.reason, action: 'review-again', source: 'server' });
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false,
+        readinessItem('AGT-1', 'ready'))).toMatchObject({
+        reason: 'Completion refused.', action: 'review-again', source: 'server', replacesAccept: true,
       });
     });
   });
@@ -122,6 +124,46 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
     expect(refusal).toEqual({ taskKey: 'wp::AGT-1', code: 'batch-gate-evidence-missing',
       message: 'Verify its published branch.' });
   });
+
+  describe('content refusals (AGT-3830)', () => {
+    const concerns = readinessItem('AGT-1', 'review-concerns', { taskKey: 'wp::AGT-1',
+      reason: 'The requirement-fit review returned concerns: The result SHA is absent from the delivery brief.' });
+
+    it('replaces Accept with Review again for review concerns, in the readiness words', () => {
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, concerns)).toMatchObject({
+        reason: 'The requirement-fit review returned concerns: The result SHA is absent from the delivery brief.',
+        action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
+        secondaryAction: { action: 'override', actionLabel: 'Accept with a reason…' },
+      });
+    });
+
+    it('replaces Accept for a missing content verdict and names what is missing', () => {
+      const none = readinessItem('AGT-1', 'no-content-verdict', { taskKey: 'wp::AGT-1',
+        reason: 'The current run has no requirement-fit verdict: no review aspect ran.', missing: 'a review of the current run' });
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, none)).toMatchObject({
+        action: 'review-again', replacesAccept: true,
+        reason: 'The current run has no requirement-fit verdict: no review aspect ran. Missing: a review of the current run',
+      });
+    });
+
+    it('keeps plain Accept for a ready card and ignores another card\'s answer', () => {
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, readinessItem('AGT-1', 'ready',
+        { taskKey: 'wp::AGT-1' }))).toBeNull();
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false,
+        readinessItem('AGT-9', 'review-concerns', { taskKey: 'wp::AGT-9' }))).toBeNull();
+    });
+
+    it('turns a server content-gap refusal into the same next step', () => {
+      const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap',
+        message: 'Completion refused: requirement-fit verdict was concerns.' };
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false)).toMatchObject({
+        action: 'review-again', source: 'server', replacesAccept: true,
+        reason: 'Completion refused: requirement-fit verdict was concerns.',
+      });
+      expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false, concerns)?.reason)
+        .toContain('The result SHA is absent');
+    });
+  });
 });
 
 /**
@@ -134,13 +176,15 @@ describe('acceptance readiness before and after the click (AGT-3867)', () => {
 
   it('says before the click why Accept on an integrated card with concerns will be refused', () => {
     const refusal = acceptanceRefusalFor(card({ status: 'integrated' }), null, false, concerns);
-    expect(refusal).toEqual({
+    // AGT-3830: a content refusal replaces Accept with its next step.
+    expect(refusal).toMatchObject({
       reason: 'The requirement-fit review returned concerns: The lane hides the reason.',
-      action: 'override', actionLabel: 'Accept with override…', source: 'hold',
+      action: 'review-again', actionLabel: 'Review again', source: 'readiness', replacesAccept: true,
+      secondaryAction: { action: 'override', actionLabel: 'Accept with a reason…' },
       headline: 'Review concerns', nextStep: 'Send a round to close the gap the review raised.', secondary: [],
     });
-    expect(acceptanceRefusalTooltip(refusal!)).toBe('Accept will be refused. The requirement-fit review returned '
-      + 'concerns: The lane hides the reason. Next step: Accept with override.');
+    expect(acceptanceRefusalTooltip(refusal!)).toBe('The requirement-fit review returned '
+      + 'concerns: The lane hides the reason. Next step: Review again.');
   });
 
   it('adds no hold for a ready card, an admitted dry run, or a run-attempt gap', () => {
@@ -154,13 +198,26 @@ describe('acceptance readiness before and after the click (AGT-3867)', () => {
 
   it('offers the round instead of an override the policy cannot admit', () => {
     const report = { ...concerns, readiness: 'blocked' as const,
+      overrideAllowed: false,
       refusal: 'Completion refused: the required report is missing (results/report.md).' };
     expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, report))
       .toMatchObject({ action: 'send-round', actionLabel: 'Send a round…' });
   });
 
+  it('offers the round for batch-gate refusal before and after a failed move', () => {
+    const batch = { ...concerns, readiness: 'integrated-unverified' as const,
+      stage: 'batch-gate', overrideAllowed: false, refusal: 'batch-gate-evidence-missing' };
+    const info = card({ status: 'integrated' });
+    expect(acceptanceRefusalFor(info, null, false, batch))
+      .toMatchObject({ action: 'send-round', actionLabel: 'Send a round…' });
+    expect(acceptanceRefusalFor(info, { taskKey: info.taskKey, code: 'batch-gate-evidence-missing',
+      message: 'Verify the published branch.' }, false, batch))
+      .toMatchObject({ action: 'send-round', source: 'server' });
+  });
+
   it('leads with the round over a pending integration and lists the integration under it (F12)', () => {
     const report = { ...concerns, readiness: 'blocked' as const,
+      overrideAllowed: false,
       refusal: 'Completion refused: the required report is missing (results/report.md).' };
     expect(acceptanceRefusalFor(card({ status: 'conflict-skipped' }), null, false, report)).toMatchObject({
       reason: concerns.reason, action: 'send-round', secondary: ['Integration into develop failed.'],
@@ -173,7 +230,36 @@ describe('acceptance readiness before and after the click (AGT-3867)', () => {
     expect(server).toEqual({ taskKey: 'wp::AGT-1', code: 'completion-content-gap',
       message: 'Acceptance refused: requirement-fit verdict was concerns.' });
     expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false, concerns))
-      .toMatchObject({ reason: 'Acceptance refused: requirement-fit verdict was concerns.', source: 'server', action: 'override' });
+      .toMatchObject({ reason: 'The requirement-fit review returned concerns: The lane hides the reason.',
+        source: 'server', action: 'review-again', replacesAccept: true });
+    expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false, null))
+      .toMatchObject({ reason: 'Acceptance refused: requirement-fit verdict was concerns.', source: 'server', action: 'review-again' });
+  });
+});
+
+describe('content refusal next steps after the merge of AGT-3867 (AGT-3830)', () => {
+  const concerns = { ...readinessItem('AGT-1', 'review-concerns'), taskKey: 'wp::AGT-1' };
+
+  it('offers the round beside Review again when an override cannot admit the card', () => {
+    const report = { ...concerns, overrideAllowed: false,
+      refusal: 'Completion refused: the required report is missing (results/report.md).' };
+    expect(acceptanceRefusalFor(card({ status: 'integrated' }), null, false, report)?.secondaryAction)
+      .toEqual({ action: 'send-round', actionLabel: 'Send a round…' });
+  });
+
+  it('offers the round beside Review again for a server refusal of a missing report without a dry run', () => {
+    const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap',
+      message: 'Acceptance refused: the required report is missing (results/report.md).' };
+    expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false, null))
+      .toMatchObject({ action: 'review-again', replacesAccept: true,
+        secondaryAction: { action: 'send-round', actionLabel: 'Send a round…' } });
+  });
+
+  it('keeps a recorded server refusal ahead of a stale ready dry run', () => {
+    const server = { taskKey: 'wp::AGT-1', code: 'completion-content-gap', message: 'Acceptance refused: concerns.' };
+    const ready = { ...concerns, readiness: 'ready' as const };
+    expect(acceptanceRefusalFor(card({ status: 'integrated' }), server, false, ready))
+      .toMatchObject({ reason: 'Acceptance refused: concerns.', action: 'review-again', replacesAccept: true });
   });
 });
 
@@ -197,7 +283,8 @@ describe('content refusal next steps (AGT-3873)', () => {
 
   it('carries the concern on the server refusal the toolbar shows', () => {
     const refusal = acceptanceRefusalFor(concerns, refused('Completion refused: requirement-fit verdict was concerns.'), false);
-    expect(refusal).toMatchObject({ source: 'server', action: 'override', concern: SUMMARY });
+    expect(refusal).toMatchObject({ source: 'server', action: 'review-again', concern: SUMMARY,
+      secondaryAction: { action: 'override' } });
     const integration = acceptanceRefusalFor(concerns, { taskKey: concerns.taskKey, code: 'integration-dead-end',
       message: 'Not in develop.' }, false);
     expect(integration?.concern).toBeNull();

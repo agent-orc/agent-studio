@@ -10,6 +10,37 @@ namespace AgentRunner.Tests;
 
 public sealed class OneShotJobClientTests
 {
+    [Theory]
+    [InlineData("low")]
+    [InlineData("medium")]
+    [InlineData("high")]
+    [InlineData("xhigh")]
+    [InlineData("max")]
+    [Trait("Category", "MachineBound")]
+    public async Task Fable52OneShot_PassesExplicitEffortToClaude(string level)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var directory = Path.Combine(Path.GetTempPath(), "fable-oneshot-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var binary = CarStubCli.Write(directory, "cat >/dev/null\nprintf '%s' \"$CLAUDE_CODE_EFFORT_LEVEL\"");
+            using var http = new HttpClient(new SequenceHandler(EmptyClaim)) { BaseAddress = new Uri("http://task-server/") };
+            using var client = new TaskServerClient(http, "runner-a", runnerInstanceId: "instance-a");
+            var admission = new OneShotJobAdmission(new RunnerOptions
+            {
+                ServerUrl = "http://localhost/", RunnerId = "test-runner", RunnerName = "test-runner",
+                Hostname = "localhost", BackendName = "test", WorkDir = directory,
+                BaseBranch = "develop", ClaudeCliBin = binary,
+            }, client, _ => { });
+            var request = new OneShotJobRequest("claude", "claude-fable-5-2", "hello", level, 10, 65_536);
+            var result = await admission.RunBoundedTurnAsync(request, directory, default);
+            Assert.Equal(0, result.ExitCode);
+            Assert.Equal(level, result.StdOut);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
     private static RunnerOptions PollOptions() => new()
     {
         ServerUrl = "http://task-server/", RunnerId = "runner-a", RunnerName = "runner-a",

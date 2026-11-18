@@ -40,6 +40,7 @@ export class AcceptanceReadinessStore {
   private readonly tasks = inject(TaskService);
 
   private readonly items = signal<ReadonlyMap<string, AcceptanceReadinessItem>>(new Map());
+  private readonly checking = new Set<string>();
   readonly checkedAt = signal<string | null>(null);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
@@ -118,18 +119,32 @@ export class AcceptanceReadinessStore {
    * AGT-3867: checks one Human Review card, for its detail and toolbar, and
    * merges the answer without touching the lane's grouping state. A failed
    * check keeps the last answer: the detail then offers no speculative step.
+   * AGT-3830: a card opened without the board (a phone, a deep link, Needs
+   * you) reads the same readiness the lane shows. Concurrent checks of a
+   * card coalesce.
    */
-  async checkCard(job: TaskInfo): Promise<void> {
-    if (job.state !== TaskState.HumanReview) return;
+  async checkCard(job: Pick<TaskInfo, 'id' | 'taskKey' | 'watchPath' | 'state'>): Promise<void> {
+    const key = readinessKey(job);
+    if (job.state !== TaskState.HumanReview || this.checking.has(key)) return;
+    this.checking.add(key);
     try {
       const report = await firstValueFrom(this.http.post<AcceptanceReadinessReport>(
         '/api/tasks/acceptance-readiness',
         { items: [{ jobId: job.id, watchPath: job.watchPath }] },
       ));
-      const item = Array.isArray(report?.items) ? report.items.find(entry => entry.jobId === job.id) : undefined;
-      if (item) this.items.update(current => new Map(current).set(item.taskKey || item.jobId, item));
+      const item = Array.isArray(report?.items)
+        ? report.items.find(entry => entry.taskKey === job.taskKey || entry.jobId === job.id)
+        : undefined;
+      this.items.update(current => {
+        const next = new Map(current);
+        if (item) next.set(key, item);
+        else next.delete(key);
+        return next;
+      });
     } catch {
       // The board check and the server refusal still name the reason.
+    } finally {
+      this.checking.delete(key);
     }
   }
 

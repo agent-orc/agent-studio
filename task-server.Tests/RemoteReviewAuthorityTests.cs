@@ -16,8 +16,9 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed partial class RemoteReviewAuthorityTests
+public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture fixture) : IClassFixture<InitializedStoreFixture>
 {
+    private readonly InitializedStoreFixture _fixture = fixture;
     private const string ResultSha = "589c462f589c462f589c462f589c462f589c462f";
     private const string TreeSha = "0123456789abcdef0123456789abcdef01234567";
     private const string RepositoryId = "repo_0123456789abcdef";
@@ -27,7 +28,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Quota_refusal_keeps_review_attempt_queued()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
         var seed = Store(temp.Path, clock);
         await seed.InitializeAsync();
@@ -58,7 +59,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Unreachable_meter_warns_on_review_claim_and_keeps_review_moving()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
         var seed = Store(temp.Path, clock);
         await seed.InitializeAsync();
@@ -79,7 +80,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Unconfigured_meter_claims_review_without_quota_message()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
         var seed = Store(temp.Path, clock);
         await seed.InitializeAsync();
@@ -115,7 +116,7 @@ public sealed partial class RemoteReviewAuthorityTests
         var digests = new List<string>();
         foreach (var host in new[] { "review-host-a", "review-host-b" })
         {
-            using var temp = new TempDirectory();
+            using var temp = _fixture.CreateDirectory();
             var store = Store(temp.Path);
             await store.InitializeAsync();
             var plan = new ReviewPlanDto(
@@ -153,7 +154,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Every_unclaimable_attempt_is_logged_once_even_beyond_the_named_and_claim_page_caps()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var logs = new CapturingStoreLogger();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 15, 8, 0, TimeSpan.Zero));
         var store = new TaskServerStore(
@@ -201,7 +202,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Claim_finds_capable_attempt_after_a_full_page_of_unclaimable_plans()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 15, 8, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -229,7 +230,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public void Concurrent_unclaimable_log_calls_emit_one_warning_per_interval()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var logs = new CapturingStoreLogger();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 15, 8, 0, TimeSpan.Zero));
         var store = new TaskServerStore(
@@ -254,7 +255,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Versioned_review_retry_can_move_to_another_capable_host_without_changing_the_step()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -305,7 +306,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Stored_review_subject_limits_dotnet_test_cpu_before_it_becomes_immutable()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -331,7 +332,7 @@ public sealed partial class RemoteReviewAuthorityTests
     public async Task Late_ordinary_heartbeat_cannot_shorten_the_final_handoff_lease()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-07T03:10:00Z"));
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store);
@@ -361,7 +362,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Fenced_review_cleanup_queues_full_envelope_decision_and_reaches_human_review_idempotently()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var source = await SeedReviewSubjectAsync(store);
@@ -431,7 +432,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Product_failure_cleanup_preserves_the_full_envelope_and_reissues_server_side()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var source = await SeedReviewSubjectAsync(store);
@@ -525,7 +526,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Cleanup_does_not_reopen_an_operator_lane_move_or_leave_review_authority_active()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var source = await SeedReviewSubjectAsync(store);
@@ -562,7 +563,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Failed_workspace_cleanup_is_audited_and_retries_the_same_subject()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -606,7 +607,7 @@ public sealed partial class RemoteReviewAuthorityTests
     public async Task Typed_infrastructure_outcomes_stay_in_auto_review_and_retry_the_same_subject(
         string classification)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -647,7 +648,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Restart_takeover_raises_review_fence_and_rejects_stale_report()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var firstStore = Store(temp.Path);
         await firstStore.InitializeAsync();
         await SeedReviewSubjectAsync(firstStore);
@@ -676,7 +677,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Restart_registration_re_adopts_active_review_and_accepts_report()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var firstStore = Store(temp.Path);
         await firstStore.InitializeAsync();
         await SeedReviewSubjectAsync(firstStore);
@@ -745,7 +746,7 @@ public sealed partial class RemoteReviewAuthorityTests
     public async Task Restart_registration_adoption_does_not_shorten_a_longer_handoff_lease()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-07T03:10:00Z"));
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var firstStore = Store(temp.Path, clock);
         await firstStore.InitializeAsync();
         await SeedReviewSubjectAsync(firstStore);
@@ -798,7 +799,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Second_restart_counts_a_missing_worker_from_the_original_lease_generation()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -874,7 +875,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Restart_reclaim_preserves_physical_isolation_replays_and_accepts_the_report()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var firstStore = Store(temp.Path);
         await firstStore.InitializeAsync();
         await SeedReviewSubjectAsync(firstStore);
@@ -961,7 +962,7 @@ public sealed partial class RemoteReviewAuthorityTests
     public async Task Ambiguous_reclaim_recovery_reports_success_without_a_false_restart_loss()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-07T03:10:00Z"));
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store);
@@ -1065,7 +1066,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Reclaim_never_steals_an_unexpired_live_review_lease()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store);
@@ -1094,7 +1095,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Reclaim_repairs_an_expired_matching_lease()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store);
@@ -1127,7 +1128,7 @@ public sealed partial class RemoteReviewAuthorityTests
         // running (or delivers its loss report), so the envelope does not refuse
         // it. The repaired attempt counts again at once, and fresh claims stay
         // refused until the host is back inside its envelope.
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 5, 9, 0, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -1162,7 +1163,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Uncommitted_stale_generation_reclaim_can_rotate_to_the_current_instance()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store);
@@ -1253,7 +1254,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Reclaim_http_endpoint_requires_a_key_and_replays_the_durable_response()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         ReviewClaimResponse claim;
         await using (var firstFactory = new ReviewApiFactory(temp.Path))
         {
@@ -1320,7 +1321,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Coding_and_review_capabilities_require_separate_registered_identities()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
 
@@ -1386,7 +1387,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Tool_unavailable_is_retained_as_a_typed_infrastructure_outcome()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -1415,7 +1416,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Plan_skew_settles_without_spending_an_infrastructure_retry()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -1450,7 +1451,7 @@ public sealed partial class RemoteReviewAuthorityTests
         int exitCode,
         bool angularModuleEvidence)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -1506,7 +1507,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [InlineData(true)]
     public async Task Preparation_failure_preserves_classification_when_report_artifacts_are_reduced(bool reduced)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var preparation = new ReviewPreparationCommandDto(
@@ -1588,7 +1589,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Report_with_shared_cache_or_unbound_command_tree_is_rejected_as_review_infrastructure()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store);
@@ -1639,7 +1640,7 @@ public sealed partial class RemoteReviewAuthorityTests
         bool hasNewFailure,
         string expectedOutcome)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -1710,7 +1711,7 @@ public sealed partial class RemoteReviewAuthorityTests
         int baselineExitCode,
         string expectedOutcome)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -1774,7 +1775,7 @@ public sealed partial class RemoteReviewAuthorityTests
     public async Task Failed_isolated_build_retains_product_or_integration_branch_verdict(
         bool branchBuildRed, string expectedOutcome)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -1860,7 +1861,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Baseline_evidence_without_the_merge_base_exit_code_is_review_infrastructure()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -1907,7 +1908,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Failed_candidate_run_cleared_by_the_clean_repeat_is_diagnosed_and_not_charged()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -1976,7 +1977,7 @@ public sealed partial class RemoteReviewAuthorityTests
     public async Task Undiagnosed_failure_without_clean_repeat_is_classified_by_the_worker_outcome(
         string workerOutcome, string? workerClassification, string expected)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 12, 17, 31, 0, TimeSpan.Zero));
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -2032,7 +2033,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [InlineData(true)]
     public async Task Flake_grade_requires_passing_same_tree_repeat_and_counts_unproven_items(bool passingRepeat)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -2106,7 +2107,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [InlineData(false)]
     public async Task Report_admits_class_subset_repeat_with_planned_arguments_and_observed_test(bool observed)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -2149,7 +2150,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Semantic_block_without_citation_is_admitted_as_non_escalating_concern()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -2196,7 +2197,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Cited_semantic_block_uses_shared_grade_even_without_delivery_diagnosis()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -2237,7 +2238,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [InlineData(false)]
     public async Task Concept_plan_without_brief_hash_cannot_settle_as_pass(bool hasModeMarker)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var aspect = hasModeMarker ? "build-tests" : "concept-fit";
@@ -2260,7 +2261,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Concept_review_uses_mirrored_authored_version_after_two_follow_up_rounds()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         const string authored = "Deliver the persona team Dossier.";
@@ -2288,7 +2289,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Coding_agent_verdict_citing_changed_file_keeps_existing_delivery_grade()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -2325,7 +2326,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Charged_non_agent_verdict_still_counts_toward_coding_grade()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
@@ -2352,7 +2353,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Stale_review_subject_cannot_overwrite_a_newer_task_lifecycle()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -2380,7 +2381,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [InlineData("7-archive")]
     public async Task Terminal_task_transition_supersedes_open_review_authority(string terminalLane)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -2414,7 +2415,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Claim_guard_supersedes_a_stale_terminal_attempt_instead_of_returning_it()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -2439,7 +2440,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Boot_sweep_supersedes_terminal_attempts_left_by_an_older_server()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -2463,7 +2464,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Source_bundle_subject_requires_its_content_digest()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -2489,7 +2490,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Three_parallel_reviews_of_one_repository_have_independent_subjects_fences_and_namespaces()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         for (var i = 0; i < 3; i++)
@@ -2512,7 +2513,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Different_host_policy_refuses_same_failure_domain_but_allows_another_review_host()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, policyDifferentHost: true, codingHost: "host-a");
@@ -2534,7 +2535,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Review_prefers_idle_eligible_other_host_and_records_both_hosts()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store, codingHost: "host-a");
@@ -2556,7 +2557,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Review_claims_on_the_coding_host_without_delay_when_it_is_the_only_host()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, codingHost: "host-a");
@@ -2572,7 +2573,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Busy_other_host_does_not_hold_a_same_host_review_claim()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, codingHost: "host-b");
@@ -2593,7 +2594,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Hard_host_requirement_names_the_wait_with_only_one_host()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store, policyDifferentHost: true, codingHost: "host-a");
@@ -2610,7 +2611,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Review_subject_rejects_a_coding_host_that_disagrees_with_the_source_run()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store, codingHost: "host-a");
@@ -2628,7 +2629,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Review_subject_replay_accepts_an_omitted_coding_host()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store, codingHost: "host-a");
@@ -2646,7 +2647,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Review_infrastructure_failure_never_creates_a_coding_attempt_or_returns_to_ready()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -2673,7 +2674,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Remote_task_done_review_infra_retry_then_all_aspects_pass_reaches_human_review_without_ready()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var subject = await SeedReviewSubjectAsync(store);
@@ -2733,7 +2734,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Draining_allows_review_renew_report_and_cleanup_but_blocks_shutdown_while_authority_is_active()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store);
@@ -2784,7 +2785,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Restore_is_blocked_while_review_attempt_authority_is_active()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store);
@@ -2806,7 +2807,7 @@ public sealed partial class RemoteReviewAuthorityTests
     [Fact]
     public async Task Integrity_digest_includes_review_attempt_and_fence_state()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
         await SeedReviewSubjectAsync(store);
