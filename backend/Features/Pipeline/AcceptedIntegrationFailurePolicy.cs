@@ -384,6 +384,9 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The release line moved during every full-suite run on the merge result; nothing was published."),
                 RebaseRecoveryAvailable: false),
+            // AGT-3964: Retry integration places the same reviewed Dossier
+            // again, so a refusal the placement check caused, or a Dossier the
+            // operator placed by hand, needs no new agent round.
             AcceptedIntegrationFailureCodes.ConceptDossierRejected => new(
                 code,
                 "Dossier placement failed",
@@ -391,7 +394,10 @@ public static class AcceptedIntegrationFailurePolicy
                     reason,
                     verdictSummary,
                     "The concept delivery is not one complete docs/<slug>/ Dossier; nothing was merged."),
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: false)
+            {
+                ReplayAvailable = true,
+            },
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
                 "Integration failed",
