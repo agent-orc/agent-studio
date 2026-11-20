@@ -54,6 +54,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Managed PostgreSQL databases for hosted apps: project.yml `databases`, run-zone provisioning, generated credentials, retention and owner deletion (IP-D5 option B, AGT-3877); backups, restore runbook, liveness, size and connection metrics (AGT-3878) | [operations/managed-databases/](../operations/managed-databases/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
+| [CLI rollout](../operations/cli-rollout.md) | German operator runbook for CLI rollout, legacy launcher adoption, KORI image pins, drift alerts, and rollback. |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
 | Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
@@ -236,7 +237,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Update Service operations: loopback bind, owner-only trigger token file, allowed Studio origins, forced triggers (AGT-3713) | [operations/setup/update-service.md](../operations/setup/update-service.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
-| Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens, retention, query API (IP-15) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
+| Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens and the Telemetry tab, deploy injection with `telemetry: true`, the Operations reader, retention, query API (IP-15, M5) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
 | Project definition v2 proposal (inactive; shared AGT/QS/Voice properties, quality applicability and rollout) | [plan](../operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) · [draft schema](../operations/docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) |
 | GitHub repository metadata recommendations | [repo-metadata.md](../repo-metadata.md) |
 | Setup | [operations/setup/README.md](../operations/setup/README.md) |
@@ -269,6 +270,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Background polling leaves an open HTTP request at `verify()` | [system/common-problems/open-http-request-at-verify-from-chat-polling/](../system/common-problems/open-http-request-at-verify-from-chat-polling/) |
 | Background chat polling test measure | [system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md](../system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md) |
 | Ready shows waiting for sign-in but the host is logged in | [common-problems/ready-sign-in-runner-link-down/](../operations/common-problems/ready-sign-in-runner-link-down/) |
+| provider-auth stays indeterminate after a provider limit reset until the daemon restarts (AGT-3948) | [common-problems/provider-auth-indeterminate-latch-after-limit/](../operations/common-problems/provider-auth-indeterminate-latch-after-limit/) |
 | claude CLI not available right after a CLI auto-update (launcher stub) | [common-problems/claude-launcher-stub-after-autoupdate/](../operations/common-problems/claude-launcher-stub-after-autoupdate/) |
 | Every process of the runner account dies in one second (sentinel pid broadcast kill) | [common-problems/sentinel-pid-broadcast-kill/](../operations/common-problems/sentinel-pid-broadcast-kill/) |
 | Designated topics (AGENTS/wiki-sync current-state index; post-agents-wiki-sync) | [concepts/designated-topics/README.md](../concepts/designated-topics/README.md) |

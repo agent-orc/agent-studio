@@ -101,4 +101,15 @@ describe('NotificationService', () => {
     service.dismissAll();
     expect(service.notifications()).toHaveLength(0);
   });
+
+  it('dismisses the newest sticky notice for an Escape owner and leaves timed ones (AGT-3830)', () => {
+    service.warning('older refusal');
+    service.success('saved');
+    service.warning('newer refusal');
+    expect(service.dismissNewestPersistent()).toBe(true);
+    expect(service.notifications().map((n) => n.message)).toEqual(['older refusal', 'saved']);
+    expect(service.dismissNewestPersistent()).toBe(true);
+    expect(service.dismissNewestPersistent()).toBe(false);
+    expect(service.notifications().map((n) => n.message)).toEqual(['saved']);
+  });
 });

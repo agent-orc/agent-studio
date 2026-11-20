@@ -37,7 +37,7 @@
 // takes its own row, the active tab gets the first row, and the overflow
 // control (app-studio-tab-overflow) lists the other open tabs.
 @media (max-width: 600px) {
-  .studio-tabbar:has(.studio-tabbar__actions > *) {
+  .studio-tabbar:has(.studio-tabbar__actions > * > :not(:empty)) {
     @include stacked-actions;
   }
 

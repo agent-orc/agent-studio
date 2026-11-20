@@ -77,6 +77,52 @@ public sealed class DeployStore
         File.Move(WriteFlushed(path, deployments), path, true);
     }
 
+    /// <summary>The runtime health ledger: one record per release and environment (F13).</summary>
+    public IReadOnlyList<ReleaseRuntimeHealthRecord> ReadRuntimeHealth(string project)
+    {
+        var path = Path.Combine(ProjectRoot(project), "release-runtime-health.json");
+        return File.Exists(path)
+            ? JsonSerializer.Deserialize<List<ReleaseRuntimeHealthRecord>>(File.ReadAllText(path), _json) ?? []
+            : [];
+    }
+
+    public void SaveRuntimeHealth(string project, IReadOnlyList<ReleaseRuntimeHealthRecord> records)
+    {
+        var root = ProjectRoot(project);
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "release-runtime-health.json");
+        File.Move(WriteFlushed(path, records), path, true);
+    }
+
+    /// <summary>Edited release note text per release and card key; a release file itself stays write-once.</summary>
+    public IReadOnlyDictionary<string, string> ReadReleaseNoteEdits(string project, string releaseId)
+        => ReadAllReleaseNoteEdits(project).GetValueOrDefault(releaseId) ?? [];
+
+    /// <summary>Stores or, for empty text, removes the edited note of one card in one release.</summary>
+    public void SaveReleaseNoteEdit(string project, string releaseId, string cardKey, string? text)
+    {
+        var all = ReadAllReleaseNoteEdits(project);
+        var notes = all.GetValueOrDefault(releaseId) ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(text)) notes.Remove(cardKey);
+        else notes[cardKey] = text.Trim();
+        if (notes.Count == 0) all.Remove(releaseId);
+        else all[releaseId] = notes;
+        var root = ProjectRoot(project);
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "release-notes.json");
+        File.Move(WriteFlushed(path, all), path, true);
+    }
+
+    private Dictionary<string, Dictionary<string, string>> ReadAllReleaseNoteEdits(string project)
+    {
+        var path = Path.Combine(ProjectRoot(project), "release-notes.json");
+        var stored = File.Exists(path)
+            ? JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(File.ReadAllText(path), _json)
+            : null;
+        return (stored ?? []).ToDictionary(item => item.Key,
+            item => new Dictionary<string, string>(item.Value, StringComparer.OrdinalIgnoreCase), StringComparer.Ordinal);
+    }
+
     /// <summary>The last refused release attempt of the project, until a release is created (F2).</summary>
     public ReleaseGateRefusal? ReadReleaseRefusal(string project)
     {

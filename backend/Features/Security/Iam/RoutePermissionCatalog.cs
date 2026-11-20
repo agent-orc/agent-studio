@@ -267,6 +267,7 @@ public static class RoutePermissionCatalog
         // rollback names an environment id the middleware resolves to the
         // kind of its declaration.
         Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/environments/releases", IamEnvironments.Stage);
+        Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/deploy/integration-release", IamEnvironments.Stage);
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
             "/api/projects/{}/environments/promotions/*", IamEnvironments.Production);
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
@@ -274,6 +275,8 @@ public static class RoutePermissionCatalog
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
             IamEnvironments.Production);
         Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix", "/api/deploy/cards");
+        // F4: run host reachability across projects, for the Hosts view.
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/deploy/run-hosts");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/stop", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
@@ -282,12 +285,15 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status",
             "/api/projects/{}/deploy/releases", "/api/projects/{}/deploy/releases/page",
             "/api/projects/{}/deploy/releases/{}",
+            "/api/projects/{}/deploy/actions", "/api/projects/{}/deploy/releases/{}/actions",
             "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",
             "/api/projects/{}/deploy/deployments/{}",
             "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit",
-            "/api/projects/{}/deploy/release-gate",
+            "/api/projects/{}/deploy/release-gate", "/api/projects/{}/deploy/secret-readiness",
             "/api/projects/{}/deploy/runbooks", "/api/projects/{}/deploy/runbooks/runs",
             "/api/projects/{}/deploy/runbooks/runs/{}", "/api/projects/{}/deploy/runbooks/runs/{}/log");
+        // Release notes are product copy, written like project documentation.
+        Add("PUT", IamPermissions.ProjectDocsWrite, "/api/projects/{}/deploy/releases/{}/notes/{}");
         Environment("POST", IamPermissions.EnvironmentDeploy,
             "/api/projects/{}/deploy/environments/{}/runbooks/{}/runs", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
@@ -486,6 +492,9 @@ public static class RoutePermissionCatalog
         Add("PUT", IamPermissions.ProjectPipelineWrite, "/api/projects/{}/pipeline-step");
         // Only project settings writers may enable shadow package review.
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/review-package");
+        Add("GET", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/incident-webhook");
+        Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/incident-webhook");
+        Add("POST", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/incident-webhook/test");
         Add("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/*");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/model-selection-overrides/{}");

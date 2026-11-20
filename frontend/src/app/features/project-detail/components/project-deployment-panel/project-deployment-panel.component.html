@@ -22,8 +22,9 @@
             <p>{{ releaseLabel(environment) }}</p>
             <p>Health: <app-status-indicator [tone]="environmentHealthTone(environment.health)" [label]="environment.health" testId="environment-health-state" /></p>
             @if (environment.pendingArtifact) { <p>Queued: <code>{{ environment.pendingArtifact }}</code></p> }
-            @if (environment.history.length > 1) {
-              <button type="button" (click)="rollbackEnvironment(environment.declaration.id)">Roll back</button>
+            @if (offers().get(environment.declaration.id); as offer) {
+              <app-rollback-offer [offer]="offer" [now]="now()" [busy]="rollbackBusy() === offer.environmentId"
+                (rollback)="rollback.emit($event)" />
             }
             <details><summary>History ({{ environment.history.length }})</summary>
               <ol>@for (entry of environment.history; track entry.at + entry.artifact) {
@@ -58,6 +59,9 @@
       <p>The shared deployment source could not be read. Try refreshing this page.</p>
     </div>
   } @else if (!loading() && summary(); as deployment) {
+    @if (!deployment.targets.length && deployment.pipelineDeploySteps) {
+      <p class="deployment__notice" data-testid="project-deployment-pipeline-steps">This project deploys through the {{ deployment.pipelineDeploySteps }} deploy step{{ deployment.pipelineDeploySteps === 1 ? '' : 's' }} in project.yml. Create a release and deploy it from Deploy.</p>
+    } @else {
     <section class="deployment__targets" aria-labelledby="deployment-targets-title">
       <header>
         <div><p class="deployment__eyebrow">Repository truth</p><h2 id="deployment-targets-title">Targets</h2></div>
@@ -76,6 +80,7 @@
         <p class="deployment__notice" data-testid="project-deployment-no-targets">No deployment target can be derived from repository facts or descriptors.</p>
       }
     </section>
+    }
 
     @if (selectedTarget(); as target) {
       <section class="deployment__launcher" data-testid="project-deployment-launcher">
@@ -195,6 +200,7 @@
 
     <app-deployment-definition-editor [projectName]="projectName()" />
 
+    @if (deployment.stableBaseline) {
     <section class="deployment__baseline" aria-labelledby="deployment-baseline-title">
       <header><p class="deployment__eyebrow">Deployment history</p><h2 id="deployment-baseline-title">Stable baseline</h2></header>
       @if (!deployment.available || !deployment.lastDeployment) {
@@ -222,5 +228,6 @@
       </section>
       }
     </section>
+    }
   }
 </section>

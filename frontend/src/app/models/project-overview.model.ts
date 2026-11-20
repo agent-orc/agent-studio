@@ -1,3 +1,5 @@
+import type { RunHostStatus } from './run-host.model';
+
 /** Compact project throughput used by the operator-first Project Overview. */
 export interface ProjectThroughputSummary {
   project: string;
@@ -35,6 +37,10 @@ export interface ProjectDeploymentSummary {
   pendingCommits: ProjectDeploymentCommit[];
   targets: ProjectDeploymentTarget[];
   defaultEvidenceRun: DeploymentTestRunReference | null;
+  /** Studio's own deploy-stable history applies to this repository (F19). */
+  stableBaseline?: boolean;
+  /** Deploy steps of a schema 2 project.yml; those run from Deploy. */
+  pipelineDeploySteps?: number;
 }
 
 export interface ProjectEnvironmentDeclaration {
@@ -62,6 +68,12 @@ export interface ProjectEnvironmentHistory {
 
 export interface ProjectEnvironments {
   project: string;
+  runTargetRemovals?: {
+    environmentId: string;
+    hostId: string;
+    kind: string | null;
+    status: string;
+  }[];
   environments: {
     declaration: ProjectEnvironmentDeclaration;
     deployedArtifact: string | null;
@@ -84,6 +96,8 @@ export interface ProjectEnvironments {
     evidence: string;
     rollbackArtifact: string | null;
   }[];
+  /** The run host of each declared targetHostId and whether it is reachable (F4). */
+  runHosts?: RunHostStatus[] | null;
 }
 
 export interface TestRunScope {

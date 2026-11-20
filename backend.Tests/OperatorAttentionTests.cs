@@ -1,5 +1,7 @@
 using AgentStudio.Operator;
 using AgentStudio.Pipeline;
+using AgentStudio.Projects;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -18,6 +20,42 @@ public sealed class OperatorAttentionTests : IDisposable
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(At));
     private readonly OperatorDecisionOptions _options = new(
         TimeSpan.FromSeconds(5), TimeSpan.FromHours(24), TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(15));
+
+    [Fact]
+    public void Open_health_incident_is_first_and_clears_on_recovery_while_successful_deploys_stay_quiet()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = _root }).Build();
+        var store = new HealthCheckStore(configuration);
+        var started = new DateTimeOffset(At.AddHours(-1));
+        var incident = new EnvironmentIncident("production/incident", "production", "Production", started,
+            CardId: "health-production-1");
+        var check = new HealthIncident("check-1", "production", "http", started, "HTTP 503", 3);
+        var state = new ProjectHealthState();
+        state.Environments["production"] = new EnvironmentHealthState { OpenIncident = incident };
+        state.Checks[HealthCheckStore.Key("production", "http")] = new HealthCheckState { OpenIncident = check };
+        store.Save("alpha", state);
+        var source = new OperatorEnvironmentIncidentFactSource(store, () => ["alpha"],
+            (project, cardId) => project == "alpha" && cardId == "health-production-1" ? "NS-2" : null);
+
+        var facts = source.Collect(At)!.Concat([
+            Fact(OperatorDecisionTypes.DeployCompleted, "alpha", "raw-job-id", At),
+            Fact(OperatorDecisionTypes.HumanReviewReady, "alpha", "A-2", At.AddMinutes(-5)),
+        ]);
+        var projected = OperatorAttention.Project(facts, OperatorDecisionReader.Everything);
+        var item = Assert.Single(projected.Items.Where(item => item.Type == OperatorDecisionTypes.EnvironmentIncidentOpen));
+        Assert.Equal(item, projected.Items[0]);
+        Assert.Equal("NS-2", item.CardKey);
+        Assert.Contains(item.Evidence, link => link.Href == "/#/tasks/NS-2");
+        Assert.Contains("Production", item.Title);
+        Assert.Contains("HTTP 503", item.Reason);
+        Assert.Contains(item.Evidence, link => link.Href.Contains("/operations"));
+        Assert.DoesNotContain(projected.Items, item => item.Type == OperatorDecisionTypes.DeployCompleted);
+
+        state.Environments["production"].OpenIncident = null;
+        store.Save("alpha", state);
+        Assert.Empty(source.Collect(At.AddMinutes(1))!);
+    }
 
     [Fact]
     public void The_list_keeps_the_readers_scope_and_its_count_equals_its_rows()

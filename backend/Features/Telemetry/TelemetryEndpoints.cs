@@ -122,7 +122,7 @@ public static class TelemetryEndpoints
 
         environment.MapPost("/tokens", (HttpContext context, string projectName, string environmentId,
             TelemetryIngestTokenRequest? request, ITelemetryEnvironmentDirectory directory,
-            ITelemetryIngestCredentials credentials) =>
+            ITelemetryIngestCredentials credentials, TelemetryOptions options) =>
         {
             if (Resolve(projectName, environmentId, directory, requireDeclared: true) is not { } key) return NotFound();
             try
@@ -130,7 +130,7 @@ public static class TelemetryEndpoints
                 var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Id;
                 var (token, secret) = credentials.Create(key.Project, key.Environment, request?.Name, request?.Signals,
                     request?.ExpiresAt, actor);
-                var endpoint = $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{OtlpBasePath}";
+                var endpoint = options.PublicOtlpEndpoint ?? RequestEndpoint(context);
                 return Results.Ok(new TelemetryIngestTokenCreatedResponse(TelemetryIngestTokenResponse.From(token), secret,
                     endpoint, "Authorization=Bearer " + secret));
             }
@@ -146,6 +146,10 @@ public static class TelemetryEndpoints
             && credentials.Revoke(key.Project, key.Environment, tokenId)
                 ? Results.NoContent() : NotFound());
     }
+
+    /// <summary>The intake base URL under the address the caller reached Studio at.</summary>
+    public static string RequestEndpoint(HttpContext context)
+        => $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{OtlpBasePath}";
 
     private static async Task Receive(HttpContext context, TelemetryIntakeService intake, string signal)
     {

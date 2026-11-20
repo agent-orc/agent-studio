@@ -729,6 +729,32 @@ describe('WorkbenchDecisionPanelComponent', () => {
         'Agent changed from codex · gpt-5-codex · medium to claude · claude-opus-5 · high');
     });
 
+    it('shows a refused rework route as requested, without claiming a route change', () => {
+      fixture.componentRef.setInput('document', {
+        ...CODEX_DOCUMENT,
+        revisionRound: { status: 'failed', taskKey: 'AGT-2300', title: 'Concept: routing policy',
+          queueReason: null, detail: 'Continue was refused before admission.' },
+        workbench: {
+          ...CODEX_DOCUMENT.workbench,
+          status: 'decision-pending',
+          decision: {
+            outcome: 'rework', action: 'rework-requested', state: 'pending', operationId: 'refused-round',
+            sourceRevision: 'c'.repeat(40), sourceFingerprint: 'b'.repeat(64),
+            preparedAt: '2026-11-15T09:00:00Z', preparedBy: 'Operator',
+            confirmedAt: '2026-11-15T09:00:00Z', confirmedBy: 'Operator', decidedAt: null,
+            reason: null, failure: null, spawnedTaskKeys: [], responses: RESPONSES, taskDraft: null,
+            cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high',
+            request: 'Add a privacy section.', revisionTaskKey: 'AGT-2300',
+          },
+        },
+      });
+      fixture.detectChanges();
+      expect(text('workbench-decision-agent-receipt')).toContain('claude · claude-opus-5 · high');
+      expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-route-change-receipt"]'))
+        .toBeNull();
+      expect(text('workbench-decision-revision-round')).toContain('Continue was refused before admission.');
+    });
+
     it('returns to the browser default for a combined task after a cancelled rework', () => {
       click('workbench-decision-rework');
       expect(actionsComponent().cliType()).toBe('codex');

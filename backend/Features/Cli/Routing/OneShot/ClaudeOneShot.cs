@@ -31,6 +31,20 @@ namespace AgentStudio.Cli;
 /// </remarks>
 public sealed class ClaudeOneShot : ICliOneShot
 {
+    internal static void AddThinkingArguments(IList<string> arguments, string? model, string? thinkingLevel)
+    {
+        foreach (var arg in CodingAgentRunner.Model.CliReasoningFlags.For(CliTypes.Claude, model, thinkingLevel))
+            arguments.Add(arg);
+        if (!arguments.Contains("--effort")
+            && ModelMetadataRegistry.Find(model)?.ThinkingLevels is { Length: > 0 }
+            && !string.IsNullOrWhiteSpace(thinkingLevel))
+        {
+            arguments.Add("--effort");
+            arguments.Add(ModelMetadataRegistry.NormalizeThinkingLevel(
+                CliTypes.Claude, model, thinkingLevel)!);
+        }
+    }
+
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(2);
 
     private readonly IConfiguration _configuration;
@@ -104,8 +118,7 @@ public sealed class ClaudeOneShot : ICliOneShot
         psi.Environment["LANG"] = "C.UTF-8";
         HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, request.Model, request.ExtraArgs,
             networked: networked);
-        foreach (var arg in CodingAgentRunner.Model.CliReasoningFlags.For(CliTypes.Claude, request.Model, request.ThinkingLevel))
-            psi.ArgumentList.Add(arg);
+        AddThinkingArguments(psi.ArgumentList, request.Model, request.ThinkingLevel);
         var multimodal = request.InlineImages is { Count: > 0 };
         if (multimodal)
         {
@@ -276,6 +289,7 @@ public sealed class ClaudeOneShot : ICliOneShot
             result.Usage,
             (long)result.Duration.TotalMilliseconds,
             ok: result.Ok,
+            cliType: CliTypes.Claude,
             project: request.Project,
             jobId: request.JobId);
     }

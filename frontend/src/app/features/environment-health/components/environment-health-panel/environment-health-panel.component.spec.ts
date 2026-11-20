@@ -1,10 +1,39 @@
+/* eslint-disable @angular-eslint/component-max-inline-declarations -- a spec host that lends the panel a template */
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { EnvironmentHealthPanelComponent, healthStatusTone } from './environment-health-panel.component';
+import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { healthResponse } from '../../../../../testing/environment-health';
 
+@Component({
+  standalone: true,
+  imports: [EnvironmentHealthPanelComponent],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `<ng-template #action let-environmentId><button type="button" data-testid="incident-action">Roll back {{ environmentId }}</button></ng-template>
+    <app-environment-health-panel projectName="Demo Project" [incidentAction]="action" />`,
+})
+class IncidentActionHost {}
+
 describe('EnvironmentHealthPanelComponent', () => {
+  it('renders the host action on an open incident only, with the environment id (F13)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [IncidentActionHost],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(IncidentActionHost);
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne('/api/projects/Demo%20Project/environments/health').flush(healthResponse);
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const actions = Array.from(element.querySelectorAll('[data-testid="incident-action"]'));
+    expect(actions.map(action => action.textContent?.trim())).toEqual(['Roll back production']);
+    expect(element.querySelector('[data-testid="environment-health-production"] [data-testid="incident-action"]')).not.toBeNull();
+  });
+
   it('shows uptime windows, latency, the open incident and a close certificate expiry', async () => {
     await TestBed.configureTestingModule({
       imports: [EnvironmentHealthPanelComponent],
@@ -44,6 +73,30 @@ describe('EnvironmentHealthPanelComponent', () => {
     fixture.detectChanges();
     expect(element.textContent).toContain('No environments are declared');
     http.verify();
+  });
+
+  it('links the incident card by its board key', async () => {
+    const references = { openReferenceOrNotify: vi.fn(() => true) };
+    await TestBed.configureTestingModule({
+      imports: [EnvironmentHealthPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting(),
+        { provide: TaskReferenceNavigationService, useValue: references }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(EnvironmentHealthPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Demo Project');
+    fixture.detectChanges();
+    const [production, ...rest] = healthResponse.environments;
+    TestBed.inject(HttpTestingController).expectOne('/api/projects/Demo%20Project/environments/health')
+      .flush({ ...healthResponse, environments: [{ ...production, incidentCardKey: 'NS-2' }, ...rest] });
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const link = element.querySelector<HTMLButtonElement>('[data-testid="environment-health-incident-card"]')!;
+    expect(link.textContent!.trim()).toBe('NS-2');
+    expect(element.querySelector('[data-testid="environment-health-incident"]')!.textContent)
+      .not.toContain('health-production-202610190745');
+    link.click();
+    expect(references.openReferenceOrNotify).toHaveBeenCalledWith('NS-2');
   });
 
   it('names a broken declaration on its environment', async () => {

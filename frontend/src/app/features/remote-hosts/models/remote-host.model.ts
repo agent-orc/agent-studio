@@ -16,7 +16,7 @@ import type { StatusTone } from '../../../components/status-indicator/status-ind
 
 /** Where a host sits relative to the operator. */
 export type HostRole = 'local' | 'remote';
-export type RunnerServiceRole = 'local' | 'coding' | 'review' | 'runner';
+export type RunnerServiceRole = 'local' | 'coding' | 'review' | 'runner' | 'deploy';
 
 /**
  * Heartbeat-derived liveness. Ordered loosely from healthiest to gone:
@@ -487,6 +487,8 @@ export interface RemoteHost {
   projectPreflights?: readonly RunnerProjectPreflight[];
   daemonState?: 'running' | 'read-only' | 'stopped';
   lastClaimAt?: string | null;
+  /** A run host's last deploy job or observed-state report (F4). */
+  lastReportAt?: string | null;
   activeTaskCount?: number;
   claimLoadGate?: ClaimLoadGate | null;
   oneShotClaimRoute?: OneShotClaimRouteCondition | null;

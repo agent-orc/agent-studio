@@ -86,6 +86,7 @@ public sealed class CodexOneShotTests
         Assert.True(result.Ok);
         Assert.Contains("Spark handled the summary", result.ParsedText);
         Assert.Equal("gpt-5.3-codex-spark", result.Usage!.Model);
+        Assert.Equal(CliTypes.Codex, result.Usage.CliType);
         Assert.Equal(400, result.Usage.InputTokens);
         Assert.Equal(800, result.Usage.CacheReadTokens);
         Assert.True(result.Usage.InputIncludesCached);

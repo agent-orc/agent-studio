@@ -3,6 +3,16 @@
 Version: 2026-11-17
 Status: System-of-record map for frontend changes.
 
+Card delivery badges are shown for cards named by a release or with verified
+integration evidence. An unreleased integrated card can show pending delivery;
+an unintegrated or incident card has no badges. A failed
+deployment remains visible on the card after an environment rollback, with the
+failed release version and attempt date, until a later deployment of a release
+containing that card succeeds. A successful rollback after a failed attempt
+reads "Failed, rolled back"; a rollback that withdraws a previously successful
+card reads "Rolled back". State labels use product wording, and the badge text
+wraps so release versions and dates remain readable on narrow board cards.
+
 Needs you shows a review-host row when a differing release claims review work.
 The status-bar trigger shows a compact Review host cue while the row is open;
 the row opens the affected Execution Hosts detail and its Update review host
@@ -182,17 +192,28 @@ and keeps its other sources loaded. Marker card keys resolve by exact key
 through `GET /api/tasks/{key}/core`, so archived cards open too. A later card
 click or leaving the view cancels a pending lookup. Log search accepts any
 release ID, including releases whose marker predates the 30-day trend.
-The API derives DORA from production deploy runs and archive-inclusive card creation
+The API derives DORA from production deploy runs, completed production environment
+incidents, and archive-inclusive card creation
 times: successful change runs per week, median card-to-production time, failed
-or rolled-back changes divided by terminal change runs, and median time from a
-failed production run to the next successful run. Missing samples remain
+or rolled-back changes and changes followed by a production incident divided by
+terminal change runs, and median time from a failed production run to the next
+successful run or from a production incident opening to its recovery. Overlapping
+run and incident recoveries count once. Missing samples remain
 unavailable. `GET /api/projects/{project}/deploy/operations/logs` accepts
 environment, bounded time range, level, release, and text filters and returns
-at most 100 lines. `IOperationsTelemetryReader` is the integration boundary
-for the pending intake store; until it is connected, telemetry and logs show
-an explicit empty state while deploy markers and DORA remain live. The reader
-contract allows only aggregate usage without personal identifiers and requires
-secret masking before stored log lines are returned.
+100 lines per page with a cursor for later pages. `IOperationsTelemetryReader`
+projects the per-environment OTLP store into metrics and masked logs. The
+explicit empty state is reserved for a disabled store; read failures return a
+named error. Deploy markers and DORA remain live. The reader contract allows
+only aggregate usage without personal identifiers and requires secret masking
+before stored log lines are returned. The metric mapping and histogram
+quantile fallback are documented in
+[app telemetry intake](../../operations/setup/app-telemetry-intake.md).
+The Deploy area's Telemetry tab
+(`ProjectTelemetryTokensComponent`, `?view=telemetry`) lists the ingest tokens of
+one environment with signals, last use, expiry and state, creates a token whose
+endpoint, protocol and headers it shows once, labels the deploy-managed token,
+and revokes a token after a confirming click.
 
 ## Workspace deployment dashboard
 

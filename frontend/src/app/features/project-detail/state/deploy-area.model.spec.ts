@@ -7,6 +7,7 @@ import {
   artifactReleaseLookups,
   buildDeployRuns,
   buildEnvironmentCards,
+  declaredEnvironments,
   carriesArtifact,
   environmentNames,
   filterDeployRuns,
@@ -184,6 +185,7 @@ describe('deploy area model', () => {
         newer: null, health: { status: 'reported', state: 'healthy' },
         lastRun: { deploymentId: 'run-c-stage-redeploy', trigger: 'redeploy', state: 'cancelled', at: '2026-10-19T11:55:00Z' },
         awaitingApproval: null,
+        host: { id: 'web-vm', name: 'web-vm', state: null, lastSeenAt: null },
       });
       expect(production).toMatchObject({
         releaseVersion: '2026.10.18.1', deployedAt: '2026-10-18T22:10:00Z', cards: { status: 'known', keys: ['WEB-29', 'WEB-30'] },
@@ -191,6 +193,20 @@ describe('deploy area model', () => {
         lastRun: { deploymentId: 'run-c-production', trigger: 'deploy', state: 'awaiting-approval', at: '2026-10-19T11:49:00Z' },
         awaitingApproval: { deploymentId: 'run-c-production', subject: 'Release 2026.10.19.2', requestedBy: 'local.dev' },
       });
+    });
+
+    it('names the run host of each environment and whether it is reachable', () => {
+      const sources = deploySourcesFixture();
+      sources.environments = {
+        ...sources.environments!,
+        runHosts: [{ id: 'web-vm', name: 'run-host-1', state: 'unreachable', projects: ['Website'],
+          lastSeenAt: '2026-10-19T11:00:00Z', lastClaimAt: '2026-10-19T10:59:00Z', lastReportAt: null }],
+      };
+
+      const [staging, production] = buildEnvironmentCards(sources);
+
+      expect(staging.host).toEqual({ id: 'web-vm', name: 'run-host-1', state: 'unreachable', lastSeenAt: '2026-10-19T11:00:00Z' });
+      expect(production.host?.state).toBe('unreachable');
     });
 
     it('falls back to the AGT-3176 environment state without the deploy service', () => {
@@ -368,6 +384,18 @@ describe('deploy area model', () => {
       expect(buildEnvironmentCards(sources)[1].awaitingApproval?.deploymentId).toBeNull();
     });
 
+    it('carries the declaration problem of a misconfigured check onto the card (F16)', () => {
+      const sources = deploySourcesFixture();
+      const problem = 'Health check http targets http://172.17.0.1:8080/health, a private network address.';
+      sources.health = { capturedAt: '', probeOrigin: '', environments: [{
+        project: 'Website', environmentId: 'stage', name: 'Staging', kind: 'stage', address: '',
+        status: 'invalid', checks: [{ id: 'http' }] as never, uptime24h: null, uptime7d: null,
+        uptime30d: null, latency24h: { p50Ms: null, p95Ms: null, p99Ms: null },
+        currentIncident: null, lastIncident: null, error: problem,
+      }] };
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'invalid', problem });
+    });
+
     it('uses the per-environment current deployment when that run is beyond the bounded history page', () => {
       const sources = deploySourcesFixture();
       sources.deployments = sources.deployments!.filter(run => run.environmentId === 'stage');
@@ -445,5 +473,27 @@ describe('deploy area model', () => {
     expect(groups.map(group => [group.step, group.state, group.lines.length])).toEqual([
       ['publish-static', 'succeeded', 2], ['health', 'failed', 1], ['rollback', null, 1],
     ]);
+  });
+  it('lists schema 2 environments that have no status card yet, matching staging to the stage card', () => {
+    const step = { path: 'deploy[0]', kind: 'static-site', target: 'web-vm' };
+    const definition = {
+      project: 'Shop', path: '.agent-studio/project.yml', exists: true, schemaVersion: 2, valid: true, issues: [],
+      migrationAvailable: false,
+      diagram: {
+        schemaVersion: 2, gate: { source: 'commands' as const, build: [], test: [], testSuites: [] }, artifacts: [],
+        environmentsDefaulted: false, lifecycleDefaulted: false,
+        environments: [
+          { path: 'environments[0]', name: 'staging', order: 0, protected: false, automatic: true, approval: [], steps: [step], variables: [] },
+          { path: 'environments[1]', name: 'production', order: 1, protected: true, automatic: false, approval: [], steps: [], variables: [] },
+        ],
+      },
+    };
+    const stage = buildEnvironmentCards(deploySourcesFixture()).filter(card => card.id === 'stage');
+
+    expect(declaredEnvironments(definition, stage)).toEqual([
+      { name: 'production', label: 'Production', protected: true, hasSteps: false },
+    ]);
+    expect(declaredEnvironments({ ...definition, schemaVersion: 1 }, [])).toEqual([]);
+    expect(declaredEnvironments(null, [])).toEqual([]);
   });
 });

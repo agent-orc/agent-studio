@@ -86,7 +86,7 @@
     }
   }
   @if (wizardOpen()) {
-    <app-add-host-wizard (cancelled)="closeWizard()" (completed)="completeWizard($event)" />
+    <app-add-host-wizard (cancelled)="closeWizard()" (completed)="completeWizard($event)" (runHostEnrolled)="runHostEnrolled()" />
   }
 
   @if (purgeRetiredOpen()) {

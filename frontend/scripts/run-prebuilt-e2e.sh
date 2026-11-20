@@ -6,7 +6,7 @@ FRONTEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${FRONTEND_ROOT}/.." && pwd)"
 if [[ "${PW_E2E_SINGLE_RUN:-0}" != "1" && "$#" -eq 0 ]]; then
   result=0
-  for profile in standard recovery ref-drift demo owner-day public-demo first-run concept-remote networked-monolith networked-https networked-checkout networked-https-demo operator-cli; do
+  for profile in standard recovery ref-drift demo owner-day public-demo first-run concept-remote networked-monolith networked-https networked-checkout networked-https-demo operator-cli deploy-lifecycle run-host; do
     PW_E2E_SINGLE_RUN=1 PW_E2E_PROFILE="${profile}" bash "$0" || result=1
   done
   exit "${result}"
@@ -16,8 +16,9 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
   for arg in "$@"; do
     case "${arg}" in
       *crash-recovery-prompt.spec.ts*|*first-run-checklist.spec.ts*) PW_E2E_PROFILE=recovery ;;
-      *first-run-journey.spec.ts*|*first-run-review-host-restart.spec.ts*|*second-project-server-checkout.spec.ts*|*first-run-off-stable-grade.spec.ts*) PW_E2E_PROFILE=first-run ;;
+      *first-run-journey.spec.ts*|*first-run-review-host-restart.spec.ts*|*second-project-server-checkout.spec.ts*|*first-run-off-stable-grade.spec.ts*|*first-run-integration-release.spec.ts*) PW_E2E_PROFILE=first-run ;;
       *concept-remote-journey.spec.ts*) PW_E2E_PROFILE=concept-remote ;;
+      *deploy-staging-retry-production-approval.spec.ts*) PW_E2E_PROFILE=deploy-lifecycle ;;
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
       *product-session-networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *reviewer-role.networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
@@ -26,6 +27,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *networked-project-checkout.spec.ts*) PW_E2E_PROFILE=networked-checkout ;;
       *product-card-detail.spec.ts*) PW_E2E_PROFILE=networked-https-demo ;;
       *studio-op-operator-cli.spec.ts*) PW_E2E_PROFILE=operator-cli ;;
+      *run-host-enrollment.spec.ts*) PW_E2E_PROFILE=run-host ;;
       *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
       *dossier-decision-live.spec.ts*) PW_E2E_PROFILE=demo ;;
       *owner-day-token-usage.spec.ts*) PW_E2E_PROFILE=owner-day ;;
@@ -82,7 +84,7 @@ trap cleanup EXIT
 export PW_E2E_BACKEND_PORT PW_E2E_FRONTEND_PORT PW_E2E_WORKSPACE PW_E2E_CHECKOUT PW_E2E_PROFILE
 # public-demo and networked-https serve the browser over real TLS, so Secure
 # session cookies behave as on a deployed Studio.
-if [[ "${PW_E2E_PROFILE}" == public-demo || "${PW_E2E_PROFILE}" == networked-https || "${PW_E2E_PROFILE}" == networked-checkout || "${PW_E2E_PROFILE}" == networked-https-demo ]]; then
+if [[ "${PW_E2E_PROFILE}" == public-demo || "${PW_E2E_PROFILE}" == networked-https || "${PW_E2E_PROFILE}" == networked-checkout || "${PW_E2E_PROFILE}" == networked-https-demo || "${PW_E2E_PROFILE}" == run-host ]]; then
   PW_E2E_TLS_CERT="${PW_E2E_WORKSPACE}/localhost.crt"
   PW_E2E_TLS_KEY="${PW_E2E_WORKSPACE}/localhost.key"
   openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \

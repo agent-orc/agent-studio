@@ -147,7 +147,7 @@ test.describe('local profile owner actions', () => {
 
       await expect(ownerDialog).toHaveCount(0);
       await expect(page.getByTestId('deploy-run-approval')).toContainText('Approved by', { timeout: 30_000 });
-      expect(confirms).toEqual([expect.stringMatching(/^Approve Production run /)]);
+      expect(confirms).toEqual([expect.stringMatching(/^Approve deploying release \S+ \(\d+ cards?\) to Production\?$/)]);
       await capture(page, 'production-approved');
       const runs = await (await page.request.get(`${deploy}/deployments`)).json() as { environmentId: string; approvedBy: string | null }[]
         | { items: { environmentId: string; approvedBy: string | null }[] };

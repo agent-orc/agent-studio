@@ -1,32 +1,87 @@
 <section class="runbooks" data-testid="environment-runbooks">
-  <header><h3>Runbooks</h3><button type="button" (click)="refresh()">Refresh</button></header>
-  @if (error(); as message) { <p role="alert">{{ message }}</p> }
-  @if (definitions().length === 0) { <p>No runbooks configured for this environment.</p> }
-  @for (definition of definitions(); track definition.name) {
-    <div class="runbooks__definition">
-      <div><strong>{{ definition.name }}</strong><p>{{ definition.steps.join(' → ') }}</p></div>
-      <button type="button" [disabled]="busy()" (click)="start(definition.name)" [attr.data-testid]="'runbook-start-' + definition.name">Run</button>
-    </div>
-  }
-  @if (runs().length) {
-    <h4>History</h4>
-    <ol>
-      @for (run of runs(); track run.id) {
-        <li>
-          <div class="runbooks__run"><span><strong>{{ run.name }}</strong> · <app-status-indicator [tone]="runTone(run.state)" [label]="run.state" [compact]="true" testId="runbook-run-state" /> · requested by {{ run.requestedBy }} @if (run.approvedBy) { · approved by {{ run.approvedBy }} }</span>
-            <button type="button" (click)="toggleLog(run.id)" [attr.aria-expanded]="openLogId() === run.id"><app-disclosure-marker [open]="openLogId() === run.id" />Log</button>
-          </div>
-          @if (run.state === 'awaiting-approval') {
-            <div class="runbooks__approval"><span>Owner or Maintainer approval required</span>
-              <button type="button" [disabled]="busy()" (click)="decide(run.id, 'approve')">Approve</button>
-              <button type="button" [disabled]="busy()" (click)="decide(run.id, 'reject')">Reject</button>
+  <header class="runbooks__header">
+    <h3>Runbooks</h3>
+    <button type="button" class="studio-button studio-button--ghost" (click)="refresh()">Refresh</button>
+  </header>
+  @if (error(); as message) { <p class="runbooks__error" role="alert">{{ message }}</p> }
+  @if (!loaded()) {
+    <app-loading-surface kind="list" label="Loading runbooks…" />
+  } @else {
+    @if (definitions().length === 0) { <p class="runbooks__muted">No runbooks configured for this environment.</p> }
+    @for (definition of definitions(); track definition.name) {
+      <div class="runbooks__definition" [attr.data-testid]="'runbook-definition-' + definition.name">
+        <div>
+          <strong>{{ definition.name }}</strong>
+          <p class="runbooks__muted">Steps: {{ definition.steps.join(' → ') }}</p>
+          @if (verificationLabel(definition.verify); as verifies) {
+            <p class="runbooks__muted">Verifies {{ verifies }} after the steps</p>
+          }
+        </div>
+        <button type="button" class="studio-button studio-button--secondary"
+          [appPendingButton]="isPending('start:' + definition.name)" pendingLabel="Starting…"
+          [disabled]="pending() !== null" (click)="start(definition.name)"
+          [attr.data-testid]="'runbook-start-' + definition.name">Run</button>
+      </div>
+    }
+    @if (runs().length) {
+      <h4>History</h4>
+      <ol class="runbooks__history">
+        @for (run of runs(); track run.id) {
+          <li class="runbooks__entry" [attr.data-testid]="'runbook-run-' + run.id">
+            <div class="runbooks__run">
+              <span class="runbooks__summary">
+                <strong>{{ run.name }}</strong>
+                <app-status-indicator [tone]="runTone(run.state)" [label]="run.state" [compact]="true" testId="runbook-run-state" />
+                <span class="runbooks__muted">requested by {{ run.requestedByName ?? (run.requestedBy | principalName) }}@if (run.approvedBy) {, approved by {{ run.approvedByName ?? (run.approvedBy | principalName) }}}</span>
+              </span>
+              <button type="button" class="studio-button studio-button--ghost runbooks__log-toggle" (click)="toggleLog(run.id)"
+                [attr.aria-expanded]="openLogId() === run.id" [attr.data-testid]="'runbook-log-toggle-' + run.id">
+                <app-disclosure-marker [open]="openLogId() === run.id" />Log
+              </button>
             </div>
-          }
-          @if (openLogId() === run.id) {
-            <ol class="runbooks__log">@for (line of logLines(); track $index) { <li>{{ line.step }} · {{ line.message }}</li> }</ol>
-          }
-        </li>
-      }
-    </ol>
+            @if (run.verification; as verification) {
+              <p class="runbooks__verification" data-testid="runbook-verification">
+                <app-status-indicator [tone]="verification.passed ? 'success' : 'warning'"
+                  [label]="verification.passed ? 'Verified' : 'Not verified'" [compact]="true" testId="runbook-verification-state" />
+                <span>{{ verification.detail }}</span>
+              </p>
+            } @else if (run.verifies && run.state === 'running') {
+              <p class="runbooks__muted" data-testid="runbook-verification">Checking {{ run.verifies }} once the steps finish</p>
+            }
+            @if (run.state === 'awaiting-approval') {
+              <div class="runbooks__approval"><span>Owner or Maintainer approval required</span>
+                <button type="button" class="studio-button studio-button--primary"
+                  [appPendingButton]="isPending('approve:' + run.id)" pendingLabel="Approving…"
+                  [disabled]="pending() !== null" (click)="decide(run.id, 'approve')">Approve</button>
+                <button type="button" class="studio-button studio-button--secondary"
+                  [appPendingButton]="isPending('reject:' + run.id)" pendingLabel="Rejecting…"
+                  [disabled]="pending() !== null" (click)="decide(run.id, 'reject')">Reject</button>
+              </div>
+            }
+            @if (openLogId() === run.id) {
+              <div class="runbooks__log" data-testid="runbook-log">
+                @for (group of logGroups(); track group.step) {
+                  <section class="runbooks__log-step" [attr.data-testid]="'runbook-log-step-' + group.step">
+                    <div class="runbooks__log-head">
+                      <strong>{{ group.step }}</strong>
+                      @if (group.state) {
+                        <app-status-indicator [tone]="runTone(group.state)" [label]="group.state" [compact]="true" testId="runbook-step-state" />
+                      }
+                    </div>
+                    @if (group.lines.length) {
+                      <div class="runbooks__output">
+                        @for (line of group.lines; track $index) { <span class="runbooks__line">{{ line }}</span> }
+                      </div>
+                    } @else {
+                      <p class="runbooks__muted">No output yet</p>
+                    }
+                  </section>
+                }
+              </div>
+            }
+          </li>
+        }
+      </ol>
+    }
   }
 </section>

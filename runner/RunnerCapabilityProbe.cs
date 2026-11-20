@@ -74,22 +74,22 @@ internal static class RunnerCapabilityProbe
         }).Where(route => providers.Contains(route.Item1))
             : Enumerable.Empty<(string, string)>();
         baseline = baseline.Concat(fallbackCandidates).Distinct().ToArray();
-        // Include these two in cached host probes before routing switches to
-        // them. Old CLIs cannot serve them, so skip the paid calls.
+        // Include the version-gated models in cached host probes before routing
+        // switches to them. Old CLIs cannot serve them, so skip the paid calls.
         var codex = CodingCliBinaries(options).FirstOrDefault(item => item.CliType == CliSelection.CodexCli);
         var installation = codex.Binary is null ? null : InspectCli(codex.Binary);
         if (configured is null && installation is not null && CodexModels(installation) is not null
             && CodexModelCatalogs.TryGetValue($"{installation.Path}\0{installation.Version}", out var catalogue))
             RunnerModelAcceptanceProbe.Shared.NoteCatalogueRefresh(
                 CliSelection.CodexCli, $"{installation.Version}:{catalogue.ObservedAt.Ticks}");
-        if (installation is null || !CodexCliRelease.OffersGpt61(installation.Version))
-            return baseline.Where(route => route.Provider != CliSelection.CodexCli
-                || route.Model is not (CodexCliRelease.Gpt61Sol or CodexCliRelease.Gpt61Terra)).ToArray();
-        return baseline.Concat(new[]
-        {
-            (CliSelection.CodexCli, CodexCliRelease.Gpt61Sol),
-            (CliSelection.CodexCli, CodexCliRelease.Gpt61Terra),
-        }).Distinct().ToArray();
+        var offered = CodexCliRelease.VersionGatedModels
+            .Where(model => installation is not null && CodexCliRelease.Offers(model, installation.Version))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return baseline.Where(route => route.Provider != CliSelection.CodexCli
+                || CodexCliRelease.MinimumVersionForModel(route.Model) is null || offered.Contains(route.Model))
+            .Concat(CodexCliRelease.VersionGatedModels.Where(offered.Contains)
+                .Select(model => (CliSelection.CodexCli, model)))
+            .Distinct().ToArray();
     }
 
     private static IReadOnlyList<(string Provider, string Model)> BuiltInModelCandidates(RunnerOptions options)
@@ -98,7 +98,7 @@ internal static class RunnerCapabilityProbe
             if (item.CliType == CliSelection.CodexCli)
             {
                 var installation = InspectCli(item.Binary);
-                string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-5.6-sol",
+                string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-5.6-sol",
                     "gpt-5.5", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna",
                     "gpt-6-astra"];
                 var offered = installation is null ? null : CodexModels(installation);
@@ -107,7 +107,7 @@ internal static class RunnerCapabilityProbe
                     .Select(model => (item.CliType, model));
             }
             return new[] { "claude-opus-5", "claude-sonnet-5", "claude-opus-5-5",
-                    "claude-sonnet-5-5", "claude-fable-5-1", "claude-sonnet-4-6",
+                    "claude-sonnet-5-5", "claude-fable-5-2", "claude-fable-5-1", "claude-sonnet-4-6",
                     "claude-sonnet-4-5", "claude-opus-4-8", "claude-opus-4-7",
                     "claude-opus-4-6", "claude-opus-4-5", "claude-haiku-4-5" }
                 .Select(model => (item.CliType, model));
@@ -635,7 +635,13 @@ internal static class RunnerCapabilityProbe
                     ProviderProbeOutcome.Healthy => "valid",
                     ProviderProbeOutcome.CredentialInvalid => "invalid",
                     _ => "unknown",
-                }));
+                }) with
+                {
+                    // AGT-3948: lets the queue watchdogs tell a latched binding
+                    // (indeterminate behind an active session) from a real failure.
+                    Since = auth.IndeterminateSince?.UtcDateTime,
+                    StatusSessionActive = auth.StatusSessionActive,
+                });
             foreach (var modelCapability in RunnerModelAcceptanceProbe.Shared.Snapshot(
                          cliType, ModelCandidates(options)
                              .Where(candidate => candidate.Provider == cliType)
@@ -643,13 +649,13 @@ internal static class RunnerCapabilityProbe
                 capabilities.Add(modelCapability);
             if (cliType == CliSelection.CodexCli && installation is not null)
             {
-                foreach (var model in new[] { CodexCliRelease.Gpt61Sol, CodexCliRelease.Gpt61Terra })
+                foreach (var model in CodexCliRelease.VersionGatedModels)
                 {
-                    if (CodexCliRelease.OffersGpt61(installation.Version)) continue;
+                    if (CodexCliRelease.Offers(model, installation.Version)) continue;
                     capabilities.Add(new AdvertisedCapabilityDto(
                         CapabilityProtocol.ModelAcceptance(cliType, model), "model-acceptance", "unavailable",
                         Identity: $"{cliType}/{model}",
-                        Detail: $"This CLI version does not offer {model}: codex-cli {installation.Version} requires {CodexCliRelease.Gpt61MinimumVersion} or newer."));
+                        Detail: $"This CLI version does not offer {model}: codex-cli {installation.Version} requires {CodexCliRelease.MinimumVersionForModel(model)} or newer."));
                 }
             }
         }
@@ -875,6 +881,10 @@ internal static class RunnerCapabilityProbe
 /// <param name="Detail">One line, no secrets, safe to show on the capability panel.</param>
 /// <param name="ObservedAt">When the verdict was taken - the TTL is measured from here.</param>
 /// <param name="ProbeDegraded">Whether the latest probe was indeterminate and this verdict was retained.</param>
+/// <param name="StatusSessionActive">Whether the latest status command confirmed an active session.
+/// Added to every status the probe returns; never stored.</param>
+/// <param name="IndeterminateSince">AGT-3948: since when the outcome has stayed indeterminate while the
+/// status command confirmed an active session. Added to every status the probe returns; never stored.</param>
 public sealed record ProviderAuthStatus(
     string Status,
     string Detail,
@@ -892,7 +902,9 @@ public sealed record ProviderAuthStatus(
     DateTimeOffset? AccessTokenExpiresAt = null,
     string EffectiveSource = "unknown",
     bool NativeFileShadowed = false,
-    ProviderProbeOutcome Outcome = ProviderProbeOutcome.Indeterminate)
+    ProviderProbeOutcome Outcome = ProviderProbeOutcome.Indeterminate,
+    bool StatusSessionActive = false,
+    DateTimeOffset? IndeterminateSince = null)
 {
     public bool IsReady => Status == ProviderAuthProbe.Ready;
 }
@@ -996,6 +1008,10 @@ public sealed class ProviderAuthProbe
     private readonly Dictionary<string, long> _runEvidenceVersions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SemaphoreSlim> _singleFlights = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (DateTimeOffset Window, int Used)> _realBudgets = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RealRequestPacing> _realPacing = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _lastRealAttempts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, bool> _statusSessionActive = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _indeterminateSince = new(StringComparer.Ordinal);
     private ProviderAuthLauncher? _realLauncher;
     private ProviderStatusIncidentAdapter? _incidentAdapter;
     private Func<ProviderComparisonQuery, CancellationToken, Task<ProviderComparisonSnapshot>>? _comparisonAdapter;
@@ -1004,6 +1020,21 @@ public sealed class ProviderAuthProbe
     public static readonly TimeSpan HealthyRealCheckCeiling = TimeSpan.FromMinutes(30);
     public static readonly TimeSpan LastGoodWindow = TimeSpan.FromMinutes(10);
     public const int DailyRealRequestBudget = 48;
+
+    /// <summary>
+    /// AGT-3948: first delay after a real request that did not prove access.
+    /// Each further failure doubles it up to <see cref="RecoveryBackoffCeiling"/>.
+    /// </summary>
+    public static readonly TimeSpan RecoveryBackoffBase = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// AGT-3948: the longest wait between two recovery requests, also with a
+    /// known reset further away: the request after a known reset is made at
+    /// the reset itself. Beyond the daily budget this is also the minimum
+    /// spacing of recovery requests, so a spent budget slows recovery checks
+    /// but never stops them.
+    /// </summary>
+    public static readonly TimeSpan RecoveryBackoffCeiling = TimeSpan.FromMinutes(30);
 
     public void UseCanaryPermit(Func<string, CancellationToken, Task<ProviderCanaryPermitDto>> permit)
     {
@@ -1105,6 +1136,29 @@ public sealed class ProviderAuthProbe
     /// </summary>
     public ProviderAuthStatus Current(string cliBinary)
     {
+        lock (_sync) return Annotate(cliBinary, CurrentCore(cliBinary));
+    }
+
+    /// <summary>
+    /// AGT-3948: adds the advertisement-only facts to a returned status. The indeterminate clock runs
+    /// while the outcome is indeterminate and the status command still confirms
+    /// a session, the state that latched the fleet on 13 October and 17 November.
+    /// </summary>
+    private ProviderAuthStatus Annotate(string cliBinary, ProviderAuthStatus status)
+    {
+        var session = _statusSessionActive.GetValueOrDefault(cliBinary);
+        if (!session || status.Outcome != ProviderProbeOutcome.Indeterminate)
+        {
+            _indeterminateSince.Remove(cliBinary);
+            return status with { StatusSessionActive = session, IndeterminateSince = null };
+        }
+        if (!_indeterminateSince.TryGetValue(cliBinary, out var since))
+            _indeterminateSince[cliBinary] = since = _clock();
+        return status with { StatusSessionActive = true, IndeterminateSince = since };
+    }
+
+    private ProviderAuthStatus CurrentCore(string cliBinary)
+    {
         lock (_sync)
         {
             _observed.TryGetValue(cliBinary, out var known);
@@ -1162,6 +1216,12 @@ public sealed class ProviderAuthProbe
     /// </summary>
     public async Task<ProviderAuthStatus> RefreshAsync(string cliBinary, CancellationToken ct)
     {
+        var status = await RefreshCoreAsync(cliBinary, ct);
+        lock (_sync) return Annotate(cliBinary, status);
+    }
+
+    private async Task<ProviderAuthStatus> RefreshCoreAsync(string cliBinary, CancellationToken ct)
+    {
         try
         {
             SemaphoreSlim gate;
@@ -1181,6 +1241,7 @@ public sealed class ProviderAuthProbe
                 lock (_sync)
                 {
                     _observed.TryGetValue(cliBinary, out previous);
+                    _statusSessionActive[cliBinary] = observation.Kind == ProviderAuthObservationKind.Authenticated;
                     if (previous is not null
                         && _runEvidenceVersions.GetValueOrDefault(cliBinary) != runEvidenceVersion
                         && previous.Status.EffectiveSource == observation.EffectiveSource
@@ -1244,6 +1305,23 @@ public sealed class ProviderAuthProbe
         if (launcher is null || status.Status == Limited
             || status.Outcome == ProviderProbeOutcome.CredentialInvalid) return status;
         var provider = RunnerCapabilityProbe.Provider(cliBinary);
+        // AGT-3948: any outcome other than a proven success needs a real
+        // request to clear it. A status command only proves the login, so
+        // before this a degraded or indeterminate binding waited for a canary
+        // permit and then for the daily budget, and only a restart cleared it.
+        var recovery = status.Outcome != ProviderProbeOutcome.Healthy
+            && status.Status is Ready or Degraded;
+        var now = _clock();
+        RealRequestPacing? pacing;
+        lock (_sync)
+        {
+            pacing = _realPacing.GetValueOrDefault(cliBinary);
+            if (pacing is not null && !pacing.SameBinding(status)) pacing = null;
+        }
+        // Paced before the permit: a deferred request must not hold the
+        // cohort's canary slot it will not use. A fresh unauthorized status
+        // answer is new evidence that still asks for corroboration.
+        if (!statusUnauthorized && pacing is not null && now < pacing.NotBefore) return status;
         var forceCanary = false;
         if (canaryPermit is not null)
         {
@@ -1256,16 +1334,26 @@ public sealed class ProviderAuthProbe
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { return status; }
         }
-        if (!forceCanary && !statusUnauthorized && (status.Status != Ready || status.ProbeDegraded))
+        if (!forceCanary && !statusUnauthorized && !recovery
+            && (status.Status != Ready || status.ProbeDegraded))
             return status;
-        var now = _clock();
-        if (!forceCanary && !statusUnauthorized && status.LastRealSuccessAt is { } last
+        now = _clock();
+        if (!forceCanary && !statusUnauthorized && !recovery && status.LastRealSuccessAt is { } last
             && now - last < HealthyRealCheckCeiling) return status;
+        var charged = false;
         lock (_sync)
         {
             var budget = _realBudgets.GetValueOrDefault(provider);
             if (now - budget.Window >= TimeSpan.FromDays(1)) budget = (now, 0);
-            if (budget.Used >= DailyRealRequestBudget)
+            if (budget.Used < DailyRealRequestBudget)
+            {
+                _realBudgets[provider] = (budget.Window, budget.Used + 1);
+                charged = true;
+            }
+            // A spent budget slows recovery requests to one per ceiling but
+            // never stops them, so the request after a reset always remains.
+            else if (!recovery || _lastRealAttempts.TryGetValue(cliBinary, out var lastAttempt)
+                     && now - lastAttempt < RecoveryBackoffCeiling)
             {
                 if (!_observed.TryGetValue(cliBinary, out var existing)) return status;
                 if (existing.Status.CredentialGeneration != status.CredentialGeneration
@@ -1277,7 +1365,7 @@ public sealed class ProviderAuthProbe
                     _observed[cliBinary] = existing with { Status = expired };
                 return expired;
             }
-            _realBudgets[provider] = (budget.Window, budget.Used + 1);
+            _lastRealAttempts[cliBinary] = now;
         }
         // One deadline spans the real request, the incident lookup and the
         // comparison wait, so a probe holds this provider's single flight for
@@ -1332,6 +1420,35 @@ public sealed class ProviderAuthProbe
             Comparison: comparison.Comparison, HostId: hostId,
             CredentialIdentity: comparison.CredentialIdentity ?? "");
         var decision = ProviderProbeClassifier.Classify(request);
+        var limitAnswer = result.ExitCode != 0
+            ? ProviderAccessClassifier.ClassifyRun(result.ExitCode, result.StdOut, result.StdErr, observedAt: _clock())
+            : null;
+        var limited = decision.Outcome == ProviderProbeOutcome.QuotaExhausted
+            || limitAnswer?.Kind == ProviderAccessEvidenceKind.RateLimited;
+        var resetAt = decision.ResetAt
+            ?? (limitAnswer is { Kind: ProviderAccessEvidenceKind.RateLimited, ResetTimeReported: true }
+                ? limitAnswer.LimitedUntil : null);
+        var nextPacing = decision.Outcome == ProviderProbeOutcome.Healthy
+            ? null
+            : RealRequestPacing.After(pacing, status, _clock(), resetAt);
+        Action<string>? log;
+        lock (_sync)
+        {
+            log = _diagnosticLog;
+            if (nextPacing is null) _realPacing.Remove(cliBinary);
+            else _realPacing[cliBinary] = nextPacing;
+            // A provider limit answer is not evidence about the binding, so the
+            // limit window cannot spend the requests the reset needs.
+            if (limited && charged && _realBudgets.TryGetValue(provider, out var spent) && spent.Used > 0)
+                _realBudgets[provider] = (spent.Window, spent.Used - 1);
+        }
+        if (nextPacing is not null)
+            log?.Invoke($"provider-auth recovery request deferred provider={provider} "
+                + $"outcome={decision.Outcome} failures={nextPacing.Failures} "
+                + $"notBefore={nextPacing.NotBefore.UtcDateTime:o} resetKnown={resetAt is not null}");
+        else if (pacing is not null)
+            log?.Invoke($"provider-auth recovery request succeeded provider={provider} "
+                + $"failedRequests={pacing.Failures}");
         var updated = status with
         {
             Outcome = decision.Outcome,
@@ -1595,6 +1712,8 @@ public sealed class ProviderAuthProbe
                         recovered = _observed[cliBinary];
                     }
                     _runEvidenceVersions[cliBinary] = _runEvidenceVersions.GetValueOrDefault(cliBinary) + 1;
+                    // Working access is the success a recovery request waits for.
+                    _realPacing.Remove(cliBinary);
                 }
             }
             if (recovered is not null)
@@ -1665,7 +1784,7 @@ public sealed class ProviderAuthProbe
             _runEvidenceVersions[cliBinary] = _runEvidenceVersions.GetValueOrDefault(cliBinary) + 1;
         }
         LogTransition(cliBinary, previous, decision, observation);
-        return decision.Status;
+        lock (_sync) return Annotate(cliBinary, decision.Status);
     }
 
     public void RecordRunStarted(string cliBinary)
@@ -2000,6 +2119,35 @@ internal sealed record ProviderAuthObservation(
     string EffectiveSource = "unknown",
     bool NativeFileShadowed = false,
     string? CredentialGeneration = null);
+
+/// <summary>
+/// AGT-3948: when the next real request for one binding may run after one that
+/// did not prove access. The delay doubles from
+/// <see cref="ProviderAuthProbe.RecoveryBackoffBase"/> up to
+/// <see cref="ProviderAuthProbe.RecoveryBackoffCeiling"/>; a reported reset
+/// within the ceiling schedules the request at the reset itself.
+/// </summary>
+internal sealed record RealRequestPacing(
+    string? CredentialGeneration,
+    string EffectiveSource,
+    int Failures,
+    DateTimeOffset NotBefore)
+{
+    public bool SameBinding(ProviderAuthStatus status)
+        => status.CredentialGeneration == CredentialGeneration && status.EffectiveSource == EffectiveSource;
+
+    public static RealRequestPacing After(
+        RealRequestPacing? previous, ProviderAuthStatus status, DateTimeOffset now, DateTimeOffset? resetAt)
+    {
+        var failures = (previous is not null && previous.SameBinding(status) ? previous.Failures : 0) + 1;
+        var ceiling = ProviderAuthProbe.RecoveryBackoffCeiling;
+        var delay = TimeSpan.FromTicks(ProviderAuthProbe.RecoveryBackoffBase.Ticks << Math.Min(failures - 1, 8));
+        if (delay > ceiling) delay = ceiling;
+        if (resetAt is { } reset && reset > now)
+            delay = reset - now < ceiling ? reset - now : ceiling;
+        return new(status.CredentialGeneration, status.EffectiveSource, failures, now + delay);
+    }
+}
 
 internal sealed record ProviderAuthCacheEntry(
     ProviderAuthStatus Status,

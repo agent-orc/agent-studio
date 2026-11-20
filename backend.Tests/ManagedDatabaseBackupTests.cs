@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using AgentStudio.Projects;
+using AgentStudio.Deploy;
 using AgentStudio.Registry;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
@@ -344,7 +345,13 @@ public sealed class ManagedDatabaseBackupTests : IDisposable
         Observe(fixture, "orders", backups: []);
         var health = new EnvironmentHealthService(fixture.Scanner, fixture.Service, new HealthCheckStore(fixture.Configuration),
             new UpProbe(_clock), new HealthAlerts(fixture.Scanner, fixture.Mutations, fixture.Timeline, fixture.Log, _clock,
-                NullLogger<HealthAlerts>.Instance), fixture.Configuration, _clock, NullLogger<EnvironmentHealthService>.Instance);
+                NullLogger<HealthAlerts>.Instance,
+                new TaskStateMachine(fixture.Scanner, NullLogger<TaskStateMachine>.Instance,
+                    timeline: fixture.Timeline, configuration: fixture.Configuration),
+                new DeployStore(fixture.Configuration)),
+            new IncidentWebhookService(fixture.Configuration, new NoWebhookClients(),
+                NullLogger<IncidentWebhookService>.Instance), fixture.Configuration, _clock,
+            NullLogger<EnvironmentHealthService>.Instance);
         // Fresh until three minutes after the last report, then three stale samples in a row.
         for (var minute = 0; minute < 8; minute++)
         {
@@ -505,6 +512,11 @@ public sealed class ManagedDatabaseBackupTests : IDisposable
     }
 
     /// <summary>Every network check answers; only the database check reads the host's reports.</summary>
+    private sealed class NoWebhookClients : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => throw new InvalidOperationException("No webhook configured.");
+    }
+
     private sealed class UpProbe(TimeProvider clock) : IHealthCheckProbe
     {
         public Task<HealthSample> ProbeAsync(HealthCheckDefinition check, CancellationToken cancellationToken)

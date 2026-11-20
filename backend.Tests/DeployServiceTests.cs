@@ -9,10 +9,17 @@ using AgentStudio.Deploy;
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
+using AgentStudio.Secrets;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
+using CreateTaskRequest = AgentStudio.Shared.CreateTaskRequest;
 using AgentStudio.TestSupport;
+using AgentStudio.Tasks;
+using AgentStudio.Registry;
+using AgentStudio.Runner;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -292,6 +299,18 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void RunHostClaim_SkipsJobsOfProjectsTheHostIsNotBoundTo()
+    {
+        var (deploy, environments, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+
+        Assert.Null(environments.Claim("stage-host", requireVerifiedRelease: true, project => project == "other"));
+        Assert.Equal("queued", environments.Read("demo")!.Jobs.Single().Status);
+        var claimed = environments.Claim("stage-host", requireVerifiedRelease: true, project => project == "demo");
+        Assert.Equal("demo", claimed!.Project);
+    }
+
+    [Fact]
     public void AutomaticRollbackAfterRestart_BindsTheHealthySourceReleaseAndChecksProvenance()
     {
         var (deploy, environments, _) = Build();
@@ -484,9 +503,11 @@ public sealed class DeployServiceTests : IDisposable
             "variables:\n  - name: LOG_LEVEL\n    value: info\n  - name: DATABASE_URL",
             StringComparison.Ordinal));
         Commit("runbook-definition");
-        var runbooks = Runbooks(environments, store);
+        var (actions, card, timeline) = OpenIncident("stage");
+        var runbooks = Runbooks(environments, store, actions);
 
         var requested = runbooks.Request("demo", "stage", "restart", Operator);
+        Assert.Equal("incident-stage", Assert.Single(store.ReadRunbookRuns("demo")).IncidentId);
         Assert.Equal(DeployOutcomeKind.Ok, requested.Kind);
         Assert.Equal(DeploymentStates.Queued, requested.Value!.State);
         var job = environments.Claim("stage-host", requireVerifiedRelease: true)!;
@@ -505,6 +526,9 @@ public sealed class DeployServiceTests : IDisposable
 
         var result = runbooks.Run("demo", requested.Value.Id)!;
         Assert.Equal(DeploymentStates.Succeeded, result.State);
+        Assert.Equal("incident-stage", store.ReadRunbookRuns("demo").Single(item => item.Id == result.Id).IncidentId);
+        Assert.Contains(timeline.ReadAll(card.FolderPath), entry => entry.Summary.Contains("Runbook restart")
+            && entry.Summary.Contains("succeeded") && entry.Actor == Operator.Id);
         Assert.All(result.Steps, step => Assert.Equal(DeploymentStates.Succeeded, step.State));
         Assert.Contains(runbooks.Log("demo", result.Id, "health")!.Lines,
             line => line.Message == "Operation succeeded.");
@@ -514,6 +538,126 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Empty(deploy.Deployments("demo", null)!);
         Assert.Null(deploy.Status("demo")!.Single(item => item.Environment.Id == "stage").CurrentRelease);
         Assert.Empty(environments.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").History);
+    }
+
+    [Fact]
+    public void Runbook_log_keeps_the_masked_bounded_output_of_each_step_and_names_people()
+    {
+        // M4: the log said only "Operation succeeded." and showed requester and approver as user ids.
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: free-disk\n    steps: [docker-prune, journal-vacuum]\n    environments: [production]\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store, names: new Directory_(new Dictionary<string, string>
+        {
+            [Operator.Id] = "Olivia Operator", [Owner.Id] = "Oscar Owner",
+        }));
+        var requested = runbooks.Request("demo", "production", "free-disk", Operator).Value!;
+        Assert.Equal("Olivia Operator", requested.RequestedByName);
+        var approved = runbooks.Approve("demo", requested.Id, Owner).Value!;
+        Assert.Equal(Owner.Id, approved.ApprovedBy);
+        Assert.Equal("Oscar Owner", approved.ApprovedByName);
+        var job = environments.Claim("prod-host")!;
+        var token = "ghp_" + new string('a', 36);
+        var prune = string.Join('\n', Enumerable.Range(0, 250).Select(index => $"deleted layer {index}")
+            .Append("Total reclaimed space: 1.2GB"));
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok",
+            RunbookResults: [new(0, true, prune), new(1, true, $"Vacuuming done with {token}\n" + new string('x', 900))])));
+        runbooks.SyncAfterHostCall("demo");
+
+        var run = runbooks.Run("demo", requested.Id)!;
+        Assert.Equal(DeploymentStates.Succeeded, run.State);
+        Assert.Equal("Olivia Operator", run.RequestedByName);
+        Assert.Equal("Oscar Owner", run.ApprovedByName);
+        var log = runbooks.Log("demo", requested.Id, null)!.Lines;
+        Assert.Contains(log, line => line.Step == "approval" && line.Message == "Approved by Oscar Owner.");
+        Assert.Contains(log, line => line.Message.StartsWith("Requested by Olivia Operator.", StringComparison.Ordinal));
+        var pruneLines = log.Where(line => line.Step == "docker-prune").Select(line => line.Message).ToArray();
+        Assert.Equal(RunbookStepOutput.MaxLines + 1, pruneLines.Length);
+        Assert.Equal("Total reclaimed space: 1.2GB", pruneLines[^2]);
+        Assert.Equal("Operation succeeded.", pruneLines[^1]);
+        var vacuum = log.Where(line => line.Step == "journal-vacuum").Select(line => line.Message).ToArray();
+        Assert.Contains(vacuum, line => line.StartsWith("Vacuuming done with [REDACTED", StringComparison.Ordinal));
+        Assert.DoesNotContain(log, line => line.Message.Contains(token, StringComparison.Ordinal));
+        Assert.All(log, line => Assert.True(line.Message.Length <= RunbookStepOutput.MaxLineLength + 1));
+    }
+
+    [Fact]
+    public async Task Runbook_with_verify_fails_when_the_named_health_check_does_not_pass_after_the_scripts()
+    {
+        // M4: the restart runbook reported succeeded while the application still answered 504.
+        var (deploy, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: restart\n    steps: [restart-container]\n    verify: health:http\n");
+        Commit("runbook-definition");
+        var probe = new ScriptedProbe(new HealthSample(_clock.GetUtcNow(), false, 4012, 504, "status"));
+        var runbooks = Runbooks(environments, store, verifier: Verifier(environments, probe));
+
+        var requested = runbooks.Request("demo", "stage", "restart", Operator).Value!;
+        Assert.Equal("health check http", requested.Verifies);
+        Assert.Equal(["restart-container", "verification"], requested.Steps.Select(step => step.Name));
+        var job = environments.Claim("stage-host")!;
+        Assert.Equal(["restart-container"], job.RunbookSteps);
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok",
+            RunbookResults: [new(0, true, "Container demo restarted.")])));
+        runbooks.SyncAfterHostCall("demo");
+        await runbooks.WaitForVerificationsAsync();
+
+        var run = runbooks.Run("demo", requested.Id)!;
+        Assert.Equal(DeploymentStates.Failed, run.State);
+        Assert.Equal([DeploymentStates.Succeeded, DeploymentStates.Failed], run.Steps.Select(step => step.State));
+        Assert.Equal(2, probe.Probed.Count);
+        Assert.Equal("https://stage.example/health", probe.Probed[0].Url);
+        Assert.False(run.Verification!.Passed);
+        Assert.Equal("health check http", run.Verification.Target);
+        Assert.Equal("Health check http (https://stage.example/health) did not pass in 2 attempts over 0 s: answered 504 after 4012 ms.",
+            run.Verification.Detail);
+        Assert.Contains(runbooks.Log("demo", requested.Id, "verification")!.Lines,
+            line => line.Message == run.Verification.Detail);
+        Assert.Contains(runbooks.Log("demo", requested.Id, "restart-container")!.Lines,
+            line => line.Message == "Container demo restarted.");
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "runbook-failed" && entry.DeploymentId == run.Id);
+        Assert.DoesNotContain(deploy.Audit("demo")!, entry => entry.Action == "runbook-succeeded");
+    }
+
+    [Fact]
+    public async Task Runbook_with_verify_succeeds_and_says_what_was_verified()
+    {
+        var (deploy, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: restart\n    steps: [restart-container]\n    verify: health:http\n");
+        Commit("runbook-definition");
+        var probe = new ScriptedProbe(new HealthSample(_clock.GetUtcNow(), false, null, null, "timeout"),
+            new HealthSample(_clock.GetUtcNow(), true, 41, 200, null));
+        var runbooks = Runbooks(environments, store, verifier: Verifier(environments, probe));
+        var requested = runbooks.Request("demo", "stage", "restart", Operator).Value!;
+        var job = environments.Claim("stage-host")!;
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok",
+            RunbookResults: [new(0, true)])));
+
+        runbooks.SyncAfterHostCall("demo");
+        await runbooks.WaitForVerificationsAsync();
+
+        var run = runbooks.Run("demo", requested.Id)!;
+        Assert.Equal(DeploymentStates.Succeeded, run.State);
+        Assert.NotNull(run.FinishedAtUtc);
+        Assert.True(run.Verification!.Passed);
+        Assert.Equal("Health check http (https://stage.example/health) passed: answered 200 after 41 ms.", run.Verification.Detail);
+        Assert.Equal(DeploymentStates.Succeeded, run.Steps[^1].State);
+        Assert.Single(deploy.Audit("demo")!, entry => entry.Action == "runbook-succeeded" && entry.DeploymentId == run.Id);
+    }
+
+    [Fact]
+    public void Runbook_that_verifies_an_undeclared_check_is_refused_before_it_queues()
+    {
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: restart\n    steps: [restart-container]\n    verify: health:deep\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store,
+            verifier: Verifier(environments, new ScriptedProbe(new HealthSample(_clock.GetUtcNow(), true, 1, 200, null))));
+
+        var refused = runbooks.Request("demo", "stage", "restart", Operator);
+
+        Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
+        Assert.Contains("declares no health check deep", refused.Error);
+        Assert.Null(environments.Claim("stage-host"));
     }
 
     [Fact]
@@ -1303,6 +1447,165 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void StagingDeployByAPerson_AfterTheAutomaticRunFailed_AsksForTheSameProductionApproval()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: false);
+        Assert.Equal("failed", environments.Read("demo")!.Promotions.Single().Status);
+
+        // The retry after the secret fix (F7): a person deploys the release to Staging again.
+        var retry = deploy.RequestDeployment("demo", release.Id, new("stage"), Operator);
+        Assert.Equal(DeploymentStates.Queued, retry.Value!.State);
+        Report(deploy, environments, "stage-host", healthy: true);
+
+        var promotion = environments.Read("demo")!.Promotions.Last();
+        Assert.Equal(("pending", release.Id), (promotion.Status, promotion.ReleaseId));
+        var waiting = Assert.Single(deploy.Deployments("demo", "production")!);
+        Assert.Equal((DeploymentStates.AwaitingApproval, release.Id, DeploymentReconciler.LifecycleActor),
+            (waiting.State, waiting.ReleaseId, waiting.RequestedBy));
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "approval-requested" && entry.DeploymentId == waiting.Id);
+
+        Assert.Equal(DeploymentStates.Queued, deploy.Approve("demo", waiting.Id, Owner).Value!.State);
+        Assert.Equal("production-queued", environments.Read("demo")!.Promotions.Last().Status);
+        Report(deploy, environments, "prod-host", healthy: true);
+        Assert.Equal(release.Id, deploy.Status("demo")!.Single(item => item.Environment.Id == "production").CurrentRelease?.Id);
+    }
+
+    [Fact]
+    public void StagingRedeployByAPerson_ReopensAnExpiredApproval_ButNotForTheReleaseProductionRuns()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        _clock.Advance(TimeSpan.FromHours(25));
+        var expired = Assert.Single(deploy.Deployments("demo", "production")!);
+        Assert.Equal(DeploymentStates.Cancelled, expired.State);
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Redeploy("demo", "stage", approve: false, Operator).Kind);
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = deploy.Deployments("demo", "production")!.Single(item => item.State == DeploymentStates.AwaitingApproval);
+        Assert.Equal(release.Id, waiting.ReleaseId);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        Report(deploy, environments, "prod-host", healthy: true);
+
+        // Production runs the release now: a Staging redeploy asks for nothing.
+        var promotions = environments.Read("demo")!.Promotions.Count;
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Redeploy("demo", "stage", approve: false, Operator).Kind);
+        Report(deploy, environments, "stage-host", healthy: true);
+        Assert.Equal(promotions, environments.Read("demo")!.Promotions.Count);
+        Assert.DoesNotContain(deploy.Deployments("demo", "production")!, item => item.State == DeploymentStates.AwaitingApproval);
+    }
+
+    [Fact]
+    public void Actions_FollowTheLifecycle_AndNameEachRefusal()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Assert.Null(deploy.Actions("demo", "unknown-release", Owner));
+
+        // Staging runs the automatic job; Production waits for Staging.
+        var queued = deploy.Actions("demo", release.Id, Operator)!;
+        var stage = queued.Single(item => item.EnvironmentId == "stage");
+        Assert.Equal((DeployActionKinds.Deploy, false), (stage.Action, stage.Allowed));
+        Assert.Contains("already queued", stage.Reason);
+        var production = queued.Single(item => item.EnvironmentId == "production");
+        Assert.False(production.Allowed);
+        Assert.Contains("requires a successful deployment", production.Reason);
+
+        Report(deploy, environments, "stage-host", healthy: false);
+        var cards = deploy.Actions("demo", null, Operator)!;
+        Assert.Equal((true, false, release.Id), cards.Where(item => item.EnvironmentId == "stage")
+            .Select(item => (item.Allowed, item.NeedsApproval, item.ReleaseId)).Single());
+        Assert.Contains("requires a successful deployment", cards.Single(item => item.EnvironmentId == "production").Reason);
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.RequestDeployment("demo", release.Id, new("stage"), Operator).Kind);
+        DeployThroughProduction(deploy, environments, release, Owner);
+
+        // Production runs the release: a redeploy, direct for the approver, a request for everybody else.
+        var forOwner = deploy.Actions("demo", null, Owner)!.Single(item => item.EnvironmentId == "production");
+        Assert.Equal((DeployActionKinds.Redeploy, true, false), (forOwner.Action, forOwner.Allowed, forOwner.NeedsApproval));
+        var forOperator = deploy.Actions("demo", release.Id, Operator)!.Single(item => item.EnvironmentId == "production");
+        Assert.Equal((DeployActionKinds.Redeploy, true, true), (forOperator.Action, forOperator.Allowed, forOperator.NeedsApproval));
+        Assert.Equal(DeploymentStates.AwaitingApproval,
+            deploy.Redeploy("demo", "production", approve: false, Operator).Value!.State);
+        var pending = deploy.Actions("demo", null, Owner)!.Single(item => item.EnvironmentId == "production");
+        Assert.False(pending.Allowed);
+        Assert.Contains("awaiting approval", pending.Reason);
+    }
+
+    [Fact]
+    public void Rollback_SkipsAReleaseThatHadAProductionIncidentWhileRunning()
+    {
+        var (_, environments, store) = Build();
+        var healthStore = new HealthCheckStore(_configuration!);
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null, health: healthStore);
+        var r1 = CreateRelease(deploy, Artifact('a'), Head());
+        DeployThroughProduction(deploy, environments, r1, Owner);
+        var r2 = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, r2, Owner);
+        // r2 passed the deploy-time health step, then failed its health check while it ran.
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        healthStore.Save("demo", Incident("production", _clock.GetUtcNow(), "HTTP 502"));
+        Assert.Equal(r1.Id, deploy.Status("demo")!.Single(item => item.Environment.Id == "production").RollbackTarget?.Release.Id);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        healthStore.Save("demo", new ProjectHealthState());
+        var r3 = CreateRelease(deploy, Artifact('c'), Commit("third"));
+        DeployThroughProduction(deploy, environments, r3, Owner);
+
+        var target = deploy.Status("demo")!.Single(item => item.Environment.Id == "production").RollbackTarget!;
+        Assert.Equal(r1.Id, target.Release.Id);
+        Assert.Equal([r2.Version], target.SkippedVersions);
+        Assert.Equal(ReleaseRuntimeHealthPolicy.Unknown, target.RuntimeHealth);
+        // The F14 secret preflight checks the release the rollback runs, not the skipped one.
+        Assert.Equal(r1.Id, deploy.SecretDemandForEnvironment("demo", "production", rollback: true)?.ReleaseId);
+        var rollback = deploy.Rollback("demo", "production", approve: true, Owner);
+        Assert.Equal((DeploymentStates.Queued, r1.Id), (rollback.Value!.State, rollback.Value.ReleaseId));
+        Assert.Equal(Artifact('a'), environments.Claim("prod-host")!.Artifact);
+    }
+
+    [Fact]
+    public void Rollback_ToTheOnlyOlderRelease_WithAnIncident_NeedsExplicitAcceptance()
+    {
+        var (_, environments, store) = Build();
+        var healthStore = new HealthCheckStore(_configuration!);
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null, health: healthStore);
+        var r1 = CreateRelease(deploy, Artifact('a'), Head());
+        DeployThroughProduction(deploy, environments, r1, Owner);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        healthStore.Save("demo", Incident("production", _clock.GetUtcNow(), "connection refused"));
+        Assert.NotNull(deploy.Status("demo"));
+        healthStore.Save("demo", new ProjectHealthState());
+        var r2 = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, r2, Owner);
+
+        var target = deploy.Status("demo")!.Single(item => item.Environment.Id == "production").RollbackTarget!;
+        Assert.Equal((r1.Id, ReleaseRuntimeHealthPolicy.Incident), (target.Release.Id, target.RuntimeHealth));
+        Assert.Contains("connection refused", target.Incident?.Detail);
+        var refused = deploy.Rollback("demo", "production", approve: true, Owner);
+        Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
+        Assert.Contains(r1.Version, refused.Error);
+        // The older route no longer rolls back to it silently either.
+        Assert.Equal(DeployOutcomeKind.Conflict, deploy.RollbackEnvironment("demo", "production", Owner).Kind);
+        Assert.Null(environments.Claim("prod-host"));
+
+        var accepted = deploy.Rollback("demo", "production", approve: true, Owner, acceptIncidentTarget: true);
+        Assert.Equal((DeploymentStates.Queued, r1.Id), (accepted.Value!.State, accepted.Value.ReleaseId));
+    }
+
+    private static ProjectHealthState Incident(string environmentId, DateTimeOffset startedAt, string error)
+    {
+        var state = new ProjectHealthState();
+        state.Checks[HealthCheckStore.Key(environmentId, "http")] = new HealthCheckState
+        {
+            OpenIncident = new HealthIncident("incident-1", environmentId, "http", startedAt, error, 3),
+        };
+        return state;
+    }
+
+    [Fact]
     public void Redeploy_AndRollbackToThePreviousRelease()
     {
         var (deploy, environments, _) = Build();
@@ -1335,6 +1638,31 @@ public sealed class DeployServiceTests : IDisposable
             (redeploy.Value!.State, redeploy.Value.ReleaseId, redeploy.Value.Trigger));
         Assert.Equal(DeployOutcomeKind.Conflict, deploy.Redeploy("demo", "stage", approve: false, Operator).Kind);
         Assert.Equal(Artifact('b'), environments.Claim("stage-host")!.Artifact);
+    }
+
+    [Fact]
+    public void Rollback_started_during_an_incident_links_its_result_to_the_card()
+    {
+        var (deploy, environments, store) = Build();
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        DeployThroughProduction(deploy, environments, first, Owner);
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, second, Owner);
+        var (actions, card, timeline) = OpenIncident("production");
+        var linked = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null, incidentActions: actions);
+
+        var rollback = linked.Rollback("demo", "production", approve: true, Owner).Value!;
+        var record = store.ReadDeployments("demo").Single(item => item.Id == rollback.Id);
+        Assert.Equal(("incident-production", card.Id), (record.IncidentId, record.IncidentCardId));
+        var job = environments.Claim("prod-host")!;
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        linked.SyncAfterHostCall("demo");
+        Assert.Equal("incident-production", store.ReadDeployments("demo")
+            .Single(item => item.Id == rollback.Id).IncidentId);
+        Assert.Contains(timeline.ReadAll(card.FolderPath), entry => entry.Summary.Contains("rollback")
+            && entry.Summary.Contains("succeeded") && entry.Summary.Contains(first.Version)
+            && entry.Actor == Owner.Id);
     }
 
     [Fact]
@@ -2473,12 +2801,36 @@ public sealed class DeployServiceTests : IDisposable
         using var agent = factory.CreateClient();
         agent.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         using var refused = await agent.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
-        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        Assert.Contains("Sign in again to approve", await refused.Content.ReadAsStringAsync());
+        var sessionCookie = Assert.Single(bootstrap.Headers.GetValues("Set-Cookie"), cookie =>
+            cookie.StartsWith(AccessSecurityStore.InsecureSessionCookieName + "=", StringComparison.Ordinal)).Split(';')[0];
+        using var missingProof = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        using var missingProofRequest = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/projects/demo/deploy/deployments/{production.Id}/approve");
+        missingProofRequest.Headers.Add("X-Client-Id", "local-default");
+        missingProofRequest.Headers.Add("Cookie", sessionCookie);
+        using var proofRefusal = await missingProof.SendAsync(missingProofRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, proofRefusal.StatusCode);
+        Assert.Contains("Sign in again to approve", await proofRefusal.Content.ReadAsStringAsync());
         using var refusedPromotion = await agent.PostAsJsonAsync("/api/projects/demo/environments/promotions/approve",
             new PromotionDecisionRequest(Artifact('a')));
         Assert.Equal(HttpStatusCode.Forbidden, refusedPromotion.StatusCode);
-        using var approved = await client.PostAsJsonAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve",
+        // F14: the approval names the unbound DATABASE_URL and is refused until the approver confirms it.
+        using var unbound = await client.PostAsJsonAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve",
             new DeploymentApprovalRequest(GuidedFailure: true));
+        Assert.Equal(HttpStatusCode.Conflict, unbound.StatusCode);
+        using (var gap = JsonDocument.Parse(await unbound.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal(DeploySecretReadiness.MissingReason, gap.RootElement.GetProperty("reason").GetString());
+            Assert.Equal("DATABASE_URL", gap.RootElement.GetProperty("missing")[0].GetProperty("name").GetString());
+        }
+        Assert.Equal(DeploymentStates.AwaitingApproval, service.DeploymentById("demo", production.Id)!.State);
+        using (var readiness = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/secret-readiness")))
+            Assert.Contains(readiness.RootElement.GetProperty("environments").EnumerateArray(), item =>
+                item.GetProperty("environmentId").GetString() == "production" && !item.GetProperty("ready").GetBoolean());
+        using var approved = await client.PostAsJsonAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve",
+            new DeploymentApprovalRequest(GuidedFailure: true, ConfirmMissingSecrets: true));
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
         Assert.Equal(auth.User!.Id, service.DeploymentById("demo", production.Id)!.ApprovedBy);
         var productionJob = hosts.Claim("prod-host")!;
@@ -2689,13 +3041,120 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(HttpStatusCode.Conflict, wrong.StatusCode);
         Assert.Equal("pending", Assert.Single(hosts.Read("demo")!.Promotions).Status);
 
-        using var decision = await client.PostAsJsonAsync(route, new PromotionDecisionRequest(artifact));
+        if (action == "approve")
+        {
+            // F14: Production declares DATABASE_URL and nothing binds it.
+            using var unbound = await client.PostAsJsonAsync(route, new PromotionDecisionRequest(artifact));
+            Assert.Equal(HttpStatusCode.Conflict, unbound.StatusCode);
+            Assert.Contains("DATABASE_URL", await unbound.Content.ReadAsStringAsync());
+            Assert.Equal("pending", Assert.Single(hosts.Read("demo")!.Promotions).Status);
+        }
+        using var decision = await client.PostAsJsonAsync(route,
+            new PromotionDecisionRequest(artifact, ConfirmMissingSecrets: true));
         Assert.Equal(HttpStatusCode.OK, decision.StatusCode);
         Assert.Equal(action == "approve" ? "production-queued" : "rejected",
             Assert.Single(hosts.Read("demo")!.Promotions).Status);
         var production = hosts.Claim("prod-host");
         if (action == "approve") Assert.Equal(artifact, production!.Artifact);
         else Assert.Null(production);
+    }
+
+    [Fact]
+    public async Task Secret_readiness_lists_unbound_secrets_per_environment_before_a_run_is_queued()
+    {
+        // F14: the gap was only found when a host claimed the job.
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        var (bindings, provider) = SecretBindings(environments);
+        var readiness = new DeploySecretReadiness(deploy, bindings);
+
+        var before = (await readiness.ReadAsync("demo", release.Id))!;
+        Assert.True(before.Environments.Single(item => item.EnvironmentId == "stage").Ready);
+        var production = before.Environments.Single(item => item.EnvironmentId == "production");
+        Assert.False(production.Ready);
+        Assert.True(production.RequiresApproval);
+        Assert.Equal(release.Id, production.ReleaseId);
+        var missing = Assert.Single(production.Missing);
+        Assert.Equal(("DATABASE_URL", "not-bound", true), (missing.Name, missing.Reason, missing.Bindable));
+        Assert.Equal("secret://demo/production/DATABASE_URL", missing.Reference);
+        // Without a release id the newest release answers, as on the environment cards.
+        Assert.Equal(production.Missing, (await readiness.ReadAsync("demo", null))!.Environments
+            .Single(item => item.EnvironmentId == "production").Missing);
+        Assert.Null(await readiness.ReadAsync("demo", "missing"));
+
+        bindings.Bind("demo", "production", "DATABASE_URL", missing.Reference, "human:owner", "owner");
+        var stored = Assert.Single((await readiness.ReadAsync("demo", release.Id))!.Environments
+            .Single(item => item.EnvironmentId == "production").Missing);
+        Assert.Equal(("not-found", false), (stored.Reason, stored.Bindable));
+        await provider.PutAsync(SecretScope.ForEnvironment("demo", "production"), "DATABASE_URL",
+            "runtime-" + Guid.NewGuid().ToString("N"), SecretActor.Human("owner"));
+        Assert.All((await readiness.ReadAsync("demo", release.Id))!.Environments, item => Assert.True(item.Ready));
+    }
+
+    [Fact]
+    public async Task Production_approval_with_missing_secret_bindings_is_refused_with_names_unless_confirmed()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        var (bindings, _) = SecretBindings(environments);
+        var readiness = new DeploySecretReadiness(deploy, bindings);
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = deploy.Deployments("demo", "production")!.Single(item =>
+            item.ReleaseId == release.Id && item.State == DeploymentStates.AwaitingApproval);
+        var demand = deploy.SecretDemandForRun("demo", waiting.Id);
+        Assert.Equal(["DATABASE_URL"], demand!.Names);
+
+        var calls = 0;
+        IResult Approve(IReadOnlyList<string> missing)
+        {
+            calls++;
+            var outcome = deploy.Approve("demo", waiting.Id, Owner, confirmedMissingSecrets: missing);
+            Assert.Equal(DeployOutcomeKind.Ok, outcome.Kind);
+            return Results.Ok();
+        }
+
+        var refused = await DeployEndpoints.WithSecretPreflight(readiness, "demo", demand, confirmed: false, Approve,
+            CancellationToken.None);
+        Assert.Equal(StatusCodes.Status409Conflict, Assert.IsAssignableFrom<IStatusCodeHttpResult>(refused).StatusCode);
+        var body = JsonSerializer.Serialize(Assert.IsAssignableFrom<IValueHttpResult>(refused).Value);
+        Assert.Contains(DeploySecretReadiness.MissingReason, body);
+        Assert.Contains("DATABASE_URL", body);
+        Assert.Equal(0, calls);
+        Assert.Equal(DeploymentStates.AwaitingApproval, deploy.DeploymentById("demo", waiting.Id)!.State);
+
+        var confirmed = await DeployEndpoints.WithSecretPreflight(readiness, "demo", demand, confirmed: true, Approve,
+            CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, Assert.IsAssignableFrom<IStatusCodeHttpResult>(confirmed).StatusCode);
+        Assert.Equal(1, calls);
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "deployment-approved"
+            && entry.Detail.Contains("missing secret binding(s): DATABASE_URL", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Secret_preflight_lets_a_bound_production_approval_and_a_stage_run_through()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        var (bindings, provider) = SecretBindings(environments);
+        var readiness = new DeploySecretReadiness(deploy, bindings);
+        Assert.Empty(await readiness.ApprovalGapAsync("demo", deploy.SecretDemandFor("demo", release.Id, "stage")));
+        bindings.Bind("demo", "production", "DATABASE_URL", "secret://demo/DATABASE_URL", "human:owner", "owner");
+        await provider.PutAsync(SecretScope.ForProject("demo"), "DATABASE_URL", "runtime-" + Guid.NewGuid().ToString("N"),
+            SecretActor.Human("owner"));
+        Assert.Empty(await readiness.ApprovalGapAsync("demo", deploy.SecretDemandFor("demo", release.Id, "production")));
+    }
+
+    private (ProjectSecretBindings Bindings, SecretProvider Provider) SecretBindings(ProjectEnvironmentService environments)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek"),
+        }).Build();
+        var provider = new SecretProvider(
+            new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+            new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock, NullLogger<SecretProvider>.Instance);
+        return (new ProjectSecretBindings(config, provider, environments, _clock), provider);
     }
 
     private void DeployThroughProduction(DeployService deploy, ProjectEnvironmentService environments,
@@ -2849,7 +3308,8 @@ public sealed class DeployServiceTests : IDisposable
             environments, store);
     }
 
-    private RunbookService Runbooks(ProjectEnvironmentService environments, DeployStore store)
+    private RunbookService Runbooks(ProjectEnvironmentService environments, DeployStore store,
+        IncidentActions? actions = null, RunbookVerifier? verifier = null, IUserDisplayNames? names = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -2862,7 +3322,57 @@ public sealed class DeployServiceTests : IDisposable
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         return new RunbookService(environments, store, git, settings, _clock,
-            NullLogger<RunbookService>.Instance);
+            NullLogger<RunbookService>.Instance, actions, verifier, names);
+    }
+
+    private RunbookVerifier Verifier(ProjectEnvironmentService environments, IHealthCheckProbe probe)
+        => new(environments, probe, _clock, new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Runbooks:VerifyAttempts"] = "2", ["Runbooks:VerifyIntervalSeconds"] = "0" })
+            .Build());
+
+    private sealed class ScriptedProbe(params HealthSample[] samples) : IHealthCheckProbe
+    {
+        private readonly Queue<HealthSample> _samples = new(samples);
+        public List<HealthCheckDefinition> Probed { get; } = [];
+
+        public Task<HealthSample> ProbeAsync(HealthCheckDefinition check, CancellationToken cancellationToken)
+        {
+            lock (_samples)
+            {
+                Probed.Add(check);
+                return Task.FromResult(_samples.Count > 1 ? _samples.Dequeue() : _samples.Peek());
+            }
+        }
+    }
+
+    private sealed class Directory_(IReadOnlyDictionary<string, string> names) : IUserDisplayNames
+    {
+        public string? DisplayNameOf(string userId) => names.GetValueOrDefault(userId);
+    }
+
+    private (IncidentActions Actions, TaskInfo Card, TimelineLog Timeline) OpenIncident(string environmentId)
+    {
+        var config = _configuration!;
+        var scanner = _scanner!;
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var mutations = new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance, timeline: timeline);
+        var cardId = mutations.CreateJob(new CreateTaskRequest { Id = "health-" + environmentId,
+            Title = "Health incident", PromptMarkdown = "Environment is failing.", WatchPath = _watch,
+            TargetState = TaskStates.Backlog, TaskType = TaskTypes.Bug, RequiresIntegration = false });
+        var card = scanner.FindJob(cardId!, _watch)!;
+        var health = new HealthCheckStore(config);
+        var state = health.Load("demo");
+        state.Environments[environmentId] = new EnvironmentHealthState
+        {
+            OpenIncident = new EnvironmentIncident("incident-" + environmentId, environmentId,
+                environmentId, _clock.GetUtcNow(), CardId: cardId),
+        };
+        health.Save("demo", state);
+        return (new IncidentActions(health, scanner, timeline, _clock), card, timeline);
     }
 
     private DeployService Reopen()
@@ -2922,6 +3432,143 @@ public sealed class DeployServiceTests : IDisposable
                 beta = new { destination = betaPort, healthUrl = $"https://beta-{environment}.example/health" },
             });
             File.WriteAllText(path, declaration.ToJsonString());
+        }
+    }
+
+    private const string TelemetryEnvironments =
+        "environments:\n  - name: staging\n    telemetry: true\n  - name: production\n    protected: true\n    telemetry: true\n";
+
+    [Fact]
+    public async Task Telemetry_environment_claim_mints_a_scoped_ingest_token_the_deploy_host_may_resolve()
+    {
+        var (deploy, environments, _) = Build();
+        WriteProjectYml(TelemetryEnvironments);
+        var release = CreateRelease(deploy, Artifact('a'), Commit("telemetry"));
+        var stage = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.Equal(new DeployJobTelemetry(DeployTelemetryVocabulary.SecretName, "http/protobuf"), stage.Telemetry);
+        Assert.DoesNotContain(DeployTelemetryVocabulary.SecretName, stage.SecretRefs);
+        // The persisted telemetry matches the release snapshot, so the claimed job stays verifiable.
+        Assert.NotNull(environments.FindClaimedJobVerification("demo", stage.Id, stage.LeaseToken!, requireVerifiedRelease: true).Job);
+
+        var config = new ConfigurationBuilder().AddConfiguration(_configuration!)
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek") })
+            .Build();
+        var provider = new AgentStudio.Secrets.SecretProvider(new AgentStudio.Secrets.BuiltInSecretStore(config,
+                new AgentStudio.Secrets.ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+            new AgentStudio.Secrets.SecretAuditLog(config), new AgentStudio.Secrets.SecretValueScrubber(_clock), _clock,
+            NullLogger<AgentStudio.Secrets.SecretProvider>.Instance);
+        var bindings = new AgentStudio.Secrets.ProjectSecretBindings(config, provider, environments, _clock);
+        var tokens = new FakeIngestTokens(_clock);
+        var telemetry = new AgentStudio.Telemetry.DeployTelemetryCredentials(tokens, bindings, provider,
+            new AgentStudio.Telemetry.TelemetryOptions(), _clock, NullLogger<AgentStudio.Telemetry.DeployTelemetryCredentials>.Instance);
+
+        var result = await ProjectOperatorDashboardEndpoints.CompleteClaimAsync(stage, _ => { }, bindings, CancellationToken.None,
+            (job, ct) => telemetry.PrepareClaimAsync(job, "https://studio.test/api/telemetry/otlp", ct));
+        var returned = Assert.IsType<Microsoft.AspNetCore.Http.HttpResults.Ok<DeployJob>>(result).Value!;
+
+        Assert.Empty(returned.MissingSecretRefs!);
+        Assert.Equal("secret://demo/stage/" + DeployTelemetryVocabulary.SecretName,
+            returned.SecretBindings![DeployTelemetryVocabulary.SecretName]);
+        Assert.Equal("https://studio.test/api/telemetry/otlp", returned.Telemetry!.Endpoint);
+        Assert.Equal($"deployment.environment.name=stage,agent_studio.release.id={Uri.EscapeDataString(release.Id)}",
+            returned.Telemetry.ResourceAttributes);
+        var minted = Assert.Single(tokens.Tokens);
+        Assert.Equal(("demo", "stage", AgentStudio.Telemetry.DeployTelemetryCredentials.CreatedBy), (minted.Project, minted.Environment, minted.CreatedBy));
+        Assert.Equal(AgentStudio.Security.TelemetrySignals.All, minted.Signals);
+
+        // The deploy host resolves the token under its lease, and only for this job's environment.
+        var leases = new AgentStudio.Secrets.SecretWorkloadLeases(environments, null!, _scanner!, bindings,
+            new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance));
+        var lease = leases.FindClaimedDeployJob("demo", stage.Id, stage.LeaseToken!)!;
+        Assert.Contains(DeployTelemetryVocabulary.SecretName, lease.SecretRefs);
+        Assert.Equal("secret://demo/stage/" + DeployTelemetryVocabulary.SecretName, lease.SecretBindings![DeployTelemetryVocabulary.SecretName]);
+        var issued = await provider.GetForWorkloadAsync(
+            AgentStudio.Secrets.SecretReference.Parse(lease.SecretBindings[DeployTelemetryVocabulary.SecretName]),
+            new AgentStudio.Secrets.SecretWorkload(AgentStudio.Secrets.SecretWorkload.DeployJob, "stage-host", "demo", "stage",
+                lease.SecretRefs, lease.SecretBindings), "deploy:stage");
+        Assert.Equal(tokens.Secrets[minted.Id], issued.Value);
+
+        // A second claim keeps the token; revoking it mints a new one and keeps only that one live.
+        await telemetry.EnsureAsync("demo", "stage", CancellationToken.None);
+        Assert.Single(tokens.Tokens);
+        tokens.Revoke("demo", "stage", minted.Id);
+        await telemetry.EnsureAsync("demo", "stage", CancellationToken.None);
+        Assert.Equal(2, tokens.Tokens.Count);
+        Assert.Single(tokens.Tokens, item => item.RevokedAt is null);
+    }
+
+    [Fact]
+    public void Automatic_rollback_returns_to_the_telemetry_of_the_release_it_restores()
+    {
+        var (deploy, environments, _) = Build();
+        WriteProjectYml(TelemetryEnvironments);
+        CreateRelease(deploy, Artifact('a'), Commit("with-telemetry"));
+        var healthy = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.True(environments.Report("demo", healthy.Id, ReportJob(healthy, healthy: true), requireVerifiedRelease: true));
+        deploy.SyncAfterHostCall("demo");
+
+        WriteSshProjectYml();
+        CreateRelease(deploy, Artifact('b'), Commit("without-telemetry"));
+        var failed = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.Null(failed.Telemetry);
+        var advancing = new ProjectEnvironmentService(_configuration!, _scanner!, _git!, _settings!,
+            new AdvancingTimeProvider(_clock, TimeSpan.FromSeconds(1)),
+            new ReleaseArtifactRegistry(_configuration!), new DeployStore(_configuration!));
+        Assert.True(advancing.Report("demo", failed.Id, ReportJob(failed, healthy: false), requireVerifiedRelease: true));
+
+        var rollback = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.True(rollback.IsRollback);
+        Assert.Equal(healthy.Telemetry, rollback.Telemetry);
+    }
+
+    [Fact]
+    public void Telemetry_environment_refuses_a_declared_otlp_variable()
+    {
+        var (_, environments, _) = Build();
+        WriteProjectYml(TelemetryEnvironments + "variables:\n  - name: OTEL_EXPORTER_OTLP_ENDPOINT\n    value: https://elsewhere.example\n");
+        var files = environments.DeclarationFiles("demo")!;
+        Assert.All(files, file => Assert.Contains("OTEL_EXPORTER_OTLP_ENDPOINT", file.Error));
+    }
+
+    [Fact]
+    public void Environment_without_telemetry_queues_jobs_without_it()
+    {
+        var (deploy, environments, _) = Build();
+        WriteSshProjectYml();
+        CreateRelease(deploy, Artifact('a'), Commit("no-telemetry"));
+        Assert.Null(environments.Claim("stage-host")!.Telemetry);
+    }
+
+    private sealed class FakeIngestTokens(TimeProvider clock) : AgentStudio.Telemetry.ITelemetryIngestCredentials
+    {
+        public List<TelemetryIngestToken> Tokens { get; } = [];
+        public Dictionary<string, string> Secrets { get; } = [];
+
+        public TelemetryIngestPrincipal? Authenticate(string? bearer) => null;
+
+        public (TelemetryIngestToken Token, string Secret) Create(string project, string environment, string? name,
+            IReadOnlyList<string>? signals, DateTime? expiresAt, string? createdBy)
+        {
+            var token = new TelemetryIngestToken
+            {
+                Id = Guid.NewGuid().ToString("N"), Name = name ?? "otlp", Project = project, Environment = environment,
+                Signals = [.. signals ?? []], SecretHash = "hash", CreatedAt = clock.GetUtcNow().UtcDateTime, CreatedBy = createdBy,
+            };
+            Tokens.Add(token);
+            // Built at runtime: no credential-shaped literal in source.
+            Secrets[token.Id] = string.Join(".", "otl", token.Id, Guid.NewGuid().ToString("N"));
+            return (token, Secrets[token.Id]);
+        }
+
+        public IReadOnlyList<TelemetryIngestToken> List(string project, string environment)
+            => Tokens.Where(item => item.Project == project && item.Environment == environment).ToArray();
+
+        public bool Revoke(string project, string environment, string tokenId)
+        {
+            var index = Tokens.FindIndex(item => item.Id == tokenId);
+            if (index < 0) return false;
+            Tokens[index] = Tokens[index] with { RevokedAt = clock.GetUtcNow().UtcDateTime };
+            return true;
         }
     }
 

@@ -44,7 +44,7 @@ public sealed class TelemetryIntakeQueue
         _maxBytesPerEnvironment = options.MaxQueuedBytesPerEnvironment;
         if (options.StoreRoot is not null)
         {
-            _journal = new TelemetryBatchJournal(options.StoreRoot, _masker, durability);
+            _journal = new TelemetryBatchJournal(options.StoreRoot, durability);
             foreach (var recovered in _journal.Recover())
             {
                 Add(recovered.Environment, recovered.RecordCount, recovered.EstimatedBytes);
@@ -77,11 +77,21 @@ public sealed class TelemetryIntakeQueue
     }
 
     public TelemetryEnqueueResult TryEnqueue(TelemetryIngestBatch batch)
+        => TryEnqueueAsync(batch, CancellationToken.None).GetAwaiter().GetResult();
+
+    public async Task<TelemetryEnqueueResult> TryEnqueueAsync(TelemetryIngestBatch batch, CancellationToken cancellationToken)
     {
         var records = batch.RecordCount;
         var bytes = batch.EstimatedBytes;
         if (records == 0) return TelemetryEnqueueResult.Accepted;
         if (records > _maxRecordsPerEnvironment || bytes > _maxBytesPerEnvironment) return TelemetryEnqueueResult.TooLarge;
+        Func<string, string> mask;
+        try { mask = await _masker.ForEnvironmentAsync(batch.Environment, cancellationToken); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Interlocked.Increment(ref _refusedBatches);
+            return TelemetryEnqueueResult.Unavailable;
+        }
         lock (_gate)
         {
             if (!Fits(batch.Environment, records, bytes))
@@ -94,7 +104,7 @@ public sealed class TelemetryIntakeQueue
                 if (batch.Metrics.Count > 0 && _store?.WouldRejectSeries(batch.Environment,
                     _outstanding.Where(item => item.Environment == batch.Environment)
                         .SelectMany(item => item.Metrics).Concat(batch.Metrics.Select(item => item with
-                            { Attributes = item.Attributes.MapValues(_masker.Mask) }))) == true)
+                            { Attributes = item.Attributes.MapText(mask) }))) == true)
                     return TelemetryEnqueueResult.TooManySeries;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
@@ -104,7 +114,7 @@ public sealed class TelemetryIntakeQueue
             }
             try
             {
-                batch = _journal?.Stage(batch) ?? batch;
+                batch = _journal?.Stage(batch, mask) ?? batch;
             }
             catch (IOException)
             {

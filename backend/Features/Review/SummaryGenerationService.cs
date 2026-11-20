@@ -658,8 +658,8 @@ public sealed class SummaryGenerationService
                 result = result with { Ok = false, Error = validationError };
 
             AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, result.Model, result.Usage,
-                result.DurationMs, ok: result.Ok, project: info.ProjectName, jobId: info.Id,
-                thinkingLevel: selection.ThinkingLevel, cliType: selection.Cli);
+                result.DurationMs, ok: result.Ok, cliType: result.EffectiveCliType ?? selection.Cli,
+                project: info.ProjectName, jobId: info.Id, thinkingLevel: selection.ThinkingLevel);
             evidence.Add($"Attempt {attempt}: {(result.Ok ? "passed" : result.Error ?? "generation failed")}");
             usage = Accumulate(usage, result.Usage);
             step = StepModelUsage.From(usage, result.Model, selection.ThinkingLevel, selection.ModelSource).ApplyTo(step with
@@ -718,14 +718,16 @@ public sealed class SummaryGenerationService
             sw.Stop();
             var endedAt = DateTime.UtcNow;
             var effectiveModel = string.IsNullOrWhiteSpace(r.EffectiveModel) ? model : r.EffectiveModel!;
+            var effectiveCli = r.EffectiveCliType ?? r.Usage?.CliType ?? selection.Cli;
             var effectiveUsage = r.Usage is null ? null : r.Usage with
             {
                 ThinkingLevel = r.Usage.ThinkingLevel ?? r.EffectiveThinkingLevel ?? selection.ThinkingLevel,
-                CliType = r.Usage.CliType ?? r.EffectiveCliType ?? selection.Cli,
+                CliType = effectiveCli,
             };
-            if (!r.Ok) return SummaryModelResult.Failure(effectiveModel, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds) with { Usage = effectiveUsage };
+            if (!r.Ok) return SummaryModelResult.Failure(effectiveModel, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds)
+                with { Usage = effectiveUsage, EffectiveCliType = effectiveCli };
             return SummaryModelResult.Success(effectiveModel, effectiveUsage, r.ParsedText.Trim(), startedAt, endedAt,
-                (long)r.Duration.TotalMilliseconds);
+                (long)r.Duration.TotalMilliseconds) with { EffectiveCliType = effectiveCli };
         }
 
         if (!string.Equals(selection.Cli, CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
@@ -1039,6 +1041,7 @@ public sealed class SummaryGenerationService
     {
         /// <summary>Raw JSON of the trailing assessment block, peeled off the prose.</summary>
         public string? AssessmentJson { get; init; }
+        public string? EffectiveCliType { get; init; }
 
         public static SummaryModelResult Success(
             string model,

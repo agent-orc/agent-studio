@@ -49,7 +49,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="../project-templates/**" Link="project-templates/%(RecursiveDir)%(Filename)%(Extension)"
+    <!-- A template installed locally for a try-out must not ship its node_modules. -->
+    <Content Include="../project-templates/**" Exclude="../project-templates/**/node_modules/**" Link="project-templates/%(RecursiveDir)%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 

@@ -693,12 +693,20 @@ its failing test names. The members the existing path would send to per-card
 suites are gated once more together as a child batch on the cohort's code
 (`sameCodeRerunOfRunId` names the red run; trigger
 `flaky-suspect-regate:<batch>`). A green re-gate publishes them and no
-per-card suite starts. A second red on the same code, or any other result,
-takes the existing per-card path; that re-gate records no proven-red finding.
-The mark is written once before the re-gate, so a restart or an isolation
-retry never re-gates the same red again. The batch state shows
-`flakySuspect` (red run, failing tests, `active`, and the re-gate's outcome
-`passed`, `reproduced` or `inconclusive` with its minutes) on the red batch.
+per-card suite starts. A re-gate the gate host could not run is recorded
+`requeued`: the red batch pauses and its members return to the batch pool,
+as any host-held flight does. A second red on the same code (`reproduced`), a
+green re-gate whose publication did not land (`unpublished`, with the reason),
+or any other result (`inconclusive`) takes the existing per-card path; that
+re-gate records no proven-red finding. The mark is written once before the
+re-gate, so a restart or an isolation retry never re-gates the same red again.
+When the red batch leaves isolation before the re-gate recorded a verdict
+(claim lost, cancellation, process death), the `isolation interrupted`
+recovery records the re-gate `interrupted` and sends the members per-card.
+The batch state shows `flakySuspect` (red run, failing tests, `active`, and
+the re-gate's outcome with its minutes and reason) on the red batch. A
+reproduced or interrupted mark is no longer active, so the failed-test
+ranking stops counting its run as a flaky suspect run.
 
 Assembly sorts a replay that is not a conflict into three outcomes
 (`BatchGatePolicy.ReplayDisposition`): a mapped success is admitted; a member
@@ -3684,15 +3692,18 @@ in
   repository-relative. Their segments contain only letters, digits, `.`, `_`, and
   `-`; no segment is empty, `.`, or `..`, or starts with `-`. A lone `.` names
   the repository root only for a container build context.
-- `environments` are ordered and exactly Staging, then Production. Production
+- `environments` are ordered: Staging alone, or Staging then Production. Production
   must be `protected`: every deploy, redeploy, or rollback into it needs an
   Owner or Maintainer approval. Staging deploys automatically after
-  integration, so `protected: true` on Staging is refused as
+  integration (an integration release, see
+  [Deployment as a first-class citizen](../../concepts/deployment-first-class.md#releases-standard-lifecycle-and-deploy-runs-bd-1)), so `protected: true` on Staging is refused as
   `staging-protection-unsupported`. The shorthand `[staging, production]`
   protects Production. When the file describes a deployment but omits
-  `environments` or `lifecycles`, the default is Staging, protected Production,
-  and the standard lifecycle.
-- `lifecycles.standard`: Staging is automatic after integration; Production
+  `environments`, the default is Staging and protected Production. When
+  `lifecycles` is omitted, the standard lifecycle follows the declared
+  environments. Removing Production therefore also requires removing its
+  lifecycle phase and all Production-scoped steps and references.
+- `lifecycles.standard`: Staging is automatic after integration; when declared, Production
   requires successful Staging and approval by Owner or Maintainer.
 - `tenants` declare customer installations with a unique portable `name`,
   optional unique `tags`, and a nonempty list of participating `environments`.
@@ -3830,6 +3841,23 @@ refuses it by route identity. The project
 Settings page shows the diagram, the validation result with line and path, and
 the migration preview with its confirm button in the Pipeline section below
 Execution.
+
+A schema 2 file that declares environments but no artifacts or deploy steps
+(the migration's result without JSON declarations) gets `deployStepsAvailable`
+on the read. Settings > Pipeline and Deploy > Overview then offer the deploy-step
+form: one static or container artifact, and per environment the target host,
+the static directory or the compose file and service, the health URL and the
+health timeout. `POST .../deploy-steps/preview` returns the proposal in the
+migration's dry-run shape and writes nothing; it appends `artifacts` and
+`deploy` to the unchanged file and accepts only plain values, because the
+project.yml reader has no escapes. `POST .../deploy-steps` repeats the form with
+both preview digests and writes under the same precondition and `PostStep`
+classification as the migration. Until steps exist, Deploy > Overview shows
+each declared environment as "No deploy step yet"; the JSON declaration
+guidance appears only for schema 1 projects. The `static-web` template carries
+this section commented out below a `# --- schema 2 deployment ---` marker; the
+`container-service` template is schema 2 with its deploy steps, telemetry
+environments and runbooks already declared (M5).
 
 A static site over SSH and a compose service, each with a health check:
 

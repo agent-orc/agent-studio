@@ -370,6 +370,11 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.openTask.emit(task);
   }
 
+  runHostEnrolled(): void {
+    this.wizardOpen.set(false);
+    this.service.reload();
+  }
+
   completeWizard(host: ProvisionedHostDraft): void {
     this.service.addProvisionedHost(host.name, host.address);
     this.wizardOpen.set(false);

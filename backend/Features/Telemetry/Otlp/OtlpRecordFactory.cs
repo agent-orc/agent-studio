@@ -13,6 +13,8 @@ internal sealed class OtlpPointFields
     public double? Sum { get; set; }
     public double? Min { get; set; }
     public double? Max { get; set; }
+    public List<double> ExplicitBounds { get; } = [];
+    public List<double> BucketCounts { get; } = [];
     public uint Flags { get; set; }
 }
 
@@ -207,6 +209,27 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
         _metrics.Add(new MetricSample(name, unit, kind, temporality, attributes,
             point.TimeUnixNano == 0 ? receivedUnixNano : point.TimeUnixNano, point.StartTimeUnixNano,
             value, count, Finite(point.Min), Finite(point.Max), isMonotonic));
+        if (name == "http.server.request.duration" && kind == MetricKind.Histogram
+            && point.BucketCounts.Count == point.ExplicitBounds.Count + 1
+            && point.BucketCounts.Count is > 0 and <= 128
+            && point.BucketCounts.All(bucket => double.IsFinite(bucket) && bucket >= 0)
+            && point.ExplicitBounds.All(double.IsFinite)
+            && point.ExplicitBounds.Zip(point.ExplicitBounds.Skip(1)).All(pair => pair.First < pair.Second))
+        {
+            for (var index = 0; index < point.BucketCounts.Count; index++)
+            {
+                CountRecord();
+                var bound = index < point.ExplicitBounds.Count
+                    ? point.ExplicitBounds[index].ToString("R", System.Globalization.CultureInfo.InvariantCulture) : "+Inf";
+                var bucketAttributes = TelemetryAttributes.From(attributes.Items.Append(
+                    KeyValuePair.Create("otel.histogram.bound", bound)));
+                Account(RecordBytes + StringBytes(name) + StringBytes(unit) + OwnBytes(bucketAttributes, point.Attributes));
+                Store(StoredPointBytes + Encoding.UTF8.GetByteCount(name) + Encoding.UTF8.GetByteCount(unit) + bucketAttributes.JsonBytes);
+                _metrics.Add(new MetricSample(name + ".bucket", unit, MetricKind.Sum, temporality,
+                    bucketAttributes, point.TimeUnixNano == 0 ? receivedUnixNano : point.TimeUnixNano,
+                    point.StartTimeUnixNano, point.BucketCounts[index], 1, null, null, true));
+            }
+        }
     }
 
     public void AddLog(TelemetryAttributes scope, OtlpLogFields log)

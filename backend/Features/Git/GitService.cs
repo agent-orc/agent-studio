@@ -3158,12 +3158,12 @@ public partial class GitService
             sw.Stop();
             if (p.ExitCode != 0)
             {
-                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, jobId: jobId);
+                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, cliType: CliTypes.Codex, jobId: jobId);
                 return new GenerateMessageResult(null, $"codex exited {p.ExitCode}: {stderr.Trim()}");
             }
 
             var text = ParseCodexAgentMessage(stdout);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, jobId: jobId);
+            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, cliType: CliTypes.Codex, jobId: jobId);
 
             var (msg, suspicious) = ParseCommitReview(text);
             if (!string.IsNullOrWhiteSpace(suspicious))
@@ -9171,6 +9171,26 @@ public partial class GitService
             .Where(parts => parts.Length == 2 && parts[0].Split(' ') is [_, "blob", _])
             .Select(parts => parts[1])
             .ToArray();
+    }
+
+    /// <summary>
+    /// Writes the uncompressed <c>git archive</c> of a full commit SHA to
+    /// <paramref name="outputFile"/>, limited to <paramref name="path"/> when
+    /// given. An integration release packs the gated tree this way. False when
+    /// git cannot read the commit or the path.
+    /// </summary>
+    public bool ArchiveCommit(string repoRoot, string sha, string? path, string outputFile)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Regex.IsMatch(sha, @"\A[0-9a-f]{40}\z")
+            || path is not null && !Regex.IsMatch(path,
+                AgentStudio.TaskServer.Contracts.ProjectDeploymentVocabulary.ArtifactPathPattern)) return false;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return false;
+        string[] args = path is null or "."
+            ? ["archive", "--format=tar", "-o", outputFile, sha]
+            : ["archive", "--format=tar", "-o", outputFile, sha, path];
+        var (_, _, code) = RunGitArgs(root, args);
+        return code == 0 && File.Exists(outputFile);
     }
 
     /// <summary>

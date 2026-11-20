@@ -9,6 +9,7 @@ import {
   connections, databaseState, formatBytes, readiness, volumeOverAlert,
   type DatabaseOperation, type DatabaseOperationRequest, type ManagedDatabase,
 } from './managed-database.model';
+import { PrincipalNamePipe } from '../../../../pipes/principal-name.pipe';
 
 export { databaseState, formatBytes, type ManagedDatabase } from './managed-database.model';
 
@@ -24,7 +25,7 @@ interface EnvironmentDatabases { id: string; name: string; databases: ManagedDat
 @Component({
   selector: 'app-managed-databases-panel',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent, ManagedDatabaseBackupsComponent],
+  imports: [PrincipalNamePipe, DatePipe, StatusIndicatorComponent, ManagedDatabaseBackupsComponent],
   templateUrl: './managed-databases-panel.html',
   styleUrl: './managed-databases-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

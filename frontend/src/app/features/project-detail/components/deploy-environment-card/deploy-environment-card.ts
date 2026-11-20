@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import {
   HEALTH_LABEL,
@@ -6,20 +6,31 @@ import {
   formatAge,
   shortArtifact,
   triggerLabel,
+  type DeployActionOption,
+  type DeployActionState,
   type EnvironmentCardView,
 } from '../../state/deploy-area.model';
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { DeployActionsComponent } from '../deploy-actions/deploy-actions';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
+import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
+import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
+import { ClientService } from '../../../../services/client.service';
+import { principalName } from '../../../../pipes/principal-name.pipe';
 
 function ago(age: string | null): string | null {
   return age && age !== 'just now' ? `${age} ago` : age;
 }
 
-/** Status card of one environment: release, age, cards, health, and the last run. */
+/** Status card of one environment: release, age, cards, health, the last run, and what may start next. */
 @Component({
   selector: 'app-deploy-environment-card',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [DatePipe, StatusIndicatorComponent, RollbackOfferComponent, PendingButtonDirective, DeployActionsComponent,
+    DeploySecretGapsComponent],
   templateUrl: './deploy-environment-card.html',
   styleUrl: './deploy-environment-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -27,8 +38,26 @@ function ago(age: string | null): string | null {
 export class DeployEnvironmentCardComponent {
   readonly environment = input.required<EnvironmentCardView>();
   readonly now = input.required<number>();
+  readonly busy = input(false);
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  /** F13: the environment's rollback target, when it has one. */
+  readonly rollbackOffer = input<RollbackOffer | null>(null);
+  readonly rollbackBusy = input(false);
+  readonly rollback = output<string>();
+  readonly stop = output<string>();
+  readonly remove = output<string>();
+  /** Deploy and redeploy options of this environment, as the server's lifecycle decided them. */
+  readonly actions = input<readonly DeployActionOption[]>([]);
+  readonly actionState = input<DeployActionState>({ busy: null, error: null });
+  readonly startAction = output<DeployActionOption>();
+  /** F14: open the binding panel on this environment. */
+  readonly openSecrets = output<string>();
+
+  /** While an approval waits here, its card note answers why nothing else may start; refusals would only repeat it. */
+  readonly ownActions = computed(() => this.actions().filter(item => item.environmentId === this.environment().id
+    && (item.allowed || !this.environment().awaitingApproval)));
+  readonly names = computed<ReadonlyMap<string, string>>(() => new Map([[this.environment().id, this.environment().name]]));
 
   readonly headingId = computed(() => `deploy-environment-${this.environment().id}-title`);
   readonly release = computed(() => {
@@ -49,10 +78,16 @@ export class DeployEnvironmentCardComponent {
     return `Release ${newer.version} is ready with ${count} ${count === 1 ? 'card' : 'cards'}`;
   });
   readonly runTone = runStateTone;
+  readonly hostTone = runHostStateTone;
+  readonly hostLabel = runHostStateLabel;
   readonly health = computed<{ tone: StatusTone; label: string }>(() => {
     const health = this.environment().health;
     if (health.status === 'no-checks') return { tone: 'neutral', label: 'No checks' };
     return { tone: healthStateTone(health.state), label: HEALTH_LABEL[health.state] };
+  });
+  readonly healthProblem = computed(() => {
+    const health = this.environment().health;
+    return health.status === 'reported' ? health.problem ?? null : null;
   });
   readonly lastRunLabel = computed(() => {
     const run = this.environment().lastRun;
@@ -62,6 +97,10 @@ export class DeployEnvironmentCardComponent {
     const run = this.environment().lastRun;
     return run ? ago(formatAge(run.at, this.now())) : null;
   });
+  /** Display names of the principals that requested the approval and decided the intervention. */
+  private readonly clients = inject(ClientService);
+  readonly approvalRequester = computed(() => principalName(this.clients, this.environment().awaitingApproval?.requestedBy));
+  readonly interventionDecider = computed(() => principalName(this.clients, this.environment().intervention?.decidedBy));
 
   reviewApproval(): void {
     const approval = this.environment().awaitingApproval;

@@ -1,7 +1,7 @@
 :host { display: none; }
 
 @media (max-width: 599px) {
-  :host:has(button) { display: block; }
+  :host:has(button) { display: grid; gap: var(--studio-spacing-2); }
 
   .mobile-lane-primary {
     display: flex;

@@ -1,6 +1,9 @@
 import { InjectionToken } from '@angular/core';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
+import type { RunHostState } from '../../../models/run-host.model';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
+import type { PipelineDefinitionResponse } from '../services/project-pipeline-definition.service';
+import type { RollbackTarget } from './rollback-offer.model';
 
 // BD-1 wire contract served by AGT-3201 under /api/projects/{project}/deploy
 // (backend/Features/Deploy/DeployContract.cs). States, triggers and health
@@ -15,6 +18,20 @@ export interface DeployEnvironment {
   kind: string;
 }
 
+/**
+ * AGT-3891: what creates the next release of the project and what blocks it
+ * now (GET /api/projects/{p}/deploy/integration-release).
+ */
+export interface IntegrationReleaseStatus {
+  project: string;
+  state: 'unconfigured' | 'promotion-train' | 'waiting-for-gate' | 'ready' | 'released' | 'blocked';
+  message: string;
+  nextStep: string | null;
+  commit: string | null;
+  releaseId: string | null;
+  canCreate: boolean;
+}
+
 /** F2: the last release attempt the release-candidate gate refused, until a release is created. */
 export interface ReleaseGateRefusal {
   commitSha: string;
@@ -25,6 +42,34 @@ export interface ReleaseGateRefusal {
 }
 
 export interface ReleaseGateStatus { refusal: ReleaseGateRefusal | null }
+
+/** F14: one secret a deploy would miss; `bindable` when an environment binding resolves it. */
+export interface SecretReadinessItem { name: string; reference: string; reason: string; bindable: boolean }
+/** F14: whether a deploy of the release into the environment finds every secret bound. */
+export interface EnvironmentSecretReadiness {
+  environmentId: string;
+  environmentName: string;
+  kind: string;
+  releaseId: string | null;
+  requiresApproval: boolean;
+  ready: boolean;
+  missing: SecretReadinessItem[];
+}
+export interface SecretReadinessResponse { project: string; releaseId: string | null; environments: EnvironmentSecretReadiness[] }
+
+const SECRET_REASON: Readonly<Record<string, string>> = {
+  'not-bound': 'not bound to this environment',
+  'approval-required': 'binding waits for Production approval',
+  'not-found': 'bound, but no secret is stored under the reference',
+  revoked: 'the bound secret version is revoked',
+  unreadable: 'the secret store cannot read it',
+  'preflight-unavailable': 'the binding check is unavailable',
+};
+/** Plain words for a missing-secret reason; an unbindable `not-bound` name needs a declaration first. */
+export function secretReasonLabel(item: SecretReadinessItem): string {
+  if (item.reason === 'not-bound' && !item.bindable) return 'not declared for this environment in project.yml';
+  return Object.hasOwn(SECRET_REASON, item.reason) ? SECRET_REASON[item.reason] : item.reason;
+}
 
 export interface Release {
   id: string;
@@ -38,7 +83,7 @@ export interface Release {
   createdAtUtc: string;
   channel: string;
   quality?: {
-    cards: { key: string; verdict: 'pass' | 'concerns' | 'block' | 'not-reviewed' }[];
+    cards: { key: string; verdict: 'pass' | 'concerns' | 'block' | 'not-reviewed'; source?: 'quality-studio' | 'review' | null; reason?: string | null }[];
     pass: number;
     concerns: number;
     block: number;
@@ -93,6 +138,8 @@ export interface EnvironmentStatus {
   releaseUncertain?: boolean;
   intervention?: { deploymentId: string; failedStep: string; expiresAtUtc: string | null;
     decision: string | null; decidedBy: string | null } | null;
+  /** F13: the release a rollback runs now; absent on servers before it. */
+  rollbackTarget?: RollbackTarget | null;
 }
 
 export interface DeploymentLogLine {
@@ -176,6 +223,39 @@ export function runActions(state: RunState): DeployRunAction[] {
 }
 
 /**
+ * A deploy or redeploy a person may start in one environment, as the server's
+ * lifecycle decided it for the signed-in actor (`GET /deploy/actions`,
+ * `GET /deploy/releases/{id}/actions`). `needsApproval` means the request waits
+ * for an Owner or Maintainer; a refused action carries the lifecycle's reason.
+ */
+export interface DeployActionOption {
+  environmentId: string;
+  action: 'deploy' | 'redeploy';
+  releaseId: string;
+  releaseVersion: string;
+  allowed: boolean;
+  needsApproval: boolean;
+  reason: string | null;
+}
+
+/** Busy and failed start requests, keyed by {@link deployActionKey}. */
+export interface DeployActionState {
+  busy: string | null;
+  error: { key: string; message: string } | null;
+}
+
+export function deployActionKey(option: Pick<DeployActionOption, 'action' | 'environmentId' | 'releaseId'>): string {
+  return `${option.action}:${option.environmentId}:${option.releaseId}`;
+}
+
+/** "Deploy to Staging", "Request Production approval", "Redeploy Production", "Request Production redeploy". */
+export function deployActionLabel(option: Pick<DeployActionOption, 'action' | 'needsApproval'>, environmentName: string): string {
+  if (option.action === 'redeploy')
+    return option.needsApproval ? `Request ${environmentName} redeploy` : `Redeploy ${environmentName}`;
+  return option.needsApproval ? `Request ${environmentName} approval` : `Deploy to ${environmentName}`;
+}
+
+/**
  * One panel's data. `unavailable` means the route is not on this server yet
  * (AGT-3201 before it ships); it is not an error.
  */
@@ -223,7 +303,8 @@ export interface DeployRun {
 }
 
 export type DeployCards = { status: 'known'; keys: string[] } | { status: 'unknown'; reason: string };
-export type DeployHealth = { status: 'reported'; state: HealthState } | { status: 'no-checks' };
+/** `problem`: why a misconfigured check is not probed and how to fix the declaration (F16). */
+export type DeployHealth = { status: 'reported'; state: HealthState; problem?: string | null } | { status: 'no-checks' };
 
 /** The latest run of a card: an AGT-3201 deployment, or the last AGT-3176 host report without it. */
 export interface CardRun {
@@ -253,6 +334,18 @@ export interface EnvironmentCardView {
   lastRun: CardRun | null;
   awaitingApproval: CardApproval | null;
   intervention?: EnvironmentStatus['intervention'];
+  /** F14: secrets the next deploy into this environment would miss. */
+  secrets?: EnvironmentSecretReadiness | null;
+  /** The run host that serves the environment (F4); null when the environment list is unavailable. */
+  host?: EnvironmentHostView | null;
+}
+
+export interface EnvironmentHostView {
+  id: string;
+  name: string;
+  /** Null while the server did not report run hosts; the host id still names the target. */
+  state: RunHostState | null;
+  lastSeenAt: string | null;
 }
 
 /** Ready panel values; null means that source is loading, failed, or absent. */
@@ -486,8 +579,51 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       lastRun,
       awaitingApproval: approvalFor(base, runs, sources),
       intervention: status?.intervention,
+      host: hostOf(base, sources.environments),
     };
   });
+}
+
+/** Display name of a project.yml environment id. */
+export function environmentLabel(name: string): string {
+  return name === 'staging' ? 'Staging' : name === 'production' ? 'Production' : name;
+}
+
+/** An environment project.yml declares that has no deployable status card yet (F5). */
+export interface DeclaredEnvironmentView {
+  name: string;
+  label: string;
+  protected: boolean;
+  /** False when project.yml has no deploy step for it yet. */
+  hasSteps: boolean;
+}
+
+/**
+ * Environments a schema 2 project.yml declares without a status card: before
+ * deploy steps exist the environment service cannot deploy them, so Overview
+ * shows them from the parsed definition instead of the legacy JSON guidance.
+ */
+export function declaredEnvironments(definition: PipelineDefinitionResponse | null,
+  cards: readonly EnvironmentCardView[]): DeclaredEnvironmentView[] {
+  if (definition?.schemaVersion !== 2 || !definition.diagram) return [];
+  const shown = new Set(cards.flatMap(card => [card.id, card.name.toLowerCase()]));
+  return definition.diagram.environments
+    .filter(item => !shown.has(item.name) && !shown.has(item.name === 'staging' ? 'stage' : item.name))
+    .map(item => ({
+      name: item.name,
+      label: environmentLabel(item.name),
+      protected: item.protected,
+      hasSteps: item.steps.length > 0,
+    }));
+}
+
+function hostOf(base: CardBase, environments: ProjectEnvironments | null): EnvironmentHostView | null {
+  const id = base.view?.declaration.targetHostId;
+  if (!id) return null;
+  const host = environments?.runHosts?.find(item => item.id === id);
+  return host
+    ? { id, name: host.name, state: host.state, lastSeenAt: host.lastSeenAt }
+    : { id, name: id, state: null, lastSeenAt: null };
 }
 
 function cardsFor(deployed: boolean, release: Release | null, releaseRecordsKnown: boolean): DeployCards {
@@ -501,7 +637,9 @@ function cardsFor(deployed: boolean, release: Release | null, releaseRecordsKnow
 function healthFor(status: EnvironmentStatus | null, base: CardBase, health?: EnvironmentHealthResponse | null): DeployHealth {
   const observed = health?.environments.find(item => item.environmentId === base.id);
   if (observed && (observed.checks.length > 0 || observed.status === 'invalid'))
-    return { status: 'reported', state: observed.status };
+    return observed.status === 'invalid'
+      ? { status: 'reported', state: observed.status, problem: observed.error }
+      : { status: 'reported', state: observed.status };
   if (base.view && !base.healthUrl && !base.hasChecks) return { status: 'no-checks' };
   // AGT-3201 health wins when it knows; it reads a host rollback as unknown, AGT-3176 as healthy.
   const reported = status ? STATUS_HEALTH[status.health] ?? 'unknown' : 'unknown';

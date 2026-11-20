@@ -41,6 +41,11 @@ public static class OwnerActivityProjection
                     && !(evt.Kind == TimelineEventKinds.PromptCreated
                          && evt.Details?.GetValueOrDefault("creationSource") == "human"))
                     continue;
+                // Cards written before the creation actor honoured createdBy
+                // still carry the owner's id on a system-created card.
+                if (evt.Kind == TimelineEventKinds.PromptCreated
+                    && TimelineActors.ForAutomatedCreator(evt.Details?.GetValueOrDefault("createdBy")) is not null)
+                    continue;
                 var topic = evt.Kind switch
                 {
                     TimelineEventKinds.LaneChanged => "lane-move",

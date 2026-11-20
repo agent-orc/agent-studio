@@ -63,6 +63,22 @@ public sealed class SummaryGenerationValidationTests : IDisposable
     }
 
     [Fact]
+    public async Task Quota_fallback_records_codex_usage_on_codex_account()
+    {
+        var (service, task, oneShot) = Arrange(ValidSummary);
+        oneShot.EffectiveCliType = CliTypes.Codex;
+
+        await service.GenerateAsync(task, CompletedOutcome);
+
+        var record = Assert.Single(new AdHocUsageRecorder(NullLogger<AdHocUsageRecorder>.Instance,
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build()).ReadAll());
+        Assert.Equal(CliTypes.Codex, record.CliType);
+        Assert.Equal(7, record.InputTokens);
+        Assert.False(oneShot.Requests.Single().RecordUsage);
+    }
+
+    [Fact]
     public async Task Invalid_output_retries_once_with_identical_inputs_and_accepts_valid_retry()
     {
         var (service, task, oneShot) = Arrange("Hello!", ValidSummary);
@@ -203,6 +219,7 @@ public sealed class SummaryGenerationValidationTests : IDisposable
         public List<CliOneShotRequest> Requests { get; } = [];
         public Action<int>? BeforeReply { get; set; }
         public bool EchoPrompt { get; set; }
+        public string? EffectiveCliType { get; set; }
 
         public Task<CliOneShotResult> RunAsync(CliOneShotRequest request, CancellationToken ct = default)
         {
@@ -211,8 +228,10 @@ public sealed class SummaryGenerationValidationTests : IDisposable
             Requests.Add(request);
             BeforeReply?.Invoke(Requests.Count);
             return Task.FromResult(new CliOneShotResult(
-                true, 0, reply, "", TimeSpan.FromMilliseconds(1), reply, null, null,
-                new AgentMessageLatency(RequestedAt: DateTime.UtcNow), null));
+                true, 0, reply, "", TimeSpan.FromMilliseconds(1), reply,
+                new OrchestratorTokenUsage { InputTokens = 7 }, null,
+                new AgentMessageLatency(RequestedAt: DateTime.UtcNow), null)
+            { EffectiveCliType = EffectiveCliType });
         }
     }
 }
