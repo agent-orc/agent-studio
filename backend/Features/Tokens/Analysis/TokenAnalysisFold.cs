@@ -364,7 +364,7 @@ public static class TokenAnalysisFold
             usage.CacheReadTokens, usage.CacheCreationTokens, at);
         return new TokenAnalysisItem(
             at, null, kind,
-            string.IsNullOrWhiteSpace(entry.Topic) ? entry.ParticipantId ?? Unknown : entry.Topic,
+            LedgerLabel(entry),
             attempt, slot,
             ModelIdentity.StoredId(usage.Model) ?? Unknown,
             ModelIdentity.Label(usage.Model) ?? Unknown,
@@ -374,6 +374,15 @@ public static class TokenAnalysisFold
             usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens, usage.CacheCreationTokens,
             usage.ReasoningTokens, cost, priced, null, null, SourceLedger);
     }
+
+    /// <summary>
+    /// A review receipt names its step in the participant (remote and local
+    /// review hosts alike), so the step id wins over the generic receipt
+    /// topic; other calls keep their topic, then their participant.
+    /// </summary>
+    private static string LedgerLabel(OrchestratorLogEntry entry)
+        => ReviewStatisticsFold.StepId(entry.ParticipantId)
+           ?? (string.IsNullOrWhiteSpace(entry.Topic) ? entry.ParticipantId ?? Unknown : entry.Topic);
 
     private static (decimal Cost, bool Priced) Price(
         ITokenPricing pricing, string? model, long input, long output, long cacheRead, long cacheWrite, DateTime at)

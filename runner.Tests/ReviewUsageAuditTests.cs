@@ -39,4 +39,38 @@ public sealed class ReviewUsageAuditTests
         Assert.Equal(900, usage.CacheReadTokens);
         Assert.True(usage.InputIncludesCached);
     }
+
+    [Theory]
+    [InlineData("7")]
+    [InlineData("{\"value\":\"one\"}")]
+    [InlineData("[\"one\"]")]
+    [InlineData("true")]
+    [InlineData("null")]
+    public void NonStringMessageId_IsCountedAsAnUnnamedFrameInsteadOfThrowing(string id)
+    {
+        var frame = "{\"type\":\"assistant\",\"message\":{\"id\":" + id
+            + ",\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}";
+        const string named = """{"type":"assistant","message":{"id":"two","usage":{"input_tokens":20,"output_tokens":3}}}""";
+
+        var usage = RemoteReviewAgentCommandRunner.ParseUsage(string.Join('\n', frame, named), "claude-opus-5-5", "claude");
+
+        Assert.Equal(30, usage.InputTokens);
+        Assert.Equal(5, usage.OutputTokens);
+    }
+
+    [Fact]
+    public void NonObjectProtocolLines_CarryNoTokenFacts()
+    {
+        const string output = """
+            42
+            "plain text"
+            {"type":"assistant","message":"not an object"}
+            {"type":"assistant","message":{"id":"one","usage":{"input_tokens":10,"output_tokens":2}}}
+            """;
+
+        var usage = RemoteReviewAgentCommandRunner.ParseUsage(output, "claude-opus-5-5", "claude");
+
+        Assert.Equal(10, usage.InputTokens);
+        Assert.Equal(2, usage.OutputTokens);
+    }
 }

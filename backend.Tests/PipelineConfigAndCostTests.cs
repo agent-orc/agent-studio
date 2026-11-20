@@ -995,8 +995,10 @@ public class PipelineConfigAndCostTests
             ReceiptEntry("AGT-2542", "orchestrator:agent-taskboard", now.AddHours(-1), 200, 20),
         };
 
-        var records = ProjectPipelineCostService.BuildReceiptRecords("P", entries);
-        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", records, days: 7, nowUtc: now);
+        var items = TokenAnalysisFold.Items(TokenTestServices.Pricing(),
+            new TokenAnalysisJobInput("AGT-2542", null, null, entries));
+        var timeline = ProjectPipelineCostService.BuildFromAnalysis(TokenTestServices.Pricing(), "P",
+            items.Select(item => ("AGT-2542", item)).ToList(), 7, now);
 
         Assert.Equal(1_870, timeline.TotalTokens);
         Assert.Equal(new[] { "core", "aspect", "orchestrator" }, timeline.Kinds.Select(kind => kind.Kind));

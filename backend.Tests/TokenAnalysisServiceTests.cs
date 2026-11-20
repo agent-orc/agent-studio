@@ -144,7 +144,7 @@ public sealed class TokenAnalysisServiceTests : IDisposable
         var receipts = new ProjectTokenReceiptReader();
         var service = new TokenAnalysisService(pricing, scanner, log,
             new ProjectTokenLedger(store, config, receipts), store, config, _clock);
-        pipelineReady?.Invoke(new ProjectPipelineCostService(pricing, scanner, log, receipts, service));
+        pipelineReady?.Invoke(new ProjectPipelineCostService(pricing, service));
         return (service, new AgentMessageBusBridge(store, config, NullLogger<AgentMessageBusBridge>.Instance));
     }
 

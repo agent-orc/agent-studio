@@ -54,10 +54,15 @@ public sealed class TokenEconomyAuditTests
         var participant = $"support:remote-review:attempt:step:{step}:usage:attempt:0";
         Assert.Equal(step, ReviewStatisticsFold.StepId(participant));
         Assert.Equal(expectedKind, TokenUsageKindPolicy.ForLedger(participant, "task-token-receipt", true));
-        var record = Assert.Single(ProjectPipelineCostService.BuildReceiptRecords("Studio",
-            [new OrchestratorLogEntry { JobId = "card", Ts = new DateTime(2026, 11, 17, 0, 0, 0, DateTimeKind.Utc), ParticipantId = participant,
-                TokenUsage = new OrchestratorTokenUsage { Model = "claude-opus-5-5", InputTokens = 100 } }]));
-        Assert.Equal(step, Assert.Single(record.Steps).StepId);
+        var at = new DateTime(2026, 11, 17, 0, 0, 0, DateTimeKind.Utc);
+        var item = Assert.Single(TokenAnalysisFold.Items(TokenTestServices.Pricing(), new("card", null, null,
+            [new OrchestratorLogEntry { JobId = "card", Ts = at, ParticipantId = participant, Topic = "task-token-receipt",
+                TokenUsage = new OrchestratorTokenUsage { Model = "claude-opus-5-5", InputTokens = 100 } }])));
+        Assert.Equal(step, item.Label);
+        Assert.Equal(expectedKind, item.Kind);
+        var timeline = ProjectPipelineCostService.BuildFromAnalysis(TokenTestServices.Pricing(), "Studio",
+            [("card", item)], 7, at);
+        Assert.Equal(step, Assert.Single(timeline.Steps).StepId);
     }
 
     [Fact]

@@ -1575,7 +1575,8 @@ only what ran; the log owns the arithmetic.
 Ledger (`GET /api/projects/{project}/token-usage/pipeline-cost`):
 
 - `ProjectPipelineCostService.MergeSources` now reads the execution log of a
-  receipt-backed (remote) task as well.
+  receipt-backed (remote) task as well. (AGT-3952 removed `MergeSources`; the
+  same reconciliation now runs in `TokenAnalysisFold`, which feeds the ledger.)
 - A core receipt prices the agent run of the attempt whose time window holds
   it (an attempt owns the span from its start to the next attempt's start).
   An attempt with no core receipt keeps its logged core tokens. The log adds the aspect,

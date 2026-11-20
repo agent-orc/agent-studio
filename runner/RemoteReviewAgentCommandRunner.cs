@@ -188,7 +188,12 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
                 }
                 if (assistant)
                 {
-                    var key = TryJsonProperty(envelope, "id", out var id) ? id.GetString() : null;
+                    // A non-string id (number, object, null) is not a message identity;
+                    // GetString would throw InvalidOperationException, which the
+                    // JsonException handler below does not catch.
+                    var key = TryJsonProperty(envelope, "id", out var id) && id.ValueKind == JsonValueKind.String
+                        ? id.GetString()
+                        : null;
                     messages[key ?? "frame:" + messageIndex++] = result;
                 }
                 else terminalSeen = true;
