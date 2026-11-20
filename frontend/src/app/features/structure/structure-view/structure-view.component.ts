@@ -1,15 +1,17 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, OnDestroy, afterNextRender, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
+import { JobsHubClient, type StructureSubscription } from '../../../services/jobs-hub-client.service';
 import { studioProjectSlug } from '../../../services/studio-project-slug.util';
 import { replaceStudioRouteQuery } from '../../studio-shell/services/studio-route';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
 import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
 import { LAYOUT, layoutStructure, leafDetail, type LayoutBox, type RoutedLink } from '../structure-layout';
-import { isGroup, kindText, observationGlyph, observationText, observationWord, projectStructure, summaryText, visibleBoxes,
-  type StructureBox, type StructureData, type StructureObservation } from '../structure.model';
+import { applyStructureDelta, factLines, isGroup, isPlacement, isStructuralDelta, isUndeclared, kindText, observationGlyph, observationText,
+  observationWord, projectStructure, summaryText, visibleBoxes,
+  type StructureBox, type StructureData, type StructureDelta, type StructureObservation } from '../structure.model';
 
 interface LibraryChannel { name: string; version: string; publishedAt: string | null; }
 interface LibraryRegistry {
@@ -40,6 +42,7 @@ let instances = 0;
 export class StructureViewComponent implements OnDestroy {
   private readonly http = inject(HttpClient);
   private readonly auth = inject(AuthSessionState);
+  private readonly hub = inject(JobsHubClient);
   private readonly element = inject(ElementRef) as ElementRef<HTMLElement>;
   readonly projectName = input<string | null>(null);
   readonly projectSlug = studioProjectSlug;
@@ -66,6 +69,22 @@ export class StructureViewComponent implements OnDestroy {
   readonly environments = computed(() => this.data().nodes.filter(node => node.kind === 'environment'));
   readonly selectedNode = computed(() => this.data().nodes.find(node => node.id === this.selected()) ?? null);
   readonly selectedLinks = computed(() => this.data().links.filter(link => link.from === this.selected() || link.to === this.selected()));
+  readonly selectedFacts = computed(() => { const node = this.selectedNode(); return node ? factLines(node) : []; });
+  /** True while deltas of this scope arrive over the hub; the view then reads only to converge. */
+  readonly live = signal(false);
+  readonly undeclared = isUndeclared;
+  /** Placement of every node, and the machines a declaration names. */
+  private readonly placementOf = computed(() => new Map(this.data().nodes.map(node => [node.id, node.parentId])));
+  private readonly declaredMachines = computed(() => new Set(this.data().nodes
+    .filter(node => node.provenance === 'declared' && isPlacement(node)).map(node => node.id)));
+  /**
+   * Hatching marks the exception: something undeclared inside a declared machine.
+   * Where nothing is declared the chip alone says so and the picture stays calm.
+   */
+  hatched(box: StructureBox): boolean {
+    const parent = this.placementOf().get(box.id);
+    return box.observation?.difference === 'undeclared' && !!parent && this.declaredMachines().has(parent);
+  }
   /** Content width of the drawing area; the layout wraps to it. */
   readonly canvasWidth = signal(880);
   readonly roots = computed(() => projectStructure(this.data(), this.view(), this.level(), this.toggles()));
@@ -83,6 +102,11 @@ export class StructureViewComponent implements OnDestroy {
   readonly stateGlyph = observationGlyph;
   private readGeneration = 0;
   private refreshTimer?: ReturnType<typeof setInterval>;
+  private lastReadAt = 0;
+  private loadedKey: string | null = null;
+  private subscription: StructureSubscription | null = null;
+  private subscribedKey: string | null = null;
+  private subscribeGeneration = 0;
 
   ownerDescription(box: StructureBox): string {
     return box.otherProject ? `other project · ${box.ownerLabel ?? box.project}` : kindText(box);
@@ -111,6 +135,12 @@ export class StructureViewComponent implements OnDestroy {
   linkObservation(link: RoutedLink): StructureObservation | null {
     return this.data().links.find(item => item.kind === link.kind && item.label === link.label)?.observation ?? null;
   }
+  /** Probed round trip of a link, where the host measures one. */
+  linkLatency(link: RoutedLink): string {
+    const latency = this.data().links.filter(item => item.kind === link.kind && item.label === link.label)
+      .map(item => item.facts?.latencyMs).filter((value): value is number => value != null);
+    return latency.length ? ` · ${Math.max(...latency).toFixed(1)} ms` : '';
+  }
   status(box: StructureBox): { tone: string; word: string } | null {
     return box.status ? STATUS[box.status] ?? STATUS['unknown'] : null;
   }
@@ -120,6 +150,7 @@ export class StructureViewComponent implements OnDestroy {
       (observed ? `, declared, ${observed}` : '') +
       (this.status(box) ? `, ${this.status(box)!.word}` : '') +
       `, ${observationWord(box.observation)}` +
+      (isUndeclared(box) ? ', observed, not declared' : '') +
       (box.replicas > 1 ? `, ${box.replicas} replicas` : '') +
       (box.placements > 1 ? `, ${box.placements} placements` : '') +
       (box.otherProject ? `, other project, ${box.ownerLabel ?? box.project}` : '') +
@@ -163,17 +194,71 @@ export class StructureViewComponent implements OnDestroy {
         void this.load();
       });
     });
+    // Live updates: join the hub group of this scope whenever the socket is up and the
+    // scope or environment changed. Membership ends with a connection, so this runs again
+    // after every reconnect.
+    const removeDeltaListener = this.hub.onStructureDelta<StructureDelta>(delta => this.onDelta(delta));
+    destroyRef.onDestroy(removeDeltaListener);
+    effect(() => {
+      const connected = this.hub.connected();
+      const scope = this.scope();
+      const environment = this.environment() || null;
+      untracked(() => void this.subscribe(connected, scope, environment));
+    });
     this.startRefresh();
   }
 
   ngOnDestroy(): void {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.unsubscribe();
   }
 
+  /**
+   * Fallback read. With deltas arriving it only converges every 15 seconds and the
+   * entity tag makes that a 304; without the hub it reads every 5 seconds.
+   */
   private startRefresh(): void {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (document.visibilityState !== 'visible') return;
-    this.refreshTimer = setInterval(() => void this.load(), 15_000);
+    this.refreshTimer = setInterval(() => {
+      if (!this.live() || Date.now() - this.lastReadAt >= 15_000) void this.load();
+    }, 5_000);
+  }
+
+  private scope(): string { return this.projectName() ? `project:${this.projectName()}` : 'workspace'; }
+
+  private async subscribe(connected: boolean, scope: string, environment: string | null): Promise<void> {
+    const key = `${scope}\n${environment ?? ''}`;
+    const generation = ++this.subscribeGeneration;
+    if (this.subscribedKey !== null && this.subscribedKey !== key) this.unsubscribe();
+    if (!connected) { this.subscription = null; this.live.set(false); return; }
+    const subscription = await this.hub.subscribeStructure(scope, environment);
+    if (generation !== this.subscribeGeneration) return;
+    this.subscription = subscription;
+    this.subscribedKey = subscription ? key : null;
+    this.live.set(subscription !== null);
+    // Anything that changed before the subscription existed is read once.
+    if (subscription && this.loaded() && subscription.revision !== (this.data().revision ?? 0)) void this.load();
+  }
+
+  private unsubscribe(): void {
+    if (this.subscribedKey !== null) {
+      const [scope, environment] = this.subscribedKey.split('\n');
+      this.hub.unsubscribeStructure(scope, environment || null);
+    }
+    this.subscribedKey = null;
+    this.subscription = null;
+    this.live.set(false);
+  }
+
+  private onDelta(delta: StructureDelta): void {
+    const subscription = this.subscription;
+    if (!subscription || delta.scope !== subscription.scope || (delta.environment ?? null) !== (subscription.environment ?? null)) return;
+    const data = this.data();
+    if (delta.revision <= (data.revision ?? 0)) return;
+    // A gap, or nodes and links that come and go, is read as a whole so the order matches the server's.
+    if (delta.baseRevision !== data.revision || isStructuralDelta(data, delta)) { void this.load(); return; }
+    this.data.set(applyStructureDelta(data, delta));
   }
 
   @HostListener('document:visibilitychange') onVisibilityChange(): void {
@@ -205,14 +290,24 @@ export class StructureViewComponent implements OnDestroy {
 
   private async load(): Promise<void> {
     const generation = ++this.readGeneration;
+    const key = `${this.scope()}\n${this.environment()}`;
+    // The revision is the entity tag: an unchanged structure answers 304 and keeps the nodes.
+    const revision = this.loadedKey === key ? this.data().revision : undefined;
+    this.lastReadAt = Date.now();
     try {
       const data = await firstValueFrom(this.http.get<StructureData>('/api/v1/operations/structure',
-        { params: { scope: this.projectName() ? `project:${this.projectName()}` : 'workspace', ...(this.environment() ? { environment: this.environment() } : {}) } }));
+        { params: { scope: this.scope(), ...(this.environment() ? { environment: this.environment() } : {}) },
+          ...(revision ? { headers: { 'If-None-Match': `"${revision}"` } } : {}) }));
       if (generation !== this.readGeneration) return;
       this.data.set(data);
+      this.loadedKey = key;
       this.error.set(null);
       this.loaded.set(true);
-    } catch { if (generation === this.readGeneration) this.error.set('Structure observations could not be loaded.'); }
+    } catch (error) {
+      if (generation !== this.readGeneration) return;
+      if (error instanceof HttpErrorResponse && error.status === 304) { this.error.set(null); return; }
+      this.error.set('Structure observations could not be loaded.');
+    }
   }
 
   setView(view: 'host' | 'container'): void {

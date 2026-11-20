@@ -146,3 +146,112 @@ function complex(): StructureData {
 export const complexFixture: StructureData = complex();
 export const structureFixtures: Readonly<Record<'complex' | 'agt' | 'workspace', StructureData>> =
   { complex: complexFixture, agt: agtFixture, workspace: workspaceFixture };
+
+// AGT-3954: an installation where nothing is declared except one spare machine and the
+// externals of a placement file. Every other node comes from host reports and from what
+// the API knows about itself, as GET /api/v1/operations/structure returns them.
+const seen = '2026-11-17T12:00:00Z';
+const observedNode = (id: string, kind: string, label: string, parentId: string | null,
+  extra: Partial<StructureNode> = {}): StructureNode => node(id, kind, label, parentId, {
+  provenance: 'observed', sourceRef: 'host report', observation: { difference: 'undeclared', health: 'up', observedAt: seen }, ...extra });
+const reviewHost = (n: number): StructureNode[] => [
+  observedNode(`machine:review-${n}`, 'container', `review-${n}`, 'machine:linux-vm', { detail: `review-host-${n}`,
+    observation: { difference: 'undeclared', health: 'up', observedAt: seen, version: '2.0', expectedVersion: '2.0',
+      cpuPercent: 37, memoryUsedBytes: 8 * 1024 ** 3, memoryTotalBytes: 32 * 1024 ** 3, activeGates: 0 },
+    facts: {
+      hostId: `review-${n}`, machineKind: 'container', virtualization: 'docker', containerName: `review-host-${n}`,
+      roles: ['review'], lastSeenAt: seen,
+      performance: { observedAt: seen, cpuPercent: 37, cpuCores: 24, load1: 2.5, load5: 2, load15: 1.5,
+        memoryUsedBytes: 8 * 1024 ** 3, memoryTotalBytes: 32 * 1024 ** 3,
+        disks: [{ mount: '/srv/work', purpose: 'runner work', usedBytes: 60 * 1024 ** 3, freeBytes: 40 * 1024 ** 3, totalBytes: 100 * 1024 ** 3 }],
+        networkReceiveBytesPerSecond: 1200, networkTransmitBytesPerSecond: 3400 },
+      capacity: { busySlots: 1, freeSlots: 1, totalSlots: 2, runningCards: n === 1 ? ['AGT-7'] : [] },
+      release: { version: '2.0', stableVersion: '2.0', state: 'current', behind: false, pendingInstall: false },
+      warnings: { tools: [{ name: 'claude', kind: 'cli', version: '1.2.0', targetVersion: '1.3.0', state: 'behind' },
+        { name: 'dotnet', kind: 'toolchain', version: '10.0.100', state: 'ok' }],
+        missingRequired: n === 1 ? ['toolchain:playwright'] : [], behindRequired: ['claude'], releaseBehind: false,
+        pendingHostInstall: false, linksDown: [],
+        blockedCards: n === 1 ? [{ key: 'AGT-10', state: 'refused', reason: 'toolchain:playwright' }] : [] },
+    } }),
+  observedNode(`component:review-${n}:review-${n}-runner`, 'process', 'review daemon', `machine:review-${n}`,
+    { unitId: `review-${n}-runner`, role: 'review' }),
+];
+const control = (from: string, latencyMs: number): StructureLink => ({
+  id: `link:${from}>component:studio-server:api:control`, from, to: 'component:studio-server:api', kind: 'control',
+  label: 'Task Server connection', sourceRef: 'host report',
+  observation: { difference: 'undeclared', health: 'up', observedAt: seen }, facts: { state: 'up', latencyMs, probedAt: seen, transport: 'https' } });
+
+export const observedStructure: StructureData = {
+  revision: 40, generatedAt: seen, schemaVersion: 2,
+  nodes: [
+    node('installation', 'boundary', 'Installation', null, { sourceRef: 'Connectivity:ManifestPath',
+      observation: { difference: 'declared-only', health: 'not observed' } }),
+    node('machine:spare', 'physical', 'Spare machine', 'installation', { sourceRef: 'Structure:PlacementPath#machines/spare',
+      observation: { difference: 'declared-only', health: 'not observed' } }),
+    node('external:cdn', 'external', 'CDN proxy', null, { sourceRef: 'Structure:PlacementPath#externals/cdn',
+      observation: { difference: 'unreachable-by-design', health: 'not observed' } }),
+    node('external:source-host', 'external', 'Source host', null, { sourceRef: 'Structure:PlacementPath#externals/source-host',
+      observation: { difference: 'unreachable-by-design', health: 'not observed' } }),
+    node('external:registry', 'external', 'Container registry', null, { sourceRef: 'Structure:PlacementPath#externals/registry',
+      observation: { difference: 'unreachable-by-design', health: 'not observed' } }),
+    node('external:models', 'external', 'Model providers', null, { sourceRef: 'Structure:PlacementPath#externals/models',
+      observation: { difference: 'unreachable-by-design', health: 'not observed' } }),
+    observedNode('machine:studio-server', 'server', 'Studio server', 'installation', { sourceRef: 'studio self observation',
+      observation: { difference: 'undeclared', health: 'up', observedAt: seen, detail: 'The API reports from this machine' },
+      facts: { machineKind: 'vm', virtualization: 'kvm', lastSeenAt: seen,
+        performance: { observedAt: seen, cpuPercent: 12, cpuCores: 12, load1: 1.2, load5: 1.1, load15: 0.9,
+          memoryUsedBytes: 20 * 1024 ** 3, memoryTotalBytes: 62 * 1024 ** 3,
+          disks: [{ mount: '/', purpose: 'instance data', usedBytes: 84 * 1024 ** 3, freeBytes: 16 * 1024 ** 3, totalBytes: 100 * 1024 ** 3 }],
+          networkReceiveBytesPerSecond: 20480, networkTransmitBytesPerSecond: 51200 },
+        dataLocations: [
+          { id: 'data:studio-server:workspace-repository', role: 'workspace-repository', label: 'Workspace repository', sourceRef: 'TaskRepository',
+            exists: true, sizeBytes: 3 * 1024 ** 3, sizeComplete: true, measuredAt: seen, backupCovered: true, gitRemoteCovered: true, coverage: 'both' },
+          { id: 'data:studio-server:project-checkouts', role: 'project-checkouts', label: 'Project checkouts', sourceRef: 'project registry',
+            exists: true, sizeBytes: 9 * 1024 ** 3, sizeComplete: false, measuredAt: seen, backupCovered: false, gitRemoteCovered: true, coverage: 'git-remote' },
+          { id: 'data:studio-server:application-state', role: 'application-state', label: 'Application state directory', sourceRef: 'local state root',
+            exists: true, sizeBytes: 200 * 1024 ** 2, sizeComplete: true, measuredAt: seen, backupCovered: true, gitRemoteCovered: false, coverage: 'backup' },
+          { id: 'data:studio-server:secrets-key', role: 'secrets-key', label: 'Secrets key', sourceRef: 'Secrets:KeyFile',
+            exists: true, sizeBytes: 64, sizeComplete: true, measuredAt: seen, backupCovered: false, gitRemoteCovered: false, coverage: 'none' },
+          { id: 'data:studio-server:edge-certificates', role: 'edge-certificates', label: 'Edge certificates', sourceRef: 'Structure:EdgeCertificatesPath',
+            exists: false, sizeBytes: null, sizeComplete: false, measuredAt: null, backupCovered: false, gitRemoteCovered: false, coverage: 'none' },
+        ] } }),
+    observedNode('component:studio-server:api', 'container', 'API', 'machine:studio-server', { unitId: 'api', role: 'api',
+      sourceRef: 'studio self observation', detail: 'stack-api-1',
+      observation: { difference: 'undeclared', health: 'up', observedAt: seen, version: '2.0', expectedVersion: '2.0' } }),
+    observedNode('component:studio-server:web', 'container', 'Web frontend', 'machine:studio-server', { unitId: 'web', role: 'web',
+      sourceRef: 'studio self observation', detail: 'stack-frontend-1' }),
+    observedNode('component:studio-server:edge', 'container', 'Edge proxy', 'machine:studio-server', { unitId: 'edge', role: 'edge',
+      sourceRef: 'studio self observation', detail: 'stack-edge-1' }),
+    observedNode('component:studio-server:engine', 'container', 'Orchestrator engine', 'machine:studio-server', { unitId: 'engine', role: 'engine',
+      sourceRef: 'studio self observation', detail: 'stack-orchestrator-engine-1' }),
+    observedNode('observed-container:runner-host:deploy-stage-api-1', 'container', 'deploy-stage-api-1', 'machine:studio-server', {
+      sourceRef: 'host capability report', observation: { difference: 'undeclared', health: 'down', observedAt: seen, detail: 'exited' } }),
+    observedNode('machine:runner-host', 'host', 'runner-host', 'machine:studio-server', {
+      facts: { hostId: 'runner-host', machineKind: 'vm', virtualization: 'kvm', roles: ['coding', 'review'], lastSeenAt: seen,
+        capacity: { busySlots: 2, freeSlots: 2, totalSlots: 4, runningCards: ['AGT-3', 'AGT-5'] },
+        release: { version: '1.9', stableVersion: '2.0', state: 'behind', behind: true, pendingInstall: true } },
+      observation: { difference: 'differs', health: 'up', observedAt: seen, version: '1.9', expectedVersion: '2.0', behind: true } }),
+    observedNode('component:runner-host:coding-runner', 'process', 'coding daemon', 'machine:runner-host', { unitId: 'coding-runner', role: 'coding' }),
+    observedNode('component:runner-host:review-runner', 'process', 'review daemon', 'machine:runner-host', { unitId: 'review-runner', role: 'review' }),
+    observedNode('machine:home-lab', 'physical', 'home-lab', 'installation', {
+      observation: { difference: 'undeclared', health: 'not observed', detail: 'Named by a reporting host' } }),
+    observedNode('machine:linux-vm', 'vm', 'linux-vm', 'machine:home-lab', {
+      observation: { difference: 'undeclared', health: 'not observed', detail: 'Named by a reporting host' } }),
+    ...[1, 2, 3].flatMap(reviewHost),
+    observedNode('machine:gate-1', 'container', 'gate-1', 'machine:linux-vm', { detail: 'gate-host',
+      facts: { hostId: 'gate-1', machineKind: 'container', roles: ['gate'], lastSeenAt: seen,
+        capacity: { busySlots: 0, freeSlots: 2, totalSlots: 2, runningCards: [] } } }),
+    observedNode('component:gate-1:gate-runner', 'process', 'gate daemon', 'machine:gate-1', { unitId: 'gate-runner', role: 'gate' }),
+    // An older host reports no placement: it still shows, flat, and has stopped reporting.
+    observedNode('machine:old-host', 'host', 'old-host', 'installation', {
+      observation: { difference: 'stale', health: 'stale', observedAt: '2026-11-17T11:40:00Z' },
+      facts: { hostId: 'old-host', roles: ['coding'], lastSeenAt: '2026-11-17T11:40:00Z' } }),
+  ],
+  links: [
+    { id: 'link:component:studio-server:edge>external:cdn:call', from: 'component:studio-server:edge', to: 'external:cdn', kind: 'call',
+      label: 'Public traffic', sourceRef: 'Structure:PlacementPath#structureLinks/0', observation: { difference: 'declared-only', health: 'not observed' } },
+    control('machine:runner-host', 0.8),
+    control('machine:review-1', 4.5),
+    control('machine:gate-1', 3.9),
+  ],
+};

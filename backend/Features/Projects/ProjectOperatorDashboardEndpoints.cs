@@ -16,14 +16,11 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
+        // AGT-3954: the projection is cached and refreshed in the background by
+        // StructureSnapshotService. A request reads the cache; it never rebuilds
+        // the structure per client and never asks a host.
         app.MapGet("/api/v1/operations/structure", async Task<IResult> (HttpContext context, string? scope, string? environment,
-            IConfiguration configuration, ProjectRegistry projects, WorkspaceRegistry workspaces, ProjectEnvironmentService environments,
-            GitService git, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
-            LinkSupervisor links, EnvironmentHealthService health,
-            AgentStudio.Runner.HostReleaseDriftWatchdog releases,
-            AgentStudio.Runner.OrchestrationEngineReadiness engine,
-            AgentStudio.Pipeline.PullGateStore gates, TimeProvider clock,
-            IHttpClientFactory clients, CancellationToken cancellationToken) =>
+            ProjectRegistry projects, StructureSnapshotService structure, CancellationToken cancellationToken) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (scope is not null && scope != "workspace" && !scope.StartsWith("project:", StringComparison.Ordinal))
@@ -35,45 +32,16 @@ public static class ProjectOperatorDashboardEndpoints
                 if (project is null) return Results.NotFound();
                 projectId = project.Id;
             }
-            InstallationConnectivityManifest? manifest = null;
-            var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
-            if (!string.IsNullOrWhiteSpace(path))
-            {
-                try { manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(Path.GetFullPath(path))); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-                { return Results.Problem("Connectivity manifest is unavailable.", statusCode: 503); }
-            }
-            var selected = projects.List().Where(p => !p.Archived).ToArray();
-            var declared = StructureProjection.Build(manifest, selected,
-                environments.DeclarationFiles, projectId, environment,
-                project => git.ResolveRepoRootForProject(project.DisplayName),
-                workspaces.List().Where(workspace => projectId is null ||
-                    projects.FindById(projectId)?.WorkspaceId == workspace.Id)
-                    .SelectMany(workspace => workspace.Systems).ToArray(),
-                ManagedServiceProbes(health));
-            var deploymentFacts = selected.SelectMany(project =>
-                environments.Read(project.DisplayName)?.Environments.Select(view =>
-                    new StructureDeploymentFact(project.Id, view)) ?? []).ToArray();
-            var healthFacts = health.Overview().Environments.Join(selected,
-                view => view.Project, project => project.DisplayName,
-                (view, project) => new StructureHealthFact(project.Id, view)).ToArray();
-            IReadOnlyList<RunnerCapabilitySnapshotDto> hostFacts = hosts.ListCapabilitySnapshots();
-            if (TaskServerPlaneProxy.IsConfigured(configuration))
-            {
-                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                deadline.CancelAfter(TimeSpan.FromSeconds(5));
-                try
-                {
-                    hostFacts = await clients.CreateClient(TaskServerPlaneProxy.ClientName)
-                        .GetFromJsonAsync<RunnerCapabilitySnapshotDto[]>("/api/v1/management/remote-hosts",
-                            deadline.Token) ?? [];
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
-                { SilentCatch.Warn(ex, "StructureProjection: remote host reports unavailable"); }
-            }
-            return Results.Ok(ObservedStructureProjection.Apply(declared, hostFacts,
-                links.Snapshot(), deploymentFacts, healthFacts, releases.Current,
-                engine.State, clock.GetUtcNow().UtcDateTime, gates.Hosts()));
+            var read = await structure.ReadAsync(projectId, string.IsNullOrWhiteSpace(environment) ? null : environment,
+                cancellationToken);
+            if (read.Response is not { } response)
+                return Results.Problem(read.Error ?? "Structure is unavailable.", statusCode: 503);
+            // The revision is the entity tag: a view that already holds it gets 304 and keeps its nodes.
+            var tag = $"\"{response.Revision}\"";
+            context.Response.Headers.ETag = tag;
+            return context.Request.Headers.IfNoneMatch.ToString() == tag
+                ? Results.StatusCode(StatusCodes.Status304NotModified)
+                : Results.Ok(response);
         });
 
         app.MapGet("/api/v1/operations/structure/library", async (StructureLibraryService library,
@@ -508,24 +476,6 @@ public static class ProjectOperatorDashboardEndpoints
             { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                 statusCode: StatusCodes.Status403Forbidden),
             var refused => Results.Conflict(new { error = refused.Error }),
-        };
-    }
-
-    /// <summary>
-    /// A managed service is observed through the environment health check it
-    /// names; the control-plane worker already probes those checks. One health
-    /// read per project and request.
-    /// </summary>
-    private static Func<ProjectRecord, string, string, StructureProbe?> ManagedServiceProbes(EnvironmentHealthService health)
-    {
-        var read = new Dictionary<string, ProjectEnvironmentHealthResponse?>(StringComparer.OrdinalIgnoreCase);
-        return (project, environment, checkId) =>
-        {
-            if (!read.TryGetValue(project.DisplayName, out var response))
-                read[project.DisplayName] = response = health.Read(project.DisplayName);
-            var check = response?.Environments.FirstOrDefault(item => item.EnvironmentId == environment)?
-                .Checks.FirstOrDefault(item => item.Id == checkId);
-            return check is null ? null : new StructureProbe(check.Kind, check.Status);
         };
     }
 
