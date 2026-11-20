@@ -1,0 +1,101 @@
+{
+  "groups": {
+    "product": {
+      "capturedAt": "2026-11-17T23:33:52.971Z",
+      "commit": "2adbb4f5d717aec58852dccd62bdca1f7f258e1c",
+      "provenance": "Prebuilt frontend of this commit at #/workspace/operations/structure; every API response from the role-named fixture in capture.mjs; no backend.",
+      "frames": [
+        "today-structure-view-light--mocked.png",
+        "today-structure-view-dark--mocked.png"
+      ]
+    },
+    "prototype": {
+      "capturedAt": "2026-11-20T16:07:26.943Z",
+      "commit": "9b86cea488407893ddffd39f66be7402f61c6f89",
+      "provenance": "This Dossier's index.html in headless Chromium; reduced motion for stills; replay seek positions as named.",
+      "frames": [
+        "layer-perf-light-1440.png",
+        "layer-storage-light-1440.png",
+        "layer-backup-light-1440.png",
+        "layer-warnings-light-1440.png",
+        "layer-health-light-1440.png",
+        "layer-version-light-1440.png",
+        "layer-drift-light-1440.png",
+        "assessment-rejected-light-1440.png",
+        "replay-tunnel-down-light-1440.png",
+        "level-1-light-1440.png",
+        "level-2-light-1440.png",
+        "level-3-light-1440.png",
+        "level-4-light-1440.png",
+        "view-2d-light-1440.png",
+        "view-25d-light-1440.png",
+        "layer-perf-light-390.png",
+        "layer-storage-light-390.png",
+        "layer-backup-light-390.png",
+        "layer-warnings-light-390.png",
+        "layer-health-light-390.png",
+        "layer-version-light-390.png",
+        "layer-drift-light-390.png",
+        "layer-perf-dark-1440.png",
+        "layer-storage-dark-1440.png",
+        "layer-backup-dark-1440.png",
+        "layer-warnings-dark-1440.png",
+        "layer-health-dark-1440.png",
+        "layer-version-dark-1440.png",
+        "layer-drift-dark-1440.png",
+        "assessment-rejected-dark-1440.png",
+        "replay-tunnel-down-dark-1440.png",
+        "layer-perf-dark-390.png",
+        "layer-storage-dark-390.png",
+        "layer-backup-dark-390.png",
+        "layer-warnings-dark-390.png",
+        "layer-health-dark-390.png",
+        "layer-version-dark-390.png",
+        "layer-drift-dark-390.png"
+      ]
+    },
+    "video": {
+      "capturedAt": "2026-11-20T16:08:10.905Z",
+      "commit": "9b86cea488407893ddffd39f66be7402f61c6f89",
+      "provenance": "Replay of the recorded deltas at speed 2, light theme, 1440 by 900, recorded with Playwright and scaled to 1280 by 800.",
+      "frames": [
+        "replay-recording-poster.png",
+        "replay-recording.webm"
+      ]
+    },
+    "filmstrip": {
+      "capturedAt": "2026-11-20T16:10:36.250Z",
+      "commit": "9b86cea488407893ddffd39f66be7402f61c6f89",
+      "provenance": "Six frames of the canvas during the live replay at speed 1, motion Lively, light theme, 1440 by 900, composed into one image with their captions.",
+      "frames": [
+        "replay-filmstrip-light-1440.png"
+      ],
+      "moments": [
+        {
+          "replaySecond": 4.5,
+          "caption": "Card 101 finished coding: a token leaves runner daemon A for the gate host"
+        },
+        {
+          "replaySecond": 9.7,
+          "caption": "Batch gate runs on the gate host; a deploy step runs on the web container"
+        },
+        {
+          "replaySecond": 12.5,
+          "caption": "The deploy restarts the web container"
+        },
+        {
+          "replaySecond": 19.1,
+          "caption": "Gate passed: the token moves on to review host 2"
+        },
+        {
+          "replaySecond": 25.9,
+          "caption": "The tunnel drops: link broken, home-lab health not observed"
+        },
+        {
+          "replaySecond": 34.5,
+          "caption": "Tunnel back; review passed and the token returns to the API"
+        }
+      ]
+    }
+  }
+}
