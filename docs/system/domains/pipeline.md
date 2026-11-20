@@ -3090,13 +3090,28 @@ operator changes cause the step to fail before its writer runs.
   merge, independent of `ReviewDecisionOrchestrator:Enabled`:
   - Before the merge, Dossier placement fetches the fenced result and requires
     its diff against the integration line to stay inside exactly one
-    `docs/<slug>/` directory. The Dossier at that commit must pass the
+    `docs/<slug>/` directory. The diff starts at the merge base of the result
+    with the whole integration line: the Studio lane, a freshly fetched
+    `origin/<branch>`, and the run's recorded base when that line carries it
+    (`GitService.ChangedPathsAgainstIntegrationLine`, AGT-3964). The runner
+    merges the integration branch into the concept branch at the start of
+    every round, and the lane only catches up with origin at the next merge,
+    so a diff against the lane alone counted develop's own files and Dossiers
+    as the concept's change (AGT-3951). The Dossier at that commit must pass the
     concept contract, and `results/deliverables.md` must name it. The
     backend-owned `status.md` keeps that reference, as summary generation
     does. A refused delivery merges nothing. Its merge row records failure
     code `concept-dossier-rejected` with `Dossier placement failed:
     <findings>`. The delivery-chain reconciler then escalates the
     integrating card with that reason.
+  - `concept-dossier-rejected` is replayable (`ReplayAvailable`): Retry
+    integration (`POST /api/tasks/{id}/integration/retry`) replays the same
+    reviewed delivery through `ConceptDeliveryPostSteps`, so placement runs
+    again without a new agent round and the passed review is reused. A
+    Dossier already on the integration branch at the delivered content merges
+    as a no-op and is recorded as placed. An Escalated card that integrates
+    this way returns to Human Review with its Dossier linked. The automatic
+    gate-environment ladder never replays it.
   - After the merge, placement writes `.metadata/concept-workbench.json` with
     the integrated commit. Concept review reruns on that commit. The step then
     writes the `concept-sight-review` marker. An integrated but incomplete
