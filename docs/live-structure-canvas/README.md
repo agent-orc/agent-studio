@@ -1,44 +1,32 @@
 # Live structure canvas (AGT-3955)
 
-Concept Dossier. Open [index.html](index.html); decisions and slices are in [workbench.json](workbench.json).
+Concept Dossier. Start at `index.html`, the decision page; `context.html`, `layers.html`, `live.html` and `stack.html` are the chapters, `prototype.html` is the live prototype, and decisions and slices are in `workbench.json`. `stack.html`, section Dossier files, lists every file.
 
-`index.html` is self-contained and generated; `src/` is the readable source. Edit the sources, then rebuild and check from the repository root:
+The pages are their own source. `build.mjs` refreshes only the regions between `<!--g:KEY-->` and `<!--/g-->` (style, navigation, tables, numbers) and writes `prototype.html` and `schema/` from `src/`. From the repository root:
 
 ```sh
-node docs/live-structure-canvas/build.mjs     # src/*, workbench.json, bench results, assets -> index.html, schema/; checks the review snapshot
-node docs/live-structure-canvas/capture.mjs   # assets/: today's view (needs npm --prefix frontend run build, else kept from the last run), layers, levels, replay video, filmstrip
+node docs/live-structure-canvas/build.mjs     # regions, prototype.html, schema/; fails if the review would not receive a page whole
+node docs/live-structure-canvas/capture.mjs   # assets/: layers, levels, replay recording, filmstrip; today's view needs npm --prefix frontend run build
 node docs/live-structure-canvas/verify.mjs    # static and browser check, light and dark, 390 and 1440 px; writes assets/real-scene-metrics.json
-node docs/live-structure-canvas/build.mjs     # again, to take the real-scene metrics into the Budget table
+node docs/live-structure-canvas/build.mjs     # again, to take the measurements into the pages
 ```
 
-## Review snapshot
+## Why several pages
 
-The concept review reads `index.html`, `workbench.json` and every file they link through a relative `href`, `src` or Markdown link: at most 256,000 characters a file, 512,000 in total and 64 files, images included (`backend/Features/Runner/ConceptDossierReviewMaterial.cs`). A file over a limit is left out and the review cannot be completed. Three rules keep the whole Dossier inside:
+The concept review reads a first delivery as a diff, cut to 40,000 characters a file, 580,000 characters and 12,000 lines in total (`runner/ReviewAspectInputBudget.cs`, `runner/SourceFacts/MergeBaseDiffMaterial.cs`). Its snapshot of linked files (256,000 characters a file, 512,000 in total, 64 files, `backend/Features/Runner/ConceptDossierReviewMaterial.cs`) comes from the Studio's own checkout, which holds a Dossier only after integration. Rules that keep the Dossier reviewable:
 
-- The build inlines the prototype minified (esbuild from `frontend/node_modules`) and fails when `index.html` passes 240,000 characters.
-- Other Dossiers are named by repository path in `code`, never hyperlinked. One relative link to another Dossier pulls that Dossier and everything it links into the snapshot.
-- `index.html` links its own evidence files and lists `src/` by name, because the same code is already in the page.
+- Every authored file stays under 40,000 characters as a diff. The style block is the canonical article style, minified by the build.
+- `prototype.html` is the one generated file above that limit: the Studio's Dossier viewer runs inline scripts only, so the prototype has to be a single file.
+- Other Dossiers are named by repository path, never hyperlinked: one relative link pulls that Dossier and everything it links into the snapshot.
+- A concept delivery changes only this directory. Links from other Dossiers to this one are slice LSC-10.
 
-`review-snapshot.mjs` reproduces the snapshot (`node docs/live-structure-canvas/review-snapshot.mjs` prints it). `build.mjs` and `verify.mjs` fail when it names a file as missing, over budget, not inspected or outside this Dossier.
+`review-input.mjs` ports both inputs with their limits and prints them; `build.mjs` and `verify.mjs` fail when a file a reviewer must read would be missing, cut or left out.
 
 ## Benchmark
 
-Renderer and chart benchmark (packages are installed outside the repository):
+Packages are installed outside the repository:
 
 ```sh
 npm install --prefix /tmp/lsc-bench --ignore-scripts pixi.js@8.23.0 cytoscape@3.35.0 three@0.187.0 uplot@1.6.32 echarts@6.1.0 chart.js@4.6.1
 node docs/live-structure-canvas/bench/run.mjs /tmp/lsc-bench   # writes bench/results.json
 ```
-
-| File | Role |
-|---|---|
-| `src/engine.js` | Canvas 2D engine: layout, camera, semantic zoom, 2D and 2.5D projection, link bundling, layer cache, particles, tokens, effects, hit testing |
-| `src/layers.js` | The seven layers: data, encoding, legend and drawing hooks |
-| `src/spec.js` | `structure-view-spec/v1` schema and validator (single source of `schema/`) |
-| `src/model.js` | Role-named facts of the installation, recorded deltas, persona specifications |
-| `src/app.js` | Prototype controller: controls, personas, replay, minimap, search, keyboard, outline |
-| `src/canvas.css`, `src/prototype.html`, `src/index.template.html` | Styles on the article tokens, prototype markup, Dossier text |
-| `bench/` | Synthetic scene, candidate adapters, chart dashboards, runner and `results.json` |
-| `review-snapshot.mjs` | Port of the concept review's snapshot walk and limits; used by the build and the browser check |
-| `schema/` | Generated JSON Schema of the view specification and an example |
-| `assets/` | Evidence captures, replay recording, `capture-manifest.json`, `real-scene-metrics.json` |

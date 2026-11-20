@@ -127,12 +127,19 @@ for (const [mode, args] of Object.entries(MODES)) {
     console.error(mode, name, JSON.stringify(runs.map(r => r.failed || [r.panZoom?.fps, r.panZoom?.renderFps, r.panZoom?.frameP95, r.idle?.browserCpuPct, r.flow?.browserCpuPct, r.flow?.framesPerSec])));
   }
 }
-if (process.env.LSC_BENCH_SKIP_CHARTS) { writeFileSync(resolve(dir, 'results.json'), JSON.stringify(results, null, 2) + '\n'); process.exit(0); }
+if (process.env.LSC_BENCH_SKIP_CHARTS) { writeFileSync(resolve(dir, 'results.json'), compact(results)); process.exit(0); }
 for (const [name, entry] of [['uplot', 'chart-uplot.js'], ['echarts', 'chart-echarts.js'], ['chartjs', 'chart-chartjs.js']]) {
   const runs = [];
   for (let i = 0; i < RUNS; i++) runs.push(await measure(name, await bundle(entry, name), 'chart'));
   results.charts.push({ name, runs });
   console.error(name, JSON.stringify(runs.map(r => r.init)));
 }
-writeFileSync(resolve(dir, 'results.json'), JSON.stringify(results, null, 2) + '\n');
+writeFileSync(resolve(dir, 'results.json'), compact(results));
 console.log(JSON.stringify(results.sizes, null, 1));
+// One run a line: the file is evidence a reviewer reads, and the review cuts long files.
+function compact(o, depth = 0) {
+  const pad = '  '.repeat(depth), flat = v => v === null || typeof v !== 'object';
+  if (flat(o) || depth >= 3 || Object.values(o).every(flat)) return JSON.stringify(o) + (depth ? '' : '\n');
+  const rows = Array.isArray(o) ? o.map(v => compact(v, depth + 1)) : Object.entries(o).map(([k, v]) => JSON.stringify(k) + ': ' + compact(v, depth + 1));
+  return (Array.isArray(o) ? '[' : '{') + '\n' + rows.map(r => pad + '  ' + r).join(',\n') + '\n' + pad + (Array.isArray(o) ? ']' : '}') + (depth ? '' : '\n');
+}

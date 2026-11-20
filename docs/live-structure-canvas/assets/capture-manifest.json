@@ -10,9 +10,9 @@
       ]
     },
     "prototype": {
-      "capturedAt": "2026-11-20T16:07:26.943Z",
-      "commit": "9b86cea488407893ddffd39f66be7402f61c6f89",
-      "provenance": "This Dossier's index.html in headless Chromium; reduced motion for stills; replay seek positions as named.",
+      "capturedAt": "2026-11-20T17:56:43.130Z",
+      "commit": "8172a872d4d949cca800cd2e04ea79033554bc15",
+      "provenance": "This Dossier's prototype.html in headless Chromium; reduced motion for stills; replay seek positions as named.",
       "frames": [
         "layer-perf-light-1440.png",
         "layer-storage-light-1440.png",
@@ -55,17 +55,16 @@
       ]
     },
     "video": {
-      "capturedAt": "2026-11-20T16:08:10.905Z",
-      "commit": "9b86cea488407893ddffd39f66be7402f61c6f89",
+      "capturedAt": "2026-11-20T17:57:25.938Z",
+      "commit": "8172a872d4d949cca800cd2e04ea79033554bc15",
       "provenance": "Replay of the recorded deltas at speed 2, light theme, 1440 by 900, recorded with Playwright and scaled to 1280 by 800.",
       "frames": [
-        "replay-recording-poster.png",
         "replay-recording.webm"
       ]
     },
     "filmstrip": {
-      "capturedAt": "2026-11-20T16:10:36.250Z",
-      "commit": "9b86cea488407893ddffd39f66be7402f61c6f89",
+      "capturedAt": "2026-11-20T17:57:51.835Z",
+      "commit": "8172a872d4d949cca800cd2e04ea79033554bc15",
       "provenance": "Six frames of the canvas during the live replay at speed 1, motion Lively, light theme, 1440 by 900, composed into one image with their captions.",
       "frames": [
         "replay-filmstrip-light-1440.png"
@@ -80,19 +79,19 @@
           "caption": "Batch gate runs on the gate host; a deploy step runs on the web container"
         },
         {
-          "replaySecond": 12.5,
+          "replaySecond": 12.6,
           "caption": "The deploy restarts the web container"
         },
         {
-          "replaySecond": 19.1,
+          "replaySecond": 19,
           "caption": "Gate passed: the token moves on to review host 2"
         },
         {
-          "replaySecond": 25.9,
+          "replaySecond": 25.8,
           "caption": "The tunnel drops: link broken, home-lab health not observed"
         },
         {
-          "replaySecond": 34.5,
+          "replaySecond": 34.3,
           "caption": "Tunnel back; review passed and the token returns to the API"
         }
       ]

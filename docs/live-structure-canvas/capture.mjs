@@ -116,7 +116,7 @@ async function captureProduct(browser) {
 }
 
 // ---------- 2. prototype ----------
-const url = pathToFileURL(resolve(dir, 'index.html')).href;
+const url = pathToFileURL(resolve(dir, 'prototype.html')).href;
 async function proto(browser, theme, width, fn, opts = {}) {
   const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme, reducedMotion: opts.reduce === false ? 'no-preference' : 'reduce', ...(opts.video ? { recordVideo: opts.video } : {}) });
   const page = await context.newPage();
@@ -177,7 +177,7 @@ async function captureProto(browser) {
       });
     }
   }
-  report.provenance = 'This Dossier\'s index.html in headless Chromium; reduced motion for stills; replay seek positions as named.';
+  report.provenance = 'This Dossier\'s prototype.html in headless Chromium; reduced motion for stills; replay seek positions as named.';
 }
 
 async function captureVideo(browser) {
@@ -191,10 +191,7 @@ async function captureVideo(browser) {
     await page.locator('[data-control="speed"] button[data-value="2"]').click();
     await page.waitForTimeout(1200);
     await page.locator('#lsc-play').click();
-    await page.waitForTimeout(6500);
-    await page.screenshot({ path: resolve(assets, 'replay-recording-poster.png') });
-    report.frames.push('replay-recording-poster.png');
-    await page.waitForTimeout(17000);
+    await page.waitForTimeout(23500);
   }, { reduce: false, video: { dir: tmp, size: { width: 1280, height: 800 } } });
   const file = readdirSync(tmp).find(f => f.endsWith('.webm'));
   renameSync(resolve(tmp, file), resolve(assets, 'replay-recording.webm'));
