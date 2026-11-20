@@ -1,4 +1,5 @@
-<section class="structure-view" [class.structure-view--embedded]="embedded()" data-testid="structure-view" aria-label="Structure and library registries" [attr.data-overlay]="overlay()">
+<section class="structure-view" [class.structure-view--embedded]="embedded()" data-testid="structure-view" aria-label="Structure and library registries" [attr.data-overlay]="overlay()"
+         [attr.data-live]="live()" [attr.data-revision]="data().revision ?? null">
   <header class="structure-header">
     <div><p class="structure-eyebrow">Operations</p><h1>Structure</h1>
       <p>{{ projectName() ? projectName() + ' partial picture' : 'Workspace whole picture' }}</p></div>
@@ -75,7 +76,7 @@
                [attr.data-collapsed]="item.box.collapsed && item.box.children.length > 0"
                [attr.data-selected]="selected() === item.id" [attr.data-other-project]="item.box.otherProject || null"
                [attr.data-observation]="item.box.probeObservation || null"
-               [attr.data-difference]="item.box.observation?.difference ?? 'declared-only'"
+               [attr.data-difference]="item.box.observation?.difference ?? 'declared-only'" [attr.data-hatched]="hatched(item.box) || null"
                [attr.data-health]="item.box.observation?.health ?? 'not observed'"
                [style.left.px]="item.x" [style.top.px]="item.y" [style.width.px]="item.w" [style.height.px]="item.h">
             <button type="button" class="structure-node" [attr.data-node-id]="item.id"
@@ -88,7 +89,7 @@
               <span class="structure-observation-state" [attr.data-state]="stateWord(item.box.observation)">
                 <span aria-hidden="true">{{ stateGlyph(item.box.observation) }}</span> {{ stateWord(item.box.observation) }}
               </span>
-              @if (item.box.observation?.difference === 'undeclared') { <span class="structure-chip">not declared</span> }
+              @if (undeclared(item.box)) { <span class="structure-chip" title="Observed, not declared">not declared</span> }
               @if (item.box.replicas > 1) { <span class="structure-replicas">×{{ item.box.replicas }}</span> }
               @if (status(item.box); as status) {
                 <svg class="structure-status" [attr.data-status]="status.tone" viewBox="-7 -7 14 14" role="img"
@@ -134,7 +135,7 @@
               <path class="structure-link" [attr.data-kind]="link.kind" d="M0 4 H24" />
             </svg>
             <span>{{ link.label }}{{ link.count > 1 ? ' ×' + link.count : '' }} · {{ link.kind }} ·
-              {{ link.fromLabel }} → {{ link.toLabel }} · {{ stateGlyph(linkObservation(link)) }} {{ stateWord(linkObservation(link)) }}</span></li>
+              {{ link.fromLabel }} → {{ link.toLabel }} · {{ stateGlyph(linkObservation(link)) }} {{ stateWord(linkObservation(link)) }}{{ linkLatency(link) }}</span></li>
         }
       </ol>
       <ul class="structure-link-key" aria-label="Connection actions">
@@ -173,6 +174,16 @@
             }
           }
         </section>
+        @if (undeclared(node) || selectedFacts().length) {
+          <section class="structure-facts" data-testid="structure-facts" aria-label="Node facts">
+            @if (undeclared(node)) { <p class="structure-facts-origin">Observed, not declared</p> }
+            @if (selectedFacts().length) {
+              <dl>
+                @for (fact of selectedFacts(); track fact.label) { <div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div> }
+              </dl>
+            }
+          </section>
+        }
       }
       @for (box of visible(); track box.id) {
         <button type="button" [attr.data-outline-id]="box.id" [attr.data-other-project]="box.otherProject || null"
