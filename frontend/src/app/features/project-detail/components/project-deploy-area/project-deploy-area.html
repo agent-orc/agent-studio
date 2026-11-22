@@ -81,7 +81,7 @@
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading…</p> } }
         @case ('flow') { @defer { <app-flow-health-page [projectName]="projectName()" (openDetail)="openFlowDetail($event)" /> } @placeholder { <p>Loading flow health…</p> } }
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" (openFlowHealth)="show('flow')" /> }
-        @case ('runbooks') { @defer { <app-project-environment-overview [projectName]="projectName()" heading="Runbooks" (openDeploy)="show('overview')" /> } @placeholder { <p>Loading runbooks…</p> } }
+        @case ('runbooks') { @defer { <app-project-environment-overview [projectName]="projectName()" [focusedEnvironment]="focusedEnvironment()" heading="Runbooks" (openDeploy)="show('overview')" /> } @placeholder { <app-loading-surface kind="list" label="Loading runbooks…" /> } }
         @case ('operations') {
           <app-environment-health-panel [projectName]="projectName()" [incidentAction]="incidentRollback" />
           @defer { <app-project-operations [projectName]="projectName()" (openRelease)="openRelease($event)" (openCard)="openCard($event)" /> }
@@ -101,8 +101,9 @@
         }
         @case ('tools') {
           <section class="deploy-section"><button type="button" (click)="show('overview')">Back to overview</button><h2>Deployment tools</h2></section>
-          <app-project-deployment-panel [projectName]="projectName()" [rollbackOffers]="rollback.offers()"
-            [rollbackBusy]="rollback.state().environmentId" [now]="now()" (rollback)="rollback.request($event)" />
+          <app-project-deployment-panel [projectName]="projectName()" [focusedEnvironment]="focusedEnvironment()"
+            [rollbackOffers]="rollback.offers()" [rollbackBusy]="rollback.state().environmentId" [now]="now()"
+            (rollback)="rollback.request($event)" />
         }
       }
     </div>

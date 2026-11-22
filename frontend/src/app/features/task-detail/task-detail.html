@@ -1,4 +1,5 @@
 <div class="detail">
+  @if (!isHealthIncident()) {
   <app-mobile-lane-primary [primary]="mobilePrimary()" [job]="detail().info" [mutationsBlocked]="mutationsBlocked()"
                            (pressed)="mobilePrimaryRequest.emit()" />
   <app-task-resource-status />
@@ -108,9 +109,14 @@
     (openInVsCode)="openInVsCode()" />
 
   <app-mobile-pane-switcher [showGit]="detail().info.mode !== 'concept'" />
+  }
 
   <div class="detail__panes" [class.detail__panes--maximized]="!!maximizedPane() && !(detail().info.mode === 'concept' && maximizedPane() === 'git')"
+       [class.detail__panes--incident]="isHealthIncident()"
        [attr.data-mobile-pane]="detail().info.mode === 'concept' && layout.mobilePane() === 'git' ? (panesVisible().prompt ? 'prompt' : 'protocol') : layout.mobilePane()" data-testid="detail-panes">
+    @if (isHealthIncident()) {
+      <app-health-incident-card [detail]="detail()" />
+    } @else {
     @if (layout.isPaneRendered('prompt') || (detail().info.mode === 'concept' && maximizedPane() === 'git' && panesVisible().prompt)) {
       <app-prompt-pane
         #promptPaneRef
@@ -210,9 +216,10 @@
     @if (!panesVisible().prompt && !panesVisible().protocol && (detail().info.mode === 'concept' || !panesVisible().git)) {
       <div class="detail__panes-empty">All panels hidden — re-enable one above.</div>
     }
+    }
   </div>
 
-  @if (showLogOverlay()) {
+  @if (!isHealthIncident() && showLogOverlay()) {
     <app-log-overlay
       [cliOutput]="cliOutput()"
       [log]="detail().log"

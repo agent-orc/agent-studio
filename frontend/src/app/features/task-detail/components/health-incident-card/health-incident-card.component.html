@@ -1,0 +1,17 @@
+<article class="health-incident" data-testid="health-incident-card">
+  <header class="health-incident__head">
+    <div>
+      <app-status-indicator tone="neutral" label="Incident record" [compact]="true" testId="health-incident-status" />
+      <h1>{{ detail().info.title }}</h1>
+      <p>{{ detail().info.projectName }}</p>
+    </div>
+    <nav class="health-incident__actions" aria-label="Incident actions">
+      @if (operations(); as href) { <a [href]="href" class="health-incident__action health-incident__action--primary" data-testid="incident-open-operations">Open Operations</a> }
+      @if (rollback(); as href) { <a [href]="href" class="health-incident__action" data-testid="incident-roll-back">Roll back</a> }
+      @if (runbook(); as href) { <a [href]="href" class="health-incident__action" data-testid="incident-run-runbook">Run runbook</a> }
+    </nav>
+  </header>
+  <section class="health-incident__record" aria-label="Incident evidence">
+    <cac-markdown [source]="evidence()" />
+  </section>
+</article>

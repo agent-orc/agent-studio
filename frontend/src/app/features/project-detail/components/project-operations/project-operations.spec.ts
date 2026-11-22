@@ -162,6 +162,25 @@ describe('ProjectOperationsComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="operations-logs-empty"]')).not.toBeNull();
   });
 
+  it('opens the incident window from an Operations link', async () => {
+    const previousHash = window.location.hash;
+    window.history.replaceState(null, '', '#/projects/PROJ-002/deploy?view=operations&environmentId=prod&since=2026-10-19T08%3A00%3A00Z');
+    try {
+      const fixture = TestBed.createComponent(ProjectOperationsComponent);
+      fixture.componentRef.setInput('projectName', 'demo');
+      fixture.detectChanges();
+      const requests = TestBed.inject(HttpTestingController);
+      requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+      const logs = requests.expectOne(req => req.url.endsWith('/deploy/operations/logs'));
+      expect(logs.request.params.get('environmentId')).toBe('prod');
+      expect(logs.request.params.get('since')).toBe('2026-10-19T08:00:00.000Z');
+      logs.flush({ telemetryAvailable: true, lines: [] });
+      fixture.destroy();
+    } finally {
+      window.history.replaceState(null, '', previousHash || '/');
+    }
+  });
+
   it('loads another log page without losing the first page and names a failed store read', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');

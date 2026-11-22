@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { ProjectRunbooksComponent } from '../project-runbooks/project-runbooks';
 import { ProjectOperationsRailComponent } from '../project-operations-rail/project-operations-rail';
@@ -26,10 +26,15 @@ export class ProjectEnvironmentOverviewComponent {
   private readonly clock = inject(DEPLOY_CLOCK);
   readonly projectName = input.required<string>();
   readonly heading = input('Operations');
+  readonly focusedEnvironment = input<string | null>(null);
   readonly openDeploy = output<void>();
   readonly openRelease = output<string>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
   readonly environments = signal<readonly EnvironmentRow[]>([]);
+  /** An incident's Runbooks link names one environment; the others stay out of the way. */
+  readonly visibleEnvironments = computed(() => this.focusedEnvironment()
+    ? this.environments().filter(item => item.state.id === this.focusedEnvironment())
+    : this.environments());
   readonly now = signal(this.clock());
   readonly loading = signal(true);
   readonly failed = signal(false);

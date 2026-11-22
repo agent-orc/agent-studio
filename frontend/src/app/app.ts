@@ -1291,12 +1291,14 @@ export class App implements OnInit, OnDestroy {
   // review panel carries its one decision.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
+    if (sel?.info.creationSource === 'environment-health' && sel.info.id.startsWith('health-')) return null;
     return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
       && !this.reviewerSession.reviewsOnly(sel.info.projectName)
       ? primaryActionForTask(sel.info) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
+    if (sel?.info.creationSource === 'environment-health' && sel.info.id.startsWith('health-')) return [];
     return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
       && !this.reviewerSession.reviewsOnly(sel.info.projectName)
       ? overflowActionsFor(sel.info.state) : [];
@@ -1365,7 +1367,9 @@ export class App implements OnInit, OnDestroy {
   readonly studioTabActionsTask = computed<TaskDetail | null>(() => {
     if (this.studioTabState.activeTab()?.kind !== 'task') return null;
     if (this.detailPreview() || this.detailLoading() || this.detailLoadError()) return null;
-    return this.selectedJob();
+    const selected = this.selectedJob();
+    return selected?.info.creationSource === 'environment-health' && selected.info.id.startsWith('health-')
+      ? null : selected;
   });
 
   readonly studioTabActionsPager = computed<StudioTabPager>(() => ({

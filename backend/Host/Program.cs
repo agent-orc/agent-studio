@@ -771,6 +771,7 @@ builder.Services.AddSingleton<HealthCheckStore>();
 builder.Services.AddSingleton<IncidentActions>();
 builder.Services.AddSingleton<TelemetryAlertReader>();
 builder.Services.AddSingleton<HealthAlerts>();
+builder.Services.AddSingleton<IHealthIncidentContext, HealthIncidentContextReader>();
 builder.Services.AddHttpClient(IncidentWebhookService.HttpClientName, client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan;
