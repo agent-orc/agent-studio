@@ -38,6 +38,7 @@ const HEALTH_TONE: Readonly<Record<HealthState, StatusTone>> = {
   'crash-loop': 'danger',
   'crash-rollback': 'danger',
   'not-observed': 'neutral',
+  'not-deployed': 'neutral',
 };
 
 export function healthStateTone(state: string | null | undefined): StatusTone {
