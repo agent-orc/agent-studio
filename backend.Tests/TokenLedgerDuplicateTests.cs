@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using AgentStudio.Registry;
 using AgentStudio.Tasks;
@@ -345,8 +346,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
     {
         WriteTask(Agt3004Receipt());
         var (scanner, _, _) = BuildWriteServices();
-        var service = new ProjectPipelineCostService(TokenTestServices.Pricing(),
-            scanner, new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance), new ProjectTokenReceiptReader());
+        var service = BuildPipelineCost(scanner);
 
         var timeline = service.Build(ProjectName, _watchPath, 30, CodexAt.AddDays(1));
 
@@ -421,8 +421,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         Assert.Equal(expected.Total, lifetime.EstimatedApiCostUsd);
 
         var (scanner, _, _) = BuildWriteServices();
-        var timeline = new ProjectPipelineCostService(TokenTestServices.Pricing(),
-                scanner, new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance), new ProjectTokenReceiptReader())
+        var timeline = BuildPipelineCost(scanner)
             .Build(ProjectName, _watchPath, 30, CodexAt.AddDays(1));
         Assert.Equal(1_100, timeline.TotalTokens);
         Assert.Equal(decimal.Round(expected.Total, 2), decimal.Round(timeline.TotalCostUsd, 2));
@@ -585,6 +584,18 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
                 ["WatchPaths:0:Path"] = _watchPath,
             })
             .Build();
+
+    private ProjectPipelineCostService BuildPipelineCost(TaskScannerService scanner)
+    {
+        var config = BuildConfig();
+        var pricing = TokenTestServices.Pricing();
+        var store = new AgentMessageBusStore();
+        var analysis = new TokenAnalysisService(pricing, scanner,
+            new PipelineExecutionLog(pricing, NullLogger<PipelineExecutionLog>.Instance),
+            new ProjectTokenLedger(store, config, new ProjectTokenReceiptReader()), store, config,
+            new FakeTimeProvider(new DateTimeOffset(CodexAt.AddDays(1))));
+        return new ProjectPipelineCostService(pricing, analysis);
+    }
 
     private TokenAggregationService BuildProjectReader(AgentMessageBusStore? store = null)
     {

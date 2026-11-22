@@ -37,13 +37,13 @@ public sealed class Gpt6TokenPricingTests
     [InlineData("gpt-6.1-sol", 2.0, 0.10, 10.0)]
     public void Gpt6_prices_resolve_from_TokenEconomy(string model, double input, double cached, double output)
     {
-        var estimate = TokenTestServices.Pricing().Estimate(model, 1_000_000, 1_000_000, 1_000_000, 0, AfterRelease);
+        var estimate = TokenTestServices.Pricing().Estimate(model, 100_000, 100_000, 100_000, 0, AfterRelease);
 
         Assert.True(estimate.ModelKnown);
         Assert.Equal((decimal)input, estimate.PriceBasis!.InputPerMillion);
         Assert.Equal((decimal)cached, estimate.PriceBasis.CacheReadPerMillion);
         Assert.Equal((decimal)output, estimate.PriceBasis.OutputPerMillion);
-        Assert.Equal((decimal)(input + cached + output), estimate.Total);
+        Assert.Equal((decimal)(input + cached + output) / 10m, estimate.Total);
     }
 
     [Theory]
@@ -83,11 +83,11 @@ public sealed class Gpt6TokenPricingTests
     [Fact]
     public void Gpt61Sol_UsesThePublishedCacheWritePrice()
     {
-        var estimate = TokenTestServices.Pricing().Estimate(ModelIds.Gpt61Sol, 0, 0, 0, 1_000_000, AfterRelease);
+        var estimate = TokenTestServices.Pricing().Estimate(ModelIds.Gpt61Sol, 0, 0, 0, 100_000, AfterRelease);
 
         Assert.True(estimate.ModelKnown);
         Assert.Equal(2.50m, estimate.PriceBasis!.CacheWritePerMillion);
-        Assert.Equal(2.50m, estimate.Total);
+        Assert.Equal(0.25m, estimate.Total);
     }
 
     [Fact]

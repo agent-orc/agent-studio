@@ -303,4 +303,24 @@ public sealed class TokenAnalysisFoldTests
         Assert.Equal(5, weekly.Points.Count);
         Assert.Contains(windows, window => window.Window == "5h");
     }
+
+    [Fact]
+    public void Review_receipts_are_labelled_by_their_step_not_by_the_receipt_topic()
+    {
+        var calls = new[]
+        {
+            Call(T0, "support:remote-review:attempt-1:step:aspect-code-quality:usage:0", "task-token-receipt",
+                "claude-opus-5-5", 100, 10),
+            Call(T0.AddMinutes(1), "support:review-attempt:attempt-1:step:post-code-review-grade", "task-token-receipt",
+                "claude-opus-5-5", 50, 5),
+            Call(T0.AddMinutes(2), "support:adhoc", "auto-tag", "claude-haiku-5-5", 20, 2),
+        };
+
+        var items = TokenAnalysisFold.Items(Pricing, new TokenAnalysisJobInput("job-1", null, null, calls));
+
+        Assert.Equal(["aspect-code-quality", "post-code-review-grade", "auto-tag"],
+            items.OrderBy(item => item.At).Select(item => item.Label));
+        Assert.Equal(TokenUsageKinds.ReviewAspect, items.Single(item => item.Label == "aspect-code-quality").Kind);
+        Assert.Equal(TokenUsageKinds.ReviewGrade, items.Single(item => item.Label == "post-code-review-grade").Kind);
+    }
 }

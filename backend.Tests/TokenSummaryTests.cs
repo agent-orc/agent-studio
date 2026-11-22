@@ -131,7 +131,9 @@ public class TokenSummaryTests
     [Fact]
     public void Summarize_Gpt61SolLedgerRow_IsInPinnedCatalog()
     {
-        var entry = Entry(ModelIds.Gpt61Sol, 1_000_000, 100_000, cacheRead: 500_000) with
+        // Stays below the 272K long-context tier of the pinned catalogue: a
+        // larger aggregate without a request size is AmbiguousPromptSize.
+        var entry = Entry(ModelIds.Gpt61Sol, 100_000, 10_000, cacheRead: 50_000) with
         {
             Ts = new DateTime(2026, 10, 4, 0, 0, 0, DateTimeKind.Utc),
         };

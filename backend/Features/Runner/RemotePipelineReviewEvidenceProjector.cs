@@ -361,8 +361,10 @@ public sealed class RemotePipelineReviewEvidenceProjector
                 CompletedAt = receivedAt,
                 DurationMs = first is null || last is null ? 0
                     : Math.Max(0, (long)(last.FinishedAt - first.StartedAt).TotalMilliseconds),
-                Model = last?.Model,
-                ReviewCli = CliFromExecutable(last?.FileName),
+                CostBasis = StepCostBasis.Deterministic,
+                TokenUsageSource = "Remote review grading policy; no model call",
+                Model = null,
+                ReviewCli = null,
                 Verdict = gradeVerdict,
                 VerdictSummary = report.Summary,
                 Reason = $"Remote Review attempt {number}: {report.Summary ?? report.Outcome}",

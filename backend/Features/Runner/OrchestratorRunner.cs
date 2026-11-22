@@ -528,6 +528,8 @@ public class OrchestratorRunner
                 usage = new OrchestratorTokenUsage
                 {
                     Model = declaredModel ?? modelId,
+                    ThinkingLevel = root.TryGetProperty("thinkingLevel", out var level) && level.ValueKind == JsonValueKind.String
+                        ? level.GetString() : null,
                     InputTokens          = TryGetInt(u, "input_tokens"),
                     OutputTokens         = TryGetInt(u, "output_tokens"),
                     CacheReadTokens      = TryGetInt(u, "cache_read_input_tokens"),

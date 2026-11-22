@@ -152,7 +152,7 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
                 workerDirectory,
                 (stream, line) =>
                 {
-                    _log($"review-agent step={command.StepId} stream={stream} {line}");
+                    _log($"review-agent step={command.StepId} stream={stream}");
                     if (firstUsage is not null && stream == "stdout"
                         && ClaudeSharedPrefixLaunch.TryReadFirstUsage(line, command.Model, out var usage)
                         && Interlocked.Exchange(ref firstUsage, null) is { } notify)
@@ -196,17 +196,24 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
                 CodingAgentRunner.Model.CliPermissionModes.ReadOnly,
                 CodingAgentRunner.Model.CliContextModes.Clean));
 
-    private static RemoteAgentUsage ParseUsage(string stdout, string model, string cliType)
+    internal static RemoteAgentUsage ParseUsage(string stdout, string model, string cliType)
     {
         var result = new RemoteAgentUsage(model, 0, 0, 0, 0, null);
+        var messages = new Dictionary<string, RemoteAgentUsage>(StringComparer.Ordinal);
+        var terminalSeen = false;
+        var messageIndex = 0;
         foreach (var line in stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
             try
             {
                 using var document = JsonDocument.Parse(line);
-                if (!TryJsonProperty(document.RootElement, "usage", out var usage)
+                var root = document.RootElement;
+                var assistant = TryJsonProperty(root, "type", out var type) && type.ValueKind == JsonValueKind.String && type.GetString() == "assistant";
+                var envelope = assistant && TryJsonProperty(root, "message", out var message) ? message : root;
+                if (!TryJsonProperty(envelope, "usage", out var usage)
                     || usage.ValueKind != JsonValueKind.Object)
                     continue;
+                if (assistant && terminalSeen) continue;
                 var cached = Math.Max(JsonLong(usage, "cached_input_tokens"),
                     JsonLong(usage, "cache_read_input_tokens"));
                 if (string.Equals(cliType, CliSelection.CodexCli, StringComparison.OrdinalIgnoreCase))
@@ -231,17 +238,32 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
                         JsonLong(usage, "cache_creation_input_tokens"),
                         false);
                 }
+                if (assistant)
+                {
+                    // A non-string id (number, object, null) is not a message identity;
+                    // GetString would throw InvalidOperationException, which the
+                    // JsonException handler below does not catch.
+                    var key = TryJsonProperty(envelope, "id", out var id) && id.ValueKind == JsonValueKind.String
+                        ? id.GetString()
+                        : null;
+                    messages[key ?? "frame:" + messageIndex++] = result;
+                }
+                else terminalSeen = true;
             }
             catch (JsonException)
             {
                 // Non-protocol output remains review evidence but has no token facts.
             }
         }
+        if (!terminalSeen && messages.Count > 0)
+            result = new RemoteAgentUsage(model, messages.Values.Sum(x => x.InputTokens),
+                messages.Values.Sum(x => x.OutputTokens), messages.Values.Sum(x => x.CacheReadTokens),
+                messages.Values.Sum(x => x.CacheCreationTokens), false);
         return result;
     }
 
     private static long JsonLong(JsonElement element, string name)
-        => TryJsonProperty(element, name, out var value) && value.TryGetInt64(out var parsed)
+        => TryJsonProperty(element, name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var parsed)
             ? Math.Max(0, parsed)
             : 0;
 
