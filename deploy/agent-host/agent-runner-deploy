@@ -33,12 +33,26 @@ readonly review_unit="agent-runner-review.service"
 readonly -a review_env_files=(/etc/agent-runner/runner-review.env /etc/agent-runner/review.env)
 readonly default_review_state_dir="/var/lib/agent-runner-review/state"
 readonly agent_host_binary="$current_link/agent-host"
+readonly legacy_agent_host_binary="$compatibility_link/agent-host"
 readonly cli_root="/opt/agent-cli"
 readonly cli_releases_root="$cli_root/releases"
 readonly cli_current_link="$cli_root/current"
 readonly npm_binary="/usr/bin/npm"
-readonly codex_launcher="/usr/local/bin/codex"
-readonly claude_launcher="/usr/local/bin/claude"
+# Adopt every installed launcher, including npm's Debian /usr/bin layout.
+# Refuse regular files rather than overwriting an operator-owned wrapper.
+readonly -a cli_launcher_dirs=(/usr/local/bin /usr/bin)
+cli_launchers() {
+  local name="$1" dir path found=0
+  for dir in "${cli_launcher_dirs[@]}"; do
+    path="$dir/$name"
+    if [[ -e "$path" || -L "$path" ]]; then
+      [[ -L "$path" ]] || die "CLI launcher must be a symbolic link: $path"
+      printf '%s\n' "$path"
+      found=1
+    fi
+  done
+  ((found)) || die "no existing npm launcher found for $name"
+}
 readonly provider_auth_file="/etc/agent-runner/provider-auth.env"
 force_restart=0
 review_guard_state_dir=""
@@ -150,6 +164,16 @@ validate_review_state_dir() {
     printf 'agent-runner-deploy: invalid effective RUNNER_STATE_DIR: %q\n' "$value" >&2
     return 1
   }
+}
+
+# Hosts installed before the /opt/agent-host layout only carry agent-host
+# under the compatibility path; the CLI step must still drain them.
+installed_agent_host_binary() {
+  if [[ -x "$agent_host_binary" ]]; then
+    printf '%s\n' "$agent_host_binary"
+  else
+    printf '%s\n' "$legacy_agent_host_binary"
+  fi
 }
 
 # Refuses a restart that would discard running review gate work. A review
@@ -452,8 +476,17 @@ update_clis() {
   local staging_root="$cli_releases_root/.staging.$release_id.$$"
   local previous_target=""
   local previous_review_main_pid="0"
-  local previous_codex_link=""
-  local previous_claude_link=""
+  local path name
+  local -a launchers=() previous_links=() names=()
+  local selected
+  for name in codex claude; do
+    selected="$(cli_launchers "$name")" || return 2
+    while IFS= read -r path; do
+      launchers+=("$path")
+      previous_links+=("$(readlink -- "$path")")
+      names+=("$name")
+    done <<<"$selected"
+  done
   [[ ! -e "$release_root" ]] || die "CLI release already exists: $release_root"
   install -d -o root -g root -m 0755 "$cli_root" "$cli_releases_root"
   install -d -o root -g root -m 0755 "$staging_root"
@@ -473,33 +506,39 @@ update_clis() {
   probe_staged_cli "$staging_root" claude auth status
   probe_staged_cli "$staging_root" codex debug models
   probe_staged_cli "$staging_root" claude models
-  assert_review_restart_is_safe "$agent_host_binary"
+  assert_review_restart_is_safe "$(installed_agent_host_binary)"
   previous_review_main_pid="$(unit_main_pid "$review_unit")" \
     || die "could not query the review unit MainPID before CLI activation"
 
-  previous_target="$(readlink -f -- "$cli_current_link" 2>/dev/null || true)"
-  if [[ -z "$previous_target" ]]; then
-    [[ -L "$codex_launcher" && -L "$claude_launcher" ]] \
-      || die "first managed CLI activation requires the existing npm launchers to be symbolic links"
-    previous_codex_link="$(readlink -- "$codex_launcher")"
-    previous_claude_link="$(readlink -- "$claude_launcher")"
+  if [[ -L "$cli_current_link" ]]; then
+    previous_target="$(readlink -- "$cli_current_link")"
+  elif [[ -e "$cli_current_link" ]]; then
+    die "managed CLI current path must be a symbolic link"
   fi
+  # Root-only rollback record includes the emergency /opt/agent-cli launcher.
+  local rollback_file="$cli_root/rollback-$(date -u +%Y%m%dT%H%M%SZ)-$$.sh"
+  ( umask 077
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$rollback_file"
+    for name in "${!launchers[@]}"; do
+      printf 'ln -sfnT -- %q %q\n' "${previous_links[$name]}" "${launchers[$name]}" >>"$rollback_file"
+    done
+    if [[ -n "$previous_target" ]]; then
+      printf 'ln -sfnT -- %q %q\n' "$previous_target" "$cli_current_link" >>"$rollback_file"
+    else
+      printf 'rm -f -- %q\n' "$cli_current_link" >>"$rollback_file"
+    fi
+  )
   mv -- "$staging_root" "$release_root"
   trap - EXIT
   ln -sfnT "$release_root" "$cli_current_link"
-  ln -sfnT "$cli_current_link/node_modules/.bin/codex" "$codex_launcher"
-  ln -sfnT "$cli_current_link/node_modules/.bin/claude" "$claude_launcher"
+  for name in "${!launchers[@]}"; do
+    ln -sfnT "$cli_current_link/node_modules/.bin/${names[$name]}" "${launchers[$name]}"
+  done
 
   if ! systemctl restart agent-runner.service \
       || ! restart_unit_and_wait_for_new_main_pid \
           "$review_unit" "$previous_review_main_pid" >/dev/null; then
-    if [[ -n "$previous_target" && -d "$previous_target" ]]; then
-      ln -sfnT "$previous_target" "$cli_current_link"
-    else
-      rm -f -- "$cli_current_link"
-      ln -sfnT "$previous_codex_link" "$codex_launcher"
-      ln -sfnT "$previous_claude_link" "$claude_launcher"
-    fi
+    bash "$rollback_file"
     rm -rf --one-file-system -- "$release_root"
     systemctl restart agent-runner.service || true
     best_effort_replace_unit "$review_unit"
@@ -508,6 +547,7 @@ update_clis() {
 
   logger -p authpriv.notice -t agent-runner-deploy \
     "action=update-clis codex=$codex_version claude=$claude_version previous=${previous_target:-none} result=activated" || true
+  printf 'agent-runner-deploy: rollback launchers with bash %s after draining both roles\n' "$rollback_file"
   printf 'agent-runner-deploy: updated codex to %s and claude to %s\n' \
     "$codex_version" "$claude_version"
 }

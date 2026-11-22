@@ -265,7 +265,29 @@ public sealed class PickupHoldLocalCodingDenialTests : IClassFixture<PickupHoldL
     }
 
     /// <summary>The projects of <see cref="PickupHoldEndpointsTests"/>, with the host's own admission policy.</summary>
-    public sealed class Host() : BoardTestHost("atp-pickup-hold-denial-", App, PickupHoldEndpointsTests.Lib);
+    public sealed class Host() : BoardTestHost("atp-pickup-hold-denial-", App, PickupHoldEndpointsTests.Lib)
+    {
+        private static readonly TimeSpan RunnerTimeout = TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// Returns once <see cref="TaskRunnerService"/> holds a runner for the
+        /// project. Its hosted loop builds the runners only after the scanner's
+        /// first publication, so on a loaded host the first start request can
+        /// arrive before them and is answered "No runner configured" instead
+        /// of the placement denial this class asserts.
+        /// </summary>
+        public void WaitForRunner(string project)
+        {
+            var runners = Services.GetRequiredService<TaskRunnerService>();
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            while (!runners.GetStatus().Projects.ContainsKey(project))
+            {
+                if (waited.Elapsed > RunnerTimeout)
+                    throw new TimeoutException($"The task runner service built no runner for '{project}' in {RunnerTimeout}.");
+                Thread.Sleep(20);
+            }
+        }
+    }
 
     [Theory]
     [InlineData(false)]
@@ -302,6 +324,7 @@ public sealed class PickupHoldLocalCodingDenialTests : IClassFixture<PickupHoldL
         Assert.Equal(PickupHoldMechanisms.ExecutionPlacement,
             card.GetProperty("pickupHold").GetProperty("mechanism").GetString());
 
+        _host.WaitForRunner(App);
         using var request = new HttpRequestMessage(
             HttpMethod.Post, $"/api/tasks/local-coding/start?watchPath={watchPath}")
         {

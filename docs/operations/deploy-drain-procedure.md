@@ -34,7 +34,10 @@ selection with the exact expected commit and image digest. A successful deploy
 command or a matching older report does not pass verification. After proof,
 **Resume review host** lifts the client drain and checks that admission is open.
 Before starting the switch, **Cancel and resume** lifts the drain without
-recording a completed update.
+recording a completed update. It posts `POST /api/clients/{id}/deploy-cancel`,
+which the server refuses with 409 and the current drain status once any
+operator recorded the switch start; the drain and the switch start then stay,
+and the panel moves to **Check new heartbeat**.
 The full networked deploy script also drains and resumes its manifest's host
 identities. Its own idle and image verification remain required; the UI's fresh
 heartbeat provides a separate check of what the runner actually reports.

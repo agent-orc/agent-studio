@@ -82,3 +82,7 @@ grep -Fq "disagrees with host record value 'runner_build02'" <<<"$conflict"
 grep -Fq 'host-record render --record /etc/agent-host/host.json --out-dir "$render_dir"' "$onboard"
 grep -Fq 'sudo systemctl enable agent-runner-deploy.service' "$onboard"
 printf 'remote-runner-onboard deploy role contract passed\n'
+
+# Existing hosts receive the current helper and exact sudoers rule on onboarding.
+grep -Fq 'scripts/upgrade-agent-runner-deploy.sh deploy/agent-host' "$onboard"
+grep -Fq 'sudo bash "$upgrade_tmp/scripts/upgrade-agent-runner-deploy.sh" --apply' "$onboard"

@@ -238,6 +238,7 @@ public sealed class RunnerModelAcceptanceProbeTests
             BaseBranch = "main",
             // Isolate routed-model selection from the installed CLI's version-gated models.
             CodexCliBin = Path.Combine(Path.GetTempPath(), "absent-codex-" + Guid.NewGuid().ToString("N")),
+            ClaudeCliBin = Path.Combine(Path.GetTempPath(), "absent-claude-" + Guid.NewGuid().ToString("N")),
         };
         (string Provider, string Model)[] routes =
             [("codex", "gpt-5.4-mini"), ("codex", "gpt-6-sol")];

@@ -127,7 +127,9 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | ApiStallDetector | always | report | Every API host. Logs an `api-stall` warning when its own timer tick runs late (GC pause or starved thread pool); no lane transition (AGT-3369). |
 | ApiHostDiskService | always | report | API host. Measures instance data and gate evidence mounts, reports disk pressure, and supplies claim admission; makes no lane transition decision. |
 | PublishEnvironmentReconciliationService | always | infra | Authority host. Polls website deployment state and releases stopped hosting reservations; no lane transition. |
+| IntegrationReleaseReconciler | !PD | infra | Authority host. Every 15 seconds creates the release of a gated integration branch tip and queues its automatic Staging run (AGT-3891); no lane transition. |
 | StructureRegistryRefreshService | always | infra | Authority host. Refreshes cached registry metadata every six hours; no lane transition. |
+| StructureSnapshotService | always | report | API host. Refreshes the cached structure projection every five seconds while a Structure view reads or subscribes, and publishes the changed nodes and links as `structureDelta`; reads host reports, never asks a host, and makes no lane transition (AGT-3954). |
 | RemoteGateOrphanSweepService | always | infra | Authority host. Cancels unowned SSH gate runs from prior Studio process instances and clears their durable records once the remote run directory is gone. |
 | WorkspaceArtifactPushWorker | !PD | infra | Authority host. Pushes nothing into the TaskRepository while `TaskArtifacts:Source = task-server` (AGT-3320). |
 | WorkspaceRepositoryMaintenanceWorker | !PD | infra | Authority host |

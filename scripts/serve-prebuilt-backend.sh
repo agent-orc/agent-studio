@@ -205,6 +205,12 @@ case "${PW_E2E_PROFILE:-standard}" in
     source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
     first_run_prepare
     ;;
+  # deploy-lifecycle: a project with Staging and Production declared and a
+  # release evidence root, so a spec drives releases through the real lifecycle.
+  deploy-lifecycle)
+    source "${REPO_ROOT}/scripts/deploy-lifecycle-e2e-fixture.sh"
+    deploy_lifecycle_prepare
+    ;;
   concept-remote)
     source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
     first_run_prepare

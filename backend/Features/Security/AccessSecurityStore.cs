@@ -14,7 +14,7 @@ namespace AgentStudio.Security;
 /// Role bindings, groups, and service accounts live in the same state file;
 /// see <c>Iam/AccessSecurityStore.Iam.cs</c>.
 /// </summary>
-public sealed partial class AccessSecurityStore
+public sealed partial class AccessSecurityStore : IUserDisplayNames
 {
     public const string SessionCookieName = "__Host-agentstudio-session";
     // Browsers reject __Host- cookies over local HTTP. Only the local profile
@@ -744,6 +744,15 @@ public sealed partial class AccessSecurityStore
     public IReadOnlyList<StudioUser> ListUsers()
     {
         lock (_gate) return StateLocked().Users.OrderBy(x => x.Username).ToList();
+    }
+
+    public string? DisplayNameOf(string userId)
+    {
+        lock (_gate)
+        {
+            var name = StateLocked().Users.FirstOrDefault(x => x.Id == userId)?.DisplayName;
+            return string.IsNullOrWhiteSpace(name) ? null : name;
+        }
     }
 
     public (StudioUser User, string TemporaryPassword) CreateUser(CreateUserRequest request, string? actingUserId = null)

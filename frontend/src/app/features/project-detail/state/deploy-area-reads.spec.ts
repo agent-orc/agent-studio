@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deployInFlight, deployRunConfirmation } from './deploy-area-reads';
-import type { DeployRun, Release } from './deploy-area.model';
+import { deployInFlight, deploymentEnvironment, deployRunConfirmation } from './deploy-area-reads';
+import type { DeployRun, EnvironmentCardView, EnvironmentStatus, Release } from './deploy-area.model';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
 
 const run = (state: DeployRun['state']) => ({
@@ -25,5 +25,14 @@ describe('deploy area reads (F17)', () => {
     expect(deployInFlight([run('succeeded'), run('awaiting-approval')], null)).toBe(false);
     const pending = { environments: [{ pendingArtifact: 'web@sha256:8f3e0d237096' }] } as unknown as ProjectEnvironments;
     expect(deployInFlight([run('succeeded')], pending)).toBe(true);
+  });
+
+  it('names a deploy action environment by its card and knows Production by kind or by name', () => {
+    const cards = [{ id: 'live', name: 'Live' }, { id: 'stage', name: 'Staging' }] as EnvironmentCardView[];
+    const statuses = { status: 'ready' as const, value: [{ environment: { id: 'live', kind: 'production' } }] as EnvironmentStatus[] };
+    const none = { status: 'loading' as const };
+    expect(deploymentEnvironment('live', cards, statuses, none)).toEqual({ name: 'Live', production: true });
+    expect(deploymentEnvironment('stage', cards, statuses, none)).toEqual({ name: 'Staging', production: false });
+    expect(deploymentEnvironment('production', [], none, none)).toEqual({ name: 'production', production: true });
   });
 });

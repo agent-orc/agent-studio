@@ -1,0 +1,409 @@
+{
+  "schemaVersion": 1,
+  "id": "live-structure-canvas",
+  "title": "Live structure canvas",
+  "summary": "One zoomable canvas for hosts, VMs, containers and links with combinable layers (performance and network, storage, backup, construction sites and warnings, health, version, drift), motion bound to causes, live deltas batched to one update a second, and persona assessments drawn on top of facts as schema-validated view specifications. Measured on 500 nodes and 2,000 links: own Canvas 2D engine recommended over PixiJS and Cytoscape.js; uPlot recommended as the hosting area\u0027s chart library. Backup inventory checked against the code: five of six must-keep locations have no off-host copy. Ten slices, first the canvas with semantic zoom and the Performance and network layer on live data.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-20T18:00:00Z",
+  "sourceTaskKeys": [
+    "AGT-3955"
+  ],
+  "relatedTo": [
+    "AGT-3879",
+    "AGT-3949",
+    "AGT-3950",
+    "AGT-3954",
+    "AGT-3955",
+    "AGT-3349",
+    "AGT-3389",
+    "AGT-3574",
+    "AGT-3365"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3879",
+    "AGT-3949",
+    "AGT-3950",
+    "AGT-3954",
+    "AGT-3349",
+    "AGT-3389",
+    "AGT-3574",
+    "AGT-3365"
+  ],
+  "buildsOn": [
+    "docs/deployment-structure-view/",
+    "docs/operations/bereitstellung/",
+    "docs/persona-team/",
+    "docs/operations/nordstern/",
+    "docs/operations/deployment-story/",
+    "docs/operations/integrierte-plattform/"
+  ],
+  "coveredElsewhere": [
+    {
+      "slice": "Extended structure facts: observed hosts, machine kind and nesting, placement file, performance and network facts per node, data locations with backup coverage, facts for warnings, live deltas",
+      "card": "AGT-3954"
+    },
+    {
+      "slice": "Instance deploy records (deploy steps on a node)",
+      "card": "AGT-3879"
+    },
+    {
+      "slice": "Deployment dashboard data",
+      "card": "AGT-3949"
+    },
+    {
+      "slice": "Deployment dashboard charts on the chart library of D2",
+      "card": "AGT-3950"
+    },
+    {
+      "slice": "Persona scheduling, admission, budget ledger, feeds and magazine",
+      "card": "PT-3, PT-4, PT-8 (docs/persona-team/)"
+    }
+  ],
+  "visualStack": {
+    "canvasRenderer": "own Canvas 2D engine (D1, recommended)",
+    "chartLibrary": "uPlot (D2, recommended)",
+    "lazy": true
+  },
+  "pages": [
+    "index.html",
+    "context.html",
+    "layers.html",
+    "live.html",
+    "stack.html",
+    "prototype.html"
+  ],
+  "openDecisions": [
+    {
+      "id": "D1",
+      "decisionId": "lsc-renderer",
+      "title": "Canvas renderer",
+      "question": "Which renderer draws the structure canvas, and every canvas of the Studio?",
+      "options": {
+        "A": "Own Canvas 2D engine, ported to a lazy Angular component",
+        "B": "PixiJS 8 (WebGL 2D)",
+        "C": "Cytoscape.js 3"
+      },
+      "recommended": "A",
+      "rationale": "Meets the frame budget on CPU raster, cheapest particles and tokens, smallest chunk; PixiJS stays the measured fallback behind the same interfaces.",
+      "status": "open"
+    },
+    {
+      "id": "D2",
+      "decisionId": "lsc-charts",
+      "title": "Chart library",
+      "question": "Which single chart library draws the hosting area\u0027s charts (AGT-3950)?",
+      "options": {
+        "A": "uPlot",
+        "B": "Apache ECharts",
+        "C": "Chart.js"
+      },
+      "recommended": "A",
+      "rationale": "Smallest chunk and fastest live update for time series and bars; other forms as small SVG components, not a second library.",
+      "status": "open"
+    },
+    {
+      "id": "D3",
+      "decisionId": "lsc-dimension",
+      "title": "2D, 2.5D or 3D",
+      "question": "Which projection does the canvas use?",
+      "options": {
+        "A": "2D by default with a 2.5D overview switch",
+        "B": "2D only",
+        "C": "3D"
+      },
+      "recommended": "A",
+      "rationale": "2D reads best at every level; 2.5D is the playful overview on the same engine at little cost; 3D adds cost and no fact.",
+      "status": "open"
+    },
+    {
+      "id": "D4",
+      "decisionId": "lsc-default-layer",
+      "title": "Default layers",
+      "question": "Which layers are on when a user opens the canvas for the first time?",
+      "options": {
+        "A": "Performance and network, Health, Construction sites; remembered per user",
+        "B": "Health only",
+        "C": "The layers the selected persona suggests"
+      },
+      "recommended": "A",
+      "rationale": "Answers \u0027is it live and is anything broken\u0027 at once; missing backups are marked in every combination anyway.",
+      "status": "open"
+    },
+    {
+      "id": "D5",
+      "decisionId": "lsc-motion",
+      "title": "Motion level",
+      "question": "How much moves by default?",
+      "options": {
+        "A": "Lively: flow particles and event motion while visible, Off with reduced motion",
+        "B": "Calm: event motion only, flow as width",
+        "C": "Off"
+      },
+      "recommended": "A",
+      "rationale": "The owner asked for movement; every motion has a cause, runs at most at 30 fps and stops when hidden.",
+      "status": "open"
+    },
+    {
+      "id": "D6",
+      "decisionId": "lsc-replace",
+      "title": "Replace the Structure view",
+      "question": "Does the canvas replace the current Structure view?",
+      "options": {
+        "A": "Yes, after parity (outline, deep links, project scope, Version, Drift); classic view one more release",
+        "B": "Both side by side",
+        "C": "Keep the current view; canvas as a separate Live tab"
+      },
+      "recommended": "A",
+      "rationale": "Two drawings of the same machines drift apart; parity first keeps every link working.",
+      "status": "open"
+    },
+    {
+      "id": "D7",
+      "decisionId": "lsc-backup-target",
+      "title": "Backup target the Backup layer checks",
+      "question": "Which off-host target should the backup job use and the Backup layer check against?",
+      "options": {
+        "A": "SFTP to the home lab\u0027s storage, a second site the owner controls",
+        "B": "S3-compatible bucket at another provider, with versioning",
+        "C": "Mounted directory share",
+        "D": "Git remote only, as today"
+      },
+      "recommended": "A",
+      "rationale": "Off-host and off-site with no new account; supported by the backup feature; a bucket can follow as a second copy.",
+      "status": "open"
+    },
+    {
+      "id": "D8",
+      "decisionId": "lsc-key-custody",
+      "title": "Key custody",
+      "question": "Where are the backup key and the secret store key escrowed?",
+      "options": {
+        "A": "Two separate password manager entries, attested by fingerprint",
+        "B": "Printed and stored offline",
+        "C": "Next to the backups"
+      },
+      "recommended": "A",
+      "rationale": "The restore runbook requires the keys apart from the backups and from each other; attestation lets the view show the date.",
+      "status": "open"
+    },
+    {
+      "id": "D9",
+      "decisionId": "lsc-roles",
+      "title": "Roles that assess",
+      "question": "Which personas assess the installation for the canvas?",
+      "options": {
+        "A": "Operations warden and reliability engineer",
+        "B": "Operations warden only",
+        "C": "Every aspect persona"
+      },
+      "recommended": "A",
+      "rationale": "Backup, credentials and escrow belong to the warden; hosts, links and capacity to the reliability engineer; both exist in the catalogue.",
+      "status": "open"
+    },
+    {
+      "id": "D10",
+      "decisionId": "lsc-cadence",
+      "title": "Refresh cadence",
+      "question": "When do the personas reassess?",
+      "options": {
+        "A": "On relevant fact changes, coalesced, plus every 12 hours, within budget",
+        "B": "Every hour",
+        "C": "Only on demand"
+      },
+      "recommended": "A",
+      "rationale": "Fresh after a change, cheap otherwise: about $0.15 a day for two personas, within their weekly allowances.",
+      "status": "open"
+    },
+    {
+      "id": "D11",
+      "decisionId": "lsc-composition",
+      "title": "How much the model composes",
+      "question": "How much of the view may be LLM-composed?",
+      "options": {
+        "A": "Facts only",
+        "B": "Assessment on top of facts: callouts, emphasis, ranking, goals, judgement, layer suggestions",
+        "C": "Model-composed view including grouping, order and default layers"
+      },
+      "recommended": "B",
+      "rationale": "Keeps facts deterministic and comparable while the persona says what matters and what to do next.",
+      "status": "open"
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "LSC-1",
+      "title": "Live structure canvas: machines, containers, semantic zoom, Performance and network layer",
+      "delivers": "Lazy canvas with semantic zoom, minimap, search, keyboard and outline; Performance and network and Health layers on live structure data; budget and accessibility checks; GPU re-run of the renderer benchmark.",
+      "dependsOn": [],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-1",
+        "criteria": [
+          "Initial bundle unchanged (build stats compared to develop); the canvas chunk is at most 35 kB gzip.",
+          "Playwright: fixture of the installation (roles only) renders levels 1 to 4; layer toggles; keyboard path; outline equals the canvas; screenshots in both themes at 390 and 1440 px under the results folder.",
+          "Re-run \u0060node docs/live-structure-canvas/bench/run.mjs\u0060 on a workstation with a GPU and report pan and zoom fps for candidates A and B; A must reach at least 50 fps with 500 nodes and 2,000 links, otherwise record the fallback to PixiJS behind the same interfaces as a follow-up card.",
+          "With nothing changing, the canvas draws no frame for 5 seconds (frame counter) and no frame while the tab is hidden."
+        ]
+      },
+      "promptMarkdown": "# Live structure canvas: machines, containers, semantic zoom, Performance and network layer\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955) and its chapter pages in the same directory. Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/system/domains/frontend.md first. Each Dossier recommendation (D1 to D11) is the working decision unless a recorded operator decision selects another option; record the option implemented. Studio tokens and existing components, light and dark, no animation with reduced motion. Fixtures and screenshots use role names only. Workspace data only through the application API; git stays with the platform. One bounded slice.\n\nDossier pages and sections: \u0060context.html\u0060 (Semantic zoom), \u0060layers.html\u0060 (Performance and network, Health), \u0060stack.html\u0060 (Canvas renderer, Budget), \u0060index.html\u0060 (Alternatives, Recommendation), the live \u0060prototype.html\u0060; source \u0060docs/live-structure-canvas/src/engine.js\u0060, \u0060layers.js\u0060, \u0060app.js\u0060.\n\nBuilds on AGT-3954 (extended structure endpoint: observed hosts, machine kind and nesting, performance and network facts, deltas). If AGT-3954 is not merged when this starts, consume today\u0027s \u0060GET /api/v1/operations/structure\u0060 through an adapter that maps it to the Dossier\u0027s assumed shape and keeps the 15-second poll; switch to the delta stream when it exists.\n\n## Deliver\n1. Port the Dossier engine to typed TypeScript under \u0060frontend/src/app/features/structure/canvas/\u0060 (D1 option A): nested layout, camera with wheel, pinch and keyboard, semantic zoom by on-screen size with cross-fade, link bundling to the nearest visible node, static layer cache while the camera moves and crisp redraw on settle, dynamic layer for flow particles, render on demand, pause when the tab is hidden or the canvas is off screen.\n2. A lazy standalone \u0060StructureCanvasComponent\u0060 mounted with \u0060@defer\u0060 and a dynamic import at \u0060#/workspace/operations/structure?view=canvas\u0060 (the current view stays default until LSC-4). Minimap, fit, zoom buttons, level 1 to 4 control, search to focus.\n3. Layers Performance and network and Health with the Dossier\u0027s encodings and legend: CPU, memory, load and slots gauges with warn at 75 % and bad at 90 %; link width and particle density by traffic, dash by link type, latency label, broken down links. Motion levels Lively, Calm, Off (D5); Off with reduced motion.\n4. Accessibility: the canvas host is focusable with \u0060aria-activedescendant\u0060 pointing into an outline tree that lists every node and link with the facts of the active layers; arrow keys move between nodes, Enter flies to a node, Escape clears.\n5. Colours from Studio tokens; the three work-kind colours as new semantic tokens with the validated values of the Dossier.\n\n## Acceptance\n- Initial bundle unchanged (build stats compared to develop); the canvas chunk is at most 35 kB gzip.\n- Playwright: fixture of the installation (roles only) renders levels 1 to 4; layer toggles; keyboard path; outline equals the canvas; screenshots in both themes at 390 and 1440 px under the results folder.\n- Re-run \u0060node docs/live-structure-canvas/bench/run.mjs\u0060 on a workstation with a GPU and report pan and zoom fps for candidates A and B; A must reach at least 50 fps with 500 nodes and 2,000 links, otherwise record the fallback to PixiJS behind the same interfaces as a follow-up card.\n- With nothing changing, the canvas draws no frame for 5 seconds (frame counter) and no frame while the tab is hidden."
+    },
+    {
+      "id": "LSC-2",
+      "title": "Traffic and latency per link",
+      "delivers": "Per-link bytes per second and latency from existing reports and heartbeats, attached to structure links.",
+      "dependsOn": [],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-2",
+        "criteria": [
+          "A fixture host report with counters yields the expected rate; a missing counter yields \u0060null\u0060.",
+          "Host report size grows by at most 1 kB for ten containers; no synthetic probe traffic is added."
+        ]
+      },
+      "promptMarkdown": "# Traffic and latency per link\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955) and its chapter pages in the same directory. Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/system/domains/frontend.md first. Each Dossier recommendation (D1 to D11) is the working decision unless a recorded operator decision selects another option; record the option implemented. Studio tokens and existing components, light and dark, no animation with reduced motion. Fixtures and screenshots use role names only. Workspace data only through the application API; git stays with the platform. One bounded slice.\n\nDossier page and section: \u0060stack.html\u0060, Data the layers need (rows Traffic per link, Latency per link).\n\nAGT-3954 delivers performance and network facts per node and links; this slice adds what it does not: bytes per second and latency per link.\n\n## Deliver\n1. Host agent: read per-container network counters (cgroup or \u0060/proc/\u003Cpid\u003E/net/dev\u0060) and the link forwarder\u0027s tunnel byte counters into the existing host report; no packet capture, no extra process.\n2. Server: compute rates between reports and attach \u0060bytesPerSec\u0060 to each structure link it can attribute; links it cannot attribute report \u0060null\u0060, never zero.\n3. Latency: link supervisor heartbeat round trip as \u0060latencyMs\u0060 for tunnel and forwarder links; for HTTPS links to outside services the median timing of calls already made (model calls, git pushes, image pulls) over 5 minutes.\n4. Contract tests and documentation in the structure endpoint\u0027s docs.\n\n## Acceptance\n- A fixture host report with counters yields the expected rate; a missing counter yields \u0060null\u0060.\n- Host report size grows by at most 1 kB for ten containers; no synthetic probe traffic is added."
+    },
+    {
+      "id": "LSC-3",
+      "title": "Live deltas, motion with causes and replay",
+      "delivers": "Delta batching to one update a second, cause-bound animations, event log, replay of recorded deltas.",
+      "dependsOn": [
+        "LSC-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-3",
+        "criteria": [
+          "A burst of 50 deltas in one second produces one visual update (counter in a test hook).",
+          "With \u0060prefers-reduced-motion\u0060 no animation frame runs and every state change is visible immediately.",
+          "Playwright records the replay of a fixture recording and screenshots a link-down moment in both themes."
+        ]
+      },
+      "promptMarkdown": "# Live deltas, motion with causes and replay\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955) and its chapter pages in the same directory. Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/system/domains/frontend.md first. Each Dossier recommendation (D1 to D11) is the working decision unless a recorded operator decision selects another option; record the option implemented. Studio tokens and existing components, light and dark, no animation with reduced motion. Fixtures and screenshots use role names only. Workspace data only through the application API; git stays with the platform. One bounded slice.\n\nDossier pages and sections: \u0060live.html\u0060 (Motion and live updates, Replay), \u0060stack.html\u0060 (Budget); replay source in \u0060docs/live-structure-canvas/src/app.js\u0060.\n\nConsumes the AGT-3954 delta stream (\u0060{ seq, at, ops[] }\u0060; resync with a snapshot on a gap).\n\n## Deliver\n1. Client batcher: queue deltas and apply at most one visual update a second; on return from a hidden tab apply the pending deltas as one update.\n2. Motion with causes: work tokens hop by hop for coding, gate and review transitions (from task hub events joined with the claiming host); an arc while a deploy step runs (instance deploy records of AGT-3879); restart wash and ring; link-drop ring and broken link; values ease to their new state. Nothing animates without a delta.\n3. Event log in words next to the canvas (\u0060aria-live=polite\u0060), the same facts as the motion.\n4. Replay: an operator can replay the recorded deltas of the last hour from the structure delta log, with play, pause, speed and scrub.\n\n## Acceptance\n- A burst of 50 deltas in one second produces one visual update (counter in a test hook).\n- With \u0060prefers-reduced-motion\u0060 no animation frame runs and every state change is visible immediately.\n- Playwright records the replay of a fixture recording and screenshots a link-down moment in both themes."
+    },
+    {
+      "id": "LSC-4",
+      "title": "Version and Drift layers; the canvas replaces the Structure view",
+      "delivers": "Version and Drift layers, parity with the current Structure view, canvas becomes the default.",
+      "dependsOn": [
+        "LSC-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-4",
+        "criteria": [
+          "Every deep link of the current view opens the same target from the canvas; a pasted link restores level, layers and focus.",
+          "The existing Structure Playwright specs pass against the canvas or are migrated with equivalent assertions."
+        ]
+      },
+      "promptMarkdown": "# Version and Drift layers; the canvas replaces the Structure view\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955) and its chapter pages in the same directory. Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/system/domains/frontend.md first. Each Dossier recommendation (D1 to D11) is the working decision unless a recorded operator decision selects another option; record the option implemented. Studio tokens and existing components, light and dark, no animation with reduced motion. Fixtures and screenshots use role names only. Workspace data only through the application API; git stays with the platform. One bounded slice.\n\nDossier pages and sections: \u0060context.html\u0060 (Today), \u0060layers.html\u0060 (Version, Drift), \u0060index.html\u0060 (Open decisions, D6).\n\n## Deliver\n1. Version layer: release chip per node, amber with the distance when behind stable, pending host install chip (host releases).\n2. Drift layer: dashed outline and chip for undeclared, declared only and differs.\n3. Parity with the current view: project scope (\u0060#/projects/{slug}/operations/structure\u0060), the click targets and deep links per node kind, query parameters for level, layers and focus, the Settings embedding.\n4. Make the canvas the default of the Structure route (D6 option A); keep the DOM view behind \u0060?view=classic\u0060 for one release, then remove it in a follow-up.\n\n## Acceptance\n- Every deep link of the current view opens the same target from the canvas; a pasted link restores level, layers and focus.\n- The existing Structure Playwright specs pass against the canvas or are migrated with equivalent assertions."
+    },
+    {
+      "id": "LSC-5",
+      "title": "Storage facts and Storage layer",
+      "delivers": "Volumes, mounts and growth as facts; the Storage layer with pressure and days until full.",
+      "dependsOn": [
+        "LSC-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-5",
+        "criteria": [
+          "A fixture with 84 % used and 0.9 GB a day shows amber pressure and the days until full; critical below 8 GiB free shows red.",
+          "No \u0060du\u0060 over large trees in a request path; the daily scan runs at low priority and is skipped under disk pressure."
+        ]
+      },
+      "promptMarkdown": "# Storage facts and Storage layer\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955) and its chapter pages in the same directory. Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/system/domains/frontend.md first. Each Dossier recommendation (D1 to D11) is the working decision unless a recorded operator decision selects another option; record the option implemented. Studio tokens and existing components, light and dark, no animation with reduced motion. Fixtures and screenshots use role names only. Workspace data only through the application API; git stays with the platform. One bounded slice.\n\nDossier pages and sections: \u0060layers.html\u0060 (Storage), \u0060stack.html\u0060 (Data the layers need, row Volumes, mounts and growth).\n\n## Deliver\n1. Volumes per machine from \u0060HostTelemetrySnapshotDto.Filesystems\u0060, the RAID level where reported, mounts mapped to containers from the container runtime at container start, growth per day by linear fit over the telemetry history, sizes of known stores from their own accounting once a day.\n2. API: \u0060volumes[]\u0060 on the structure response as written in the Dossier.\n3. Storage layer: volume bar under each machine header split by mount, pressure per \u0060HostDiskPressurePolicy\u0060, days until full; mounts on container cards. Block height by mount size in 2.5D belongs to LSC-9.\n\n## Acceptance\n- A fixture with 84 % used and 0.9 GB a day shows amber pressure and the days until full; critical below 8 GiB free shows red.\n- No \u0060du\u0060 over large trees in a request path; the daily scan runs at low priority and is skipped under disk pressure."
+    },
+    {
+      "id": "LSC-6",
+      "title": "Backup layer, escrow attestations and the backup goal",
+      "delivers": "Backup coverage per data location, escrow attestations, copy links, goal progress, missing backup always visible.",
+      "dependsOn": [
+        "LSC-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-6",
+        "criteria": [
+          "With today\u0027s state (not-configured, local snapshot of 9 November) the layer shows 1 of 6 and marks five locations; with a fixture of a verified off-host archive it shows them green.",
+          "Screenshots in both themes at 390 and 1440 px."
+        ]
+      },
+      "promptMarkdown": "# Backup layer, escrow attestations and the backup goal\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955) and its chapter pages in the same directory. Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/system/domains/frontend.md first. Each Dossier recommendation (D1 to D11) is the working decision unless a recorded operator decision selects another option; record the option implemented. Studio tokens and existing components, light and dark, no animation with reduced motion. Fixtures and screenshots use role names only. Workspace data only through the application API; git stays with the platform. One bounded slice.\n\nDossier pages and sections: \u0060layers.html\u0060 (Layers, Backup), \u0060index.html\u0060 (Open decisions, D7 and D8).\n\nData locations with backup coverage are delivered by AGT-3954; this slice draws them and adds what is missing.\n\n## Deliver\n1. Join each data location with \u0060/api/operator/backups\u0060 (archives, off-host uploads, verification) and the workspace export\u0027s push receipts; copies carry kind, target, time, off-host and verified.\n2. Escrow attestations: \u0060POST /api/operator/backups/escrow { keyKind, fingerprint }\u0060 by an owner with \u0060WorkspaceOperate\u0060, recorded in the control-plane audit; shown as \u0027attested on\u0027. No key material is ever sent.\n3. Backup layer: shields, copy links to the git remote and to the configured target, a ghost node for a missing target, the goal \u0027every must-keep location has a verified off-host copy\u0027 with progress; a missing backup stays marked in every layer combination.\n4. The layer checks against the target chosen in D7 (recommended SFTP to the home lab\u0027s storage); it reads the target state from the backup overview and never connects to the target itself.\n\n## Acceptance\n- With today\u0027s state (not-configured, local snapshot of 9 November) the layer shows 1 of 6 and marks five locations; with a fixture of a verified off-host archive it shows them green.\n- Screenshots in both themes at 390 and 1440 px."
+    },
+    {
+      "id": "LSC-7",
+      "title": "Construction sites and warnings layer",
+      "delivers": "Every open problem pinned to its node with what it blocks and the next step.",
+      "dependsOn": [
+        "LSC-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-7",
+        "criteria": [
+          "A fixture per kind renders its pin, its words and its next step; clicking a list item focuses the node.",
+          "Screenshots in both themes at 390 and 1440 px."
+        ]
+      },
+      "promptMarkdown": "# Construction sites and warnings layer\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955) and its chapter pages in the same directory. Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/system/domains/frontend.md first. Each Dossier recommendation (D1 to D11) is the working decision unless a recorded operator decision selects another option; record the option implemented. Studio tokens and existing components, light and dark, no animation with reduced motion. Fixtures and screenshots use role names only. Workspace data only through the application API; git stays with the platform. One bounded slice.\n\nDossier page and sections: \u0060layers.html\u0060 (Construction sites and warnings, Layers).\n\nFacts for warnings are delivered by AGT-3954; this slice draws them.\n\n## Deliver\n1. Warnings pinned to nodes for: toolchain or CLI missing or behind, release behind stable or pending install, link down, cards parked or refused because of a host, disk pressure, expiring credentials, missing backups. Each with what is wrong, what it blocks (card keys, gates, deploys) and the next step.\n2. Cone badge with count, top problem on the card at level 3, full list inside the service at level 4, a ranked side list; without an assessment the order is by severity.\n\n## Acceptance\n- A fixture per kind renders its pin, its words and its next step; clicking a list item focuses the node.\n- Screenshots in both themes at 390 and 1440 px."
+    },
+    {
+      "id": "LSC-8",
+      "title": "Persona view specifications for the structure canvas",
+      "delivers": "Persona-authored, schema-validated, cached view specifications drawn on top of the facts.",
+      "dependsOn": [
+        "LSC-6",
+        "LSC-7"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-8",
+        "criteria": [
+          "A model response with markup, an unknown key or an unknown node is rejected and the canvas shows facts only with the reasons.",
+          "Cost per assessment and calls per day are recorded in the token ledger as \u0060persona:\u003Cid\u003E\u0060 and stay within the persona\u0027s weekly allowance in a one-week soak."
+        ]
+      },
+      "promptMarkdown": "# Persona view specifications for the structure canvas\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955) and its chapter pages in the same directory. Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/system/domains/frontend.md first. Each Dossier recommendation (D1 to D11) is the working decision unless a recorded operator decision selects another option; record the option implemented. Studio tokens and existing components, light and dark, no animation with reduced motion. Fixtures and screenshots use role names only. Workspace data only through the application API; git stays with the platform. One bounded slice.\n\nDossier page and section: \u0060live.html\u0060, Assessments by personas; schema \u0060docs/live-structure-canvas/schema/structure-view-spec.v1.schema.json\u0060; persona model in \u0060docs/persona-team/\u0060 (do not redefine it).\n\n## Deliver\n1. A persona occurrence kind that assesses the installation for \u0060operations-warden\u0060 and \u0060reliability-engineer\u0060 (D9): input is a compact, versioned facts digest; output is a \u0060structure-view-spec/v1\u0060 document only. Triggers and schedule per D10 through the persona scheduler, admission and budget ledger.\n2. Server-side validation against the schema plus reference checks against the current facts; invalid output is stored with its errors and never served as valid.\n3. A specification store versioned by persona and facts version; \u0060GET /api/v1/operations/structure/assessments?persona=\u0060 returns the last valid one with its provenance.\n4. Client: persona picker (Facts only, each persona), callouts as numbered markers far out and bubbles closer in, emphasis halos, ranking, goals with steps, provenance (author, time, model, confidence, facts used), fallback to facts with the reason (D11 option B: on top of facts only).\n5. Each assessment also goes to the persona\u0027s feed as an item, so the magazine\u0027s operations watch can quote it.\n\n## Acceptance\n- A model response with markup, an unknown key or an unknown node is rejected and the canvas shows facts only with the reasons.\n- Cost per assessment and calls per day are recorded in the token ledger as \u0060persona:\u003Cid\u003E\u0060 and stay within the persona\u0027s weekly allowance in a one-week soak."
+    },
+    {
+      "id": "LSC-9",
+      "title": "2.5D overview mode",
+      "delivers": "Isometric overview mode on the same engine and data; block height by CPU and by mount size.",
+      "dependsOn": [
+        "LSC-1",
+        "LSC-5"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-9",
+        "criteria": [
+          "Switching back and forth keeps selection, focus and camera centre; reduced motion switches without animation.",
+          "Screenshots of 2D and 2.5D in both themes at 1440 px."
+        ]
+      },
+      "promptMarkdown": "# 2.5D overview mode\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955) and its chapter pages in the same directory. Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/system/domains/frontend.md first. Each Dossier recommendation (D1 to D11) is the working decision unless a recorded operator decision selects another option; record the option implemented. Studio tokens and existing components, light and dark, no animation with reduced motion. Fixtures and screenshots use role names only. Workspace data only through the application API; git stays with the platform. One bounded slice.\n\nDossier pages and sections: \u0060context.html\u0060 (2D and 2.5D), \u0060index.html\u0060 (Open decisions, D3).\n\nBuilds on the canvas of LSC-1 and the Storage layer of LSC-5, whose mount sizes give the block height.\n\n## Deliver\n1. The animated projection switch of the prototype: services as blocks, height by CPU in the Performance layer and by mount size in the Storage layer, labels as billboards, earlier opening of groups.\n2. Hit testing on projected faces; keyboard and outline unchanged.\n3. The switch is remembered per user; 2D stays the default.\n\n## Acceptance\n- Switching back and forth keeps selection, focus and camera centre; reduced motion switches without animation.\n- Screenshots of 2D and 2.5D in both themes at 1440 px."
+    },
+    {
+      "id": "LSC-10",
+      "title": "Register the live structure canvas Dossier in the Nordstern map and add forward links",
+      "delivers": "One entry in the Nordstern map and one forward link each in the deployment structure view and Bereitstellung Dossiers; no recorded decision changes.",
+      "dependsOn": [],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LSC-10",
+        "criteria": [
+          "The map of \u0060docs/operations/nordstern/index.html\u0060 has one linked entry for \u0060docs/live-structure-canvas/\u0060 under Next horizon.",
+          "\u0060docs/deployment-structure-view/index.html\u0060 (through its \u0060src/index.template.html\u0060 and \u0060build.mjs\u0060) and \u0060docs/operations/bereitstellung/index.html\u0060 each carry one forward link to the new Dossier.",
+          "No decision, option or recommendation recorded in those three Dossiers changes; the diff contains only the added links.",
+          "Every added link resolves; the build and verify scripts of \u0060docs/deployment-structure-view/\u0060 pass."
+        ]
+      },
+      "promptMarkdown": "# Register the live structure canvas Dossier in the Nordstern map and add forward links\n\nSource: \u0060docs/live-structure-canvas/index.html\u0060 (AGT-3955), page \u0060context.html\u0060, section Position. Read AGENTS.md and docs/start/README.md before editing. Documentation only: no product code, no change to any recorded decision. Git ownership stays with the platform. This is one bounded slice.\n\nWhy a card: the owner asked AGT-3955 to leave these links, but a concept delivery may change only its own \u0060docs/\u003Cslug\u003E/\u0060 directory, so they are delivered here with their exact text.\n\n## Deliver\n1. \u0060docs/operations/nordstern/index.html\u0060: add one card to the map, in the group of the next horizon, after the last card of that group:\n   \u0060\u0060\u0060html\n   \u003Ca class=\u0022card\u0022 href=\u0022../../live-structure-canvas/index.html\u0022\u003E\u003Ch4\u003ELive structure canvas\u003C/h4\u003E\u003Cdiv class=\u0022path\u0022\u003Elive-structure-canvas/ \u0026middot; Source AGT-3955\u003C/div\u003E\u003Cp\u003EThe hosting area\u0027s system view: one zoomable canvas of sites, machines, VMs and containers with layers for performance and network, storage, backup, construction sites, health, version and drift, and persona assessments on top of facts. Decides the canvas renderer and the chart library for the hosting area. D1 to D11 pending.\u003C/p\u003E\u003C/a\u003E\n   \u0060\u0060\u0060\n2. \u0060docs/deployment-structure-view/src/index.template.html\u0060: add this callout as the last element of the page header block, then run \u0060node docs/deployment-structure-view/build.mjs\u0060 so that \u0060index.html\u0060 carries the same line:\n   \u0060\u0060\u0060html\n   \u003Cdiv class=\u0022callout\u0022 data-tone=\u0022accent\u0022\u003E\u003Cp\u003E\u003Cb\u003EContinued by\u003C/b\u003E \u003Ca href=\u0022../live-structure-canvas/index.html\u0022\u003ELive structure canvas\u003C/a\u003E (AGT-3955). It carries this Dossier\u0027s model, levels and the Health, Version and Drift overlays on as layers of one zoomable canvas, and proposes to replace the SVG renderer with a Canvas 2D engine and the level switch with semantic zoom (its D1, D3 and D6). The decisions recorded here are unchanged.\u003C/p\u003E\u003C/div\u003E\n   \u0060\u0060\u0060\n3. \u0060docs/operations/bereitstellung/index.html\u0060: add this box directly before the first decision of the page:\n   \u0060\u0060\u0060html\n   \u003Cdiv class=\u0022box\u0022\u003E\u003Cb\u003EContinued by.\u003C/b\u003E \u003Ca href=\u0022../../live-structure-canvas/index.html\u0022\u003ELive structure canvas\u003C/a\u003E (AGT-3955) draws the deploy steps of this area on the node they run on and decides the chart library for the deploy dashboard (AGT-3950). The decisions below are unchanged.\u003C/div\u003E\n   \u0060\u0060\u0060\n4. If the owner has recorded decisions on \u0060docs/live-structure-canvas/\u0060 by then, replace \u0022D1 to D11 pending\u0022 in the map entry with the recorded state.\n\n## Acceptance\n- The map of \u0060docs/operations/nordstern/index.html\u0060 has one linked entry for \u0060docs/live-structure-canvas/\u0060 under Next horizon.\n- \u0060docs/deployment-structure-view/index.html\u0060 (through its \u0060src/index.template.html\u0060 and \u0060build.mjs\u0060) and \u0060docs/operations/bereitstellung/index.html\u0060 each carry one forward link to the new Dossier.\n- No decision, option or recommendation recorded in those three Dossiers changes; the diff contains only the added links.\n- Every added link resolves; the build and verify scripts of \u0060docs/deployment-structure-view/\u0060 pass.\n"
+    }
+  ],
+  "key": "AGT-W3463"
+}

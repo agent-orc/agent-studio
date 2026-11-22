@@ -14,17 +14,34 @@ public sealed record BatchFlakySuspect(
 /// <summary>
 /// The verdict of the one same-code re-gate of a flaky suspect.
 /// <see cref="Outcome"/> is <c>passed</c> (published, no per-card suite),
-/// <c>reproduced</c> (a second deterministic red on the same code), or
-/// <c>inconclusive</c> (any other result). The last two take the existing path.
+/// <c>reproduced</c> (a second deterministic red on the same code),
+/// <c>unpublished</c> (green, but its publication did not land; <see cref="Reason"/>
+/// names why), <c>requeued</c> (the gate host could not be reached; the members
+/// return to the batch pool), <c>interrupted</c> (the parent left isolation
+/// before the re-gate recorded a verdict), or <c>inconclusive</c> (any other
+/// result). Every outcome but <c>passed</c> and <c>requeued</c> sends the
+/// members down the existing per-card path.
 /// </summary>
 public sealed record BatchFlakySuspectRegate(
     string BatchId, string RegateBatchId, IReadOnlyList<string> MemberKeys,
-    string Outcome, double Minutes, DateTimeOffset RecordedAtUtc);
+    string Outcome, double Minutes, DateTimeOffset RecordedAtUtc, string? Reason = null)
+{
+    public const string Passed = "passed";
+    public const string Reproduced = "reproduced";
+    public const string Unpublished = "unpublished";
+    public const string Requeued = "requeued";
+    public const string Interrupted = "interrupted";
+    public const string Inconclusive = "inconclusive";
+}
 
 public sealed record BatchFlakySuspectView(BatchFlakySuspect Mark, BatchFlakySuspectRegate? Regate)
 {
-    /// <summary>A reproduced red is no longer a flaky suspect.</summary>
-    public bool Active => Regate?.Outcome != "reproduced";
+    /// <summary>
+    /// A reproduced red is no longer a flaky suspect. An interrupted re-gate
+    /// ends the mark without a verdict, so the red stops counting as one too.
+    /// </summary>
+    public bool Active => Regate?.Outcome is not (BatchFlakySuspectRegate.Reproduced
+        or BatchFlakySuspectRegate.Interrupted);
 }
 
 public sealed partial class BatchGateStore

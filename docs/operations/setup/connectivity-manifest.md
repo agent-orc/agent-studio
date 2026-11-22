@@ -42,6 +42,11 @@ only through `private-https`.
 | `externals[]` | Optional declared services outside the installation boundary, with `id`, `name`, and optional `kind`. |
 | `structureLinks[]` | Optional typed declared connections with `from`, `to`, `kind`, and `label`. References use `machine:<id>`, `component:<machine>:<id>` or `external:<id>`. |
 
+Placement can also live apart from this record: a file with only `machines`,
+`externals` and `structureLinks`, read from `Structure:PlacementPath`, feeds
+the Structure view and never this policy. See
+[structure-placement.md](./structure-placement.md).
+
 No credential is stored in the record or in generated configuration.
 
 The role-named `one-box.json` sample declares an AGT placement example: three

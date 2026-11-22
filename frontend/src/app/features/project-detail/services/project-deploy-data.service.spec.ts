@@ -156,6 +156,28 @@ describe('ProjectDeployDataService', () => {
     }
   });
 
+  it('reads deploy actions and starts them through the lifecycle deploy and redeploy routes', () => {
+    const cards = collect(service.deployActions('Web Site'));
+    const detail = collect(service.releaseDeployActions('Web Site', 'release one'));
+    const deploy = { environmentId: 'production', action: 'deploy' as const, releaseId: 'release one',
+      releaseVersion: '1', allowed: true, needsApproval: true, reason: null };
+    http.expectOne(`${DEPLOY}/actions`).flush([deploy]);
+    http.expectOne(`${DEPLOY}/releases/release%20one/actions`).flush([]);
+    expect(cards.at(-1)).toEqual({ status: 'ready', value: [deploy] });
+    expect(detail.at(-1)).toEqual({ status: 'ready', value: [] });
+
+    service.start('Web Site', deploy).subscribe();
+    const request = http.expectOne(`${DEPLOY}/releases/release%20one/deployments`);
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({ environmentId: 'production', approve: false });
+    request.flush({});
+
+    service.start('Web Site', { ...deploy, environmentId: 'stage', action: 'redeploy', needsApproval: false }).subscribe();
+    const redeploy = http.expectOne(`${DEPLOY}/environments/stage/redeploy`);
+    expect(redeploy.request.body).toEqual({ approve: true });
+    redeploy.flush({});
+  });
+
   it('treats a missing environments project as an error, not as unavailable', () => {
     const values = collect(service.environments('web'));
 

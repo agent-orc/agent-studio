@@ -1,0 +1,37 @@
+@use '../project-deploy-area/deploy-shared' as deploy;
+
+:host { display: block; min-width: 0; }
+
+.deploy-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+}
+
+.deploy-actions__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+
+  button {
+    @include deploy.button;
+
+    &:disabled { opacity: 0.55; cursor: not-allowed; }
+  }
+
+  .deploy-actions__primary {
+    border-color: var(--studio-accent);
+    background: var(--studio-accent);
+    color: var(--studio-on-accent);
+
+    &:hover:not(:disabled) { background: var(--studio-accent-strong); }
+  }
+}
+
+.deploy-actions__reason { @include deploy.muted; margin: 0; overflow-wrap: anywhere; }
+
+.deploy-actions__error {
+  margin: 0;
+  color: var(--studio-error);
+  overflow-wrap: anywhere;
+}

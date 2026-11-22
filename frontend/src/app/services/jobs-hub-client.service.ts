@@ -40,6 +40,13 @@ export interface OrchestratorContextChangedEvent {
   updatedAt: string;
 }
 
+/** Answer of the hub's `SubscribeToStructure`: the scope as deltas name it and the server's revision. */
+export interface StructureSubscription {
+  scope: string;
+  environment: string | null;
+  revision: number;
+}
+
 export interface PlanUpdatedEvent {
   jobId: string;
   cliType: string;
@@ -76,6 +83,7 @@ export class JobsHubClient {
   readonly planUpdated = signal<PlanUpdatedEvent | null>(null);
 
   private connection: HubConnection | null = null;
+  private readonly structureDeltaHandlers = new Set<(delta: unknown) => void>();
   private handlers: JobsHubHandlers | null = null;
   private coldRetryHandle: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
@@ -128,6 +136,11 @@ export class JobsHubClient {
       }));
     });
 
+    // AGT-3954: every delta is delivered, in order; a signal would coalesce two in one turn.
+    conn.on('structureDelta', (delta: unknown) => {
+      for (const handler of this.structureDeltaHandlers) handler(delta);
+    });
+
     conn.onreconnecting(() => this.setConnected(false));
     conn.onreconnected(() => {
       this.setConnected(true);
@@ -158,6 +171,32 @@ export class JobsHubClient {
     this.connection = null;
     this.setConnected(false);
     if (conn) conn.stop().catch(() => undefined);
+  }
+
+  /** Registers a listener for `structureDelta` pushes; returns the function that removes it. */
+  onStructureDelta<T>(handler: (delta: T) => void): () => void {
+    const listener = handler as (delta: unknown) => void;
+    this.structureDeltaHandlers.add(listener);
+    return () => this.structureDeltaHandlers.delete(listener);
+  }
+
+  /**
+   * Joins the hub group of one structure scope. Null while the socket is down
+   * or the server refuses; the caller then keeps reading with its entity tag.
+   * Group membership ends with the connection, so callers subscribe again
+   * whenever {@link connected} turns true.
+   */
+  async subscribeStructure(scope: string, environment: string | null): Promise<StructureSubscription | null> {
+    const conn = this.connection;
+    if (!conn || !this.connected()) return null;
+    try { return await conn.invoke<StructureSubscription>('SubscribeToStructure', scope, environment); }
+    catch { return null; }
+  }
+
+  unsubscribeStructure(scope: string, environment: string | null): void {
+    const conn = this.connection;
+    if (!conn || !this.connected()) return;
+    conn.invoke('UnsubscribeFromStructure', scope, environment).catch(() => undefined);
   }
 
   private connect(): void {

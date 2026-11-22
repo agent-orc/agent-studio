@@ -18,6 +18,12 @@ public sealed record ProjectArtifactDefinition(string Name, string Type, string?
 public sealed record ProjectEnvironmentDefinition(string Name, bool Protected)
 {
     /// <summary>
+    /// Studio connects the workload to its OTLP intake (M5): a container deploy
+    /// receives the endpoint, the protocol and an ingest token scoped to this environment.
+    /// </summary>
+    public bool Telemetry { get; init; }
+
+    /// <summary>
     /// Lets the control plane's health checks reach RFC 1918, shared and unique-local
     /// addresses, for an environment hosted on a LAN or VPN. The JSON declaration's
     /// <c>healthChecksAllowPrivateNetwork</c>; loopback, link-local and metadata stay refused.
@@ -59,9 +65,40 @@ public sealed record ProjectTenantDefinition(string Name, IReadOnlyList<string> 
 public sealed record ProjectChannelDefinition(string Name, string Lifecycle, string? PrereleaseTag,
     string? BranchPattern, bool Default);
 
-/// <summary>Named host operations. The host resolves each name to an operator-installed script.</summary>
+/// <summary>
+/// Named host operations. The host resolves each name to an operator-installed script.
+/// <see cref="Verify"/> names what must pass after the scripts before the run succeeds:
+/// <c>health:&lt;check id&gt;</c> for an environment health check or <c>alert:&lt;rule id&gt;</c>
+/// for a telemetry alert rule that must not fire.
+/// </summary>
 public sealed record ProjectRunbookDefinition(string Name, IReadOnlyList<string> Steps,
-    IReadOnlyList<string> Environments);
+    IReadOnlyList<string> Environments)
+{
+    public string? Verify { get; init; }
+}
+
+/// <summary>The parsed <c>verify</c> value of a runbook.</summary>
+public sealed record ProjectRunbookVerification(string Kind, string Target)
+{
+    public const string HealthCheck = "health";
+    public const string AlertRule = "alert";
+    /// <summary>The step that carries the verification result after the scripts.</summary>
+    public const string StepName = "verification";
+
+    public static ProjectRunbookVerification? Parse(string? value)
+    {
+        var separator = value?.IndexOf(':') ?? -1;
+        if (separator <= 0) return null;
+        var kind = value![..separator];
+        var target = value[(separator + 1)..];
+        return kind is HealthCheck or AlertRule && target.Length is > 0 and <= 64
+            && target[0] is >= 'a' and <= 'z' or >= '0' and <= '9'
+            && target.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '_' or '-')
+            ? new(kind, target) : null;
+    }
+
+    public string Describe() => Kind == HealthCheck ? $"health check {Target}" : $"alert rule {Target}";
+}
 
 /// <summary>
 /// Deploy hosts registered for one project, per P1 environment. The backend
@@ -115,13 +152,13 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
-    public static readonly IReadOnlyList<string> EnvironmentKeys = ["name", "protected", "healthChecksAllowPrivateNetwork"];
+    public static readonly IReadOnlyList<string> EnvironmentKeys = ["name", "protected", "telemetry", "healthChecksAllowPrivateNetwork"];
     public static readonly IReadOnlyList<string> LifecyclePhaseKeys = ["phase", "automatic", "approval", "requires"];
     public static readonly IReadOnlyList<string> ApprovalRoles = ["Owner", "Maintainer"];
     public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments", "tenants", "tenantTags", "channels"];
     public static readonly IReadOnlyList<string> TenantKeys = ["name", "tags", "environments"];
     public static readonly IReadOnlyList<string> ChannelKeys = ["name", "lifecycle", "versionRules", "prereleaseTag", "branchPattern", "default"];
-    public static readonly IReadOnlyList<string> RunbookKeys = ["name", "steps", "environments"];
+    public static readonly IReadOnlyList<string> RunbookKeys = ["name", "steps", "environments", "verify"];
     public static readonly IReadOnlyList<string> StepKinds =
         ["static-site", "container", "publish-static", "start-container", "run", "health", "approval"];
     public const int MaxHealthTimeoutSeconds = 900;
@@ -288,7 +325,7 @@ public static partial class ProjectDefinitionReader
             {
                 CheckMapKeys(item, ProjectDeploymentVocabulary.RunbookKeys, $"runbooks[{index}]", issues);
                 return new ProjectRunbookDefinition(Get(item, "name") ?? "", List(item, "steps"),
-                    List(item, "environments"));
+                    List(item, "environments")) { Verify = Get(item, "verify") };
             }).ToArray();
         var databases = ParseDatabases(lines, issues);
 
@@ -301,7 +338,9 @@ public static partial class ProjectDefinitionReader
         return new(NestedStringList(lines, "pipeline", "build"),
             NestedStringList(lines, "pipeline", "test"), artifacts,
             defaultEnvironments ? ProjectDeploymentVocabulary.DefaultEnvironments() : environments,
-            defaultLifecycle ? ProjectDeploymentVocabulary.DefaultStandardLifecycle() : phases,
+            defaultLifecycle ? (environments.Count == 1 && environments[0].Name == "staging"
+                ? [new ProjectLifecyclePhase("staging", true, [], null)]
+                : ProjectDeploymentVocabulary.DefaultStandardLifecycle()) : phases,
             steps)
         {
             Variables = variables,
@@ -332,9 +371,9 @@ public static partial class ProjectDefinitionReader
 
     /// <summary>
     /// Environments are either the inline shorthand <c>[staging, production]</c>
-    /// or a list of maps with <c>name</c>, <c>protected</c> and
-    /// <c>healthChecksAllowPrivateNetwork</c>. The shorthand
-    /// protects production.
+    /// or a list of maps with <c>name</c>, <c>protected</c>, <c>telemetry</c> and
+    /// <c>healthChecksAllowPrivateNetwork</c>. The shorthand protects production
+    /// and leaves telemetry off.
     /// </summary>
     private static IReadOnlyList<ProjectEnvironmentDefinition> Environments(
         IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues)
@@ -363,12 +402,17 @@ public static partial class ProjectDefinitionReader
                 var isProtected = protectedText is null
                     ? name == "production"
                     : bool.TryParse(protectedText, out var parsed) && parsed;
+                var telemetryText = Get(item, "telemetry");
+                if (telemetryText is not null && !bool.TryParse(telemetryText, out _))
+                    issues.Add(new($"environments[{index}].telemetry", "environment-telemetry-invalid",
+                        "telemetry must be true or false."));
                 var privateText = Get(item, "healthChecksAllowPrivateNetwork");
                 if (privateText is not null && !bool.TryParse(privateText, out _))
                     issues.Add(new($"environments[{index}].healthChecksAllowPrivateNetwork",
                         "environment-health-private-network-invalid", "healthChecksAllowPrivateNetwork must be true or false."));
                 return new ProjectEnvironmentDefinition(name, isProtected)
                 {
+                    Telemetry = telemetryText is not null && bool.TryParse(telemetryText, out var telemetry) && telemetry,
                     HealthChecksAllowPrivateNetwork = bool.TryParse(privateText, out var allowPrivate) && allowPrivate,
                 };
             }).ToArray();
@@ -477,6 +521,12 @@ public static partial class ProjectDefinitionValidator
                 issues.Add(new($"{path}.steps", "runbook-step-reserved", "approval is reserved for the environment approval step."));
             if (runbook.Environments.Any(environment => !environments.Contains(environment)))
                 issues.Add(new($"{path}.environments", "runbook-environment-unknown", "Runbook environments must be declared."));
+            if (runbook.Verify is not null && ProjectRunbookVerification.Parse(runbook.Verify) is null)
+                issues.Add(new($"{path}.verify", "runbook-verify-invalid",
+                    "verify must be health:<health check id> or alert:<alert rule id>."));
+            if (runbook.Verify is not null && runbook.Steps.Contains(ProjectRunbookVerification.StepName, StringComparer.Ordinal))
+                issues.Add(new($"{path}.steps", "runbook-step-reserved",
+                    "verification is reserved for the verification step when verify is set."));
         }
         return issues;
     }
@@ -490,15 +540,16 @@ public static partial class ProjectDefinitionValidator
             if (value.Artifacts.Count > 0 || value.Deploy.Count > 0 || value.Variables.Count > 0
                 || value.Runbooks.Count > 0)
                 issues.Add(new("environments", "deployment-environments-invalid",
-                    "P1 environments must be [staging, production] in deployment order."));
+                    "Environments must be [staging] or [staging, production] in deployment order."));
             return environments;
         }
-        if (value.Environments.Count != 2 || !environments.SetEquals(ProjectDeploymentVocabulary.EnvironmentNames))
+        if (value.Environments.Count == 2 && value.Environments[0].Name == "production"
+            && value.Environments[1].Name == "staging")
+            issues.Add(new("environments", "deployment-environment-order-invalid", "Staging must precede production."));
+        else if (value.Environments.Count is < 1 or > 2 || value.Environments[0].Name != "staging"
+            || value.Environments.Count == 2 && value.Environments[1].Name != "production")
             issues.Add(new("environments", "deployment-environments-invalid",
-                "P1 environments must be [staging, production] in deployment order."));
-        else if (value.Environments[0].Name != "staging")
-            issues.Add(new("environments", "deployment-environment-order-invalid",
-                "Staging must precede production."));
+                "Environments must be [staging] or [staging, production] in deployment order."));
         for (var i = 0; i < value.Environments.Count; i++)
         {
             if (value.Environments[i] is { Name: "production", Protected: false })
@@ -543,22 +594,24 @@ public static partial class ProjectDefinitionValidator
     {
         if (value.StandardLifecycle.Count == 0 && value.Environments.Count == 0)
             return;
-        if (value.StandardLifecycle.Count != 2
+        var stagingOnly = value.Environments.Count == 1 && value.Environments[0].Name == "staging"
+            && value.StandardLifecycle.Count == 1 && value.StandardLifecycle[0].Phase == "staging";
+        if (!stagingOnly && (value.StandardLifecycle.Count != 2
             || value.StandardLifecycle[0].Phase != "staging"
-            || value.StandardLifecycle[1].Phase != "production")
+            || value.StandardLifecycle[1].Phase != "production"))
         {
             issues.Add(new("lifecycles.standard", "standard-lifecycle-invalid",
-                "P1 standard lifecycle must contain staging followed by production."));
+                "The standard lifecycle must contain staging, optionally followed by production."));
             return;
         }
         if (!value.StandardLifecycle[0].Automatic)
             issues.Add(new("lifecycles.standard[0].automatic", "staging-automatic-required",
                 "Staging must deploy automatically after integration."));
-        if (value.StandardLifecycle[1].Approval.Count == 0
-            || value.StandardLifecycle[1].Approval.Any(role => !ProjectDeploymentVocabulary.ApprovalRoles.Contains(role)))
+        if (!stagingOnly && (value.StandardLifecycle[1].Approval.Count == 0
+            || value.StandardLifecycle[1].Approval.Any(role => !ProjectDeploymentVocabulary.ApprovalRoles.Contains(role))))
             issues.Add(new("lifecycles.standard[1].approval", "production-approval-invalid",
                 "Production approval must name Owner or Maintainer."));
-        if (value.StandardLifecycle[1].Requires is not ("staging" or "{ staging: success }" or "{staging: success}"))
+        if (!stagingOnly && value.StandardLifecycle[1].Requires is not ("staging" or "{ staging: success }" or "{staging: success}"))
             issues.Add(new("lifecycles.standard[1].requires", "production-requires-staging",
                 "Production must require successful staging. Use 'requires: staging'."));
         foreach (var (name, phases) in value.Lifecycles)

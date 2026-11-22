@@ -267,6 +267,7 @@ public static class RoutePermissionCatalog
         // rollback names an environment id the middleware resolves to the
         // kind of its declaration.
         Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/environments/releases", IamEnvironments.Stage);
+        Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/deploy/integration-release", IamEnvironments.Stage);
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
             "/api/projects/{}/environments/promotions/*", IamEnvironments.Production);
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
@@ -290,10 +291,11 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status", "/api/projects/{}/deploy/instance",
             "/api/projects/{}/deploy/releases", "/api/projects/{}/deploy/releases/page",
             "/api/projects/{}/deploy/releases/{}",
+            "/api/projects/{}/deploy/actions", "/api/projects/{}/deploy/releases/{}/actions",
             "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",
             "/api/projects/{}/deploy/deployments/{}",
             "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit",
-            "/api/projects/{}/deploy/release-gate",
+            "/api/projects/{}/deploy/release-gate", "/api/projects/{}/deploy/secret-readiness",
             "/api/projects/{}/deploy/runbooks", "/api/projects/{}/deploy/runbooks/runs",
             "/api/projects/{}/deploy/runbooks/runs/{}", "/api/projects/{}/deploy/runbooks/runs/{}/log");
         // Release notes are product copy, written like project documentation.

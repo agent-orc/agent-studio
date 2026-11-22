@@ -12,7 +12,7 @@ public sealed record EnvironmentOperationsView(DeployEnvironment Environment, bo
 public sealed record ProjectOperationsView(string Project, DateTimeOffset Since, DateTimeOffset Until,
     IReadOnlyList<EnvironmentOperationsView> Environments, DoraSummary Dora);
 
-public sealed record OperationsLogResult(bool TelemetryAvailable, IReadOnlyList<OperationsLogLine> Lines);
+public sealed record OperationsLogResult(bool TelemetryAvailable, IReadOnlyList<OperationsLogLine> Lines, string? NextCursor);
 
 public sealed class ProjectOperationsService(DeployService deploy, TaskScannerService scanner,
     IOperationsTelemetryReader telemetry, TimeProvider clock, HealthCheckStore health)
@@ -55,7 +55,7 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
         .ToArray();
 
     public OperationsLogResult? SearchLogs(string project, string environmentId, DateTimeOffset? since,
-        DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit)
+        DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit, string? cursor)
     {
         if (deploy.Environments(project) is not { } environments) return null;
         if (!environments.Any(item => item.Id == environmentId)) return null;
@@ -65,11 +65,15 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
             throw new ArgumentException("Log search must use an ordered range of at most 30 days.");
         if (text?.Length > 200 || releaseId?.Length > 100 || level?.Length > 30)
             throw new ArgumentException("A log search filter is too long.");
+        if (!string.IsNullOrWhiteSpace(level) && AgentStudio.Telemetry.TelemetrySeverity.Parse(level) is null)
+            throw new ArgumentException("Log level is invalid.");
+        if (!string.IsNullOrWhiteSpace(cursor) && AgentStudio.Telemetry.LogCursor.Decode(cursor) is null)
+            throw new ArgumentException("Log cursor is invalid.");
         var query = new OperationsLogQuery(project, environmentId, start, end,
             string.IsNullOrWhiteSpace(level) ? null : level,
             string.IsNullOrWhiteSpace(releaseId) ? null : releaseId,
-            string.IsNullOrWhiteSpace(text) ? null : text, Math.Clamp(limit ?? 100, 1, 100));
-        var lines = telemetry.SearchLogs(query);
-        return new(lines is not null, lines?.Take(query.Limit).ToArray() ?? []);
+            string.IsNullOrWhiteSpace(text) ? null : text, Math.Clamp(limit ?? 100, 1, 100), cursor);
+        var page = telemetry.SearchLogs(query);
+        return new(page is not null, page?.Lines ?? [], page?.NextCursor);
     }
 }

@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-studio.local/schemas/structure-view-spec.v1.schema.json",
+  "title": "Structure view specification v1",
+  "description": "Declarative assessment a persona returns for the live structure canvas. Plain text only; no code, markup or styles.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "revision",
+    "persona",
+    "createdAt",
+    "model",
+    "confidence",
+    "factsUsed",
+    "headline"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "structure-view-spec/v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._@:-]{1,80}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "persona": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "title"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._@:-]{1,80}$"
+        },
+        "role": {
+          "enum": [
+            "operations",
+            "reliability",
+            "cost",
+            "security",
+            "quality"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[^<>]*$",
+          "x-plain-text": true
+        }
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capabilityClass"
+      ],
+      "properties": {
+        "capabilityClass": {
+          "enum": [
+            "fast",
+            "balanced",
+            "frontier"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9.-]+$"
+        }
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "trigger": {
+      "type": "string",
+      "maxLength": 120,
+      "pattern": "^[^<>]*$",
+      "x-plain-text": true
+    },
+    "factsUsed": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "maxLength": 120,
+        "pattern": "^[A-Za-z0-9._@:/-]+$"
+      }
+    },
+    "headline": {
+      "type": "string",
+      "maxLength": 160,
+      "pattern": "^[^<>]*$",
+      "x-plain-text": true
+    },
+    "judgement": {
+      "type": "string",
+      "maxLength": 700,
+      "pattern": "^[^<>]*$",
+      "x-plain-text": true
+    },
+    "layers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "array",
+          "maxItems": 7,
+          "items": {
+            "enum": [
+              "perf",
+              "storage",
+              "backup",
+              "warnings",
+              "health",
+              "version",
+              "drift"
+            ]
+          }
+        },
+        "emphasise": {
+          "enum": [
+            "perf",
+            "storage",
+            "backup",
+            "warnings",
+            "health",
+            "version",
+            "drift"
+          ]
+        }
+      }
+    },
+    "emphasis": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node"
+        ],
+        "properties": {
+          "node": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._@:-]{1,80}$"
+          },
+          "weight": {
+            "enum": [
+              "strong",
+              "normal"
+            ]
+          }
+        }
+      }
+    },
+    "annotations": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "tone",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._@:-]{1,80}$"
+          },
+          "node": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._@:-]{1,80}$"
+          },
+          "link": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._@:-]{1,80}$"
+          },
+          "tone": {
+            "enum": [
+              "bad",
+              "warn",
+              "info",
+              "good"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 48,
+            "pattern": "^[^<>]*$",
+            "x-plain-text": true
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 160,
+            "pattern": "^[^<>]*$",
+            "x-plain-text": true
+          },
+          "factRefs": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._@:-]{1,80}$"
+            }
+          }
+        }
+      }
+    },
+    "ranking": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._@:-]{1,80}$"
+      }
+    },
+    "goals": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "done",
+          "total"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._@:-]{1,80}$"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 90,
+            "pattern": "^[^<>]*$",
+            "x-plain-text": true
+          },
+          "done": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "steps": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "title",
+                "state"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "owner-decision",
+                    "card",
+                    "operation"
+                  ]
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 90,
+                  "pattern": "^[^<>]*$",
+                  "x-plain-text": true
+                },
+                "detail": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "pattern": "^[^<>]*$",
+                  "x-plain-text": true
+                },
+                "state": {
+                  "enum": [
+                    "open",
+                    "proposed",
+                    "in-progress",
+                    "done"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

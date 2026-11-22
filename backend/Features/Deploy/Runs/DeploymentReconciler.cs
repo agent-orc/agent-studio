@@ -163,8 +163,10 @@ public static class DeploymentReconciler
         foreach (var promotion in input.Promotions.Where(item => item.Status == "pending"))
         {
             if (!environments.TryGetValue(promotion.ProductionId, out var environment)) continue;
+            // A digest can belong to several releases; the promotion names its release when it can.
             var record = input.Releases.Where(item => item.Release.ArtifactDigests.Contains(promotion.Artifact, StringComparer.Ordinal)
-                    && item.Release.CreatedAtUtc <= promotion.StageHealthyAt)
+                    && item.Release.CreatedAtUtc <= promotion.StageHealthyAt
+                    && (promotion.ReleaseId is null || item.Release.Id == promotion.ReleaseId))
                 .OrderBy(item => item.Release.CreatedAtUtc).ThenBy(item => item.Release.Id, StringComparer.Ordinal)
                 .LastOrDefault();
             if (record is null || record.Lifecycle.Count == 0

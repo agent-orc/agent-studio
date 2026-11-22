@@ -327,6 +327,25 @@ public class RunnerOptionsTests
     }
 
     [Fact]
+    public void Structure_placement_settings_come_from_the_environment_or_the_command_line()
+    {
+        using (new EnvironmentVariableScope(("RUNNER_PARENT_MACHINE", null), ("RUNNER_CONTAINER_NAME", null)))
+        {
+            var (flat, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
+            Assert.Equal((string.Empty, string.Empty), (flat.ParentMachine, flat.ContainerName));
+            var (flagged, _, _, _) = RunnerTestOptions.Parse(
+                ["--poll", "--parent-machine", "rack/guest", "--container-name", "review-host-2"]);
+            Assert.Equal(("rack/guest", "review-host-2"), (flagged.ParentMachine, flagged.ContainerName));
+        }
+        using (new EnvironmentVariableScope(
+            ("RUNNER_PARENT_MACHINE", " home-lab/linux-vm "), ("RUNNER_CONTAINER_NAME", "review-host-1")))
+        {
+            var (options, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
+            Assert.Equal(("home-lab/linux-vm", "review-host-1"), (options.ParentMachine, options.ContainerName));
+        }
+    }
+
+    [Fact]
     public void Salvage_retention_defaults_to_apply_on_the_home_salvage_store()
     {
         using var environment = new EnvironmentVariableScope(
