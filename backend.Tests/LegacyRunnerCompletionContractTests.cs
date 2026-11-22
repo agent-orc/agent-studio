@@ -8,6 +8,7 @@ using AgentStudio.TestSupport;
 
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -288,10 +289,16 @@ public sealed class LegacyRunnerCompletionContractTests : IDisposable
     };
 
     private WebApplicationFactory<Program> BuildFactory() =>
-        new WebApplicationFactory<Program>()
+        new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
+                builder.ConfigureTestServices(services =>
+                {
+                    // These requests own claim and completion state. Background
+                    // reconciliation must not race their assertions or teardown.
+                    TestHostFactory.RemoveBackgroundHostedServices(services);
+                });
                 builder.ConfigureAppConfiguration((_, configuration) =>
                     configuration.AddInMemoryCollection(new Dictionary<string, string?>
                     {
