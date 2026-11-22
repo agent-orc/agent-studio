@@ -59,8 +59,32 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         var observation = new PostMergeWindowObservation(new string('a', 40), now.AddMinutes(-31), now, 30, "1 occupied slots");
         using var response = await client.PostAsJsonAsync("/api/runner/post-merge/projects/one/window", observation);
         response.EnsureSuccessStatusCode();
+        var store = factory.Services.GetRequiredService<PostMergeRunStore>();
+        var one = registered.Single(project => project.DisplayName == "one");
+        foreach (var (id, at, names) in new[]
+                 { ("expired", now.AddDays(-15), new[] { "Runner.Old" }),
+                   ("first", now.AddDays(-2), new[] { "Runner.Frequent", "Runner.Rare" }),
+                   ("second", now.AddDays(-1), new[] { "Runner.Frequent" }) })
+        {
+            var run = new PostMergeRunRecord(id, "one", "nightly", observation.TipSha, null,
+                null, null, 0, ["dotnet test"], [], "running", at, null,
+                StartLoadPerCore: 0.4, StartOccupiedSlots: 6);
+            Assert.NotNull(store.Record(one.Id, run));
+            Assert.NotNull(store.Record(one.Id, run with { Status = "green", FinishedAtUtc = at,
+                Verdicts = [new("dotnet test", 0, false, FlakyTests: names, Retried: true)] }));
+        }
+        // Admission clears the pending observation, so restore it before checking its projection.
+        store.ObserveWindow(one.Id, observation);
+        var receiptState = await client.GetFromJsonAsync<PostMergeProjectState>("/api/runner/post-merge/projects/one");
+        Assert.Equal(1, receiptState!.Runs[^1].FlakyCount);
+        Assert.Equal(6, receiptState.Runs[^1].StartOccupiedSlots);
+        Assert.Equal(0.4, receiptState.Runs[^1].StartLoadPerCore);
         var states = await client.GetFromJsonAsync<DevelopStateSummary[]>("/api/develop-states");
         var pending = states!.Single(state => state.Project == "one").PendingWindow;
+        var summary = states.Single(state => state.Project == "one");
+        Assert.Equal(1, summary.FlakyCount);
+        Assert.Equal(["Runner.Frequent", "Runner.Rare"], summary.MostFlakyTests14Days!.Select(test => test.Test));
+        Assert.Equal([2, 1], summary.MostFlakyTests14Days.Select(test => test.Runs));
         Assert.NotNull(pending);
         Assert.True(pending.Starved);
         Assert.Equal(observation.TipSha, pending.TipSha);

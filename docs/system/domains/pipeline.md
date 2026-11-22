@@ -247,6 +247,37 @@ The Dossier's recorded working decisions are D1 T-B, D2 A, D3 A, D4 A,
 D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A. This card implements T3 under
 D1 T-B and retains D3 A as the before-delivery policy for its later card.
 
+### Flaky tests after integration (AGT-3976)
+
+Every failed routine suite in a window or nightly run gets one same-tip repeat,
+including runner, task-server, frontend, and nightly shards. .NET failures use
+method names without theory display arguments and a focused filter that retains
+the original exclusions. Each failed method repeats once; a method that recovers
+is flaky and a method that fails twice remains red. Other suite kinds, or output
+that cannot form a safe focused filter, repeat the original suite command once.
+Build and prepare failures remain blocking. Active test quarantines retain their
+existing exemption.
+
+Receipts retain the original failure excerpt and record repeat attempts
+through `retried`, recovered names in `flakyTests`, and a distinct `flakyCount`.
+Recovered tests do not make develop red, including when other tests stay red.
+`/api/develop-states` exposes the latest terminal run's `flakyCount` and
+`mostFlakyTests14Days`, ordered by the number of distinct runs per test. Flaky
+occurrences are persisted for 14 days independently of the 512-receipt limit.
+Names are available for recognized .NET and Vitest console failures; an unnamed
+suite recovery is reported in the receipt reason without inventing a test name.
+Receipts also record the admission sample as `startLoadPerCore` and
+`startOccupiedSlots`, including on a red result. This is a start snapshot, not
+monitoring of load throughout execution.
+
+Attribution excludes paths under `docs/` and root Markdown documentation even
+when suite selection conservatively ran every suite. Source and build changes
+continue to use the test project's reference graph and conservative fallback.
+When no relevant merge remains, the receipt records `noRelevantMerges`; its
+repair card says no merge explains the failure and identifies an environmental
+or flaky suspect. Attribution errors remain unresolved rather than claiming a
+proof of independence.
+
 ### Red develop repair (AGT-3312)
 
 This slice implements the Dossier's recorded D2 option A (`revert-first`). A
