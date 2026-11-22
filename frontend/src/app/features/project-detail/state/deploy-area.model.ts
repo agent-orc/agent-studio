@@ -200,7 +200,7 @@ export function triggerLabel(raw: string): string {
   return (DEPLOY_TRIGGERS as readonly string[]).includes(raw) ? TRIGGER_LABEL[raw as keyof typeof TRIGGER_LABEL] : raw;
 }
 
-export type HealthState = 'healthy' | 'unhealthy' | 'unknown' | 'up' | 'degraded' | 'down' | 'invalid' | 'not-observed' | 'crash-loop' | 'crash-rollback';
+export type HealthState = 'healthy' | 'unhealthy' | 'unknown' | 'up' | 'degraded' | 'down' | 'invalid' | 'not-observed' | 'crash-loop' | 'crash-rollback' | 'not-deployed';
 /** AGT-3201 `EnvironmentStatus.health`. */
 const STATUS_HEALTH: Record<string, HealthState> = { healthy: 'healthy', unhealthy: 'unhealthy', unknown: 'unknown' };
 /** AGT-3176 `environments[].health`, from the latest host report. */
@@ -212,7 +212,7 @@ const HOST_REPORT: Record<string, { state: DeploymentState; trigger: string }> =
   failed: { state: 'failed', trigger: 'deploy' },
 };
 
-export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'No data', up: 'Up', degraded: 'Degraded', down: 'Down', invalid: 'Misconfigured', 'not-observed': 'Not observed', 'crash-loop': 'Crash loop', 'crash-rollback': 'Crash rollback' };
+export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'No data', up: 'Up', degraded: 'Degraded', down: 'Down', invalid: 'Misconfigured', 'not-observed': 'Not observed', 'crash-loop': 'Crash loop', 'crash-rollback': 'Crash rollback', 'not-deployed': 'Not deployed' };
 
 /** Actions the lifecycle accepts per state (AGT-3201 StandardLifecyclePolicy); the server still decides. */
 export type DeployRunAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'skip' | 'abort';
