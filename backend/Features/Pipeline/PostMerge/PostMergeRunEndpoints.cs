@@ -50,11 +50,14 @@ public static class PostMergeRunEndpoints
             if (record is null) return Results.NotFound();
             var state = store.Read(record.Id);
             var projectSettings = settings.Get(record.DisplayName);
-            if (IntegrationTestModes.Resolve(projectSettings) == IntegrationTestModes.PostMerge)
+            var strategy = TestingStrategies.Resolve(projectSettings);
+            if (TestingStrategies.ExpectsPostMergeRuns(strategy))
                 state = state with
                 {
                     WindowMaxMerges = projectSettings.BatchGate.MaximumSize,
                     WindowMinutes = Math.Max(0, projectSettings.BatchGate.LookAheadMinutes),
+                    // AGT-3965: fast selects the affected routine suites, balanced every routine suite.
+                    WindowSuites = TestingStrategies.WindowSuites(strategy),
                 };
             return Results.Ok(state);
         });

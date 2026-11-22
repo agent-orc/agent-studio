@@ -516,6 +516,18 @@
       </tbody>
     </table>
 
+    <h3>Testing strategy per project (AGT-3965)</h3>
+    <p>One owner setting, <code>testing.strategy</code>, selects where the tiers above run. It maps onto the existing switches and adds no mechanism. The model review aspects run in T1 in every strategy. A project without a stored value is <b>fast</b>.</p>
+    <table>
+      <thead><tr><th>Strategy</th><th>Per card (T1)</th><th>Integration (T2)</th><th>After integration (T3, T4)</th></tr></thead>
+      <tbody>
+        <tr><td><b>fast</b> (default)</td><td>Build, affected tests and fast checks</td><td>Right after the review passed; merged-tree compile, affected tests again only on shared-path movement</td><td>Merge window: affected routine suites. Nightly: full routine suite. T4 full suite before a Production release</td></tr>
+        <tr><td><b>balanced</b></td><td>As fast</td><td>As fast</td><td>Merge window: every routine suite. Nightly and T4 as fast</td></tr>
+        <tr><td><b>strict</b></td><td>Build in review; the full suite runs in the batch gate</td><td>Pre-merge integration gate, after a green batch</td><td>No post-merge expectation; T4 as configured</td></tr>
+      </tbody>
+    </table>
+    <p>A fast or balanced project whose develop has a commit older than six hours that no reported T3 run covers, and that reported no T3 run in six hours, shows a warning on its settings page and Operations view and a <code>post-merge.missing</code> item in Needs you. The two-hour red-develop fallback to pre-merge is unchanged.</p>
+
     <h3>Failures after merge</h3>
     <p>Moving the full suite after the merge means develop can turn red. The design question is how fast a red develop is found, attributed and repaired, and what it is allowed to block.</p>
     <ol>
@@ -939,6 +951,10 @@
 <li data-implementation-entry="" data-task-key="AGT-3314" data-delivered-at="2026-10-27" data-slice="post-merge-mode-switch">
   <strong>AGT-3314 · Post-merge mode switch</strong>
   <span>Implemented D1 T-B for the per-project post-merge switch: T1 affected verification, a merged-tree compile at T2 with affected tests on shared-path movement, and the pre-merge batch route disabled. The look-ahead settings size the T3 window. Merge and push locks are keyed by project and branch. Under D2 A, a repair card escalated through the post-merge attribution category returns its project to pre-merge while the card remains Escalated; a red develop also triggers fallback after two hours, and a green T3 receipt clears the recorded card. Agent Studio stays pre-merge pending a measured T1 replay median at or below ten minutes. The recorded D3 A, D4 A, D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A remain choices for their delivery slices.</span>
+</li>
+<li data-implementation-entry="" data-task-key="AGT-3965" data-delivered-at="2026-11-22" data-slice="testing-strategy">
+  <strong>AGT-3965 · Testing strategy</strong>
+  <span>Implemented D1 T-B as the default: <code>testing.strategy</code> is fast, balanced or strict, and a project without a stored value resolves to fast, so every project that had no testing section moves from pre-merge and full to post-merge and affected. The former <code>testing.perCard</code> and <code>testing.mode</code> are derived from the strategy and readable for one release; <code>PUT /api/projects/{name}/testing</code> takes only <code>{"strategy": ...}</code>. Strict reproduces the pre-merge review plan and batch gate. Balanced makes the T3 window run every routine suite. A fast or balanced project without a T3 report while develop moved warns on its settings page, its Operations view and in Needs you (<code>post-merge.missing</code>). Agent Studio is no longer held in pre-merge (owner decision of 20 to 22 November 2026).</span>
 </li>
 <!-- agent-studio:implementation-log:end -->
     </ol>

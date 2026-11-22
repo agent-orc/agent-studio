@@ -1834,6 +1834,17 @@ enable lingering for the service account). Manual nightly timers retain their
 02:15 and 04:15 local-time attempts. The worker posts receipts to
 `/api/runner/post-merge/projects/{project}/runs`; it never mutates card folders.
 
+Every project on testing strategy `fast` (the default since AGT-3965) or
+`balanced` needs T3 runs: those strategies integrate before the tests run, and
+T3 is develop's only check. `GET /api/runner/post-merge/projects` lists exactly
+these projects, so the coding daemon's host scheduler picks them up without
+timers; this manual pair is only the fallback. A project whose develop
+moved without a receipt for six hours shows "Post-merge runs missing" on its
+settings page and Operations view and a `post-merge.missing` item in Needs
+you until a receipt arrives. A project that cannot get T3 runs yet chooses
+`strict` on its settings page. The window run reads `windowSuites` from the
+state route: `affected` for fast, `routine` (every routine suite) for balanced.
+
 ### Salvage store retention
 
 The coding daemon owns the host salvage store and sweeps it on its own timer

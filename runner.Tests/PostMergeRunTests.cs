@@ -34,6 +34,26 @@ public sealed class PostMergeRunTests
     }
 
     [Fact]
+    public void WindowSuitesFollowTheProjectTestingStrategy()
+    {
+        // AGT-3965: fast keeps the affected union, balanced runs every routine suite.
+        var definition = new ProjectExecutionDefinition(1, [],
+            new Dictionary<string, string>(), new("prepare", ["build"], [], []),
+            [new("backend-routine", "routine", 10, "backend tests"),
+             new("runner-routine", "routine", 10, "runner tests"),
+             new("backend-coverage", "release", 10, "backend coverage")],
+            [], [], new Dictionary<string, string>(), null, null, null, null, null);
+        string[] changed = ["backend/Foo.cs"];
+
+        Assert.Equal(["prepare", "build", "backend tests"],
+            PostMergeRunPlan.Build(definition, "window", changed, PostMergeWindowSuiteModes.Affected));
+        Assert.Equal(["prepare", "build", "backend tests"],
+            PostMergeRunPlan.Build(definition, "window", changed, null));
+        Assert.Equal(["prepare", "build", "backend tests", "runner tests"],
+            PostMergeRunPlan.Build(definition, "window", changed, PostMergeWindowSuiteModes.Routine));
+    }
+
+    [Fact]
     public void NightlyShardsUseOnlyFreeSlotsAndRetainAComplementShard()
     {
         var suite = new ProjectTestSuite("backend-routine", "routine", 1800,

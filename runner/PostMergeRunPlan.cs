@@ -37,15 +37,21 @@ public static class PostMergeRunPlan
         return routine.Where(suite => selected.Contains(suite.Id)).Select(suite => suite.Command).ToArray();
     }
 
+    /// <param name="windowSuites">
+    /// A <see cref="PostMergeWindowSuiteModes"/> value from the project's testing
+    /// strategy (AGT-3965). <see cref="PostMergeWindowSuiteModes.Routine"/> runs
+    /// every routine suite in a window, like the nightly run; anything else keeps
+    /// the affected selection.
+    /// </param>
     public static IReadOnlyList<string> Build(ProjectExecutionDefinition definition,
-        string kind, IReadOnlyList<string> changedPaths)
+        string kind, IReadOnlyList<string> changedPaths, string? windowSuites = null)
     {
         var commands = new List<string>();
         if (!string.IsNullOrWhiteSpace(definition.Commands.Prepare)) commands.Add(definition.Commands.Prepare);
         commands.AddRange(definition.Commands.Build.Where(command => !string.IsNullOrWhiteSpace(command)));
         if (!definition.TestSuites.Any(suite => suite.Category == "routine"))
             commands.Add("echo 'No routine test suites are configured' >&2; exit 2");
-        else if (kind == "nightly")
+        else if (kind == "nightly" || windowSuites == PostMergeWindowSuiteModes.Routine)
             commands.AddRange(definition.TestSuites.Where(suite => suite.Category == "routine")
                 .Select(suite => suite.Command));
         else commands.AddRange(SelectAffected(definition, changedPaths));

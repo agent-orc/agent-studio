@@ -49,6 +49,8 @@ import type {
   ReviewProjectionView,
   TaskDeliveryClaimAnswer,
   DecisionActionResponse,
+  ProjectTesting,
+  TestingStrategy,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
 import type { CouncilFindingAction, CouncilReactionDisposition } from '../models/council-review.model';
@@ -2695,6 +2697,14 @@ export class TaskService {
     }>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/pipeline-step-order`,
       { pipelineType, stepIds },
+    );
+  }
+
+  /** AGT-3965: Owner only; the server rebuilds queued review plans for the new tier. */
+  setProjectTestingStrategy(projectName: string, strategy: TestingStrategy) {
+    return this.http.put<ProjectTesting>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/testing`,
+      { strategy },
     );
   }
 

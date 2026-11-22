@@ -287,8 +287,8 @@ public sealed class RemoteReviewPlanBuilder
             : BatchDeferralBlocker(
                 projectSettings?.BatchGate.Enabled == true,
                 projectSettings is not null
-                && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
-                    ?? IntegrationTestModes.Resolve(projectSettings)) == IntegrationTestModes.PostMerge,
+                && PostMergeModeService.Effective(_postMergeMode, task?.ProjectName ?? string.Empty, projectSettings)
+                    == IntegrationTestModes.PostMerge,
                 task is null || TaskModes.IsReportOnly(task.Mode),
                 projectSettings?.BatchGate.EffectiveScope, changedPaths, resultRef, resultSha,
                 concept: task is not null && TaskModes.IsConcept(task.Mode));
@@ -361,9 +361,11 @@ public sealed class RemoteReviewPlanBuilder
         }
         // AGT-3310: testing.perCard: affected runs tier T1 per card. Full keeps
         // the plan above byte for byte; so does a T1 scope that falls back.
+        // AGT-3965: perCard is derived from testing.strategy; only strict is full.
         var perCardApplied = false;
         if (!deferBuildTest && !noChange && conceptDossier is null
             && task is not null && !TaskModes.IsReportOnly(task.Mode)
+            && projectSettings is not null
             && PerCardTestModes.Resolve(projectSettings) == PerCardTestModes.Affected
             && changedPaths is { Count: > 0 } && !string.IsNullOrWhiteSpace(repositoryPath)
             && ReviewSubjectStore.IsValidResultSha(resultSha))

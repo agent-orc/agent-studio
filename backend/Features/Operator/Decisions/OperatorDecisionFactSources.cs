@@ -283,3 +283,24 @@ public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
         => OperatorDecisionFacts.FromProviderLimits(limits.Active(nowUtc));
 }
+
+/// <summary>
+/// AGT-3965: one fact per fast or balanced project whose develop moved
+/// without a post-merge run reported within six hours. The occurrence is the
+/// last reported tip, so a new report that leaves develop uncovered again is
+/// a new occurrence, and a report that covers develop clears it.
+/// </summary>
+public sealed class OperatorPostMergeCoverageFactSource(Func<IReadOnlyList<PostMergeCoverage>> missing)
+    : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PostMergeRunsMissing];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+        => missing().Select(coverage => new OperatorDecisionFact(
+            OperatorDecisionTypes.PostMergeRunsMissing,
+            $"{OperatorDecisionTypes.PostMergeRunsMissing}|{coverage.Project}|{coverage.LastReportedTipSha ?? "never"}",
+            coverage.Project, null, coverage.Message,
+            (coverage.LastReportedAtUtc + PostMergeCoveragePolicy.Limit)?.UtcDateTime ?? nowUtc,
+            [new OperatorEvidenceLink("testing", "/api/projects/" + Uri.EscapeDataString(coverage.Project) + "/testing")],
+            Title: "Post-merge runs missing")).ToArray();
+}

@@ -235,7 +235,7 @@ public sealed class PostMergeRunCommand
             }
             changed = changed.Distinct(StringComparer.Ordinal).ToList();
         }
-        var commands = PostMergeRunPlan.Build(definition, _options.Mode, changed);
+        var commands = PostMergeRunPlan.Build(definition, _options.Mode, changed, state.WindowSuites);
         var opened = merges.Count == 0 ? (DateTimeOffset?)null : merges.Min(merge => merge.At);
         var started = new PostMergeRunRecord(id, _options.Project, _options.Mode, tip,
             from, opened, now, merges.Count, commands, [], "running", now, null);
