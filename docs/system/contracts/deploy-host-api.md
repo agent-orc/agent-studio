@@ -33,6 +33,10 @@ assignments again. An observed crash loop opens or updates a durable environment
 runtime incident and raises an Activity alert. A later running observation
 closes the incident and records recovery. The project Operations view shows the
 host restart count and last crash output even without application telemetry.
+Observation is best effort: an unreadable target list, Docker inspect output
+of an unexpected shape, or a refused or unreachable observed-state report is
+written to the host's stderr and never fails the job-less poll. A container
+whose inspect output cannot be read is reported as `failed`.
 
 ## Run host identity and liveness
 
