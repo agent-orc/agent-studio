@@ -318,6 +318,9 @@ public sealed class RemoteReviewWorkspace
         var candidateDependencyRemovers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string? lastCandidateStep = null;
         string? reviewMaterial = null;
+        // AGT-3971: the lead aspect's first streamed usage releases its siblings.
+        var firstUsageObservers = new System.Collections.Concurrent.ConcurrentDictionary<string, Action<RemoteAgentUsage>>(
+            StringComparer.Ordinal);
         IReadOnlyDictionary<string, VerifyCacheEntry> reusableVerify =
             new Dictionary<string, VerifyCacheEntry>(StringComparer.Ordinal);
         try
@@ -506,6 +509,7 @@ public sealed class RemoteReviewWorkspace
             // read. The executed budget - never the frozen one - is what the
             // evidence and any violation report.
             var command = plannedCommand;
+            var launch = ReviewAspectLaunch.Plain;
             if (ReviewCommandKinds.IsAgent(command.ExecutionKind))
             {
                 var screenshots = string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
@@ -533,6 +537,9 @@ public sealed class RemoteReviewWorkspace
                     Prompt = prompt,
                     TimeoutSeconds = Math.Max(plannedCommand.TimeoutSeconds, budget.Seconds),
                 };
+                launch = new ReviewAspectLaunch(
+                    input.SharedPrefixLength,
+                    firstUsageObservers.TryRemove(command.StepId, out var observer) ? observer : null);
                 _log(
                     $"review-aspect-budget step={command.StepId} {budget.Describe()} " +
                     $"planned={plannedCommand.TimeoutSeconds}s effective={command.TimeoutSeconds}s");
@@ -553,7 +560,7 @@ public sealed class RemoteReviewWorkspace
             }
 
             var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
-                ? await _agentCommands.RunAsync(command, ct)
+                ? await _agentCommands.RunAsync(command, launch, ct)
                 : await RunCommandAsync(command, RepositoryPath, ct);
             if (!ReviewCommandKinds.IsAgent(command.ExecutionKind))
             {
@@ -1156,25 +1163,55 @@ public sealed class RemoteReviewWorkspace
             var parallelism = _options.ReviewAspectParallelism;
             try
             {
-                var remaining = aspects;
+                var lead = aspects[0];
+                TaskCompletionSource? released = null;
                 if (aspects.Count > 1
-                    && string.Equals(aspects[0].CliType, "claude", StringComparison.OrdinalIgnoreCase)
-                    && aspects[0].Prompt?.Contains(SharedMaterialMarker, StringComparison.Ordinal) == true)
+                    && lead.Prompt?.Contains(SharedMaterialMarker, StringComparison.Ordinal) == true
+                    && _agentCommands.SharesReviewPrefix(lead))
                 {
-                    // A completed Claude call has written the shared prefix to
-                    // the provider cache before its siblings start reading it.
-                    await RunAspectAsync(aspects[0], ct);
-                    remaining = aspects.Skip(1).ToArray();
-                    var seed = commands.LastOrDefault(command => command.StepId == aspects[0].StepId);
-                    if (seed is null || seed.CacheCreationTokens == 0 && seed.CacheReadTokens == 0)
+                    // AGT-3971: the lead writes the shared prefix to the provider
+                    // cache; a cache entry is readable once its response streams.
+                    // Its siblings start on the lead's first streamed usage, when
+                    // it ends, or after MaximumLead, whichever comes first.
+                    var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    released = gate;
+                    var leadStarted = DateTime.UtcNow;
+                    firstUsageObservers[lead.StepId] = usage =>
                     {
-                        // No observable cache entry was written or read. Avoid
-                        // simultaneous cold writes while subsequent calls try.
-                        parallelism = 1;
-                        _log($"review-aspect-cache-unconfirmed step={aspects[0].StepId}; remaining aspects run serially");
-                    }
+                        var seconds = (DateTime.UtcNow - leadStarted).TotalSeconds;
+                        _log(usage.CacheCreationTokens == 0 && usage.CacheReadTokens == 0
+                            ? $"review-aspect-cache-unconfirmed step={lead.StepId} leadSeconds={seconds:0.0}; siblings start without a confirmed cache entry"
+                            : $"review-aspect-cache-lead step={lead.StepId} leadSeconds={seconds:0.0} " +
+                              $"cacheCreationTokens={usage.CacheCreationTokens} cacheReadTokens={usage.CacheReadTokens}");
+                        gate.TrySetResult();
+                    };
+                    _ = Task.Delay(ClaudeSharedPrefixLaunch.MaximumLead, ct)
+                        .ContinueWith(_ => gate.TrySetResult(), TaskScheduler.Default);
                 }
-                await ReviewAspectFanOut.RunAsync(remaining, parallelism, RunAspectAsync, ct);
+                await ReviewAspectFanOut.RunAsync(
+                    aspects,
+                    parallelism,
+                    async (aspect, aspectCt) =>
+                    {
+                        try
+                        {
+                            await RunAspectAsync(aspect, aspectCt);
+                        }
+                        finally
+                        {
+                            if (released is not null && ReferenceEquals(aspect, lead))
+                            {
+                                firstUsageObservers.TryRemove(lead.StepId, out _);
+                                released.TrySetResult();
+                            }
+                        }
+                    },
+                    ct,
+                    released?.Task,
+                    // The provider cache is per model: an aspect on another model
+                    // or CLI cannot read the lead's entry and starts at once.
+                    aspect => string.Equals(aspect.CliType, lead.CliType, StringComparison.OrdinalIgnoreCase)
+                              && string.Equals(aspect.Model, lead.Model, StringComparison.OrdinalIgnoreCase));
             }
             catch (ReviewInfrastructureException exception) when (exception.Evidence is not null)
             {
