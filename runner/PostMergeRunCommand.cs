@@ -429,9 +429,26 @@ public sealed class PostMergeRunCommand
         catch (IOException) { return null; }
     }
 
-    private IReadOnlyDictionary<string, string?> ChildEnvironment(IReadOnlyDictionary<string, string> values)
+    private static IReadOnlyDictionary<string, string?> ChildEnvironment(IReadOnlyDictionary<string, string> values)
     {
-        var environment = values.ToDictionary(pair => pair.Key, pair => (string?)pair.Value);
+        // Like review commands, project commands receive an explicit environment.
+        // The host scheduler also holds runner, provider, and Git credentials.
+        var environment = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var name in new[]
+                 {
+                     "PATH", "HOME", "DOTNET_ROOT", "DOTNET_ROOT_X64", "DOTNET_ROOT_ARM64",
+                     "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP",
+                     "SSL_CERT_FILE", "SSL_CERT_DIR", "PLAYWRIGHT_BROWSERS_PATH",
+                 })
+        {
+            if (Environment.GetEnvironmentVariable(name) is { } value) environment[name] = value;
+        }
+        if (OperatingSystem.IsWindows())
+        {
+            foreach (var name in new[] { "SystemRoot", "windir", "SystemDrive", "ComSpec", "PATHEXT", "USERPROFILE" })
+                if (Environment.GetEnvironmentVariable(name) is { } value) environment[name] = value;
+        }
+        foreach (var (name, value) in values) environment[name] = value;
         environment["RUNNER_AUTH_TOKEN"] = null;
         environment["RUNNER_AUTH_TOKEN_FILE"] = null;
         environment["POST_MERGE_TOKEN_FILE"] = null;
@@ -439,7 +456,7 @@ public sealed class PostMergeRunCommand
         return environment;
     }
 
-    private async Task<(int ExitCode, bool TimedOut, string Output)> RunCommand(string command,
+    internal async Task<(int ExitCode, bool TimedOut, string Output)> RunCommand(string command,
         IReadOnlyDictionary<string, string> environment, CancellationToken ct)
     {
         _output.WriteLine($"post-merge {command}");
@@ -448,7 +465,7 @@ public sealed class PostMergeRunCommand
         try
         {
             var result = await ProcessRunner.RunAsync("sh", ["-c", command], _options.Checkout,
-                environment: ChildEnvironment(environment),
+                environment: ChildEnvironment(environment), clearEnvironment: true,
                 onStdOut: line => _output.WriteLine(line),
                 onStdErr: line => _output.WriteLine(line),
                 isolateProcessGroup: OperatingSystem.IsLinux(), ct: timeout.Token);
