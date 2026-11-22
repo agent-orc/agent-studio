@@ -11,6 +11,9 @@
    promptMarkdown (ConceptPromotionService.BuildPrompt).
 3. Checks that slices whose Area lines share a directory are ordered by dependsOn
    (directly or transitively).
+4. Runs replay.py (4 slots, unit durations) and compares every cell of the replay
+   results table in index.html with the script output, so the published figures
+   cannot drift from the evidence.
 
 Usage: python3 -I check_dossier.py [repository root]
 """
@@ -143,5 +146,31 @@ for i, a in enumerate(ids):
 print("same-area pairs without a dependsOn path:", unordered or "none")
 if unordered:
     failures.append("same-area slices unordered")
+
+# 4. Replay table against replay.py output.
+import subprocess
+out = subprocess.run([sys.executable, "-I", os.path.join(HERE, "replay.py")],
+                     capture_output=True, text=True, check=True).stdout
+section = out.split("== durations: unit", 1)[1].split("== durations: size", 1)[0]
+replayed = {}
+for line in section.splitlines():
+    if line.startswith('{"name"'):
+        r = json.loads(line)
+        replayed[r["name"].replace(" (baseline)", "")] = [
+            str(r["runs"]), str(r["exposedPairs"]), str(r["cardsNeedingSync"]),
+            f'{r["roundsPerCard"]:.2f}', f'{r["parallelism"]:.2f}', f'{r["makespan"]:g}',
+            str(r["valuePlain"]), str(r["value"])]
+html = open(os.path.join(DOSSIER, "index.html"), encoding="utf-8").read()
+table = html.split('<h3 id="replay-results">', 1)[1].split("</table>", 1)[0]
+published = {}
+for row in re.findall(r"<tr><td>([^<]+)</td>((?:<td>[^<]*</td>)+)</tr>", table):
+    published[row[0]] = re.findall(r"<td>([^<]*)</td>", row[1])
+drift = []
+for name, cells in replayed.items():
+    if published.get(name) != cells:
+        drift.append(f"{name}: published {published.get(name)} replayed {cells}")
+print("\nreplay table vs replay.py:", "match for %d personas" % len(replayed) if not drift else drift)
+if drift or len(replayed) != 6:
+    failures.append("replay table drifts from replay.py")
 print("\nresult:", "PASS" if not failures else "FAIL " + "; ".join(failures))
 sys.exit(1 if failures else 0)

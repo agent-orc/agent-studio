@@ -126,12 +126,23 @@ def pair_quality(pred):
 
 # --- packer: packages and chains before the start ----------------------------------
 # Size prior per source kind: median real code files of earlier delivered cards of the
-# same source. Text signals do not predict size on this wave (correlation of real code
-# files with acceptance criteria 0.08, with words 0.12, with forecast size 0.10). The
-# replay uses the wave's own group medians as a stand-in for that learned prior.
+# same source. Text signals do not predict size on this wave: the correlation of real
+# code files with forecast size is 0.10 over the 55 cards with source text (printed
+# below). The counts of acceptance criteria (0.08) and words (0.12) were measured on the
+# source finding text, which this wave file does not keep. The replay uses the wave's
+# own group medians as a stand-in for that learned prior.
 def _median(xs):
     xs = sorted(xs)
     return xs[len(xs) // 2] if xs else 0
+
+
+def _pearson(xs, ys):
+    n = len(xs)
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    sxx = sum((x - mx) ** 2 for x in xs)
+    syy = sum((y - my) ** 2 for y in ys)
+    return sxy / (sxx * syy) ** 0.5 if sxx and syy else 0.0
 
 
 SIZE_PRIOR = {g: _median([len(real[k]) for k in keys if cards[k]["group"] == g])
@@ -320,6 +331,11 @@ if __name__ == "__main__":
         for row in score(rows, bound):
             print(json.dumps(row))
     print("\nsize prior (median real code files per source):", SIZE_PRIOR)
+    texted = [k for k in keys if cards[k]["hasSourceText"]]
+    print("size signal: correlation of real code files with forecast files, cited files"
+          f" over {len(texted)} cards with source text:",
+          round(_pearson([len(cards[k]["forecastFiles"]) for k in texted], [len(real[k]) for k in texted]), 2),
+          round(_pearson([len(cards[k]["citedFiles"]) for k in texted], [len(real[k]) for k in texted]), 2))
     print("\npackages:", [[cards[k]["label"] for k in u] for u in pk if len(u) > 1])
     print("\n== today's prompt-path rule, unit and size durations, instant integration")
     for durations in ("unit", "size"):

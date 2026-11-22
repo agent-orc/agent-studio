@@ -17,9 +17,15 @@ Evidence for the Dossier `docs/dispatcher-personas/index.html` (AGT-3974).
   Standard library only.
 - `check_dossier.py`: mirrors the workbench contract (keys, bounded slices,
   `dependsOn` order, concept sections), checks that slices sharing an area are
-  ordered by `dependsOn`, and applies today's pick-gate scope rule to the
+  ordered by `dependsOn`, applies today's pick-gate scope rule to the
   promoted prompts of the DS slices and PT-13 to PT-20 to show which pairs the
-  platform keeps apart.
+  platform keeps apart, and compares every cell of the replay results table in
+  `index.html` with the output of `replay.py`.
+- `output-4-slots.txt`, `output-6-slots.txt`, `output-check.txt`: the full
+  output of the three commands below at develop `d3c4eed65`, so the figures can
+  be read without running anything.
+- `remote-claim-evidence.md`: the ten wave cards whose runner reports name a
+  remote result ref, with the delivery commits, which all exist in git.
 
 ```sh
 python3 -I docs/dispatcher-personas/replay/replay.py            # 4 slots

@@ -7,7 +7,7 @@
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-22T10:40:00Z",
+  "updatedAt": "2026-11-22T11:30:00Z",
   "sourceTaskKeys": [
     "AGT-3974"
   ],
@@ -169,7 +169,7 @@
       },
       "recommended": "B",
       "recommendation": "B. Area warden on forecast modules after its shadow gate; Packer in shadow with proposals",
-      "rationale": "Most robust in all four replay runs, model-free, needs no recut rights.",
+      "rationale": "Most robust in the replay: first or tied first in three of four runs and two points behind the Packer in the base run; model-free, needs no recut rights.",
       "status": "open"
     },
     {
